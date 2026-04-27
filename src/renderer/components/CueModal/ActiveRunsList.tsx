@@ -2,9 +2,10 @@
  * ActiveRunsList — Displays currently running Cue tasks with stop controls.
  */
 
-import { Square, StopCircle } from 'lucide-react';
+import { Trash2, StopCircle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueRunResult } from '../../hooks/useCue';
+import { getModalActions } from '../../stores/modalStore';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { PipelineDot } from './StatusDot';
 import { formatElapsed, getPipelineForSubscription } from './cueModalUtils';
@@ -53,11 +54,15 @@ export function ActiveRunsList({
 					style={{ backgroundColor: theme.colors.bgActivity }}
 				>
 					<button
-						onClick={() => onStopRun(run.runId)}
+						onClick={() =>
+							getModalActions().showConfirmation(`Stop run "${run.subscriptionName}"?`, () =>
+								onStopRun(run.runId)
+							)
+						}
 						className="flex-shrink-0 p-1 rounded hover:bg-white/10 transition-colors"
 						title="Stop run"
 					>
-						<Square className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
+						<Trash2 className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
 					</button>
 					<div className="flex-1 min-w-0 flex items-center gap-1.5">
 						{(() => {

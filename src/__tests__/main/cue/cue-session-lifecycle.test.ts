@@ -36,6 +36,7 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	},
 	watchCueYaml: (...args: unknown[]) => mockWatchCueYaml(args[0] as string, args[1] as () => void),
 	findAncestorCueConfigRoot: () => null,
+	findAncestorCueConfigRoots: () => [],
 }));
 
 // Mock the file watcher
@@ -56,6 +57,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	persistQueuedEvent: vi.fn(),
+	removeQueuedEvent: vi.fn(),
+	getQueuedEvents: vi.fn(() => []),
+	clearPersistedQueue: vi.fn(),
+	safePersistQueuedEvent: vi.fn(),
+	safeRemoveQueuedEvent: vi.fn(),
 	clearGitHubSeenForSubscription: (...args: unknown[]) =>
 		mockClearGitHubSeenForSubscription(...args),
 }));
@@ -582,10 +589,11 @@ describe('CueEngine session lifecycle', () => {
 			engine.stop();
 		});
 
-		it('a second system-boot in the same process lifecycle still dedups', () => {
-			// Edge case: simulates someone (e.g. a test) calling start('system-boot')
-			// twice without a real Electron restart. The startup keys persist across
-			// stop/start so the second boot is a no-op for app.startup.
+		it('a second system-boot start after stop re-fires app.startup (dedup keys cleared on stop)', () => {
+			// stop() resets the startup dedup keys so that re-enabling Cue (which
+			// calls start('system-boot')) fires startup subscriptions again. This
+			// matches the expected UX: toggling Cue off then on is treated as a
+			// new Cue "boot" from the user's perspective.
 			mockLoadCueConfig.mockReturnValue(makeStartupConfig());
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
@@ -593,9 +601,9 @@ describe('CueEngine session lifecycle', () => {
 			engine.start('system-boot');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			engine.stop();
-			engine.start('system-boot');
-			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			engine.stop(); // clears startup dedup keys
+			engine.start('system-boot'); // should fire again
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
 
 			engine.stop();
 		});

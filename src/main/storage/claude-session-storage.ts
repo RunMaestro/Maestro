@@ -21,6 +21,7 @@ import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { calculateClaudeCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
+import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -40,34 +41,6 @@ import type {
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 export type { ClaudeSessionOriginsData } from '../stores/types';
-
-// Cap on parallel per-session SSH reads when listing remote sessions. Must stay
-// well below OpenSSH's default `MaxStartups` threshold (10 unauthenticated
-// connections before drops begin) so pages with many sessions don't silently
-// lose entries to rejected connections.
-const REMOTE_SESSION_READ_CONCURRENCY = 6;
-
-/**
- * Map `items` with a bounded concurrency.
- */
-async function mapWithConcurrency<T, R>(
-	items: T[],
-	limit: number,
-	fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-	const results: R[] = new Array(items.length);
-	let cursor = 0;
-	const workerCount = Math.min(Math.max(1, limit), items.length);
-	const workers = Array.from({ length: workerCount }, async () => {
-		while (true) {
-			const index = cursor++;
-			if (index >= items.length) return;
-			results[index] = await fn(items[index], index);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
 
 /**
  * Origin data structure stored in electron-store

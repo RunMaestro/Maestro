@@ -429,6 +429,7 @@ Manages file tree refresh/filter state and git-related file metadata.
 
 - `refreshFileTree(sessionId)` - Reload directory tree and return change stats
 - `refreshGitFileState(sessionId)` - Refresh tree + git repo metadata
+- `cancelFileTreeLoad(sessionId)` - Abort the in-flight tree load (halts further readDir calls; useful over SSH)
 - `filteredFileTree` - Derived tree based on filter string
 
 #### useBatchProcessor (`src/renderer/hooks/useBatchProcessor.ts`)

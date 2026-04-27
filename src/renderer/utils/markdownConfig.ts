@@ -25,6 +25,11 @@ import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
+import {
+	INLINE_CODE_CLICK_PROPS,
+	INLINE_CODE_CLICK_STYLE,
+	buildInlineCodeHandlers,
+} from './inlineCodeCopy';
 
 // ============================================================================
 // Types
@@ -484,10 +489,18 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// Inline code only — block code is handled by the pre component above
 		code: ({ node: _node, className, children, ...props }: any) => {
 			const hexColor = extractHexColor(children);
+			const handlers = buildInlineCodeHandlers(children);
+			const codeProps = {
+				className,
+				...props,
+				...INLINE_CODE_CLICK_PROPS,
+				...handlers,
+				style: { ...(props.style ?? {}), ...INLINE_CODE_CLICK_STYLE },
+			};
 			if (hexColor) {
 				return React.createElement(
 					'code',
-					{ className, ...props },
+					codeProps,
 					React.createElement('span', {
 						style: {
 							display: 'inline-block',
@@ -503,7 +516,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 					children
 				);
 			}
-			return React.createElement('code', { className, ...props }, children);
+			return React.createElement('code', codeProps, children);
 		},
 	};
 
@@ -694,7 +707,9 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					'code',
 					{
 						className: 'px-1 py-0.5 rounded text-xs font-mono',
-						style: { backgroundColor: `${theme.colors.bgMain}80` },
+						style: { backgroundColor: `${theme.colors.bgMain}80`, ...INLINE_CODE_CLICK_STYLE },
+						...INLINE_CODE_CLICK_PROPS,
+						...buildInlineCodeHandlers(children),
 					},
 					hexColor
 						? React.createElement('span', {
@@ -822,7 +837,10 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					style: {
 						backgroundColor: theme.colors.bgMain,
 						color: theme.colors.accent,
+						...INLINE_CODE_CLICK_STYLE,
 					},
+					...INLINE_CODE_CLICK_PROPS,
+					...buildInlineCodeHandlers(children),
 				},
 				hexColor
 					? React.createElement('span', {

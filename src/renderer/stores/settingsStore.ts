@@ -98,8 +98,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = ['mindmap', 'radial', 'force'];
+export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
+const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
+	'mindmap',
+	'radial',
+	'hierarchical',
+	'force',
+];
 
 // ============================================================================
 // Default Constants
@@ -121,6 +126,18 @@ export const DEFAULT_FILE_EXPLORER_MAX_ENTRIES = 100_000;
 export const FILE_EXPLORER_MIN_ENTRIES = 1_000;
 /** Maximum allowed file-entry cap (soft ceiling; "Load all" bypasses this). */
 export const FILE_EXPLORER_MAX_ENTRIES_CAP = 1_000_000;
+
+/**
+ * Default fraction applied to {@link DEFAULT_FILE_EXPLORER_MAX_ENTRIES} when
+ * "Reduce entry cap on SSH remotes" is enabled. 0.10 → 10% of the local cap.
+ */
+export const DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION = 0.1;
+/** Minimum allowed SSH cap fraction (5%). */
+export const SSH_REDUCE_ENTRY_CAP_MIN_FRACTION = 0.05;
+/** Maximum allowed SSH cap fraction (100% — no reduction). */
+export const SSH_REDUCE_ENTRY_CAP_MAX_FRACTION = 1.0;
+/** Slider step for the SSH cap fraction (5 percentage points). */
+export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
 
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -326,6 +343,8 @@ export interface SettingsStoreState {
 	localHonorGitignore: boolean;
 	fileExplorerMaxDepth: number;
 	fileExplorerMaxEntries: number;
+	sshReduceEntryCapEnabled: boolean;
+	sshReduceEntryCapFraction: number;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
 	useSystemBrowser: boolean;
@@ -346,6 +365,7 @@ export interface SettingsStoreState {
 	autoRunDisabled: boolean;
 	autoRunInactivityTimeoutMin: number;
 	lastSelectedPromptId: string | null;
+	spellCheck: boolean;
 }
 
 export interface SettingsStoreActions {
@@ -416,6 +436,8 @@ export interface SettingsStoreActions {
 	setLocalHonorGitignore: (value: boolean) => void;
 	setFileExplorerMaxDepth: (value: number) => void;
 	setFileExplorerMaxEntries: (value: number) => void;
+	setSshReduceEntryCapEnabled: (value: boolean) => void;
+	setSshReduceEntryCapFraction: (value: number) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
@@ -436,6 +458,7 @@ export interface SettingsStoreActions {
 	setAutoRunDisabled: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
+	setSpellCheck: (value: boolean) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -586,6 +609,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		localHonorGitignore: true,
 		fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
 		fileExplorerMaxEntries: DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
+		sshReduceEntryCapEnabled: false,
+		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		useSystemBrowser: false,
@@ -606,6 +631,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunDisabled: false,
 		autoRunInactivityTimeoutMin: 240,
 		lastSelectedPromptId: null,
+		spellCheck: false,
 
 		// ============================================================================
 		// Simple Setters
@@ -1028,6 +1054,24 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('fileExplorerMaxEntries', clamped);
 		},
 
+		setSshReduceEntryCapEnabled: (value) => {
+			set({ sshReduceEntryCapEnabled: value });
+			window.maestro.settings.set('sshReduceEntryCapEnabled', value);
+		},
+
+		setSshReduceEntryCapFraction: (value) => {
+			// Snap to the slider step so persisted values stay on-grid even if the
+			// caller passes a high-precision float (e.g. from a range input).
+			const steps = Math.round(value / SSH_REDUCE_ENTRY_CAP_STEP);
+			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
+			const clamped = Math.max(
+				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
+			);
+			set({ sshReduceEntryCapFraction: clamped });
+			window.maestro.settings.set('sshReduceEntryCapFraction', clamped);
+		},
+
 		setSshRemoteIgnorePatterns: (value) => {
 			set({ sshRemoteIgnorePatterns: value });
 			window.maestro.settings.set('sshRemoteIgnorePatterns', value);
@@ -1130,6 +1174,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setLastSelectedPromptId: (value) => {
 			set({ lastSelectedPromptId: value });
 			window.maestro.settings.set('lastSelectedPromptId', value);
+		},
+
+		setSpellCheck: (value) => {
+			set({ spellCheck: value });
+			window.maestro.settings.set('spellCheck', value);
 		},
 
 		// ============================================================================
@@ -2072,6 +2121,24 @@ export async function loadAllSettings(): Promise<void> {
 			);
 		}
 
+		if (typeof allSettings['sshReduceEntryCapEnabled'] === 'boolean') {
+			patch.sshReduceEntryCapEnabled = allSettings['sshReduceEntryCapEnabled'] as boolean;
+		}
+
+		if (
+			allSettings['sshReduceEntryCapFraction'] !== undefined &&
+			typeof allSettings['sshReduceEntryCapFraction'] === 'number' &&
+			Number.isFinite(allSettings['sshReduceEntryCapFraction'])
+		) {
+			const raw = allSettings['sshReduceEntryCapFraction'] as number;
+			const steps = Math.round(raw / SSH_REDUCE_ENTRY_CAP_STEP);
+			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
+			patch.sshReduceEntryCapFraction = Math.max(
+				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
+			);
+		}
+
 		// SSH Remote settings (with array validation)
 		if (
 			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
@@ -2151,6 +2218,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['lastSelectedPromptId'] !== undefined)
 			patch.lastSelectedPromptId = allSettings['lastSelectedPromptId'] as string | null;
 
+		if (allSettings['spellCheck'] !== undefined)
+			patch.spellCheck = allSettings['spellCheck'] as boolean;
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -2159,4 +2229,119 @@ export async function loadAllSettings(): Promise<void> {
 		// Mark settings as loaded even if there was an error (use defaults)
 		useSettingsStore.setState({ settingsLoaded: true });
 	}
+}
+
+// ============================================================================
+// Non-React Access
+// ============================================================================
+
+export function getSettingsState(): SettingsStoreState {
+	return useSettingsStore.getState();
+}
+
+export function getSettingsActions() {
+	const state = useSettingsStore.getState();
+	return {
+		setConductorProfile: state.setConductorProfile,
+		setLlmProvider: state.setLlmProvider,
+		setModelSlug: state.setModelSlug,
+		setApiKey: state.setApiKey,
+		setDefaultShell: state.setDefaultShell,
+		setCustomShellPath: state.setCustomShellPath,
+		setShellArgs: state.setShellArgs,
+		setShellEnvVars: state.setShellEnvVars,
+		setGhPath: state.setGhPath,
+		setFontFamily: state.setFontFamily,
+		setFontSize: state.setFontSize,
+		setActiveThemeId: state.setActiveThemeId,
+		setCustomThemeColors: state.setCustomThemeColors,
+		setCustomThemeBaseId: state.setCustomThemeBaseId,
+		setEnterToSendAI: state.setEnterToSendAI,
+		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
+		setDefaultShowThinking: state.setDefaultShowThinking,
+		setLeftSidebarWidth: state.setLeftSidebarWidth,
+		setRightPanelWidth: state.setRightPanelWidth,
+		setMarkdownEditMode: state.setMarkdownEditMode,
+		setChatRawTextMode: state.setChatRawTextMode,
+		setBionifyReadingMode: state.setBionifyReadingMode,
+		setBionifyIntensity: state.setBionifyIntensity,
+		setBionifyAlgorithm: state.setBionifyAlgorithm,
+		setShowHiddenFiles: state.setShowHiddenFiles,
+		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
+		setTerminalWidth: state.setTerminalWidth,
+		setLogLevel: state.setLogLevel,
+		setMaxLogBuffer: state.setMaxLogBuffer,
+		setMaxOutputLines: state.setMaxOutputLines,
+		setOsNotificationsEnabled: state.setOsNotificationsEnabled,
+		setAudioFeedbackEnabled: state.setAudioFeedbackEnabled,
+		setAudioFeedbackCommand: state.setAudioFeedbackCommand,
+		setToastDuration: state.setToastDuration,
+		setCheckForUpdatesOnStartup: state.setCheckForUpdatesOnStartup,
+		setEnableBetaUpdates: state.setEnableBetaUpdates,
+		setCrashReportingEnabled: state.setCrashReportingEnabled,
+		setLogViewerSelectedLevels: state.setLogViewerSelectedLevels,
+		setShortcuts: state.setShortcuts,
+		setTabShortcuts: state.setTabShortcuts,
+		setCustomAICommands: state.setCustomAICommands,
+		setTotalActiveTimeMs: state.setTotalActiveTimeMs,
+		addTotalActiveTimeMs: state.addTotalActiveTimeMs,
+		setAutoRunStats: state.setAutoRunStats,
+		recordAutoRunComplete: state.recordAutoRunComplete,
+		updateAutoRunProgress: state.updateAutoRunProgress,
+		acknowledgeBadge: state.acknowledgeBadge,
+		getUnacknowledgedBadgeLevel: state.getUnacknowledgedBadgeLevel,
+		setUsageStats: state.setUsageStats,
+		updateUsageStats: state.updateUsageStats,
+		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setTourCompleted: state.setTourCompleted,
+		setFirstAutoRunCompleted: state.setFirstAutoRunCompleted,
+		setOnboardingStats: state.setOnboardingStats,
+		recordWizardStart: state.recordWizardStart,
+		recordWizardComplete: state.recordWizardComplete,
+		recordWizardAbandon: state.recordWizardAbandon,
+		recordWizardResume: state.recordWizardResume,
+		recordTourStart: state.recordTourStart,
+		recordTourComplete: state.recordTourComplete,
+		recordTourSkip: state.recordTourSkip,
+		getOnboardingAnalytics: state.getOnboardingAnalytics,
+		setLeaderboardRegistration: state.setLeaderboardRegistration,
+		setPersistentWebLink: state.setPersistentWebLink,
+		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
+		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
+		setContextManagementSettings: state.setContextManagementSettings,
+		updateContextManagementSettings: state.updateContextManagementSettings,
+		setKeyboardMasteryStats: state.setKeyboardMasteryStats,
+		recordShortcutUsage: state.recordShortcutUsage,
+		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
+		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
+		setColorBlindMode: state.setColorBlindMode,
+		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
+		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
+		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
+		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,
+		setStatsCollectionEnabled: state.setStatsCollectionEnabled,
+		setDefaultStatsTimeRange: state.setDefaultStatsTimeRange,
+		setPreventSleepEnabled: state.setPreventSleepEnabled,
+		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
+		setDisableConfetti: state.setDisableConfetti,
+		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
+		setLocalHonorGitignore: state.setLocalHonorGitignore,
+		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
+		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
+		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
+		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
+		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
+		setEncoreFeatures: state.setEncoreFeatures,
+		setDirectorNotesSettings: state.setDirectorNotesSettings,
+		setWakatimeApiKey: state.setWakatimeApiKey,
+		setWakatimeEnabled: state.setWakatimeEnabled,
+		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
+		setUseNativeTitleBar: state.setUseNativeTitleBar,
+		setAutoHideMenuBar: state.setAutoHideMenuBar,
+		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
+		setSpellCheck: state.setSpellCheck,
+		setAutoRunDisabled: state.setAutoRunDisabled,
+		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
+		setLastSelectedPromptId: state.setLastSelectedPromptId,
+	};
 }

@@ -175,6 +175,21 @@ describe('shared/formatters', () => {
 			expect(formatRelativeTime(new Date(now).toISOString())).toBe('just now');
 			expect(formatRelativeTime(new Date(now - 60000).toISOString())).toBe('1m ago');
 		});
+
+		describe('includeSeconds option', () => {
+			it('should format sub-minute durations as seconds', () => {
+				expect(formatRelativeTime(now, { includeSeconds: true })).toBe('0s ago');
+				expect(formatRelativeTime(now - 1000, { includeSeconds: true })).toBe('1s ago');
+				expect(formatRelativeTime(now - 10000, { includeSeconds: true })).toBe('10s ago');
+				expect(formatRelativeTime(now - 59000, { includeSeconds: true })).toBe('59s ago');
+			});
+
+			it('should fall through to minutes/hours/days when over a minute', () => {
+				expect(formatRelativeTime(now - 60000, { includeSeconds: true })).toBe('1m ago');
+				expect(formatRelativeTime(now - 60 * 60000, { includeSeconds: true })).toBe('1h ago');
+				expect(formatRelativeTime(now - 24 * 60 * 60000, { includeSeconds: true })).toBe('1d ago');
+			});
+		});
 	});
 
 	// ==========================================================================

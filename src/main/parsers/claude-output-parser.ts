@@ -382,6 +382,16 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		const obj = parsed as Record<string, unknown>;
+
+		// system/* events (api_retry, init, etc.) are control-plane messages, not
+		// assistant-turn failures. api_retry in particular carries `error: "rate_limit"`
+		// as a retry-category tag for HTTP 429/529 and similar transient conditions
+		// that Claude Code will automatically retry. Treating them as errors would
+		// flag a still-streaming (and ultimately successful) response as failed.
+		if (obj.type === 'system') {
+			return null;
+		}
+
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 

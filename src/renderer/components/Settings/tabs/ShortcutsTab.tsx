@@ -9,6 +9,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
+import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -22,12 +24,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 	const [recordingId, setRecordingId] = useState<string | null>(null);
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
+	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
+	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
 
 	// Notify parent of recording state changes (for escape handler coordination)
 	useEffect(() => {
-		onRecordingChange?.(!!recordingId);
-	}, [recordingId, onRecordingChange]);
+		onRecordingChange?.(!!recordingId || recordingFilterShortcut);
+	}, [recordingId, recordingFilterShortcut, onRecordingChange]);
 
 	// Auto-focus filter input on mount
 	useEffect(() => {
@@ -49,28 +53,8 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			return;
 		}
 
-		const keys = [];
-		if (e.metaKey) keys.push('Meta');
-		if (e.ctrlKey) keys.push('Ctrl');
-		if (e.altKey) keys.push('Alt');
-		if (e.shiftKey) keys.push('Shift');
-		if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
-
-		// On macOS, Alt+letter produces special characters (e.g., Alt+L = ¬, Alt+P = π)
-		// Use e.code to get the physical key name when Alt is pressed
-		let mainKey = e.key;
-		if (e.altKey && e.code) {
-			// e.code is like 'KeyL', 'KeyP', 'Digit1', etc.
-			if (e.code.startsWith('Key')) {
-				mainKey = e.code.replace('Key', '').toLowerCase();
-			} else if (e.code.startsWith('Digit')) {
-				mainKey = e.code.replace('Digit', '');
-			} else {
-				// For other keys like Arrow keys, use as-is
-				mainKey = e.key;
-			}
-		}
-		keys.push(mainKey);
+		const keys = buildKeysFromEvent(e);
+		if (!keys) return;
 
 		if (isTabShortcut) {
 			setTabShortcuts({
@@ -91,9 +75,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		...Object.values(tabShortcuts).map((sc) => ({ ...sc, isTabShortcut: true })),
 	];
 	const totalShortcuts = allShortcuts.length;
-	const filteredShortcuts = allShortcuts.filter((sc) =>
-		sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase())
-	);
+	const filteredShortcuts = allShortcuts.filter((sc) => {
+		if (filterShortcutKeys.length > 0) {
+			const sortedFilter = [...filterShortcutKeys].sort().join('+');
+			const sortedKeys = [...sc.keys].sort().join('+');
+			return sortedKeys === sortedFilter;
+		}
+		return sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase());
+	});
 	const filteredCount = filteredShortcuts.length;
 
 	// Group shortcuts by category
@@ -150,24 +139,36 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					Note: Most functionality is unavailable until you've created your first agent.
 				</p>
 			)}
-			<div className="flex items-center gap-2 mb-3">
+			<div className="flex items-stretch gap-2 mb-3">
 				<input
 					ref={shortcutsFilterRef}
 					type="text"
 					value={shortcutsFilter}
-					onChange={(e) => setShortcutsFilter(e.target.value)}
+					onChange={(e) => {
+						setShortcutsFilter(e.target.value);
+						setFilterShortcutKeys([]);
+					}}
 					placeholder="Filter shortcuts..."
 					className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				/>
+				<ShortcutFilterButton
+					theme={theme}
+					keys={filterShortcutKeys}
+					onKeysChange={setFilterShortcutKeys}
+					recording={recordingFilterShortcut}
+					onRecordingChange={setRecordingFilterShortcut}
+				/>
 				<span
-					className="text-xs px-2 py-1.5 rounded font-medium"
+					className="text-xs px-2 rounded font-medium flex items-center"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						color: theme.colors.textDim,
 					}}
 				>
-					{shortcutsFilter ? `${filteredCount} / ${totalShortcuts}` : totalShortcuts}
+					{shortcutsFilter || filterShortcutKeys.length > 0
+						? `${filteredCount} / ${totalShortcuts}`
+						: totalShortcuts}
 				</span>
 			</div>
 			<p className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>

@@ -39,6 +39,7 @@ interface GraphSessionInput {
 		watch?: string;
 		source_session?: string | string[];
 		fan_out?: string[];
+		fan_out_ids?: string[];
 		fan_out_prompts?: string[];
 		filter?: Record<string, string | number | boolean>;
 		repo?: string;
@@ -52,6 +53,8 @@ interface GraphSessionInput {
 		cli_output?: { target: string };
 		action?: 'prompt' | 'command';
 		command?: CueCommand;
+		target_node_key?: string;
+		fan_out_node_keys?: string[];
 	}>;
 }
 
@@ -359,21 +362,46 @@ function triggerLabel(eventType: CueEventType): string {
 }
 
 /**
- * Finds or creates an agent node, deduplicating by session name.
+ * Finds or creates an agent node.
  *
- * When `forceNew` is true, always creates a fresh node even if one already
- * exists for this session — needed for chains where the same agent appears
- * at multiple positions (e.g. A → B → A).
+ * Resolution precedence:
+ *   1. When `nodeKey` is provided and `nodeKeyToNode` already has it, return
+ *      the existing node — this is the explicit fan-in case (multiple
+ *      subscriptions sharing the same visual target node).
+ *   2. When `nodeKey` is provided and no entry exists yet, create a fresh
+ *      node and register it under the key. Two subscriptions targeting the
+ *      same `agent_id` but carrying *different* keys end up as two distinct
+ *      visual nodes — the round-trip behavior the editor relies on after
+ *      the user dropped the same agent onto the canvas twice.
+ *   3. When `nodeKey` is absent (legacy YAML written before the field
+ *      existed), fall back to dedup-by-sessionName so older pipelines keep
+ *      loading without surprise behavior changes.
+ *
+ * `forceNew` is the legacy-path escape hatch for chains where the same
+ * agent appears at multiple positions (e.g. A → B → A) — under the legacy
+ * path it forces a new node even when sessionName already maps to one.
+ * Ignored when `nodeKey` resolves a hit (the user explicitly asked for one
+ * shared node).
  */
 function getOrCreateAgentNode(
 	sessionName: string,
 	sessions: PipelineSessionInfo[],
 	nodeMap: Map<string, PipelineNode>,
 	position: { x: number; y: number },
-	forceNew?: boolean
+	forceNew?: boolean,
+	nodeKey?: string,
+	nodeKeyToNode?: Map<string, PipelineNode>
 ): PipelineNode {
-	// Check if we already have a node for this session
-	if (!forceNew) {
+	if (nodeKey && nodeKeyToNode) {
+		const existing = nodeKeyToNode.get(nodeKey);
+		if (existing && existing.type === 'agent') return existing;
+	}
+
+	// Legacy dedup-by-sessionName path. Skip when we have an explicit key —
+	// the key-based path above is authoritative; falling through here for
+	// keyed subs would re-merge them by sessionName and re-introduce the
+	// "two trigger subs collapse into one node" bug we're fixing.
+	if (!forceNew && !nodeKey) {
 		for (const [, node] of nodeMap) {
 			if (node.type === 'agent' && (node.data as AgentNodeData).sessionName === sessionName) {
 				return node;
@@ -392,10 +420,12 @@ function getOrCreateAgentNode(
 			sessionId: session?.id ?? sessionName,
 			sessionName,
 			toolType: session?.toolType ?? 'claude-code',
+			...(nodeKey ? { nodeKey } : {}),
 		} as AgentNodeData,
 	};
 
 	nodeMap.set(nodeId, node);
+	if (nodeKey && nodeKeyToNode) nodeKeyToNode.set(nodeKey, node);
 	return node;
 }
 
@@ -413,8 +443,19 @@ function createCommandNode(
 	sessions: PipelineSessionInfo[],
 	nodeMap: Map<string, PipelineNode>,
 	position: { x: number; y: number },
-	commandFromCliOutput?: CueCommand
+	commandFromCliOutput?: CueCommand,
+	nodeKey?: string,
+	nodeKeyToNode?: Map<string, PipelineNode>
 ): PipelineNode {
+	// Same precedence as the agent path: when an explicit `nodeKey` already
+	// maps to a command node, return it (multiple subs sharing one visual
+	// command node — explicit user-drawn fan-in onto a command). Otherwise
+	// create fresh and register under the key.
+	if (nodeKey && nodeKeyToNode) {
+		const existing = nodeKeyToNode.get(nodeKey);
+		if (existing && existing.type === 'command') return existing;
+	}
+
 	const owners = (sub as CueSubscription & { _ownerSessions?: string[] })._ownerSessions ?? [];
 	let owningSession: PipelineSessionInfo | undefined;
 	if (sub.agent_id) owningSession = sessions.find((s) => s.id === sub.agent_id);
@@ -430,6 +471,7 @@ function createCommandNode(
 		owningSessionId: owningSession?.id ?? sub.agent_id ?? '',
 		owningSessionName: owningSession?.name ?? owners[0] ?? 'Unknown',
 		...fields,
+		...(nodeKey ? { nodeKey } : {}),
 	};
 	const nodeId = `command-${sub.name}-${nodeMap.size}`;
 	const node: PipelineNode = {
@@ -439,6 +481,7 @@ function createCommandNode(
 		data,
 	};
 	nodeMap.set(nodeId, node);
+	if (nodeKey && nodeKeyToNode) nodeKeyToNode.set(nodeKey, node);
 	return node;
 }
 
@@ -499,6 +542,13 @@ export function subscriptionsToPipelines(
 
 		// Track the agent node for each session name for deduplication
 		const sessionToNode = new Map<string, PipelineNode>();
+		// Map subscription `target_node_key` (or fan-out per-position key) to
+		// the visual node that key identifies. When multiple subs carry the
+		// same key, all of them point at one shared visual node — explicit
+		// fan-in. When their keys differ, each gets its own node even if
+		// they share an agent_id. Absent keys (legacy YAML) bypass this map
+		// and fall through to the `sessionToNode` legacy dedup.
+		const nodeKeyToNode = new Map<string, PipelineNode>();
 		// Map YAML subscription name → the work node (agent or command) that
 		// subscription produces. Used by chain-sub source resolution to
 		// locate a specific upstream by its `source_sub` name instead of by
@@ -569,16 +619,43 @@ export function subscriptionsToPipelines(
 				branchCountForTrigger.set(triggerId, branchRow + 1);
 				columnIndex = 1;
 
+				// Anchor the trigger's downstream agent positions to the
+				// trigger's own Y rather than to a constant baseY. Two
+				// distinct triggers each producing a single-target agent
+				// would otherwise both compute y = baseY + 0*spacing and
+				// the agents would stack pixel-perfect on top of each
+				// other (rendering as a single node visually even though
+				// the model has two distinct nodes — the "(2)" instance
+				// label is the only hint).
+				const ownerTriggerNode = nodeMap.get(triggerId);
+				const triggerY = ownerTriggerNode?.position.y ?? LAYOUT.baseY;
+
 				if (sub.fan_out && sub.fan_out.length > 0) {
-					// Fan-out: trigger connects to multiple agents
+					// Fan-out: trigger connects to multiple agents.
+					// Prefer `fan_out_ids[i]` over `fan_out[i]` when present so
+					// a renamed agent still resolves to its current display
+					// name (and renders under the new name in the editor).
+					// Falls back to the legacy name-only path otherwise.
+					const fanOutIds = sub.fan_out_ids;
+					const fanOutNodeKeys = sub.fan_out_node_keys;
 					for (let i = 0; i < sub.fan_out.length; i++) {
-						const sessionName = sub.fan_out[i];
+						const idAtPos = fanOutIds?.[i];
+						const sessionFromId = idAtPos ? sessions.find((s) => s.id === idAtPos) : undefined;
+						const sessionName = sessionFromId?.name ?? sub.fan_out[i];
 						const pos = {
 							x: LAYOUT.firstAgentX,
-							y: LAYOUT.baseY + i * LAYOUT.verticalSpacing,
+							y: triggerY + i * LAYOUT.verticalSpacing,
 						};
 
-						const agentNode = getOrCreateAgentNode(sessionName, sessions, nodeMap, pos);
+						const agentNode = getOrCreateAgentNode(
+							sessionName,
+							sessions,
+							nodeMap,
+							pos,
+							false,
+							fanOutNodeKeys?.[i],
+							nodeKeyToNode
+						);
 						sessionToNode.set(sessionName, agentNode);
 						sessionColumn.set(sessionName, 1);
 						sessionRow.set(sessionName, i);
@@ -613,9 +690,17 @@ export function subscriptionsToPipelines(
 					// than stacking on top of each other.
 					const pos = {
 						x: LAYOUT.firstAgentX,
-						y: LAYOUT.baseY + branchRow * LAYOUT.verticalSpacing,
+						y: triggerY + branchRow * LAYOUT.verticalSpacing,
 					};
-					const commandNode = createCommandNode(sub, sessions, nodeMap, pos);
+					const commandNode = createCommandNode(
+						sub,
+						sessions,
+						nodeMap,
+						pos,
+						undefined,
+						sub.target_node_key,
+						nodeKeyToNode
+					);
 					sessionColumn.set(commandNode.id, 1);
 					sessionRow.set(commandNode.id, branchRow);
 					subNameToNode.set(sub.name, commandNode);
@@ -641,7 +726,7 @@ export function subscriptionsToPipelines(
 
 					const pos = {
 						x: LAYOUT.firstAgentX,
-						y: LAYOUT.baseY + branchRow * LAYOUT.verticalSpacing,
+						y: triggerY + branchRow * LAYOUT.verticalSpacing,
 					};
 
 					if (!targetSessionName) {
@@ -669,8 +754,26 @@ export function subscriptionsToPipelines(
 						continue;
 					}
 
-					const agentNode = getOrCreateAgentNode(targetSessionName, sessions, nodeMap, pos);
-					const isReusedAgent = sessionToNode.has(targetSessionName);
+					// Under the legacy (no-key) path, "this sessionName has
+					// already been mapped to a node" was the signal that the
+					// agent was being reused — i.e. multiple triggers feeding
+					// the same node. Under the keyed path that signal is
+					// "this `target_node_key` already resolves to a node"
+					// (multiple subs intentionally pointing at one shared
+					// visual node). Compute reuse BEFORE calling the resolver
+					// so the per-call create-vs-fetch decision is observable.
+					const isReusedAgent = sub.target_node_key
+						? nodeKeyToNode.has(sub.target_node_key)
+						: sessionToNode.has(targetSessionName);
+					const agentNode = getOrCreateAgentNode(
+						targetSessionName,
+						sessions,
+						nodeMap,
+						pos,
+						false,
+						sub.target_node_key,
+						nodeKeyToNode
+					);
 					sessionToNode.set(targetSessionName, agentNode);
 					subNameToNode.set(sub.name, agentNode);
 					sessionColumn.set(targetSessionName, 1);
@@ -734,7 +837,15 @@ export function subscriptionsToPipelines(
 						x: LAYOUT.firstAgentX + (targetCol - 1) * LAYOUT.stepSpacing,
 						y: LAYOUT.baseY + existingRows * LAYOUT.verticalSpacing,
 					};
-					const commandNode = createCommandNode(sub, sessions, nodeMap, pos);
+					const commandNode = createCommandNode(
+						sub,
+						sessions,
+						nodeMap,
+						pos,
+						undefined,
+						sub.target_node_key,
+						nodeKeyToNode
+					);
 					sessionColumn.set(commandNode.id, targetCol);
 					sessionRow.set(commandNode.id, existingRows);
 					subNameToNode.set(sub.name, commandNode);
@@ -888,13 +999,18 @@ export function subscriptionsToPipelines(
 				// Force a new node when this session already appeared earlier in the chain
 				// (e.g. A → B → A). Reusing the earlier node would create a back-edge
 				// instead of rendering the second occurrence as a distinct node.
+				// `forceNew` is ignored when `target_node_key` resolves to an
+				// existing node — the user explicitly asked for fan-in onto
+				// that shared node, which trumps the back-edge heuristic.
 				const alreadyInChain = sessionToNode.has(targetSessionName);
 				const targetNode = getOrCreateAgentNode(
 					targetSessionName,
 					sessions,
 					nodeMap,
 					pos,
-					alreadyInChain
+					alreadyInChain,
+					sub.target_node_key,
+					nodeKeyToNode
 				);
 				sessionToNode.set(targetSessionName, targetNode);
 				subNameToNode.set(sub.name, targetNode);

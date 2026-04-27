@@ -12,8 +12,8 @@ Maestro ships with 23 core system prompts that control wizard conversations, Aut
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
 2. Select the **Maestro Prompts** tab
-3. Browse prompts by category in the left sidebar
-4. Edit in the right-side editor, then click **Save**
+3. Browse prompts by category in the left sidebar — each row shows an estimated token count so you can spot heavy prompts at a glance
+4. Edit in the right-side editor, then click **Save**. A live token estimate next to the prompt title updates as you type.
 
 You can also jump to the four most commonly edited prompts from **Quick Actions** (`Cmd+K` / `Ctrl+K`): Maestro System Prompt, Auto Run Default, Commit Command, and Group Chat Moderator.
 

@@ -183,6 +183,22 @@ const ANCESTOR_SEARCH_DEPTH = 5;
  * Does NOT return `projectRoot` itself — only strict ancestors.
  */
 export function findAncestorCueConfigRoot(projectRoot: string): string | null {
+	const roots = findAncestorCueConfigRoots(projectRoot);
+	return roots.length > 0 ? roots[0] : null;
+}
+
+/**
+ * Walk parent directories from `projectRoot` and return EVERY ancestor that
+ * has a cue.yaml, in closest-first order. Used by callers that need to keep
+ * walking when the closest ancestor's cue.yaml has nothing relevant to them
+ * (e.g. a sub-agent's session whose subs live at a HIGHER ancestor while a
+ * closer ancestor hosts an unrelated pipeline).
+ *
+ * Stops at filesystem root or after {@link ANCESTOR_SEARCH_DEPTH} levels.
+ * Does NOT include `projectRoot` itself — only strict ancestors.
+ */
+export function findAncestorCueConfigRoots(projectRoot: string): string[] {
+	const roots: string[] = [];
 	let current = path.resolve(projectRoot);
 
 	for (let depth = 0; depth < ANCESTOR_SEARCH_DEPTH; depth++) {
@@ -191,9 +207,9 @@ export function findAncestorCueConfigRoot(projectRoot: string): string | null {
 		current = parent;
 
 		if (resolveCueConfigPath(current) !== null) {
-			return current;
+			roots.push(current);
 		}
 	}
 
-	return null;
+	return roots;
 }

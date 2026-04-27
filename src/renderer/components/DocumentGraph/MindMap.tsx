@@ -120,6 +120,8 @@ export interface MindMapProps {
 	previewCharLimit?: number;
 	/** Layout algorithm to use for node positioning */
 	layoutType?: MindMapLayoutType;
+	/** Multiplier applied to per-layout spacing constants (1 = default density). */
+	spacingScale?: number;
 	/** Custom position overrides for nodes (from user drag operations) */
 	nodePositions?: Map<string, NodePositionOverride>;
 	/** Callback when a node position is changed via drag */
@@ -576,6 +578,7 @@ export function MindMap({
 	searchQuery,
 	previewCharLimit = 100,
 	layoutType = 'mindmap',
+	spacingScale = 1,
 	nodePositions,
 	onNodePositionChange,
 	containerRef: externalContainerRef,
@@ -619,7 +622,8 @@ export function MindMap({
 			width,
 			height,
 			showExternalLinks,
-			previewCharLimit
+			previewCharLimit,
+			spacingScale
 		);
 	}, [
 		layoutType,
@@ -632,6 +636,7 @@ export function MindMap({
 		height,
 		showExternalLinks,
 		previewCharLimit,
+		spacingScale,
 	]);
 
 	// Set initial focus to center node when center file changes

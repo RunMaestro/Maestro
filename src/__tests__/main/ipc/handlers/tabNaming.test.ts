@@ -237,6 +237,72 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Login Form Implementation');
 		});
 
+		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
+			// Regression guard: without forwarding promptArgs, ChildProcessSpawner falls back
+			// to `-- <prompt>` which breaks copilot-cli (needs `-p <prompt>`) and factory-droid
+			// (needs a bare positional prompt).
+			const copilotPromptArgs = vi.fn((p: string) => ['-p', p]);
+			const mockCopilotAgent: AgentConfig = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				command: 'copilot',
+				path: '/usr/local/bin/copilot',
+				args: [],
+				promptArgs: copilotPromptArgs,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCopilotAgent);
+
+			mockProcessManager.on.mockImplementation(() => {});
+
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'copilot-cli',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'copilot-cli',
+					promptArgs: copilotPromptArgs,
+				})
+			);
+		});
+
+		it('forwards noPromptSeparator for agents that use bare positional prompts (factory-droid)', async () => {
+			const mockDroidAgent: AgentConfig = {
+				id: 'factory-droid',
+				name: 'Factory Droid',
+				command: 'droid',
+				path: '/usr/local/bin/droid',
+				args: [],
+				noPromptSeparator: true,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockDroidAgent);
+
+			mockProcessManager.on.mockImplementation(() => {});
+
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'factory-droid',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'factory-droid',
+					noPromptSeparator: true,
+				})
+			);
+		});
+
 		it('filters out --dangerously-skip-permissions for read-only parallel execution', async () => {
 			const { buildAgentArgs } = await import('../../../../main/utils/agent-args');
 
@@ -740,6 +806,79 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('SSH Remote Feature');
+		});
+
+		it('embeds prompt in SSH wrapper args for non-stream-json agents (copilot)', async () => {
+			// Regression: Without this, ChildProcessSpawner appends `-p <prompt>` AFTER
+			// buildSshCommand has wrapped the agent invocation in `bash -c '<...>'`.
+			// SSH then passes the trailing `-p <prompt>` as positional args to the
+			// remote bash (not into the wrapped command), so copilot never sees the
+			// prompt. The tab-naming spawn just times out and the spinner clears with
+			// no rename. See tabNaming.ts SSH branch.
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'test-remote', host: 'test.example.com', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['-o', 'BatchMode=yes', 'test.example.com', "/bin/bash -c '...'"],
+			});
+
+			const copilotPromptArgs = vi.fn((p: string) => ['-p', p]);
+			const mockCopilotAgent: AgentConfig = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				command: 'copilot',
+				path: '/usr/local/bin/copilot',
+				args: [],
+				promptArgs: copilotPromptArgs,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCopilotAgent);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'copilot-cli',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'test-remote-id' },
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Prompt must reach buildSshCommand inside `args`, not be left for the
+			// post-wrapper appender in ChildProcessSpawner.
+			const sshCall = (buildSshCommand as Mock).mock.calls[0][1];
+			expect(sshCall.args).toContain('-p');
+			const promptIdx = sshCall.args.indexOf('-p');
+			expect(sshCall.args[promptIdx + 1]).toContain('Review this repo');
+			expect(sshCall.useStdin).toBe(false);
+
+			// Spawner must be told the prompt is already in args so it does not
+			// append it again to the SSH-wrapped command.
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					promptAlreadyInArgs: true,
+					sendPromptViaStdin: false,
+				})
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Repo Review');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('handles process manager not available', async () => {

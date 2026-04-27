@@ -822,31 +822,32 @@ export function NewInstanceModal({
 					</div>
 				)}
 
-				{/* SSH Remote Execution - Top Level */}
-				{/* Show SSH selector when remotes are configured, regardless of agent selection */}
-				{/* This allows users to see and configure SSH settings even while troubleshooting agent detection */}
-				{/* Uses '_pending_' key when no agent selected, transfers to agent when selected */}
-				{sshRemotes.length > 0 && (
-					<SshRemoteSelector
-						theme={theme}
-						sshRemotes={sshRemotes}
-						sshRemoteConfig={
-							agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
-						}
-						onSshRemoteConfigChange={(config) => {
-							setAgentSshRemoteConfigs((prev) => {
-								const newConfigs: Record<string, AgentSshRemoteConfig> = {
-									...prev,
-									_pending_: config,
-								};
-								if (selectedAgent) {
-									newConfigs[selectedAgent] = config;
-								}
-								return newConfigs;
-							});
-						}}
-					/>
-				)}
+				{/* SSH Remote Execution - Top Level.
+				    Always rendered, even when no remotes are configured, so the
+				    "remote-controlled" toggle is reachable — it mirrors history
+				    to the local project dir for a Maestro SSH'd into this
+				    machine, independent of local SSH remote setup.
+				    Uses '_pending_' key when no agent selected, transfers to
+				    agent when selected. */}
+				<SshRemoteSelector
+					theme={theme}
+					sshRemotes={sshRemotes}
+					sshRemoteConfig={
+						agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
+					}
+					onSshRemoteConfigChange={(config) => {
+						setAgentSshRemoteConfigs((prev) => {
+							const newConfigs: Record<string, AgentSshRemoteConfig> = {
+								...prev,
+								_pending_: config,
+							};
+							if (selectedAgent) {
+								newConfigs[selectedAgent] = config;
+							}
+							return newConfigs;
+						});
+					}}
+				/>
 
 				{/* New Session Message */}
 				<NudgeMessageField

@@ -46,6 +46,8 @@ export interface TaskCompleteEvent extends JsonlEvent {
 	fullResponse?: string;
 	elapsedMs: number;
 	usageStats?: UsageStats;
+	synopsisUsageStats?: UsageStats;
+	synopsisSkipped?: boolean;
 	agentSessionId?: string;
 }
 

@@ -12,6 +12,7 @@
 
 import { create } from 'zustand';
 import type { FocusArea, RightPanelTab } from '../types';
+import { notifyCenterFlash } from './centerFlashStore';
 
 export interface UIStoreState {
 	// Sidebar
@@ -34,10 +35,6 @@ export interface UIStoreState {
 
 	// Session sidebar selection
 	selectedSidebarIndex: number;
-
-	// Flash notifications
-	flashNotification: string | null;
-	successFlashNotification: string | null;
 
 	// Output search
 	outputSearchOpen: boolean;
@@ -92,8 +89,17 @@ export interface UIStoreActions {
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
 
-	// Flash notifications
+	/**
+	 * Compatibility shim — fires a center flash with the `warning` variant.
+	 * New code should call `notifyCenterFlash({ message, variant: 'warning' })` directly.
+	 * Passing `null` is a no-op (auto-dismiss handles clearing).
+	 */
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
+	/**
+	 * Compatibility shim — fires a center flash with the `success` variant.
+	 * New code should call `notifyCenterFlash({ message })` directly.
+	 * Passing `null` is a no-op (auto-dismiss handles clearing).
+	 */
 	setSuccessFlashNotification: (
 		msg: string | null | ((prev: string | null) => string | null)
 	) => void;
@@ -146,8 +152,6 @@ export const useUIStore = create<UIStore>()((set) => ({
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
 	selectedSidebarIndex: 0,
-	flashNotification: null,
-	successFlashNotification: null,
 	outputSearchOpen: false,
 	outputSearchQuery: '',
 	outputSearchRegex: false,
@@ -186,9 +190,16 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
 
-	setFlashNotification: (v) => set((s) => ({ flashNotification: resolve(v, s.flashNotification) })),
-	setSuccessFlashNotification: (v) =>
-		set((s) => ({ successFlashNotification: resolve(v, s.successFlashNotification) })),
+	setFlashNotification: (v) => {
+		const value = typeof v === 'function' ? v(null) : v;
+		if (value === null) return;
+		notifyCenterFlash({ message: value, variant: 'warning' });
+	},
+	setSuccessFlashNotification: (v) => {
+		const value = typeof v === 'function' ? v(null) : v;
+		if (value === null) return;
+		notifyCenterFlash({ message: value, variant: 'success' });
+	},
 
 	setOutputSearchOpen: (v) => set((s) => ({ outputSearchOpen: resolve(v, s.outputSearchOpen) })),
 	setOutputSearchQuery: (v) => set((s) => ({ outputSearchQuery: resolve(v, s.outputSearchQuery) })),

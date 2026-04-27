@@ -181,6 +181,12 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
+		onRemoteNotifyToast: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteNotifyCenterFlash: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 	};
 
 	const mockLive = {

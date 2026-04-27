@@ -282,10 +282,18 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				logger.info('Starting web server', 'WebServer');
 				const { port, url } = await webServer.start();
 				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
-				return { success: true, url };
 			}
 
-			// Already running
+			// (Re)publish the CLI discovery file. The CLI shares this server, so
+			// any path that brings the server up must publish discovery — otherwise
+			// `maestro-cli` reports "desktop app is not running" even though it is.
+			writeCliServerInfo({
+				port: webServer.getPort(),
+				token: webServer.getSecurityToken(),
+				pid: process.pid,
+				startedAt: Date.now(),
+			});
+
 			return { success: true, url: webServer.getSecureUrl() };
 		} catch (error: any) {
 			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
@@ -297,6 +305,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:stopServer', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			// Even with no server, ensure the CLI channel is available so
+			// maestro-cli works after Live Mode toggles.
+			await ensureCliServer(deps);
 			return { success: true };
 		}
 
@@ -304,13 +315,18 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
+			deleteCliServerInfo();
 			logger.info('Web server stopped and cleaned up', 'WebServer');
-			return { success: true };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
 			return { success: false, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token. The user
+		// turned off Live Mode (closing the public URL) but the CLI server
+		// must remain reachable for maestro-cli.
+		await ensureCliServer(deps);
+		return { success: true };
 	});
 
 	// Persist the current web server's security token and enable persistent web link.
@@ -370,6 +386,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:disableAll', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			await ensureCliServer(deps);
 			return { success: true, count: 0 };
 		}
 
@@ -385,12 +402,16 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
 			setWebServer(null);
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
-			return { success: true, count };
+			deleteCliServerInfo();
 		} catch (error: any) {
 			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
 			return { success: false, count, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token so maestro-cli
+		// continues working after Live Mode is fully disabled.
+		await ensureCliServer(deps);
+		return { success: true, count };
 	});
 
 	// Web server management

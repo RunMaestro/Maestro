@@ -100,10 +100,10 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string, options?: { forceParallel?: boolean }) => void;
+	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean }) => void
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
 	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
@@ -423,9 +423,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<(text?: string, options?: { forceParallel?: boolean }) => void>(
-		() => {}
-	);
+	const processInputRef = useRef<
+		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);

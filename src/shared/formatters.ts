@@ -85,9 +85,14 @@ export function formatTokensCompact(tokens: number): string {
  * Accepts either a timestamp (number of milliseconds) or a date string.
  *
  * @param dateOrTimestamp - Either a Date object, timestamp in milliseconds, or ISO date string
+ * @param options - Optional formatting options
+ * @param options.includeSeconds - When true, sub-minute durations render as "Ns ago" instead of "just now"
  * @returns Relative time string (e.g., "just now", "5m ago", "3d ago", or localized date)
  */
-export function formatRelativeTime(dateOrTimestamp: Date | number | string): string {
+export function formatRelativeTime(
+	dateOrTimestamp: Date | number | string,
+	options?: { includeSeconds?: boolean }
+): string {
 	let timestamp: number;
 
 	if (typeof dateOrTimestamp === 'number') {
@@ -100,11 +105,17 @@ export function formatRelativeTime(dateOrTimestamp: Date | number | string): str
 
 	const now = Date.now();
 	const diffMs = now - timestamp;
+	const diffSecs = Math.floor(diffMs / 1000);
 	const diffMins = Math.floor(diffMs / 60000);
 	const diffHours = Math.floor(diffMins / 60);
 	const diffDays = Math.floor(diffHours / 24);
 
-	if (diffMins < 1) return 'just now';
+	if (diffMins < 1) {
+		if (options?.includeSeconds) {
+			return `${Math.max(0, diffSecs)}s ago`;
+		}
+		return 'just now';
+	}
 	if (diffMins < 60) return `${diffMins}m ago`;
 	if (diffHours < 24) return `${diffHours}h ago`;
 	if (diffDays < 7) return `${diffDays}d ago`;

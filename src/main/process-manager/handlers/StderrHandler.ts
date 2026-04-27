@@ -107,14 +107,26 @@ export class StderrHandler {
 				return;
 			}
 
-			// Codex writes both Rust tracing diagnostics and human-readable progress to stderr.
-			// When running with --json (isStreamJsonMode), the structured output comes from
-			// stdout and is parsed by CodexOutputParser. The stderr content is a redundant
-			// human-readable echo that should NOT be re-emitted as data — doing so causes
-			// raw unformatted text (tool calls, outputs, reasoning) to appear in the terminal.
-			//
-			// Only suppress when in stream-json mode. If Codex runs without --json,
-			// stderr may contain the actual response and should be forwarded.
+			// For JSONL agents with output parsers (copilot-cli, codex, opencode,
+			// factory-droid), suppress stderr display. These agents emit MCP server
+			// startup messages, shell profile banners, and other initialization noise
+			// to stderr that should not be shown to the user. Error detection has
+			// already happened above, so real errors are already captured.
+			if (outputParser && toolType !== 'codex') {
+				// Codex is excluded because it has its own special stderr handling below
+				// that re-emits actual response content from stderr as data.
+				logger.info('[ProcessManager] Suppressing stderr for JSONL agent', 'ProcessManager', {
+					sessionId,
+					toolType,
+					stderrPreview: cleanedStderr.substring(0, 100),
+				});
+				return;
+			}
+
+			// Codex writes both Rust tracing diagnostics and actual responses to stderr.
+			// Strip tracing lines (e.g. "2026-02-08T04:39:23Z ERROR codex_core::rollout::list: ...")
+			// and the "Reading prompt from stdin..." prefix, then re-emit any remaining
+			// content as regular data so it renders normally instead of as an error.
 			if (toolType === 'codex') {
 				const lines = cleanedStderr.split('\n');
 				const tracingLines: string[] = [];

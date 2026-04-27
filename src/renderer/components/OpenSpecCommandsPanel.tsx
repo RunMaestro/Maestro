@@ -11,7 +11,7 @@ import {
 	GitBranch,
 } from 'lucide-react';
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
-import { useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
@@ -96,6 +96,8 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 			logger.error('Failed to save prompt:', undefined, error);
 		}
 	};
+
+	useSaveShortcut(handleSaveEdit, Boolean(editingCommand));
 
 	const handleReset = async (id: string) => {
 		try {

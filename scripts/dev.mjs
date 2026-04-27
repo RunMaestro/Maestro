@@ -88,7 +88,14 @@ try {
 	shutdown(1);
 }
 
-main = spawn(npmCommand, ['run', mainScript], {
+const cdpPort = process.env.MAESTRO_CDP_PORT;
+const mainArgs = ['run', mainScript];
+if (cdpPort) {
+	mainArgs.push('--', `--remote-debugging-port=${cdpPort}`);
+	console.log(`[dev] Electron CDP enabled on port ${cdpPort}`);
+}
+
+main = spawn(npmCommand, mainArgs, {
 	env: sharedEnv,
 	stdio: 'inherit',
 });

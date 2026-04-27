@@ -320,7 +320,7 @@ export function createGitApi() {
 		scanWorktreeDirectory: (
 			parentPath: string,
 			sshRemoteId?: string
-		): Promise<{ gitSubdirs: GitSubdirEntry[] }> =>
+		): Promise<{ gitSubdirs: GitSubdirEntry[]; scanFailed?: boolean }> =>
 			ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
 
 		/**

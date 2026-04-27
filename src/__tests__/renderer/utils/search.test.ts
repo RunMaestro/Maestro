@@ -3,6 +3,7 @@ import {
 	fuzzyMatch,
 	fuzzyMatchWithScore,
 	fuzzyMatchWithIndices,
+	filterSlashCommands,
 	FuzzyMatchResult,
 } from '../../../renderer/utils/search';
 
@@ -556,6 +557,27 @@ describe('search utils', () => {
 			const withDot = fuzzyMatchWithScore('hello.world', 'w', '.');
 			const withoutDot = fuzzyMatchWithScore('hello.world', 'w');
 			expect(withDot.score).toBeGreaterThan(withoutDot.score);
+		});
+	});
+
+	describe('filterSlashCommands', () => {
+		it('ranks prefix match above fuzzy matches when typing /npm', () => {
+			const commands = [
+				{ command: '/openspec.implement' },
+				{ command: '/fewer-permission-prompts' },
+				{ command: '/npm-test' },
+			];
+			const result = filterSlashCommands(commands, 'npm', false);
+			expect(result[0].command).toBe('/npm-test');
+		});
+
+		it('keeps direct prefix match on top even when fuzzy matches share many characters', () => {
+			const commands = [
+				{ command: '/manage-permissions' }, // fuzzy: m-a-n
+				{ command: '/man-page' }, // prefix
+			];
+			const result = filterSlashCommands(commands, 'man', false);
+			expect(result[0].command).toBe('/man-page');
 		});
 	});
 });

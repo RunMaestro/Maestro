@@ -76,6 +76,10 @@ import type {
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
+	NotifyToastParams,
+	NotifyCenterFlashParams,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -140,6 +144,8 @@ export interface WebServerCallbacks {
 	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
+	notifyToast: NotifyToastCallback | null;
+	notifyCenterFlash: NotifyCenterFlashCallback | null;
 }
 
 export class CallbackRegistry {
@@ -200,6 +206,8 @@ export class CallbackRegistry {
 		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
+		notifyToast: null,
+		notifyCenterFlash: null,
 	};
 
 	// ============ Getter Methods ============
@@ -539,6 +547,16 @@ export class CallbackRegistry {
 		return this.callbacks.generateDirectorNotesSynopsis(lookbackDays, provider);
 	}
 
+	async notifyToast(params: NotifyToastParams): Promise<boolean> {
+		if (!this.callbacks.notifyToast) return false;
+		return this.callbacks.notifyToast(params);
+	}
+
+	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
+		if (!this.callbacks.notifyCenterFlash) return false;
+		return this.callbacks.notifyCenterFlash(params);
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -769,6 +787,14 @@ export class CallbackRegistry {
 
 	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
 		this.callbacks.generateDirectorNotesSynopsis = callback;
+	}
+
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbacks.notifyToast = callback;
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbacks.notifyCenterFlash = callback;
 	}
 
 	// ============ Check Methods ============

@@ -303,6 +303,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
+				// Surface the user's queued message in the target tab's logs so it appears
+				// in the chat history when the queue flushes. Without this, the agent
+				// processes the message but the user never sees what was sent.
+				useSessionStore.getState().addLogToTab(
+					sessionId,
+					{
+						source: 'user',
+						text: item.text || '',
+						...(hasImages && { images: item.images }),
+					},
+					targetTab.id
+				);
+
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: targetTab.id,
@@ -405,6 +418,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
 					);

@@ -330,7 +330,7 @@ settings:
   queue_size: 20 # Buffer up to 20 events
 ```
 
-**Range:** 0–50. **Default:** 10.
+**Range:** 0–50. **Default:** 0 (no buffering — events that can't run immediately are dropped).
 
 - Events beyond the queue limit are **dropped** (silently discarded)
 - Set to `0` to disable queuing — events that can't run immediately are discarded

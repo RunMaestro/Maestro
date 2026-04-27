@@ -31,6 +31,7 @@ import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
+import { useSaveShortcut } from '../../hooks';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -426,6 +427,8 @@ export function SshRemoteModal({
 	const removeEnvVar = (id: number) => {
 		setEnvVars((prev) => prev.filter((entry) => entry.id !== id));
 	};
+
+	useSaveShortcut(handleSave, isOpen && !saving);
 
 	if (!isOpen) return null;
 

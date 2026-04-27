@@ -79,6 +79,8 @@ export interface MaestroSettings {
 	totalActiveTimeMs: number;
 	// Last prompt edited in Settings → Maestro Prompts (restored on reopen)
 	lastSelectedPromptId: string | null;
+	// Spell check in input areas
+	spellCheck: boolean;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

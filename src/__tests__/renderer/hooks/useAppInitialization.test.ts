@@ -534,6 +534,51 @@ describe('useAppInitialization', () => {
 
 			expect(mockSetUpdateCheckModalOpen).not.toHaveBeenCalled();
 		});
+
+		it('should re-check daily for long-running sessions', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(2);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(3);
+		});
+
+		it('should clear daily interval on unmount', async () => {
+			vi.useFakeTimers();
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.checkForUpdatesOnStartup = true;
+			mockUpdatesCheck.mockResolvedValue({ updateAvailable: false });
+
+			const { unmount } = renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2500);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+
+			unmount();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+			});
+			expect(mockUpdatesCheck).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	// --- Leaderboard startup sync ---

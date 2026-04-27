@@ -50,6 +50,12 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
 }));
 
+// Mock flashCopiedToClipboard helper (used for clipboard-success acks)
+const mockFlashCopiedToClipboard = vi.fn();
+vi.mock('../../../renderer/utils/flashCopiedToClipboard', () => ({
+	flashCopiedToClipboard: (...args: unknown[]) => mockFlashCopiedToClipboard(...args),
+}));
+
 // Mock tabExport for dynamic import
 const mockDownloadTabExport = vi.fn();
 vi.mock('../../../renderer/utils/tabExport', () => ({
@@ -208,11 +214,7 @@ describe('useTabExportHandlers', () => {
 				await Promise.resolve();
 			});
 
-			expect(mockNotifyToast).toHaveBeenCalledWith({
-				type: 'success',
-				title: 'Context Copied',
-				message: 'Conversation copied to clipboard.',
-			});
+			expect(mockFlashCopiedToClipboard).toHaveBeenCalledWith(undefined, 'Conversation Copied');
 		});
 
 		it('shows an error toast when clipboard write fails', async () => {
@@ -755,11 +757,7 @@ describe('useTabExportHandlers', () => {
 			});
 
 			expect(mockClipboardWriteText).toHaveBeenCalledWith('hello world');
-			expect(mockNotifyToast).toHaveBeenCalledWith({
-				type: 'success',
-				title: 'Terminal Buffer Copied',
-				message: 'Terminal Buffer copied to clipboard.',
-			});
+			expect(mockFlashCopiedToClipboard).toHaveBeenCalledWith(undefined, 'Terminal Buffer Copied');
 		});
 
 		it('warns and skips the clipboard when the text is blank', () => {

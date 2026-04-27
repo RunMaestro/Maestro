@@ -5,6 +5,9 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { useSessionStore } from '../../stores/sessionStore';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -554,6 +557,53 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					detail: { sessionId },
 				})
 			);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote toast notifications from CLI/web interface.
+	// Resolves the agent (if provided) so the toast carries project/tab metadata,
+	// enabling click-to-jump behavior.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteNotifyToast((params) => {
+			const { title, message, toastType, duration, sessionId } = params;
+			let project: string | undefined;
+			let tabId: string | undefined;
+			let tabName: string | undefined;
+			if (sessionId) {
+				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				project = session?.name;
+				const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId);
+				tabId = activeTab?.id;
+				tabName = activeTab?.name ?? undefined;
+			}
+			notifyToast({
+				type: toastType,
+				title,
+				message,
+				duration: duration !== undefined ? duration * 1000 : undefined,
+				sessionId,
+				tabId,
+				tabName,
+				project,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote center-flash notifications from CLI/web interface.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteNotifyCenterFlash((params) => {
+			notifyCenterFlash({
+				message: params.message,
+				detail: params.detail,
+				variant: params.variant,
+				duration: params.duration,
+			});
 		});
 		return () => {
 			unsubscribe();

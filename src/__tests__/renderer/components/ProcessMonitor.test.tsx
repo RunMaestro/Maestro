@@ -208,6 +208,31 @@ describe('ProcessMonitor', () => {
 		mockRegisterLayer.mockClear();
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
+
+		// jsdom in this environment doesn't provide a working Storage on
+		// window.localStorage, so install a minimal in-memory mock that
+		// satisfies the Storage methods the component uses.
+		const store = new Map<string, string>();
+		Object.defineProperty(window, 'localStorage', {
+			configurable: true,
+			writable: true,
+			value: {
+				getItem: vi.fn((key: string) => (store.has(key) ? store.get(key)! : null)),
+				setItem: vi.fn((key: string, value: string) => {
+					store.set(key, String(value));
+				}),
+				removeItem: vi.fn((key: string) => {
+					store.delete(key);
+				}),
+				clear: vi.fn(() => {
+					store.clear();
+				}),
+				key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+				get length() {
+					return store.size;
+				},
+			},
+		});
 	});
 
 	afterEach(() => {
@@ -937,7 +962,45 @@ describe('ProcessMonitor', () => {
 			});
 		});
 
-		it('should collapse all when clicking collapse button', async () => {
+		it('should step through depth levels when clicking the collapse button', async () => {
+			const process = createActiveProcess();
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession({ groupId: 'group-1' });
+			const group = createGroup();
+
+			render(
+				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
+			);
+
+			// Initial state: fully expanded — process visible
+			await waitFor(() => {
+				expect(
+					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
+				).toBeInTheDocument();
+			});
+			expect(screen.getByText('Test Session')).toBeInTheDocument();
+
+			const collapseButton = screen.getByTitle('Collapse one level');
+
+			// First click collapses the deepest level (sessions) — process hidden, session still visible
+			fireEvent.click(collapseButton);
+			await waitFor(() => {
+				expect(
+					screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
+				).not.toBeInTheDocument();
+			});
+			expect(screen.getByText('Test Session')).toBeInTheDocument();
+
+			// Second click collapses the group level — only the group remains visible
+			fireEvent.click(collapseButton);
+			await waitFor(() => {
+				expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
+			});
+			expect(screen.getByText('Test Group')).toBeInTheDocument();
+		});
+
+		it('should step through depth levels when clicking the expand button', async () => {
 			const process = createActiveProcess();
 			getActiveProcessesMock().mockResolvedValue([process]);
 
@@ -954,54 +1017,77 @@ describe('ProcessMonitor', () => {
 				).toBeInTheDocument();
 			});
 
-			// Click collapse all button
-			const collapseButton = screen.getByTitle('Collapse all');
+			// Fully collapse first by clicking collapse twice
+			const collapseButton = screen.getByTitle('Collapse one level');
+			fireEvent.click(collapseButton);
 			fireEvent.click(collapseButton);
 
-			// Process should no longer be visible
+			await waitFor(() => {
+				expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
+			});
+
+			const expandButton = screen.getByTitle('Expand one level');
+
+			// First click expands group — session visible but process not
+			fireEvent.click(expandButton);
+			await waitFor(() => {
+				expect(screen.getByText('Test Session')).toBeInTheDocument();
+			});
+			expect(
+				screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
+			).not.toBeInTheDocument();
+
+			// Second click expands session — process now visible
+			fireEvent.click(expandButton);
 			await waitFor(() => {
 				expect(
-					screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
-				).not.toBeInTheDocument();
+					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
+				).toBeInTheDocument();
 			});
 		});
 
-		it('should expand all when clicking expand button', async () => {
+		it('should persist the last expand/collapse level across renders', async () => {
 			const process = createActiveProcess();
 			getActiveProcessesMock().mockResolvedValue([process]);
 
 			const session = createSession({ groupId: 'group-1' });
 			const group = createGroup();
 
-			render(
+			const { unmount } = render(
 				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
 			);
 
+			// Initial render: fully expanded.
 			await waitFor(() => {
 				expect(
 					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
 				).toBeInTheDocument();
 			});
 
-			// Collapse first
-			const collapseButton = screen.getByTitle('Collapse all');
-			fireEvent.click(collapseButton);
-
+			// Step down once — sessions visible, process hidden.
+			fireEvent.click(screen.getByTitle('Collapse one level'));
 			await waitFor(() => {
 				expect(
 					screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
 				).not.toBeInTheDocument();
 			});
+			expect(screen.getByText('Test Session')).toBeInTheDocument();
 
-			// Then expand
-			const expandButton = screen.getByTitle('Expand all');
-			fireEvent.click(expandButton);
+			// Persisted level should be 1 (depth-0 group expanded only).
+			expect(window.localStorage.getItem('maestro.processMonitor.expandedLevel')).toBe('1');
+
+			// Tear down and re-render — should restore to the same level.
+			unmount();
+			render(
+				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
+			);
 
 			await waitFor(() => {
-				expect(
-					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
-				).toBeInTheDocument();
+				expect(screen.getByText('Test Session')).toBeInTheDocument();
 			});
+			expect(
+				screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
+			).not.toBeInTheDocument();
 		});
 	});
 
@@ -1065,14 +1151,13 @@ describe('ProcessMonitor', () => {
 				).toBeInTheDocument();
 			});
 
-			// Collapse first
-			const collapseButton = screen.getByTitle('Collapse all');
+			// Fully collapse first by stepping down twice (session, then group)
+			const collapseButton = screen.getByTitle('Collapse one level');
+			fireEvent.click(collapseButton);
 			fireEvent.click(collapseButton);
 
 			await waitFor(() => {
-				expect(
-					screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
-				).not.toBeInTheDocument();
+				expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
 			});
 
 			const dialog = screen.getByRole('dialog');

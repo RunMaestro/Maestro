@@ -375,6 +375,7 @@ export interface AppModalsProps {
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	onDismissAgentError: () => void;
+	onJumpToAgent?: () => void;
 	groupChatError: GroupChatErrorInfo | null;
 	groupChatRecoveryActions: RecoveryAction[];
 	onClearGroupChatError: () => void;
@@ -743,6 +744,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		effectiveAgentError,
 		recoveryActions,
 		onDismissAgentError,
+		onJumpToAgent,
 		groupChatError,
 		groupChatRecoveryActions,
 		onClearGroupChatError,
@@ -1095,6 +1097,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				effectiveAgentError={effectiveAgentError}
 				recoveryActions={recoveryActions}
 				onDismissAgentError={onDismissAgentError}
+				onJumpToAgent={onJumpToAgent}
 				groupChatError={groupChatError}
 				groupChatRecoveryActions={groupChatRecoveryActions}
 				onClearGroupChatError={onClearGroupChatError}

@@ -114,6 +114,31 @@ function formatRuntime(startTime: number): string {
 	return `${seconds}s`;
 }
 
+// Persistence for the System Processes expand/collapse stepper.
+// Stores the depth tier last shown so it survives app restarts.
+const PROCESS_MONITOR_LEVEL_KEY = 'maestro.processMonitor.expandedLevel';
+
+function readStoredExpandedLevel(): number | null {
+	if (typeof window === 'undefined') return null;
+	try {
+		const raw = window.localStorage.getItem(PROCESS_MONITOR_LEVEL_KEY);
+		if (raw === null) return null;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function writeStoredExpandedLevel(level: number): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(PROCESS_MONITOR_LEVEL_KEY, String(level));
+	} catch {
+		// localStorage may throw in private mode or when full — non-fatal for a UI preference.
+	}
+}
+
 // Interface for the detailed process view
 interface ProcessDetailData {
 	processSessionId: string;
@@ -259,29 +284,60 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		});
 	};
 
-	// Collect all expandable node IDs from the tree
-	const getAllExpandableNodeIds = (nodes: ProcessNode[]): string[] => {
-		const ids: string[] = [];
-		const traverse = (nodeList: ProcessNode[]) => {
+	// Collect expandable node IDs grouped by depth (only nodes that have children).
+	// Used by the stepwise expand/collapse buttons so each click changes the visible
+	// depth by exactly one level.
+	const getExpandableIdsByDepth = (nodes: ProcessNode[]): string[][] => {
+		const byDepth: string[][] = [];
+		const traverse = (nodeList: ProcessNode[], depth: number) => {
 			nodeList.forEach((node) => {
 				if (node.children && node.children.length > 0) {
-					ids.push(node.id);
-					traverse(node.children);
+					if (!byDepth[depth]) byDepth[depth] = [];
+					byDepth[depth].push(node.id);
+					traverse(node.children, depth + 1);
 				}
 			});
 		};
-		traverse(nodes);
-		return ids;
+		traverse(nodes, 0);
+		return byDepth;
 	};
 
-	const expandAll = () => {
-		const processTree = buildProcessTree();
-		const allIds = getAllExpandableNodeIds(processTree);
-		setExpandedNodes(new Set(allIds));
+	// Step-expand: find the shallowest depth with any unexpanded node and expand all at that depth.
+	const expandStep = () => {
+		const idsByDepth = getExpandableIdsByDepth(buildProcessTree());
+		for (let depth = 0; depth < idsByDepth.length; depth++) {
+			const ids = idsByDepth[depth] || [];
+			if (ids.length === 0) continue;
+			const allExpanded = ids.every((id) => expandedNodes.has(id));
+			if (!allExpanded) {
+				setExpandedNodes((prev) => {
+					const next = new Set(prev);
+					ids.forEach((id) => next.add(id));
+					return next;
+				});
+				writeStoredExpandedLevel(depth + 1);
+				return;
+			}
+		}
 	};
 
-	const collapseAll = () => {
-		setExpandedNodes(new Set());
+	// Step-collapse: find the deepest depth with any expanded node and collapse all at that depth.
+	const collapseStep = () => {
+		const idsByDepth = getExpandableIdsByDepth(buildProcessTree());
+		for (let depth = idsByDepth.length - 1; depth >= 0; depth--) {
+			const ids = idsByDepth[depth] || [];
+			if (ids.length === 0) continue;
+			const anyExpanded = ids.some((id) => expandedNodes.has(id));
+			if (anyExpanded) {
+				setExpandedNodes((prev) => {
+					const next = new Set(prev);
+					ids.forEach((id) => next.delete(id));
+					return next;
+				});
+				writeStoredExpandedLevel(depth);
+				return;
+			}
+		}
 	};
 
 	// Parse the base session ID from a process session ID
@@ -720,14 +776,22 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		return tree;
 	};
 
-	// Expand all nodes by default on initial load
+	// On initial load, restore the depth level last set via the stepper buttons.
+	// Falls back to fully expanded when no preference has been saved yet.
 
 	useEffect(() => {
 		if (!isLoading && !hasExpandedInitially) {
-			// Build tree and get all expandable node IDs
 			const tree = buildProcessTree();
-			const allIds = getAllExpandableNodeIds(tree);
-			setExpandedNodes(new Set(allIds));
+			const idsByDepth = getExpandableIdsByDepth(tree);
+			const stored = readStoredExpandedLevel();
+			// Default: fully open (matches prior behavior on first launch).
+			const targetLevel = stored ?? idsByDepth.length;
+			const cappedLevel = Math.min(targetLevel, idsByDepth.length);
+			const initialIds = new Set<string>();
+			for (let depth = 0; depth < cappedLevel; depth++) {
+				(idsByDepth[depth] || []).forEach((id) => initialIds.add(id));
+			}
+			setExpandedNodes(initialIds);
 			setHasExpandedInitially(true);
 		}
 	}, [isLoading, hasExpandedInitially, activeProcesses]);
@@ -1846,14 +1910,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									<RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
 								</button>
 								<button
-									onClick={expandAll}
+									onClick={expandStep}
 									className="p-1.5 rounded hover:bg-opacity-10"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 									}
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-									title="Expand all"
+									title="Expand one level"
 								>
 									<div className="flex flex-col items-center -space-y-1.5">
 										<ChevronUp className="w-4 h-4" />
@@ -1861,14 +1925,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									</div>
 								</button>
 								<button
-									onClick={collapseAll}
+									onClick={collapseStep}
 									className="p-1.5 rounded hover:bg-opacity-10"
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) =>
 										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 									}
 									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-									title="Collapse all"
+									title="Collapse one level"
 								>
 									<div className="flex flex-col items-center -space-y-1.5">
 										<ChevronDown className="w-4 h-4" />

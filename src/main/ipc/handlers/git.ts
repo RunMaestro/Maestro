@@ -1043,7 +1043,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								`Failed to read remote directory ${parentPath}: ${result.error}`,
 								LOG_CONTEXT
 							);
-							return { gitSubdirs: [] };
+							return { gitSubdirs: [], scanFailed: true };
 						}
 						// Filter to only directories (excluding hidden directories)
 						subdirs = result.data.filter((e) => e.isDirectory && !e.name.startsWith('.'));
@@ -1092,9 +1092,17 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								return null; // Git command failed — treat as invalid
 							}
 							const toplevel = toplevelResult.stdout.trim();
-							// For SSH, compare as-is; for local, resolve to handle symlinks
-							const normalizedSubdir = sshRemote ? subdirPath : path.resolve(subdirPath);
-							const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
+							// For local paths, canonicalize via realpath so that symlinked base
+							// paths (common on Linux: /home → /data/home; Windows junctions) match
+							// what git rev-parse --show-toplevel returns. path.resolve alone does
+							// NOT follow symlinks, which previously caused every subdir to be
+							// rejected and the entire worktree set to be marked stale.
+							const normalizedSubdir = sshRemote
+								? subdirPath
+								: await fs.realpath(subdirPath).catch(() => path.resolve(subdirPath));
+							const normalizedToplevel = sshRemote
+								? toplevel
+								: await fs.realpath(toplevel).catch(() => path.resolve(toplevel));
 							if (normalizedSubdir !== normalizedToplevel) {
 								return null; // Subdirectory inside a repo, not a repo/worktree root
 							}
@@ -1156,7 +1164,9 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				} catch (err) {
 					void captureException(err);
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
-					return { gitSubdirs: [] };
+					// Distinguish a failed scan from a successful "no subdirs" result so
+					// the renderer doesn't bulk-flag every existing child session as removed.
+					return { gitSubdirs: [], scanFailed: true };
 				}
 			}
 		)
@@ -1261,9 +1271,16 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								);
 								return;
 							}
-							if (path.resolve(dirPath) !== path.resolve(toplevelResult.stdout.trim())) {
+							// Use realpath so symlinked base paths (e.g. /home/user/work →
+							// /data/work on Linux, NTFS junctions on Windows) match git's
+							// canonical toplevel output.
+							const resolvedDir = await fs.realpath(dirPath).catch(() => path.resolve(dirPath));
+							const resolvedToplevel = await fs
+								.realpath(toplevelResult.stdout.trim())
+								.catch(() => path.resolve(toplevelResult.stdout.trim()));
+							if (resolvedDir !== resolvedToplevel) {
 								logger.warn(
-									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${path.resolve(dirPath)} toplevel=${path.resolve(toplevelResult.stdout.trim())})`
+									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
 								);
 								return;
 							}

@@ -4,13 +4,14 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                            |
-| --------------- | ------------- | ---------- | ---------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`   |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                        |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                  |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                          |
+| ID              | Name          | Status     | Notes                                                                                                                               |
+| --------------- | ------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                      |
+| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                           |
+| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                    |
+| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                     |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker |
+| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                             |
 
 ## Agent Capabilities
 
@@ -89,6 +90,21 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **Read-only:** `--agent plan`
 - **YOLO Mode:** Auto-enabled in batch mode (no flag needed)
 - **Multi-Provider:** Supports 75+ LLMs including Ollama, LM Studio, llama.cpp
+
+### Copilot-CLI
+
+- **Agent ID:** `copilot-cli`
+- **Binary:** `copilot`
+- **JSON Output:** `--output-format json`
+- **Batch Mode:** `-p, --prompt <text>`
+- **Resume:** `--continue`, `--resume[=session-id]`
+- **Read-only:** CLI-enforced via `--allow-tool=read,url`, `--deny-tool=write,shell,memory,github`, `--no-ask-user`
+- **Thinking Display:** Streams `assistant.reasoning_delta` / `assistant.reasoning` into Maestro's thinking panel
+- **Images:** Prompt-embedded `@/tmp/...` mentions (maps Maestro uploads to Copilot file/image mentions)
+- **Session Storage:** `~/.copilot/session-state/<session-id>/` (local and SSH-remote)
+- **Model Discovery:** Fetches available models from [models.dev](https://models.dev) (github-copilot provider) with a 3s timeout, falling back to the user's configured model in `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
+- **Known Limitations:**
+  - **SSH interactive mode:** PTY-based interactive Copilot sessions do not go through `wrapSpawnWithSsh()`, so interactive Copilot over SSH remote is not supported. Batch mode (`-p`) over SSH works correctly via the standard child-process spawner.
 
 ## Adding New Agents
 

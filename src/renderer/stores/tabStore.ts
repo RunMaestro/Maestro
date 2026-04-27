@@ -62,7 +62,7 @@ import { useSessionStore, selectActiveSession } from './sessionStore';
 
 export interface TabStoreState {
 	// Gist publishing state (moved from App.tsx local state)
-	tabGistContent: { filename: string; content: string } | null;
+	tabGistContent: { filename: string; content: string; messageId?: string } | null;
 	fileGistUrls: Record<string, GistInfo>;
 	/**
 	 * Pending terminal buffer content queued for "Send to Agent".
@@ -76,7 +76,9 @@ export interface TabStoreState {
 export interface TabStoreActions {
 	// === Gist UI state ===
 
-	setTabGistContent: (content: { filename: string; content: string } | null) => void;
+	setTabGistContent: (
+		content: { filename: string; content: string; messageId?: string } | null
+	) => void;
 	setPendingTerminalBufferSend: (pending: { content: string; sourceName: string } | null) => void;
 	setFileGistUrls: (urls: Record<string, GistInfo>) => void;
 	setFileGistUrl: (path: string, info: GistInfo) => void;

@@ -6,6 +6,8 @@ export interface TabBarProps {
 	theme: Theme;
 	/** The Maestro session/agent ID that owns these tabs */
 	sessionId?: string;
+	/** Session-level agentSessionId fallback for tab title display (used until tab.agentSessionId is wired up) */
+	sessionAgentSessionId?: string | null;
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;

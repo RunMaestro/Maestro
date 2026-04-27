@@ -166,14 +166,14 @@ interface TabStoreState {
 
 ### Tab Metadata Actions
 
-| Action                | Signature          | Notes                             |
-| --------------------- | ------------------ | --------------------------------- |
-| `starTab`             | `(tabId)`          | Toggle starred flag               |
-| `markUnread`          | `(tabId, unread?)` | Set hasUnread flag                |
-| `updateTabName`       | `(tabId, name)`    | Update tab display name           |
-| `toggleReadOnly`      | `(tabId)`          | Toggle read-only mode             |
-| `toggleSaveToHistory` | `(tabId)`          | Toggle history saving             |
-| `cycleThinkingMode`   | `(tabId)`          | Cycle: off -> on -> sticky -> off |
+| Action                | Signature          | Notes                                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `starTab`             | `(tabId)`          | Toggle starred flag                                                                                                                                                                                                                                                       |
+| `markUnread`          | `(tabId, unread?)` | Set hasUnread flag                                                                                                                                                                                                                                                        |
+| `updateTabName`       | `(tabId, name)`    | Update tab display name                                                                                                                                                                                                                                                   |
+| `toggleReadOnly`      | `(tabId)`          | Toggle read-only mode                                                                                                                                                                                                                                                     |
+| `toggleSaveToHistory` | `(tabId)`          | Toggle history saving                                                                                                                                                                                                                                                     |
+| `cycleThinkingMode`   | `(tabId)`          | Cycle: off -> on -> sticky -> off. Transition to 'off' wipes thinking/tool logs; 'on' keeps them only until inline (new stdout) or process-exit clears fire (`cleanupExitedTabLogs`); 'sticky' opts out of all three clears. See `ThinkingMode` in `src/shared/types.ts`. |
 
 ### Tab Selectors (use with useSessionStore)
 

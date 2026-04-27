@@ -269,12 +269,6 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 		path.join(programFiles, 'WinGet', 'Links', `${bin}.exe`),
 	];
 	const goBin = (bin: string) => [path.join(home, 'go', 'bin', `${bin}.exe`)];
-	const pythonScripts = (bin: string) => [
-		path.join(appData, 'Python', 'Scripts', `${bin}.exe`),
-		path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts', `${bin}.exe`),
-		path.join(localAppData, 'Programs', 'Python', 'Python311', 'Scripts', `${bin}.exe`),
-		path.join(localAppData, 'Programs', 'Python', 'Python310', 'Scripts', `${bin}.exe`),
-	];
 
 	// Define known installation paths for each binary, in priority order
 	// Prefer .exe (standalone installers) over .cmd (npm wrappers)
@@ -313,13 +307,28 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm (has known issues on Windows, but check anyway)
 			...npmGlobal('opencode'),
 		],
+		'copilot-cli': [
+			// WinGet installation (primary method on Windows)
+			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
+			// npm global installation
+			...npmGlobal('copilot'),
+			// Scoop installation
+			path.join(home, 'scoop', 'shims', 'copilot.exe'),
+			path.join(home, 'scoop', 'apps', 'copilot', 'current', 'copilot.exe'),
+			// Chocolatey installation
+			path.join(
+				process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey',
+				'bin',
+				'copilot.exe'
+			),
+			// Standalone installation
+			...localBin('copilot'),
+			// Winget
+			...wingetLinks('copilot'),
+		],
 		gemini: [
 			// npm global installation
 			...npmGlobal('gemini'),
-		],
-		aider: [
-			// pip installation
-			...pythonScripts('aider'),
 		],
 		gh: [
 			// GitHub CLI official installer (MSI)
@@ -428,6 +437,19 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('opencode'),
 		],
+		'copilot-cli': [
+			// Homebrew installation (primary method on macOS)
+			...homebrew('copilot'),
+			// GitHub CLI installation
+			'/usr/local/bin/copilot',
+			path.join(home, '.local', 'bin', 'copilot'),
+			// npm global
+			...npmGlobal('copilot'),
+			// User bin
+			path.join(home, 'bin', 'copilot'),
+			// Node version managers
+			...nodeVersionManagers('copilot'),
+		],
 		gemini: [
 			// npm global paths
 			...npmGlobal('gemini'),
@@ -435,14 +457,6 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('gemini'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('gemini'),
-		],
-		aider: [
-			// pip installation
-			...localBin('aider'),
-			// Homebrew paths
-			...homebrew('aider'),
-			// Node version managers (in case installed via npm)
-			...nodeVersionManagers('aider'),
 		],
 		gh: [
 			// Homebrew (Apple Silicon + Intel)
