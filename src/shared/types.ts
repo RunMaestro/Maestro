@@ -177,8 +177,16 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
+	/** Per-session effort/reasoning override (wins over agent-level config). */
 	customEffort?: string;
+	/** Per-session extra CLI args appended to the spawn. Space-separated, shell-quote aware. */
+	customArgs?: string;
+	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
+	customEnvVars?: Record<string, string>;
+	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
+	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)
