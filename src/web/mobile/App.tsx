@@ -3388,8 +3388,11 @@ export default function MobileApp() {
 				)}
 			</div>
 
-			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input) */}
-			{currentInputMode !== 'terminal' && (
+			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input).
+				Also hidden when the right panel is open in full-screen overlay mode (narrow viewport),
+				so the panel's own bottom action bar isn't covered by the chat input. On wider viewports
+				the right panel is inline and shrinks the main column, so the input stays visible. */}
+			{currentInputMode !== 'terminal' && !(showRightDrawer && isMobile) && (
 				<CommandInputBar
 					isOffline={isOffline}
 					isConnected={connectionState === 'connected' || connectionState === 'authenticated'}
