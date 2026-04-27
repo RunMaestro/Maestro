@@ -11,6 +11,7 @@ import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { useAutoRun } from '../hooks/useAutoRun';
 import type { AutoRunDocument, LaunchConfig, Playbook } from '../hooks/useAutoRun';
 import type { UseWebSocketReturn } from '../hooks/useWebSocket';
+import { TEMPLATE_VARIABLES } from '../../shared/templateVariables';
 
 /**
  * Props for AutoRunSetupSheet component
@@ -68,7 +69,15 @@ export function AutoRunSetupSheet({
 	const [loopEnabled, setLoopEnabled] = useState(false);
 	const [maxLoops, setMaxLoops] = useState(3);
 	const [isVisible, setIsVisible] = useState(false);
+	// Mirrors desktop's `DocumentSelectorModal`: unselected docs are tucked
+	// behind an "Add documents" expander so the sheet doesn't open with the
+	// entire library on screen.
+	const [showAddDocs, setShowAddDocs] = useState(false);
+	// Toggles the inline template-variable reference under the prompt textarea —
+	// matches desktop's collapsible "Template Variables" section.
+	const [showTemplateVars, setShowTemplateVars] = useState(false);
 	const sheetRef = useRef<HTMLDivElement>(null);
+	const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// Playbook state — loaded once when the sheet opens, plus the id of the
 	// currently-loaded playbook (used to disambiguate "Save" vs. "Update").
@@ -258,18 +267,31 @@ export function AutoRunSetupSheet({
 		});
 	}, []);
 
-	const handleToggleAll = useCallback(() => {
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-		if (selectedFiles.size === documents.length) {
-			setSelectedFiles(new Set());
-		} else {
-			setSelectedFiles(new Set(documents.map((d) => d.path || d.filename)));
-		}
-	}, [selectedFiles.size, documents]);
-
 	const handleLoopToggle = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		setLoopEnabled((prev) => !prev);
+	}, []);
+
+	// Insert a `{{VARIABLE}}` token at the prompt textarea's cursor position
+	// (or append at the end if the textarea isn't focused). Matches desktop's
+	// click-to-insert behaviour from `BatchRunnerModal`.
+	const insertTemplateVariable = useCallback((variable: string) => {
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		const ta = promptTextareaRef.current;
+		if (ta && document.activeElement === ta) {
+			const start = ta.selectionStart ?? ta.value.length;
+			const end = ta.selectionEnd ?? ta.value.length;
+			const next = ta.value.slice(0, start) + variable + ta.value.slice(end);
+			setPrompt(next);
+			// Place caret right after the inserted variable on the next render tick.
+			requestAnimationFrame(() => {
+				ta.focus();
+				const caret = start + variable.length;
+				ta.setSelectionRange(caret, caret);
+			});
+		} else {
+			setPrompt((prev) => (prev ? `${prev}${prev.endsWith(' ') ? '' : ' '}${variable}` : variable));
+		}
 	}, []);
 
 	const handleMaxLoopsChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -408,8 +430,6 @@ export function AutoRunSetupSheet({
 		sessionId,
 		showPlaybookActionError,
 	]);
-
-	const allSelected = selectedFiles.size === documents.length && documents.length > 0;
 
 	return (
 		<div
@@ -779,9 +799,13 @@ export function AutoRunSetupSheet({
 						)}
 					</div>
 
-					{/* Document selector section */}
+					{/* Documents section — desktop BatchRunnerModal parity:
+						the active document(s) get prominent rows with a remove (X)
+						affordance, while the rest are tucked behind an "Add documents"
+						expander so the sheet doesn't open with the entire library
+						visible. */}
 					<div style={{ marginBottom: '20px' }}>
-						{/* Section label + Select All toggle */}
+						{/* Section label */}
 						<div
 							style={{
 								display: 'flex',
@@ -799,27 +823,19 @@ export function AutoRunSetupSheet({
 									letterSpacing: '0.5px',
 								}}
 							>
-								Documents
+								Documents to run
 							</span>
-							<button
-								onClick={handleToggleAll}
+							<span
 								style={{
-									background: 'none',
-									border: 'none',
-									color: colors.accent,
-									fontSize: '13px',
-									fontWeight: 500,
-									cursor: 'pointer',
-									padding: '4px 8px',
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
+									fontSize: '12px',
+									color: colors.textDim,
 								}}
 							>
-								{allSelected ? 'Deselect All' : 'Select All'}
-							</button>
+								{selectedFiles.size} of {documents.length}
+							</span>
 						</div>
 
-						{/* Document checkbox list */}
+						{/* Selected docs — prominent rows with remove button */}
 						<div
 							style={{
 								display: 'flex',
@@ -827,94 +843,223 @@ export function AutoRunSetupSheet({
 								gap: '6px',
 							}}
 						>
-							{documents.map((doc) => {
-								const docKey = doc.path || doc.filename;
-								const isSelected = selectedFiles.has(docKey);
-								return (
-									<button
-										key={docKey}
-										onClick={() => handleToggleFile(docKey)}
-										style={{
-											display: 'flex',
-											alignItems: 'center',
-											gap: '12px',
-											padding: '12px 14px',
-											borderRadius: '10px',
-											border: `1px solid ${isSelected ? colors.accent : colors.border}`,
-											backgroundColor: isSelected ? `${colors.accent}10` : colors.bgSidebar,
-											color: colors.textMain,
-											width: '100%',
-											textAlign: 'left',
-											cursor: 'pointer',
-											touchAction: 'manipulation',
-											WebkitTapHighlightColor: 'transparent',
-											outline: 'none',
-											minHeight: '44px',
-										}}
-										aria-label={`${isSelected ? 'Deselect' : 'Select'} ${doc.filename}`}
-										aria-pressed={isSelected}
-									>
-										{/* Checkbox */}
+							{documents
+								.filter((doc) => selectedFiles.has(doc.path || doc.filename))
+								.map((doc) => {
+									const docKey = doc.path || doc.filename;
+									return (
 										<div
+											key={docKey}
 											style={{
-												width: '22px',
-												height: '22px',
-												borderRadius: '6px',
-												border: `2px solid ${isSelected ? colors.accent : colors.textDim}`,
-												backgroundColor: isSelected ? colors.accent : 'transparent',
 												display: 'flex',
 												alignItems: 'center',
-												justifyContent: 'center',
-												flexShrink: 0,
-												transition: 'all 0.15s ease',
+												gap: '12px',
+												padding: '12px 14px',
+												borderRadius: '10px',
+												border: `1px solid ${colors.accent}`,
+												backgroundColor: `${colors.accent}10`,
+												color: colors.textMain,
+												width: '100%',
+												minHeight: '44px',
 											}}
 										>
-											{isSelected && (
+											<div style={{ flex: 1, minWidth: 0 }}>
+												<div
+													style={{
+														fontSize: '14px',
+														fontWeight: 500,
+														overflow: 'hidden',
+														textOverflow: 'ellipsis',
+														whiteSpace: 'nowrap',
+													}}
+												>
+													{doc.filename}
+												</div>
+												<div
+													style={{
+														fontSize: '12px',
+														color: colors.textDim,
+														marginTop: '2px',
+													}}
+												>
+													{doc.taskCount} {doc.taskCount === 1 ? 'task' : 'tasks'}
+												</div>
+											</div>
+											<button
+												type="button"
+												onClick={() => handleToggleFile(docKey)}
+												disabled={selectedFiles.size === 1}
+												title={
+													selectedFiles.size === 1
+														? 'At least one document is required'
+														: `Remove ${doc.filename}`
+												}
+												style={{
+													width: '32px',
+													height: '32px',
+													display: 'flex',
+													alignItems: 'center',
+													justifyContent: 'center',
+													borderRadius: '6px',
+													border: 'none',
+													background: 'transparent',
+													color: colors.textDim,
+													cursor: selectedFiles.size === 1 ? 'not-allowed' : 'pointer',
+													opacity: selectedFiles.size === 1 ? 0.4 : 1,
+													touchAction: 'manipulation',
+													WebkitTapHighlightColor: 'transparent',
+													flexShrink: 0,
+												}}
+												aria-label={`Remove ${doc.filename}`}
+											>
 												<svg
-													width="14"
-													height="14"
+													width="16"
+													height="16"
 													viewBox="0 0 24 24"
 													fill="none"
-													stroke="white"
-													strokeWidth="3"
+													stroke="currentColor"
+													strokeWidth="2"
 													strokeLinecap="round"
 													strokeLinejoin="round"
 												>
-													<polyline points="20 6 9 17 4 12" />
+													<line x1="18" y1="6" x2="6" y2="18" />
+													<line x1="6" y1="6" x2="18" y2="18" />
 												</svg>
-											)}
+											</button>
 										</div>
-
-										{/* File info */}
-										<div style={{ flex: 1, minWidth: 0 }}>
-											<div
-												style={{
-													fontSize: '14px',
-													fontWeight: 500,
-													overflow: 'hidden',
-													textOverflow: 'ellipsis',
-													whiteSpace: 'nowrap',
-												}}
-											>
-												{doc.filename}
-											</div>
-											<div
-												style={{
-													fontSize: '12px',
-													color: colors.textDim,
-													marginTop: '2px',
-												}}
-											>
-												{doc.taskCount} {doc.taskCount === 1 ? 'task' : 'tasks'}
-											</div>
-										</div>
-									</button>
-								);
-							})}
+									);
+								})}
 						</div>
+
+						{/* Add documents expander — toggles a list of unselected docs */}
+						{documents.some((doc) => !selectedFiles.has(doc.path || doc.filename)) && (
+							<>
+								<button
+									type="button"
+									onClick={() => setShowAddDocs((v) => !v)}
+									style={{
+										marginTop: '8px',
+										width: '100%',
+										display: 'flex',
+										alignItems: 'center',
+										justifyContent: 'space-between',
+										padding: '10px 14px',
+										borderRadius: '10px',
+										border: `1px dashed ${colors.border}`,
+										backgroundColor: 'transparent',
+										color: colors.accent,
+										fontSize: '13px',
+										fontWeight: 500,
+										cursor: 'pointer',
+										touchAction: 'manipulation',
+										WebkitTapHighlightColor: 'transparent',
+										minHeight: '40px',
+									}}
+									aria-expanded={showAddDocs}
+								>
+									<span>{showAddDocs ? 'Hide' : 'Add documents'}</span>
+									<svg
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="2.5"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										style={{
+											transform: showAddDocs ? 'rotate(180deg)' : 'rotate(0deg)',
+											transition: 'transform 0.15s ease',
+										}}
+									>
+										<polyline points="6 9 12 15 18 9" />
+									</svg>
+								</button>
+								{showAddDocs && (
+									<div
+										style={{
+											display: 'flex',
+											flexDirection: 'column',
+											gap: '4px',
+											marginTop: '8px',
+										}}
+									>
+										{documents
+											.filter((doc) => !selectedFiles.has(doc.path || doc.filename))
+											.map((doc) => {
+												const docKey = doc.path || doc.filename;
+												return (
+													<button
+														key={docKey}
+														type="button"
+														onClick={() => handleToggleFile(docKey)}
+														style={{
+															display: 'flex',
+															alignItems: 'center',
+															gap: '10px',
+															padding: '10px 14px',
+															borderRadius: '8px',
+															border: `1px solid ${colors.border}`,
+															backgroundColor: colors.bgSidebar,
+															color: colors.textMain,
+															width: '100%',
+															textAlign: 'left',
+															cursor: 'pointer',
+															touchAction: 'manipulation',
+															WebkitTapHighlightColor: 'transparent',
+															minHeight: '40px',
+														}}
+														aria-label={`Add ${doc.filename}`}
+													>
+														<svg
+															width="14"
+															height="14"
+															viewBox="0 0 24 24"
+															fill="none"
+															stroke={colors.accent}
+															strokeWidth="2.5"
+															strokeLinecap="round"
+															strokeLinejoin="round"
+															style={{ flexShrink: 0 }}
+														>
+															<line x1="12" y1="5" x2="12" y2="19" />
+															<line x1="5" y1="12" x2="19" y2="12" />
+														</svg>
+														<div style={{ flex: 1, minWidth: 0 }}>
+															<div
+																style={{
+																	fontSize: '13px',
+																	fontWeight: 500,
+																	overflow: 'hidden',
+																	textOverflow: 'ellipsis',
+																	whiteSpace: 'nowrap',
+																}}
+															>
+																{doc.filename}
+															</div>
+															<div
+																style={{
+																	fontSize: '11px',
+																	color: colors.textDim,
+																	marginTop: '1px',
+																}}
+															>
+																{doc.taskCount} {doc.taskCount === 1 ? 'task' : 'tasks'}
+															</div>
+														</div>
+													</button>
+												);
+											})}
+									</div>
+								)}
+							</>
+						)}
 					</div>
 
-					{/* Prompt input section */}
+					{/* Prompt input section — desktop BatchRunnerModal exposes a
+						"Template Variables" collapsible reference here that lets the
+						user click to insert. Mirror that on web so the user doesn't
+						have to memorize variable names. */}
 					<div style={{ marginBottom: '20px' }}>
 						<label
 							style={{
@@ -930,6 +1075,7 @@ export function AutoRunSetupSheet({
 							Custom Prompt (optional)
 						</label>
 						<textarea
+							ref={promptTextareaRef}
 							value={prompt}
 							onChange={(e) => setPrompt(e.target.value)}
 							placeholder="Additional instructions for the agent..."
@@ -956,6 +1102,113 @@ export function AutoRunSetupSheet({
 								(e.target as HTMLTextAreaElement).style.borderColor = colors.border;
 							}}
 						/>
+						{/* Template variables expander */}
+						<button
+							type="button"
+							onClick={() => setShowTemplateVars((v) => !v)}
+							style={{
+								marginTop: '8px',
+								display: 'flex',
+								alignItems: 'center',
+								gap: '6px',
+								padding: '6px 10px',
+								borderRadius: '6px',
+								border: 'none',
+								backgroundColor: 'transparent',
+								color: colors.accent,
+								fontSize: '12px',
+								fontWeight: 500,
+								cursor: 'pointer',
+								touchAction: 'manipulation',
+								WebkitTapHighlightColor: 'transparent',
+							}}
+							aria-expanded={showTemplateVars}
+						>
+							<svg
+								width="12"
+								height="12"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2.5"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								style={{
+									transform: showTemplateVars ? 'rotate(90deg)' : 'rotate(0deg)',
+									transition: 'transform 0.15s ease',
+								}}
+							>
+								<polyline points="9 18 15 12 9 6" />
+							</svg>
+							{showTemplateVars ? 'Hide template variables' : 'Show template variables'}
+						</button>
+						{showTemplateVars && (
+							<div
+								style={{
+									marginTop: '8px',
+									padding: '10px',
+									borderRadius: '8px',
+									border: `1px solid ${colors.border}`,
+									backgroundColor: colors.bgSidebar,
+									display: 'flex',
+									flexDirection: 'column',
+									gap: '4px',
+									maxHeight: '180px',
+									overflowY: 'auto',
+								}}
+							>
+								{TEMPLATE_VARIABLES.filter((v) => !v.cueOnly).map((tv) => (
+									<button
+										key={tv.variable}
+										type="button"
+										onClick={() => insertTemplateVariable(tv.variable)}
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											gap: '8px',
+											padding: '6px 8px',
+											borderRadius: '4px',
+											border: 'none',
+											backgroundColor: 'transparent',
+											color: colors.textMain,
+											textAlign: 'left',
+											cursor: 'pointer',
+											touchAction: 'manipulation',
+											WebkitTapHighlightColor: 'transparent',
+											minHeight: '32px',
+										}}
+										title={`Insert ${tv.variable}`}
+									>
+										<code
+											style={{
+												fontSize: '11px',
+												fontFamily:
+													'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+												color: colors.accent,
+												backgroundColor: `${colors.accent}15`,
+												padding: '2px 5px',
+												borderRadius: '3px',
+												flexShrink: 0,
+											}}
+										>
+											{tv.variable}
+										</code>
+										<span
+											style={{
+												fontSize: '11px',
+												color: colors.textDim,
+												overflow: 'hidden',
+												textOverflow: 'ellipsis',
+												whiteSpace: 'nowrap',
+												flex: 1,
+											}}
+										>
+											{tv.description}
+										</span>
+									</button>
+								))}
+							</div>
+						)}
 					</div>
 
 					{/* Loop settings section */}
@@ -1072,18 +1325,43 @@ export function AutoRunSetupSheet({
 					</div>
 				</div>
 
-				{/* Launch button */}
+				{/* Footer — Cancel + Launch (mirrors desktop's Cancel/Save/Go).
+					Save lives in the Playbook section above; this footer is just
+					the dismiss + go pair. */}
 				<div
 					style={{
+						display: 'flex',
+						gap: '8px',
 						padding: '12px 16px 0',
 						flexShrink: 0,
 					}}
 				>
 					<button
+						type="button"
+						onClick={handleClose}
+						style={{
+							flex: 1,
+							padding: '14px 20px',
+							borderRadius: '12px',
+							border: `1px solid ${colors.border}`,
+							backgroundColor: 'transparent',
+							color: colors.textMain,
+							fontSize: '15px',
+							fontWeight: 500,
+							cursor: 'pointer',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+							minHeight: '50px',
+						}}
+						aria-label="Cancel"
+					>
+						Cancel
+					</button>
+					<button
 						onClick={handleLaunch}
 						disabled={selectedFiles.size === 0}
 						style={{
-							width: '100%',
+							flex: 2,
 							padding: '14px 20px',
 							borderRadius: '12px',
 							backgroundColor: selectedFiles.size === 0 ? `${colors.accent}40` : colors.accent,
