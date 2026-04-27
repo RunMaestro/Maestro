@@ -105,6 +105,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	TriggerCueSubscriptionCallback,
@@ -556,6 +557,10 @@ export class WebServer {
 		this.callbackRegistry.setSummarizeContextCallback(callback);
 	}
 
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbackRegistry.setCreateGistCallback(callback);
+	}
+
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
 		this.callbackRegistry.setGetCueSubscriptionsCallback(callback);
 	}
@@ -818,6 +823,8 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
+			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
+				this.callbackRegistry.createGist(sessionId, description, isPublic),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>

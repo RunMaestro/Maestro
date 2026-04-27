@@ -40,6 +40,7 @@ import {
 	settingsAgentReset,
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
+import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 
@@ -418,6 +419,20 @@ prompts
 	.description('Print a prompt by id (honors user customizations from Settings → Maestro Prompts)')
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
+
+// Gist commands — publish agent session transcripts to GitHub gists via the
+// running Maestro desktop app. Grouped as a subcommand so we can add more gist
+// operations (list, show, delete, etc.) later.
+const gist = program.command('gist').description('Publish session context to GitHub gists');
+
+gist
+	.command('create <agent-id>')
+	.description(
+		"Publish an agent's session transcript as a GitHub gist (requires running Maestro app)"
+	)
+	.option('-d, --description <text>', 'Gist description')
+	.option('-p, --public', 'Create a public gist (default: private)')
+	.action(gistCreate);
 
 // Notify commands — surface notifications in the Maestro desktop app
 const notify = program

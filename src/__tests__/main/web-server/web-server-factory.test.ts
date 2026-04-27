@@ -69,6 +69,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setMergeContextCallback = vi.fn();
 			setTransferContextCallback = vi.fn();
 			setSummarizeContextCallback = vi.fn();
+			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
 			setGetCueActivityCallback = vi.fn();

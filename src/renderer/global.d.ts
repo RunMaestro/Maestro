@@ -412,6 +412,18 @@ interface MaestroAPI {
 			callback: (sessionId: string, filePath: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteGetGitDiffResponse: (responseChannel: string, result: any) => void;
+		onRemoteCreateGist: (
+			callback: (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCreateGistResponse: (
+			responseChannel: string,
+			result: { success: boolean; gistUrl?: string; error?: string }
+		) => void;
 		onRemoteTriggerCueSubscription: (
 			callback: (
 				subscriptionName: string,

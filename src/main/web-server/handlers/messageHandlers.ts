@@ -236,6 +236,11 @@ export interface MessageHandlerCallbacks {
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;
+	createGist: (
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
@@ -487,6 +492,10 @@ export class WebSocketMessageHandler {
 
 			case 'summarize_context':
 				this.handleSummarizeContext(client, message);
+				break;
+
+			case 'create_gist':
+				this.handleCreateGist(client, message);
 				break;
 
 			case 'get_cue_subscriptions':
@@ -2638,6 +2647,55 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to summarize context: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle create_gist message - publish a session's transcript to a GitHub gist.
+	 * Always replies with `create_gist_result` (even on failure) so waiting
+	 * clients don't hang until their request timeout.
+	 */
+	private handleCreateGist(client: WebClient, message: WebClientMessage): void {
+		const reply = (result: { success: boolean; gistUrl?: string; error?: string }) => {
+			this.send(client, {
+				type: 'create_gist_result',
+				...result,
+				requestId: message.requestId,
+			});
+		};
+
+		const sessionId = message.sessionId;
+		if (typeof sessionId !== 'string' || !sessionId) {
+			reply({ success: false, error: 'Missing sessionId' });
+			return;
+		}
+
+		// Strict validation — avoid truthy coercion so a string like "false"
+		// cannot flip a private gist to public.
+		if (message.description !== undefined && typeof message.description !== 'string') {
+			reply({ success: false, error: 'description must be a string when provided' });
+			return;
+		}
+		if (message.isPublic !== undefined && typeof message.isPublic !== 'boolean') {
+			reply({ success: false, error: 'isPublic must be a boolean when provided' });
+			return;
+		}
+		const description = message.description ?? '';
+		const isPublic = message.isPublic ?? false;
+
+		if (!this.callbacks.createGist) {
+			reply({ success: false, error: 'Gist creation not configured' });
+			return;
+		}
+
+		this.callbacks
+			.createGist(sessionId, description, isPublic)
+			.then((result) => {
+				reply(result);
+			})
+			.catch((error: unknown) => {
+				const msg = error instanceof Error ? error.message : String(error);
+				reply({ success: false, error: `Failed to create gist: ${msg}` });
 			});
 	}
 

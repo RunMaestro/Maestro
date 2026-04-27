@@ -119,6 +119,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeContext: vi.fn().mockResolvedValue(true),
 		transferContext: vi.fn().mockResolvedValue(true),
 		summarizeContext: vi.fn().mockResolvedValue(true),
+		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),
@@ -1672,6 +1673,94 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(callbacks.triggerCueSubscription).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Create Gist', () => {
+		it('replies with create_gist_result on success', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				description: 'My gist',
+				isPublic: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(true);
+			expect(response.gistUrl).toBe('https://gist.example');
+		});
+
+		it('defaults description to "" and isPublic to false when omitted', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false);
+			});
+		});
+
+		it('replies with create_gist_result (not error) when sessionId is missing', () => {
+			handler.handleMessage(client, { type: 'create_gist' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('sessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('rejects non-boolean isPublic to prevent private→public leaks', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				isPublic: 'false',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('isPublic');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('surfaces rejected callback errors as create_gist_result', async () => {
+			(callbacks.createGist as any).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('boom');
+		});
+
+		it('replies with create_gist_result when createGist callback is unconfigured', () => {
+			callbacks.createGist = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('not configured');
 		});
 	});
 });
