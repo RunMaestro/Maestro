@@ -60,10 +60,18 @@ Per-agent history storage with 5,000 entries per agent (up from 1,000 global). E
 ```typescript
 window.maestro.history = {
   getAll: (projectPath?, sessionId?) => Promise<HistoryEntry[]>,
+  getAllPaginated: (options?) => Promise<PaginatedResult<HistoryEntry>>,
   add: (entry) => Promise<boolean>,
   clear: (projectPath?, sessionId?) => Promise<boolean>,
   delete: (entryId, sessionId?) => Promise<boolean>,
   update: (entryId, updates, sessionId?) => Promise<boolean>,
+  // Activity-graph data — always all-time, decoupled from any lookback
+  // applied to the entry list. Disk-cached server-side keyed by the
+  // session file's mtime+size, so repeat calls are cheap.
+  getGraphData: (sessionId, bucketCount, sharedContext?) => Promise<HistoryGraphData>,
+  // Resolve the offset (newest-first sorted) of the first entry whose
+  // timestamp <= the given value. Powers click-to-jump on the activity graph.
+  getOffsetForTimestamp: (sessionId, timestamp) => Promise<number>,
   // For AI context integration:
   getFilePath: (sessionId) => Promise<string | null>,
   listSessions: () => Promise<string[]>,
@@ -74,6 +82,8 @@ window.maestro.history = {
 ```
 
 **AI Context Integration**: Use `getFilePath(sessionId)` to get the path to an agent's history file. This file can be passed directly to AI agents as context, giving them visibility into past completed tasks, decisions, and work patterns.
+
+**Activity Graph (cached)**: `getGraphData` returns pre-aggregated buckets covering the full session history. Cached to `userData/history-cache/` keyed by source-file fingerprint, so the activity graph stays "all-encompassing" without recomputing across thousands of entries on every interaction. The unified-history equivalent is `window.maestro.directorNotes.getGraphData(bucketCount)`.
 
 ## Cue API
 

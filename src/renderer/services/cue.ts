@@ -12,6 +12,7 @@ import type {
 	CueGraphSession,
 	CueRunResult,
 } from '../../shared/cue/contracts';
+import type { CueLogPayload } from '../../shared/cue-log-types';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -62,6 +63,22 @@ export const cueService = {
 			call: () => window.maestro.cue.getQueueStatus(),
 			errorContext: 'Cue getQueueStatus',
 			defaultValue: {},
+		});
+	},
+
+	async getMetrics(): Promise<import('../../main/cue/cue-metrics').CueMetrics | null> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.getMetrics(),
+			errorContext: 'Cue getMetrics',
+			defaultValue: null,
+		});
+	},
+
+	async getFanInHealth(): Promise<import('../../main/cue/cue-fan-in-tracker').FanInHealthEntry[]> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.getFanInHealth(),
+			errorContext: 'Cue getFanInHealth',
+			defaultValue: [],
 		});
 	},
 
@@ -196,7 +213,7 @@ export const cueService = {
 
 	// ── Event passthrough ─────────────────────────────────────────────────────
 
-	onActivityUpdate(callback: (data: CueRunResult) => void): () => void {
+	onActivityUpdate(callback: (data: CueLogPayload) => void): () => void {
 		return window.maestro.cue.onActivityUpdate(callback);
 	},
 };

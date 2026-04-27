@@ -77,6 +77,37 @@ export interface WorktreeRemovedData {
 }
 
 /**
+ * Result of the `git.worktreeSetup` IPC.
+ *
+ * Shared between the preload bridge and the renderer global declaration so
+ * the contract stays in one place.
+ *
+ * Named `GitWorktreeSetupResult` to avoid colliding with the higher-level
+ * `WorktreeSetupResult` exported from `renderer/hooks/batch/useWorktreeManager`.
+ */
+export interface GitWorktreeSetupResult {
+	success: boolean;
+	created?: boolean;
+	currentBranch?: string;
+	requestedBranch?: string;
+	branchMismatch?: boolean;
+	/** True when the branch was already attached to a worktree on disk. */
+	alreadyExisted?: boolean;
+	/** Path of the existing worktree when alreadyExisted is true. */
+	existingPath?: string;
+	error?: string;
+}
+
+/**
+ * Result of the `git.worktreeCheckout` IPC.
+ */
+export interface GitWorktreeCheckoutResult {
+	success: boolean;
+	hasUncommittedChanges: boolean;
+	error?: string;
+}
+
+/**
  * Creates the git API object for preload exposure
  */
 export function createGitApi() {
@@ -231,14 +262,7 @@ export function createGitApi() {
 			worktreePath: string,
 			branchName: string,
 			sshRemoteId?: string
-		): Promise<{
-			success: boolean;
-			created?: boolean;
-			currentBranch?: string;
-			requestedBranch?: string;
-			branchMismatch?: boolean;
-			error?: string;
-		}> =>
+		): Promise<GitWorktreeSetupResult> =>
 			ipcRenderer.invoke('git:worktreeSetup', mainRepoCwd, worktreePath, branchName, sshRemoteId),
 
 		/**
@@ -249,11 +273,7 @@ export function createGitApi() {
 			branchName: string,
 			createIfMissing: boolean,
 			sshRemoteId?: string
-		): Promise<{
-			success: boolean;
-			hasUncommittedChanges: boolean;
-			error?: string;
-		}> =>
+		): Promise<GitWorktreeCheckoutResult> =>
 			ipcRenderer.invoke(
 				'git:worktreeCheckout',
 				worktreePath,
@@ -320,7 +340,7 @@ export function createGitApi() {
 		scanWorktreeDirectory: (
 			parentPath: string,
 			sshRemoteId?: string
-		): Promise<{ gitSubdirs: GitSubdirEntry[] }> =>
+		): Promise<{ gitSubdirs: GitSubdirEntry[]; scanFailed?: boolean }> =>
 			ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
 
 		/**

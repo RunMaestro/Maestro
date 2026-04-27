@@ -184,6 +184,29 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['tab', 'name', 'auto', 'rename', 'title'],
 	},
 	{
+		id: 'general-spell-check',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Enable spell checking',
+		description:
+			'Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default.',
+		keywords: [
+			'spell',
+			'spell check',
+			'spelling',
+			'spellcheck',
+			'dictionary',
+			'autocorrect',
+			'suggestions',
+			'typo',
+			'red underline',
+			'input',
+			'prompt input',
+			'group chat',
+			'file editor',
+		],
+	},
+	{
 		id: 'general-power',
 		tab: 'general',
 		tabLabel: 'General',
@@ -456,7 +479,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'File Indexing & File Panel Settings',
 		description:
-			'Local ignore patterns, gitignore handling, max recursion depth, and max file entries for the Files panel',
+			'Local ignore patterns, gitignore handling, max recursion depth, max file entries, and SSH cap reduction for the Files panel',
 		keywords: [
 			'ignore',
 			'patterns',
@@ -486,6 +509,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'250k',
 			'500k',
 			'preset',
+			'ssh',
+			'remote',
+			'reduce',
+			'fraction',
+			'percent',
+			'percentage',
+			'cap',
+			'budget',
 		],
 	},
 ];

@@ -89,6 +89,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	GetGitStatusCallback,
@@ -104,6 +105,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	TriggerCueSubscriptionCallback,
@@ -113,6 +115,8 @@ import type {
 	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -553,6 +557,10 @@ export class WebServer {
 		this.callbackRegistry.setSummarizeContextCallback(callback);
 	}
 
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbackRegistry.setCreateGistCallback(callback);
+	}
+
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
 		this.callbackRegistry.setGetCueSubscriptionsCallback(callback);
 	}
@@ -579,6 +587,14 @@ export class WebServer {
 
 	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
 		this.callbackRegistry.setGenerateDirectorNotesSynopsisCallback(callback);
+	}
+
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbackRegistry.setNotifyToastCallback(callback);
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
 
 	broadcastGroupsChanged(groups: GroupData[]): void {
@@ -725,8 +741,13 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
-			executeCommand: async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
+			executeCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
@@ -781,8 +802,13 @@ export class WebServer {
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
-			createSession: async (name: string, toolType: string, cwd: string, groupId?: string) =>
-				this.callbackRegistry.createSession(name, toolType, cwd, groupId),
+			createSession: async (
+				name: string,
+				toolType: string,
+				cwd: string,
+				groupId?: string,
+				config?: CreateSessionConfig
+			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			renameSession: async (sessionId: string, newName: string) =>
 				this.callbackRegistry.renameSession(sessionId, newName),
@@ -802,6 +828,8 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
+			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
+				this.callbackRegistry.createGist(sessionId, description, isPublic),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
@@ -828,6 +856,8 @@ export class WebServer {
 				Promise.resolve({ success: false, pid: 0 }),
 			killTerminalForWeb: (sessionId: string) =>
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
+			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
+			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 		});
 	}
 

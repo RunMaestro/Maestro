@@ -50,6 +50,12 @@ export interface MessageHistoryProps {
 	sessionState?: string;
 	/** Whether to apply Bionify reading mode to long-form AI output */
 	enableBionifyReadingMode?: boolean;
+	/**
+	 * Max output lines per message before collapsing — mirrors the desktop
+	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) to
+	 * fall back to the local line/char defaults and never force-truncate.
+	 */
+	maxOutputLines?: number;
 }
 
 const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
@@ -57,19 +63,29 @@ const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 /**
  * Summarize tool input for display (simplified from desktop TerminalOutput)
  */
-function summarizeToolInput(input: Record<string, unknown>): string {
+function summarizeToolInput(input: unknown): string {
+	// Some agents (notably Copilot/Codex apply_patch) deliver the argument as a
+	// raw string instead of an object \u2014 surface it as-is rather than walking it
+	// with Object.keys (which would expose character indices).
+	if (typeof input === 'string') {
+		return input.length > 80 ? input.substring(0, 80) + '\u2026' : input;
+	}
+	if (!input || typeof input !== 'object' || Array.isArray(input)) {
+		return '';
+	}
+	const inputRecord = input as Record<string, unknown>;
 	// File operations
-	if (typeof input.file_path === 'string') return input.file_path;
-	if (typeof input.path === 'string') return input.path;
+	if (typeof inputRecord.file_path === 'string') return inputRecord.file_path;
+	if (typeof inputRecord.path === 'string') return inputRecord.path;
 	// Bash commands
-	if (typeof input.command === 'string') {
-		const cmd = input.command as string;
+	if (typeof inputRecord.command === 'string') {
+		const cmd = inputRecord.command;
 		return cmd.length > 80 ? cmd.substring(0, 80) + '\u2026' : cmd;
 	}
 	// Search operations
-	if (typeof input.pattern === 'string') return `/${input.pattern}/`;
+	if (typeof inputRecord.pattern === 'string') return `/${inputRecord.pattern}/`;
 	// Fallback
-	const keys = Object.keys(input);
+	const keys = Object.keys(inputRecord);
 	if (keys.length === 0) return '';
 	return keys.slice(0, 2).join(', ');
 }
@@ -86,6 +102,7 @@ export function MessageHistory({
 	thinkingMode,
 	sessionState,
 	enableBionifyReadingMode = false,
+	maxOutputLines = Infinity,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -100,28 +117,41 @@ export function MessageHistory({
 	const [hasNewMessages, setHasNewMessages] = useState(false);
 	const [newMessageCount, setNewMessageCount] = useState(0);
 
+	// When the user-configured line cap is finite ("15" / "25" / …) it takes
+	// precedence over the local mobile default; "All" (Infinity) disables
+	// line-based collapse entirely, matching desktop behavior.
+	const hasLineCap = Number.isFinite(maxOutputLines);
+	const effectiveLineCap = hasLineCap ? maxOutputLines : LINE_TRUNCATE_THRESHOLD;
+
 	/**
 	 * Check if a message should be truncated
 	 */
-	const shouldTruncate = useCallback((text: string): boolean => {
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
-		const lineCount = text.split('\n').length;
-		return lineCount > LINE_TRUNCATE_THRESHOLD;
-	}, []);
+	const shouldTruncate = useCallback(
+		(text: string): boolean => {
+			if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
+			if (!hasLineCap) return false;
+			const lineCount = text.split('\n').length;
+			return lineCount > effectiveLineCap;
+		},
+		[effectiveLineCap, hasLineCap]
+	);
 
 	/**
 	 * Get truncated text for display
 	 */
-	const getTruncatedText = useCallback((text: string): string => {
-		const lines = text.split('\n');
-		if (lines.length > LINE_TRUNCATE_THRESHOLD) {
-			return lines.slice(0, LINE_TRUNCATE_THRESHOLD).join('\n');
-		}
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) {
-			return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
-		}
-		return text;
-	}, []);
+	const getTruncatedText = useCallback(
+		(text: string): string => {
+			const lines = text.split('\n');
+			if (hasLineCap && lines.length > effectiveLineCap) {
+				return lines.slice(0, effectiveLineCap).join('\n');
+			}
+			if (text.length > CHAR_TRUNCATE_THRESHOLD) {
+				return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
+			}
+			return text;
+		},
+		[effectiveLineCap, hasLineCap]
+	);
 
 	/**
 	 * Toggle expansion state for a message
@@ -279,10 +309,9 @@ export function MessageHistory({
 
 					// Tool entries render as compact inline cards
 					if (source === 'tool') {
-						const toolInput = entry.metadata?.toolState?.input as
-							| Record<string, unknown>
-							| undefined;
-						const toolDetail = toolInput ? summarizeToolInput(toolInput) : null;
+						const toolInput = entry.metadata?.toolState?.input;
+						const toolDetail =
+							toolInput !== undefined && toolInput !== null ? summarizeToolInput(toolInput) : null;
 
 						return (
 							<div

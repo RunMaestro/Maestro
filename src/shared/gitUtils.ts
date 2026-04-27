@@ -285,6 +285,59 @@ export function remoteUrlToBrowserUrl(remoteUrl: string): string | null {
 }
 
 /**
+ * Detect git's "branch is already used / already checked out" stderr message
+ * emitted by `git worktree add` when the requested branch is already attached
+ * to another worktree on disk.
+ *
+ * Modern git: `fatal: '<branch>' is already checked out at '<path>'`
+ * Older git:  `fatal: '<branch>' is already used by worktree at '<path>'`
+ *
+ * @param stderr - Raw stderr from `git worktree add`
+ * @returns True if the error indicates the branch is already attached elsewhere
+ */
+export function isWorktreeAlreadyUsedError(stderr: string): boolean {
+	if (!stderr) return false;
+	return /is already (used by worktree|checked out) at/i.test(stderr);
+}
+
+/**
+ * Parse `git worktree list --porcelain` output and return the absolute path
+ * of the worktree currently checked out on the given branch, or null.
+ *
+ * Porcelain blocks look like:
+ *   worktree /abs/path
+ *   HEAD <sha>
+ *   branch refs/heads/<branch>
+ *
+ * Detached worktrees lack a `branch` line and are skipped.
+ *
+ * @param stdout - Raw stdout from `git worktree list --porcelain`
+ * @param branchName - Branch to look up (without refs/heads/ prefix)
+ * @returns Absolute worktree path, or null if no match
+ */
+export function parseWorktreePathForBranch(stdout: string, branchName: string): string | null {
+	if (!stdout || !branchName) return null;
+	const blocks = stdout.split(/\r?\n\r?\n/);
+	for (const block of blocks) {
+		const lines = block.split(/\r?\n/);
+		let wtPath: string | null = null;
+		let branch: string | null = null;
+		for (const line of lines) {
+			if (line.startsWith('worktree ')) {
+				wtPath = line.slice('worktree '.length).trim();
+			} else if (line.startsWith('branch ')) {
+				branch = line
+					.slice('branch '.length)
+					.trim()
+					.replace(/^refs\/heads\//, '');
+			}
+		}
+		if (wtPath && branch === branchName) return wtPath;
+	}
+	return null;
+}
+
+/**
  * Common image file extensions for git file handling
  */
 const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];

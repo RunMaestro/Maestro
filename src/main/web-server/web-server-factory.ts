@@ -15,6 +15,7 @@ import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../
 import type { Group } from '../../shared/types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
+import { buildWebSettingsSnapshot } from './web-settings-snapshot';
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
@@ -364,7 +365,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// This forwards AI commands to the renderer, ensuring single source of truth
 		// The renderer handles all spawn logic, state management, and broadcasts
 		server.setExecuteCommandCallback(
-			async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for executeCommand', 'WebServer');
@@ -376,18 +383,30 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				const session = sessions.find((s) => s.id === sessionId);
 				const agentSessionId = session?.agentSessionId || 'none';
 
-				// Forward to renderer - it will handle spawn, state, and everything else
-				// This ensures web commands go through exact same code path as desktop commands
-				// Pass inputMode so renderer uses the web's intended mode (avoids sync issues)
+				// Forward to renderer - it will handle spawn, state, and everything else.
+				// Log metadata only at info level — remote commands can carry secrets,
+				// proprietary code, or PII; the full prompt goes to debug, which is
+				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Command: ${command.substring(0, 100)}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | CommandLength: ${command.length}`,
+					'WebServer'
+				);
+				logger.debug(
+					`[Web → Renderer] Command preview (truncated): ${command.substring(0, 100)}`,
 					'WebServer'
 				);
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for executeCommand', 'WebServer');
 					return false;
 				}
-				mainWindow.webContents.send('remote:executeCommand', sessionId, command, inputMode);
+				mainWindow.webContents.send(
+					'remote:executeCommand',
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					force
+				);
 				return true;
 			}
 		);
@@ -639,6 +658,34 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
+		server.setNotifyToastCallback(async (params) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for notifyToast', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for notifyToast', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:notifyToast', params);
+			return true;
+		});
+
+		server.setNotifyCenterFlashCallback(async (params) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for notifyCenterFlash', 'WebServer');
+				return false;
+			}
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for notifyCenterFlash', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:notifyCenterFlash', params);
+			return true;
+		});
+
 		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -721,10 +768,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return false;
+				return { success: false };
 			}
 
-			return new Promise<boolean>((resolve) => {
+			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
 				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
 				let resolved = false;
 
@@ -732,14 +779,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
-					resolve(result === true);
+					// Renderer was updated to ack with `{ success, tabId? }`. Older
+					// renderers that still send a bare boolean stay supported via
+					// the `result === true` fallback.
+					if (typeof result === 'object' && result !== null) {
+						const r = result as { success?: unknown; tabId?: unknown };
+						resolve({
+							success: r.success === true,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+						});
+					} else {
+						resolve({ success: result === true });
+					}
 				};
 
 				ipcMain.once(responseChannel, handleResponse);
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
+					resolve({ success: false });
 					return;
 				}
 				mainWindow.webContents.send(
@@ -757,7 +815,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						`newAITabWithPrompt callback timed out for session ${sessionId}`,
 						'WebServer'
 					);
-					resolve(false);
+					resolve({ success: false });
 				}, 5000);
 			});
 		});
@@ -961,6 +1019,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 				colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
+				// Infinity is JSON-serialized as null — web client maps null back to Infinity.
+				maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
 				shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 			};
 		});
@@ -987,20 +1047,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 					// After successful setting change, broadcast updated settings to all web clients
 					if (success) {
-						const settings = {
-							theme: settingsStore.get('activeThemeId', 'dracula') as string,
-							fontSize: settingsStore.get('fontSize', 14) as number,
-							enterToSendAI: settingsStore.get('enterToSendAI', false) as boolean,
-							defaultSaveToHistory: settingsStore.get('defaultSaveToHistory', true) as boolean,
-							defaultShowThinking: settingsStore.get('defaultShowThinking', 'off') as string,
-							autoScroll: true,
-							notificationsEnabled: settingsStore.get('osNotificationsEnabled', true) as boolean,
-							audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
-							colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
-							conductorProfile: settingsStore.get('conductorProfile', '') as string,
-							shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
-						};
-						server.broadcastSettingsChanged(settings);
+						server.broadcastSettingsChanged(buildWebSettingsSnapshot(settingsStore));
 					}
 
 					resolve(success);
@@ -1711,6 +1758,57 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, 60000);
 			});
 		});
+
+		// Create gist — uses IPC request-response pattern. The renderer holds
+		// the AI-tab transcripts in memory, so we forward to it and let it
+		// build the payload + call the existing `git:createGist` handler.
+		server.setCreateGistCallback(
+			async (sessionId: string, description: string, isPublic: boolean) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for createGist', 'WebServer');
+					return { success: false, error: 'Desktop app window is not available' };
+				}
+
+				return new Promise<{ success: boolean; gistUrl?: string; error?: string }>((resolve) => {
+					const responseChannel = `remote:createGist:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (
+						_event: Electron.IpcMainEvent,
+						result: { success: boolean; gistUrl?: string; error?: string } | undefined
+					) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve(result ?? { success: false, error: 'Empty response' });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for createGist', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop webContents not available' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:createGist',
+						sessionId,
+						description,
+						isPublic,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`createGist callback timed out for session ${sessionId}`, 'WebServer');
+						resolve({ success: false, error: 'Timed out waiting for gist creation' });
+					}, 60000);
+				});
+			}
+		);
 
 		// ============ Cue Automation Callbacks ============
 

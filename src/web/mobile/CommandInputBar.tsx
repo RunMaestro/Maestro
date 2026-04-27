@@ -145,6 +145,8 @@ export interface CommandInputBarProps {
 	 * handle, recent command chips) so the bar consumes less vertical space.
 	 */
 	compact?: boolean;
+	/** Reports the rendered outer height of the input bar whenever it changes. */
+	onHeightChange?: (height: number) => void;
 }
 
 /**
@@ -177,6 +179,7 @@ export function CommandInputBar({
 	onToggleThinking,
 	supportsThinking = false,
 	compact = false,
+	onHeightChange,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -284,6 +287,28 @@ export function CommandInputBar({
 		}
 		return placeholder || 'Enter command...';
 	};
+
+	/**
+	 * Report container height changes to parent so it can reserve matching space
+	 * in the scroll area above (keeps last chat line visible when bar expands).
+	 * Report the *border-box* height — the container's own padding (including
+	 * safe-area inset on notched devices) must be part of the reserved space,
+	 * and `contentRect` excludes it, which would cause the reserved gap to
+	 * shrink after the first observer tick.
+	 */
+	useEffect(() => {
+		const container = containerRef.current;
+		if (!container || !onHeightChange) return;
+		const observer = new ResizeObserver((entries) => {
+			const entry = entries[0];
+			if (!entry) return;
+			const borderBoxBlockSize = entry.borderBoxSize?.[0]?.blockSize;
+			onHeightChange(borderBoxBlockSize ?? container.getBoundingClientRect().height);
+		});
+		observer.observe(container);
+		onHeightChange(container.getBoundingClientRect().height);
+		return () => observer.disconnect();
+	}, [onHeightChange]);
 
 	/**
 	 * Auto-resize textarea based on content
@@ -860,6 +885,28 @@ export function CommandInputBar({
 										width: '100%',
 									}}
 								>
+									{/* Action buttons stacked on the left so the bottom row stays balanced
+									    when the textarea grows — otherwise the lone send button floats far
+									    from the composer and the gap looks awkward. */}
+									{voiceSupported && (
+										<VoiceInputButton
+											isListening={isListening}
+											onToggle={handleVoiceToggle}
+											disabled={isDisabled}
+										/>
+									)}
+									<SlashCommandButton
+										isOpen={slashCommandOpen}
+										onOpen={openSlashCommandAutocomplete}
+										disabled={isDisabled}
+									/>
+									{supportsThinking && onToggleThinking && (
+										<ThinkingToggleButton
+											thinkingMode={thinkingMode}
+											onToggle={onToggleThinking}
+											disabled={isDisabled}
+										/>
+									)}
 									<div style={{ marginLeft: 'auto' }}>
 										<SendInterruptButton
 											isInterruptMode={inputMode === 'ai' && isSessionBusy}

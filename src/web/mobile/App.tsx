@@ -1180,6 +1180,9 @@ export default function MobileApp() {
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
+	// Measured height of the sticky CommandInputBar — drives dynamic bottom padding
+	// so the last chat line stays visible when the bar grows with multi-line drafts.
+	const [inputBarHeight, setInputBarHeight] = useState(80);
 
 	// Custom slash commands from desktop
 	const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -3036,6 +3039,12 @@ export default function MobileApp() {
 						thinkingMode={thinkingMode}
 						sessionState={activeSession?.state}
 						enableBionifyReadingMode={bionifyReadingMode}
+						maxOutputLines={
+							// null (wire-serialized Infinity) and undefined both map to "All".
+							settingsHook.settings?.maxOutputLines == null
+								? Infinity
+								: settingsHook.settings.maxOutputLines
+						}
 					/>
 				)}
 			</div>
@@ -3346,13 +3355,21 @@ export default function MobileApp() {
 					/>
 				)}
 
-				{/* Main content area */}
+				{/* Main content area. Tailwind handles layout / overflow; the
+				    bottom padding stays inline because `inputBarHeight` is a
+				    dynamic value reported by `CommandInputBar` via
+				    `onHeightChange`. The reported height already includes
+				    `max(12px, env(safe-area-inset-bottom))`, so we don't add
+				    the inset again here (would gap on notched devices). */}
 				<main
 					className={`flex flex-1 flex-col justify-start min-h-0 min-w-0 overflow-hidden ${
 						currentInputMode === 'terminal'
 							? 'items-stretch p-0 text-left'
-							: 'items-center px-3 pt-3 pb-[calc(80px+env(safe-area-inset-bottom))] text-center'
+							: 'items-center px-3 pt-3 text-center'
 					}`}
+					style={{
+						paddingBottom: currentInputMode === 'terminal' ? 0 : `${inputBarHeight}px`,
+					}}
 				>
 					{/* Content wrapper */}
 					<div
@@ -3424,6 +3441,7 @@ export default function MobileApp() {
 					onToggleThinking={handleToggleThinking}
 					supportsThinking={activeSession?.toolType === 'claude-code'}
 					compact={isShortViewport}
+					onHeightChange={setInputBarHeight}
 				/>
 			)}
 

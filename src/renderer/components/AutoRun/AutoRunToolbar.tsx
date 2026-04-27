@@ -40,7 +40,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 	onFileSelect,
 }: AutoRunToolbarProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const compact = rightPanelWidth < 320;
+	const compact = rightPanelWidth < 340;
 	const btnClass =
 		'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors hover:bg-white/10';
 
@@ -67,7 +67,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					}}
 					title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
 				>
-					{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
+					{isStopping ? <Spinner size={14} /> : !compact && <Square className="w-3.5 h-3.5" />}
 					{isStopping ? 'Stopping' : 'Stop'}
 				</button>
 			) : (

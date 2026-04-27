@@ -91,6 +91,13 @@ export async function buildSpawnSpec(
 		prompt: substitutedPrompt,
 		cwd: projectRoot,
 		yoloMode: true, // Cue runs always use YOLO mode like Auto Run
+		// Cue spawns with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY, so the
+		// agent must run in batch mode every time. Without this, a prompt that
+		// substituted to `""` (e.g. `{{CUE_SOURCE_OUTPUT}}` when the upstream
+		// agent produced no parseable stdout) would silently drop the batch-mode
+		// args — e.g. Codex loses its `exec` subcommand and launches its TUI,
+		// which immediately dies with "Error: stdin is not a terminal".
+		forceBatchMode: true,
 	});
 
 	// 3. Apply config overrides (custom model, custom args, custom env vars)

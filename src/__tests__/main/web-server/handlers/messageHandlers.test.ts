@@ -80,7 +80,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
-		newAITabWithPrompt: vi.fn().mockResolvedValue(true),
+		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -119,6 +119,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeContext: vi.fn().mockResolvedValue(true),
 		transferContext: vi.fn().mockResolvedValue(true),
 		summarizeContext: vi.fn().mockResolvedValue(true),
+		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),
@@ -129,6 +130,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		resizeTerminal: vi.fn().mockReturnValue(true),
 		spawnTerminalForWeb: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
+		notifyToast: vi.fn().mockResolvedValue(true),
+		notifyCenterFlash: vi.fn().mockResolvedValue(true),
 	};
 }
 
@@ -185,7 +188,13 @@ describe('WebSocketMessageHandler', () => {
 
 			// Wait for async callback
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'Hello Claude!', 'ai');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello Claude!',
+					'ai',
+					undefined,
+					false
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -202,7 +211,13 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'ls -la', 'terminal');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'ls -la',
+					'terminal',
+					undefined,
+					false
+				);
 			});
 		});
 
@@ -219,6 +234,85 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('busy');
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
+			// The server's `activeTabId` snapshot can diverge from the renderer's
+			// actual write target if the user switches tabs between IPC send and
+			// receive. Echoing it would mislead `dispatch --session <returnedTabId>`
+			// callers chaining a follow-up. We only echo when the caller passed an
+			// explicit, authoritative tabId.
+			(callbacks.getSessionDetail as any).mockReturnValue({
+				state: 'idle',
+				inputMode: 'ai',
+				activeTabId: 'tab-active-77',
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBeUndefined();
+		});
+
+		it('forwards an explicit tabId to the executeCommand callback and echoes it in command_result', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+				tabId: 'tab-explicit',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello',
+					'ai',
+					'tab-explicit',
+					false
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.tabId).toBe('tab-explicit');
+		});
+
+		it('should bypass busy guard and forward command when force=true', async () => {
+			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'concurrent write',
+				inputMode: 'ai',
+				force: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'concurrent write',
+					'ai',
+					undefined,
+					true
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
 		});
 
 		it('should reject command when session not found', () => {
@@ -982,6 +1076,9 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('new_ai_tab_with_prompt_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// PR1: surface the freshly-created tabId so `dispatch --new-tab`
+			// can return an addressable id without owning a persistent channel.
+			expect(response.tabId).toBe('tab-mock-123');
 		});
 
 		it('should reject missing sessionId', () => {
@@ -1646,6 +1743,94 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(callbacks.triggerCueSubscription).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Create Gist', () => {
+		it('replies with create_gist_result on success', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				description: 'My gist',
+				isPublic: false,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(true);
+			expect(response.gistUrl).toBe('https://gist.example');
+		});
+
+		it('defaults description to "" and isPublic to false when omitted', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false);
+			});
+		});
+
+		it('replies with create_gist_result (not error) when sessionId is missing', () => {
+			handler.handleMessage(client, { type: 'create_gist' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('sessionId');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('rejects non-boolean isPublic to prevent private→public leaks', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				isPublic: 'false',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('isPublic');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
+		});
+
+		it('surfaces rejected callback errors as create_gist_result', async () => {
+			(callbacks.createGist as any).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('boom');
+		});
+
+		it('replies with create_gist_result when createGist callback is unconfigured', () => {
+			callbacks.createGist = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('not configured');
 		});
 	});
 });

@@ -168,6 +168,43 @@ describe('useCueGraphData', () => {
 		expect(result.current.graphSessions).toEqual([{ sessionId: 'initial' }]);
 	});
 
+	it('initialLoading: true on mount, false after first fetch resolves', async () => {
+		let resolveFn!: (v: CueGraphSession[]) => void;
+		mockGetGraphData.mockReturnValue(
+			new Promise<CueGraphSession[]>((r) => {
+				resolveFn = r;
+			})
+		);
+		const { result } = renderHook(() =>
+			useCueGraphData({ activeTab: 'dashboard', sessionInfoList: [] })
+		);
+		expect(result.current.initialLoading).toBe(true);
+		resolveFn([]);
+		await waitFor(() => expect(result.current.initialLoading).toBe(false));
+	});
+
+	it('initialLoading: flips to false after first fetch rejects', async () => {
+		mockGetGraphData.mockRejectedValue(new Error('boom'));
+		const { result } = renderHook(() =>
+			useCueGraphData({ activeTab: 'dashboard', sessionInfoList: [] })
+		);
+		expect(result.current.initialLoading).toBe(true);
+		await waitFor(() => expect(result.current.initialLoading).toBe(false));
+	});
+
+	it('initialLoading: stays false on subsequent refetches (does not flicker back)', async () => {
+		mockGetGraphData.mockResolvedValue([]);
+		const { result } = renderHook(() =>
+			useCueGraphData({ activeTab: 'dashboard', sessionInfoList: [] })
+		);
+		await waitFor(() => expect(result.current.initialLoading).toBe(false));
+		act(() => {
+			result.current.refreshGraphData();
+		});
+		// Should remain false even while a refetch is in flight.
+		expect(result.current.initialLoading).toBe(false);
+	});
+
 	it('dashboardPipelines memo recomputes only when graphSessions or sessionInfoList change', async () => {
 		const { graphSessionsToPipelines } =
 			await import('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline');

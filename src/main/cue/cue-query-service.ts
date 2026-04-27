@@ -13,7 +13,6 @@ import {
 } from './cue-session-state';
 
 export interface CueQueryServiceDeps {
-	enabled: () => boolean;
 	getAllSessions: () => Array<{
 		id: string;
 		name: string;
@@ -61,28 +60,26 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 				);
 			}
 
-			if (!deps.enabled()) {
-				for (const session of allSessions) {
-					if (reportedSessionIds.has(session.id)) continue;
-					const config = deps.loadConfigForProjectRoot(session.projectRoot);
-					if (!config) continue;
+			for (const session of allSessions) {
+				if (reportedSessionIds.has(session.id)) continue;
+				const config = deps.loadConfigForProjectRoot(session.projectRoot);
+				if (!config) continue;
 
-					result.push(
-						toSessionStatus({
-							sessionId: session.id,
-							sessionName: session.name,
-							toolType: session.toolType,
-							projectRoot: session.projectRoot,
-							enabled: false,
-							subscriptionCount: countActiveSubscriptions(
-								config.subscriptions,
-								session.id,
-								session.name
-							),
-							activeRuns: 0,
-						})
-					);
-				}
+				result.push(
+					toSessionStatus({
+						sessionId: session.id,
+						sessionName: session.name,
+						toolType: session.toolType,
+						projectRoot: session.projectRoot,
+						enabled: false,
+						subscriptionCount: countActiveSubscriptions(
+							config.subscriptions,
+							session.id,
+							session.name
+						),
+						activeRuns: 0,
+					})
+				);
 			}
 
 			return result;
@@ -114,21 +111,19 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 				});
 			}
 
-			if (!deps.enabled()) {
-				for (const session of allSessions) {
-					if (reportedSessionIds.has(session.id)) continue;
-					const config = deps.loadConfigForProjectRoot(session.projectRoot);
-					if (!config) continue;
+			for (const session of allSessions) {
+				if (reportedSessionIds.has(session.id)) continue;
+				const config = deps.loadConfigForProjectRoot(session.projectRoot);
+				if (!config) continue;
 
-					result.push({
-						sessionId: session.id,
-						sessionName: session.name,
-						toolType: session.toolType,
-						subscriptions: config.subscriptions.filter((sub) =>
-							isSubscriptionParticipant(sub, session.id, session.name)
-						),
-					});
-				}
+				result.push({
+					sessionId: session.id,
+					sessionName: session.name,
+					toolType: session.toolType,
+					subscriptions: config.subscriptions.filter((sub) =>
+						isSubscriptionParticipant(sub, session.id, session.name)
+					),
+				});
 			}
 
 			return result;

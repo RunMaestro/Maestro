@@ -28,6 +28,10 @@ type DetailedResult =
 // exercised deterministically.
 const loaderByPath = new Map<string, DetailedResult>();
 const ancestorLookup = new Map<string, string | null>();
+// Closest-first chain of ancestor cue.yaml roots, keyed by descendant project
+// root. Used by the plural `findAncestorCueConfigRoots` mock so tests can
+// model the real "closer ancestor has unrelated cue.yaml, walk further" case.
+const ancestorChainLookup = new Map<string, string[]>();
 
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 
@@ -40,6 +44,14 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 		loaderByPath.get(projectRoot) ?? { ok: false as const, reason: 'missing' as const },
 	watchCueYaml: (...args: unknown[]) => mockWatchCueYaml(args[0] as string, args[1] as () => void),
 	findAncestorCueConfigRoot: (projectRoot: string) => ancestorLookup.get(projectRoot) ?? null,
+	findAncestorCueConfigRoots: (projectRoot: string) => {
+		const chain = ancestorChainLookup.get(projectRoot);
+		if (chain) return chain;
+		// Fall back to the singular lookup so existing tests (which only set
+		// the closest ancestor) keep working without churn.
+		const root = ancestorLookup.get(projectRoot);
+		return root ? [root] : [];
+	},
 }));
 
 vi.mock('../../../main/cue/cue-file-watcher', () => ({
@@ -56,6 +68,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	persistQueuedEvent: vi.fn(),
+	removeQueuedEvent: vi.fn(),
+	getQueuedEvents: vi.fn(() => []),
+	clearPersistedQueue: vi.fn(),
+	safePersistQueuedEvent: vi.fn(),
+	safeRemoveQueuedEvent: vi.fn(),
 	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
@@ -167,6 +185,7 @@ describe('ancestor cue.yaml fallback', () => {
 		vi.useFakeTimers();
 		loaderByPath.clear();
 		ancestorLookup.clear();
+		ancestorChainLookup.clear();
 		mockWatchCueYaml.mockReturnValue(vi.fn());
 	});
 
@@ -242,10 +261,13 @@ describe('ancestor cue.yaml fallback', () => {
 		engine.stop();
 	});
 
-	it('keeps the local config when it has its own subscriptions (no ancestor takeover)', () => {
-		// The ancestor fallback is an addition, not a replacement. A local
-		// file with real subs must win over the ancestor to avoid silently
-		// mixing two unrelated pipelines.
+	it('keeps an unowned local sub AND merges agent_id-targeted ancestor subs', () => {
+		// Local subs that don't address any specific agent (no agent_id) belong
+		// to the local file's own session; they must NOT be blown away by the
+		// ancestor walk. But agent_id-targeted ancestor subs aimed at this
+		// session must be merged in — without that, a session that has its own
+		// local pipeline cannot also participate in a cross-root pipeline that
+		// lives at a higher ancestor (the trigger silently never arms).
 		const localConfig: CueConfig = {
 			subscriptions: [
 				{
@@ -276,7 +298,163 @@ describe('ancestor cue.yaml fallback', () => {
 
 		const graph = engine.getGraphData();
 		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		expect(agent1View?.subscriptions.map((s) => s.name).sort()).toEqual([
+			'Pipeline 1-cmd-a',
+			'local-only',
+		]);
+
+		engine.stop();
+	});
+
+	it('merges ancestor-targeted subs into a session that already has local subs', () => {
+		// Regression for the second-degree vanishing-trigger bug: a session
+		// (Cyber Stocks) had a non-empty LOCAL cue.yaml AND an ancestor cue.yaml
+		// at a higher root (e.g. /Users/pedram) where another pipeline targeted
+		// it via agent_id. Before the merge, the local file short-circuited the
+		// ancestor walk and the cross-root sub never armed — getGraphData
+		// reported only the local subs, so the editor reconstructed the parent
+		// pipeline without that trigger.
+		const localConfig: CueConfig = {
+			subscriptions: [
+				{
+					name: 'local-Tech',
+					event: 'time.scheduled',
+					enabled: true,
+					prompt: 'analyze',
+					agent_id: SESSION_AGENT_1.id,
+					schedule_times: ['06:00'],
+					pipeline_name: 'Local Pipeline',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+		loaderByPath.set(AGENT1_ROOT, { ok: true, config: localConfig, warnings: [] });
+		loaderByPath.set(ANCESTOR_ROOT, {
+			ok: true,
+			config: ancestorConfigWithSubsForBothAgents(),
+			warnings: [],
+		});
+		ancestorLookup.set(AGENT1_ROOT, ANCESTOR_ROOT);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		// Local sub is preserved; the ancestor's agent_id-targeted sub is merged in.
+		expect(agent1View?.subscriptions.map((s) => s.name).sort()).toEqual([
+			'Pipeline 1-cmd-a',
+			'local-Tech',
+		]);
+
+		engine.stop();
+	});
+
+	it('honors no_ancestor_fallback when local has its own subs', () => {
+		// Opt-out flag must suppress the merge so a user who deliberately
+		// isolates a local pipeline doesn't pick up cross-root subs.
+		const localConfig: CueConfig = {
+			subscriptions: [
+				{
+					name: 'local-only',
+					event: 'cli.trigger',
+					enabled: true,
+					prompt: 'local work',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+			no_ancestor_fallback: true,
+		};
+		loaderByPath.set(AGENT1_ROOT, { ok: true, config: localConfig, warnings: [] });
+		loaderByPath.set(ANCESTOR_ROOT, {
+			ok: true,
+			config: ancestorConfigWithSubsForBothAgents(),
+			warnings: [],
+		});
+		ancestorLookup.set(AGENT1_ROOT, ANCESTOR_ROOT);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
 		expect(agent1View?.subscriptions.map((s) => s.name)).toEqual(['local-only']);
+
+		engine.stop();
+	});
+
+	it('walks past a closer ancestor whose cue.yaml has no subs targeting this session', () => {
+		// Regression for the cross-root vanishing-trigger bug: a sub-agent at
+		// /home/user/project/agent1 had its targeted sub in the FAR ancestor
+		// (/home/user) while a CLOSER ancestor (/home/user/project) hosted an
+		// unrelated pipeline. The walk used to stop at the closer ancestor and
+		// silently report `configRemoved`, so getGraphData never saw the sub
+		// and the trigger disappeared from the editor on the next reload.
+		const FAR_ANCESTOR = '/home/user';
+		// /home/user/project hosts an unrelated pipeline (no subs for agent1).
+		const CLOSER_UNRELATED = ANCESTOR_ROOT;
+
+		const closerUnrelated: CueConfig = {
+			subscriptions: [
+				{
+					name: 'unrelated',
+					event: 'cli.trigger',
+					enabled: true,
+					prompt: 'x',
+					agent_id: 'someone-else',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+		const farAncestorTargets: CueConfig = {
+			subscriptions: [
+				{
+					name: 'cross-root-trigger',
+					event: 'time.scheduled',
+					enabled: true,
+					prompt: 'morning briefing',
+					schedule_times: ['07:00'],
+					agent_id: SESSION_AGENT_1.id,
+					pipeline_name: 'CrossRoot',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+
+		loaderByPath.set(CLOSER_UNRELATED, { ok: true, config: closerUnrelated, warnings: [] });
+		loaderByPath.set(FAR_ANCESTOR, { ok: true, config: farAncestorTargets, warnings: [] });
+		// agent1's ancestor chain: closer-unrelated first, then far-ancestor.
+		ancestorChainLookup.set(AGENT1_ROOT, [CLOSER_UNRELATED, FAR_ANCESTOR]);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		expect(agent1View?.subscriptions.map((s) => s.name)).toEqual(['cross-root-trigger']);
 
 		engine.stop();
 	});

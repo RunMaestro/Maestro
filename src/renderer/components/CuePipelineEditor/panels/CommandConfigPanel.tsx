@@ -11,7 +11,7 @@
  * affordance; to re-bind, the user clears the selection via the dropdown.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ExternalLink, Send, Terminal } from 'lucide-react';
 import type { Theme } from '../../../types';
 import {
@@ -113,6 +113,22 @@ export function CommandConfigPanel({
 		},
 		[node.id, onUpdateNode, sessions]
 	);
+
+	// Sort sessions alphabetically by name (case-insensitive) so the picker
+	// list is scannable. The leading "Select an agent…" placeholder stays
+	// pinned at the top regardless of sort order.
+	const ownerSelectOptions = useMemo(() => {
+		const sorted = [...(sessions ?? [])].sort((a, b) =>
+			a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+		);
+		return [
+			{ value: '', label: 'Select an agent…' },
+			...sorted.map((s) => ({
+				value: s.id,
+				label: `${s.name} · ${s.toolType}`,
+			})),
+		];
+	}, [sessions]);
 
 	const handleNameChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -289,14 +305,10 @@ export function CommandConfigPanel({
 					<CueSelect
 						value={data.owningSessionId}
 						onChange={(v) => setOwningSession(v)}
-						options={[
-							{ value: '', label: 'Select an agent…' },
-							...(sessions ?? []).map((s) => ({
-								value: s.id,
-								label: `${s.name} · ${s.toolType}`,
-							})),
-						]}
+						options={ownerSelectOptions}
 						theme={theme}
+						filterable
+						filterPlaceholder="Filter agents…"
 					/>
 				</div>
 			)}
@@ -329,32 +341,21 @@ export function CommandConfigPanel({
 						flexDirection: 'column',
 					}}
 				>
-					<label
+					<label style={themedLabelStyle}>Shell command</label>
+					<textarea
+						value={localShell}
+						onChange={handleShellChange}
+						placeholder="e.g. npm run lint -- {{CUE_FILE_PATH}}"
+						spellCheck={false}
 						style={{
-							...themedLabelStyle,
+							...themedInputStyle,
+							resize: 'vertical',
+							fontFamily: 'monospace',
+							lineHeight: 1.4,
 							flex: 1,
-							display: 'flex',
-							flexDirection: 'column',
-							minHeight: 0,
-							marginBottom: 0,
+							minHeight: 96,
 						}}
-					>
-						<span style={{ marginBottom: 4 }}>Shell command</span>
-						<textarea
-							value={localShell}
-							onChange={handleShellChange}
-							placeholder="e.g. npm run lint -- {{CUE_FILE_PATH}}"
-							spellCheck={false}
-							style={{
-								...themedInputStyle,
-								resize: 'vertical',
-								fontFamily: 'monospace',
-								lineHeight: 1.4,
-								flex: 1,
-								minHeight: 96,
-							}}
-						/>
-					</label>
+					/>
 					<div
 						style={{
 							color: theme.colors.textDim,

@@ -30,12 +30,15 @@ import {
 import {
 	readDirRemote,
 	readFileRemote,
+	readFileRemoteAbortable,
 	writeFileRemote,
 	statRemote,
 	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
 	countItemsRemote,
+	listTreeRemote,
+	type ListTreeOptions,
 } from '../../utils/remote-fs';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
@@ -165,56 +168,118 @@ export function registerFilesystemHandlers(): void {
 		);
 	});
 
-	// Read file contents (supports SSH remote, with image base64 encoding)
-	ipcMain.handle('fs:readFile', async (_, filePath: string, sshRemoteId?: string) => {
-		try {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+	// In-flight cancellable remote reads keyed by renderer-supplied requestId.
+	// Lets the renderer SIGTERM the underlying ssh+cat when the user closes
+	// the file tab mid-load (e.g. they double-clicked a huge file by mistake).
+	const inflightReads = new Map<string, AbortController>();
+
+	// Read file contents (supports SSH remote, with image base64 encoding).
+	// requestId is optional; when present, the read is cancellable via fs:cancelReadFile.
+	ipcMain.handle(
+		'fs:readFile',
+		async (_, filePath: string, sshRemoteId?: string, requestId?: string) => {
+			try {
+				// SSH remote: dispatch to remote fs operations
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					let result: Awaited<ReturnType<typeof readFileRemote>>;
+					if (requestId) {
+						const controller = new AbortController();
+						inflightReads.set(requestId, controller);
+						try {
+							result = await readFileRemoteAbortable(filePath, sshConfig, controller.signal);
+						} finally {
+							inflightReads.delete(requestId);
+						}
+						if (controller.signal.aborted) {
+							// Surface cancellation as null so the renderer can ignore
+							// the result without it being a generic error.
+							return null;
+						}
+					} else {
+						result = await readFileRemote(filePath, sshConfig);
+					}
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to read remote file');
+					}
+					// For images over SSH, we'd need to base64 encode on remote and decode here
+					// For now, return raw content (text files work, binary images may have issues)
+					const ext = filePath.split('.').pop()?.toLowerCase();
+					const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+					if (isImage) {
+						// The remote readFile returns raw bytes as string - convert to base64 data URL
+						const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
+						const base64 = Buffer.from(result.data!, 'binary').toString('base64');
+						return `data:${mimeType};base64,${base64}`;
+					}
+					return result.data!;
 				}
-				const result = await readFileRemote(filePath, sshConfig);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to read remote file');
-				}
-				// For images over SSH, we'd need to base64 encode on remote and decode here
-				// For now, return raw content (text files work, binary images may have issues)
+
+				// Local: use standard fs operations
+				// Check if file is an image
 				const ext = filePath.split('.').pop()?.toLowerCase();
 				const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+
 				if (isImage) {
-					// The remote readFile returns raw bytes as string - convert to base64 data URL
+					// Read image as buffer and convert to base64 data URL
+					const buffer = await fs.readFile(filePath);
+					const base64 = buffer.toString('base64');
 					const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-					const base64 = Buffer.from(result.data!, 'binary').toString('base64');
 					return `data:${mimeType};base64,${base64}`;
+				} else {
+					// Read text files as UTF-8
+					const content = await fs.readFile(filePath, 'utf-8');
+					return content;
 				}
-				return result.data!;
+			} catch (error: any) {
+				// Return null for missing files instead of throwing.
+				// Prevents noisy Electron IPC error logging when callers
+				// expect files that may not exist (e.g., .gitignore).
+				if (error?.code === 'ENOENT') {
+					return null;
+				}
+				throw new Error(`Failed to read file: ${error}`);
 			}
+		}
+	);
 
-			// Local: use standard fs operations
-			// Check if file is an image
-			const ext = filePath.split('.').pop()?.toLowerCase();
-			const isImage = IMAGE_EXTENSIONS.includes(ext || '');
+	// Enumerate a remote directory tree in a single SSH round-trip.
+	// Replaces N-per-directory `ls` recursion with two batched `find` calls
+	// bundled into one SSH command. Used by the file explorer to load remote
+	// trees in 1–2 round-trips total instead of one per directory.
+	// SSH-only: local trees use direct fs recursion in the renderer.
+	ipcMain.handle(
+		'fs:listTreeRemote',
+		async (_, rootPath: string, sshRemoteId: string, options: ListTreeOptions) => {
+			const sshConfig = getSshRemoteById(sshRemoteId);
+			if (!sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			const result = await listTreeRemote(rootPath, options, sshConfig);
+			if (!result.success) {
+				throw new Error(result.error || 'Failed to list remote tree');
+			}
+			// Normalize names to NFC to match the readDir handler's behavior
+			// (paths may contain composed/decomposed unicode on macOS remotes).
+			return {
+				directories: result.data!.directories.map((p) => p.normalize('NFC')),
+				files: result.data!.files.map((p) => p.normalize('NFC')),
+				truncated: result.data!.truncated,
+			};
+		}
+	);
 
-			if (isImage) {
-				// Read image as buffer and convert to base64 data URL
-				const buffer = await fs.readFile(filePath);
-				const base64 = buffer.toString('base64');
-				const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
-				return `data:${mimeType};base64,${base64}`;
-			} else {
-				// Read text files as UTF-8
-				const content = await fs.readFile(filePath, 'utf-8');
-				return content;
-			}
-		} catch (error: any) {
-			// Return null for missing files instead of throwing.
-			// Prevents noisy Electron IPC error logging when callers
-			// expect files that may not exist (e.g., .gitignore).
-			if (error?.code === 'ENOENT') {
-				return null;
-			}
-			throw new Error(`Failed to read file: ${error}`);
+	// Cancel an in-flight remote file read by requestId.
+	// Aborts the SSH child process so we don't waste bandwidth on a file the
+	// user already closed. No-op if the requestId is unknown (read may have
+	// completed or never started).
+	ipcMain.handle('fs:cancelReadFile', (_, requestId: string) => {
+		const controller = inflightReads.get(requestId);
+		if (controller) {
+			controller.abort();
 		}
 	});
 

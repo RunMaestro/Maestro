@@ -153,6 +153,13 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		fileTreeLoading: undefined,
 		fileTreeLoadingProgress: undefined,
 		fileTreeLastScanTime: undefined,
+		// Error and retry-backoff are transient UI state. Persisting them
+		// would restore a stale error on next launch (from a previous
+		// failed load, potentially from an outdated code path) and the
+		// `hasLoadedOnce` gate in useFileTreeManagement would block the
+		// auto-loader from making a fresh attempt.
+		fileTreeError: undefined,
+		fileTreeRetryAt: undefined,
 		// Don't persist file preview history — stores full file content that can be
 		// re-read from disk on demand. Another major contributor to session file bloat.
 		filePreviewHistory: undefined,

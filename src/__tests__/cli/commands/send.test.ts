@@ -28,6 +28,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	readSettingValue: vi.fn(),
 }));
 
 // Mock usage-aggregator
@@ -51,7 +52,7 @@ vi.mock('../../../main/agents/definitions', () => ({
 import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, readSettingValue } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
 
 describe('send command', () => {
@@ -401,6 +402,90 @@ describe('send command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
+		it('should include force=true in send_command payload when --force is set and setting is enabled', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(true);
+			const mockSendCommand = vi.fn().mockResolvedValue({ type: 'command_result' });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Forced message', { live: true, force: true });
+
+			expect(readSettingValue).toHaveBeenCalledWith('allowConcurrentSend');
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Forced message',
+					inputMode: 'ai',
+					force: true,
+				},
+				'command_result'
+			);
+		});
+
+		it('should omit force field when --force is not set', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({ type: 'command_result' });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Normal', { live: true });
+
+			const [payload] = mockSendCommand.mock.calls[0];
+			expect(payload).not.toHaveProperty('force');
+		});
+
+		it('should error when --force is used without --live', async () => {
+			await send('my-agent-id', 'Hello', { force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toBe('--force requires --live');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should error FORCE_NOT_ALLOWED when --force is used and allowConcurrentSend is disabled', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(false);
+
+			// Production relies on process.exit(1) halting execution after emitting
+			// FORCE_NOT_ALLOWED. The shared spy swallows exit; override it locally so
+			// the mocked exit throws and control cannot fall through to the --live branch.
+			processExitSpy.mockImplementation(() => {
+				throw new Error('PROCESS_EXIT');
+			});
+
+			await expect(send('my-agent-id', 'Hello', { live: true, force: true })).rejects.toThrow(
+				'PROCESS_EXIT'
+			);
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('FORCE_NOT_ALLOWED');
+			expect(output.error).toContain('allowConcurrentSend');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			// Must not reach the WS layer
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('should error FORCE_NOT_ALLOWED when --force is used and setting is unset (default off)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(undefined);
+
+			await send('my-agent-id', 'Hello', { live: true, force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('FORCE_NOT_ALLOWED');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
 		it('should error when --live is combined with --session', async () => {
 			await send('my-agent-id', 'Hello', { live: true, session: 'some-session' });
 
@@ -458,6 +543,53 @@ describe('send command', () => {
 			expect(getSessionById).not.toHaveBeenCalled();
 			expect(detectAgent).not.toHaveBeenCalled();
 			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('emits a stderr deprecation notice on every --live invocation', async () => {
+			// `send --live` is retained as a hidden alias for `dispatch` during
+			// the deprecation window. The notice goes to stderr so JSON-parsing
+			// callers reading stdout aren't broken by the new line.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: vi.fn().mockResolvedValue({ type: 'command_result' }) };
+				return action(mockClient as never);
+			});
+			const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			const stderrText = stderrSpy.mock.calls.map((call) => String(call[0])).join('');
+			expect(stderrText).toMatch(/deprecated/i);
+			expect(stderrText).toMatch(/dispatch/);
+
+			stderrSpy.mockRestore();
+		});
+
+		it('preserves the legacy SendResponse shape (agentName="live", null fields) so existing scripts keep parsing', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi
+						.fn()
+						.mockResolvedValue({ type: 'command_result', success: true, tabId: 'tab-99' }),
+				};
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			// PR1 surfaces tabId in `dispatch` output but `send --live` keeps
+			// the historic shape — sessionId stays null and agentName stays
+			// "live" so downstream parsers don't break mid-deprecation window.
+			expect(output).toEqual({
+				agentId: 'agent-abc-123',
+				agentName: 'live',
+				sessionId: null,
+				response: null,
+				success: true,
+				usage: null,
+			});
 		});
 	});
 });

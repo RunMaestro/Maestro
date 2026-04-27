@@ -743,10 +743,22 @@ function SessionListInner(props: SessionListProps) {
 				{leftSidebarOpen ? (
 					<>
 						<div className="flex items-center gap-2">
-							<Wand2
-								className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
-								style={{ color: theme.colors.accent }}
-							/>
+							<button
+								type="button"
+								onClick={() => {
+									if (sessions.length > 0) {
+										getModalActions().setQuickActionOpen(true, 'agents');
+									}
+								}}
+								className="flex items-center justify-center rounded hover:bg-white/10 transition-colors p-0.5 -m-0.5"
+								title="Switch agent"
+								aria-label="Switch agent"
+							>
+								<Wand2
+									className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
+									style={{ color: theme.colors.accent }}
+								/>
+							</button>
 							<h1
 								className="font-bold tracking-widest text-lg"
 								style={{ color: theme.colors.textMain }}

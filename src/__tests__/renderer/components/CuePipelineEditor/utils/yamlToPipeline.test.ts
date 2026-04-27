@@ -587,6 +587,414 @@ describe('subscriptionsToPipelines', () => {
 	});
 });
 
+describe('subscriptionsToPipelines — target_node_key dedup', () => {
+	it('keeps two subs targeting the same agent_id but different target_node_key as separate nodes', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'multi-trigger',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Morning run',
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				target_node_key: 'key-A',
+				pipeline_name: 'multi-trigger',
+			},
+			{
+				name: 'multi-trigger-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Outreach run',
+				schedule_times: ['06:30'],
+				agent_id: 'session-0',
+				target_node_key: 'key-B',
+				pipeline_name: 'multi-trigger',
+			},
+		];
+		const sessions = makeSessions('Pedsidian');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const triggers = pipelines[0].nodes.filter((n) => n.type === 'trigger');
+		// Two distinct visual agent nodes (the round-trip behavior the user
+		// expects when they dropped the same agent twice).
+		expect(agents).toHaveLength(2);
+		expect(triggers).toHaveLength(2);
+		// Each trigger has its own dedicated downstream agent node — no merge.
+		const edgeTargets = pipelines[0].edges.map((e) => e.target).sort();
+		const agentIds = agents.map((a) => a.id).sort();
+		expect(edgeTargets).toEqual(agentIds);
+		// nodeKey is propagated onto AgentNodeData so subsequent saves re-emit
+		// the same key (round-trip stability).
+		const keys = agents.map((a) => (a.data as AgentNodeData).nodeKey).sort();
+		expect(keys).toEqual(['key-A', 'key-B']);
+	});
+
+	it('merges two subs sharing the same target_node_key onto one node (explicit fan-in)', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'shared-target',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Run A',
+				schedule_times: ['06:00'],
+				agent_id: 'session-0',
+				target_node_key: 'shared-key',
+				pipeline_name: 'shared-target',
+			},
+			{
+				name: 'shared-target-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Run B',
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				target_node_key: 'shared-key',
+				pipeline_name: 'shared-target',
+			},
+		];
+		const sessions = makeSessions('Pedsidian');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const triggers = pipelines[0].nodes.filter((n) => n.type === 'trigger');
+		expect(agents).toHaveLength(1);
+		expect(triggers).toHaveLength(2);
+		// Both triggers point at the one shared agent node.
+		const targets = pipelines[0].edges.map((e) => e.target);
+		expect(new Set(targets).size).toBe(1);
+		expect(targets[0]).toBe(agents[0].id);
+	});
+
+	it('falls back to legacy sessionName dedup when target_node_key is absent (backwards compat)', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'legacy-pipeline',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Run A',
+				schedule_times: ['06:00'],
+				agent_id: 'session-0',
+				pipeline_name: 'legacy-pipeline',
+			},
+			{
+				name: 'legacy-pipeline-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Run B',
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				pipeline_name: 'legacy-pipeline',
+			},
+		];
+		const sessions = makeSessions('Pedsidian');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		// Legacy YAML: dedup by sessionName → one merged node (preserves
+		// pre-fix behavior so older pipelines keep loading without surprise).
+		expect(agents).toHaveLength(1);
+		expect((agents[0].data as AgentNodeData).nodeKey).toBeUndefined();
+	});
+
+	it('uses fan_out_node_keys to keep distinct fan-out positions as distinct nodes', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'fanout-distinct',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'Go',
+				interval_minutes: 10,
+				fan_out: ['worker', 'worker'],
+				fan_out_ids: ['session-0', 'session-0'],
+				fan_out_node_keys: ['key-1', 'key-2'],
+				pipeline_name: 'fanout-distinct',
+			},
+		];
+		const sessions = makeSessions('worker');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		// Two distinct fan-out positions resolve to two visual nodes even
+		// though both target the same session — the keys disambiguate.
+		expect(agents).toHaveLength(2);
+		const keys = agents.map((a) => (a.data as AgentNodeData).nodeKey).sort();
+		expect(keys).toEqual(['key-1', 'key-2']);
+	});
+
+	it('chain target with target_node_key creates an independent visual node for A → B → A shapes when keys differ', () => {
+		// When the same session appears at multiple chain positions with
+		// distinct keys, each occurrence renders as its own node — no
+		// back-edge to the earlier occurrence.
+		const subs: CueSubscription[] = [
+			{
+				name: 'aba-pipeline',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'first A',
+				interval_minutes: 5,
+				agent_id: 'session-0',
+				target_node_key: 'a-1',
+				pipeline_name: 'aba-pipeline',
+			},
+			{
+				name: 'aba-pipeline-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'B',
+				source_session: 'A',
+				source_session_ids: 'session-0',
+				agent_id: 'session-1',
+				target_node_key: 'b-1',
+				pipeline_name: 'aba-pipeline',
+			},
+			{
+				name: 'aba-pipeline-chain-2',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'second A',
+				source_session: 'B',
+				source_session_ids: 'session-1',
+				agent_id: 'session-0',
+				target_node_key: 'a-2',
+				pipeline_name: 'aba-pipeline',
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{ id: 'session-0', name: 'A', toolType: 'claude-code', cwd: '/tmp', projectRoot: '/tmp' },
+			{ id: 'session-1', name: 'B', toolType: 'claude-code', cwd: '/tmp', projectRoot: '/tmp' },
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		// 3 nodes: first-A, B, second-A — the keys keep the second-A
+		// distinct from the first.
+		expect(agents).toHaveLength(3);
+	});
+
+	it('handles mixed keyed/unkeyed YAML: keyed subs use key path, unkeyed subs use legacy sessionName dedup', () => {
+		// Realistic mid-migration shape: one sub from before the fix (no
+		// key) and three from after (with keys). The unkeyed sub creates
+		// a node via the legacy path; the keyed subs each create their
+		// own node, untouched by the legacy sessionName loop.
+		const subs: CueSubscription[] = [
+			{
+				name: 'mixed',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Legacy run',
+				schedule_times: ['06:00'],
+				agent_id: 'session-0',
+				pipeline_name: 'mixed',
+			},
+			{
+				name: 'mixed-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Keyed run A',
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				target_node_key: 'k-A',
+				pipeline_name: 'mixed',
+			},
+			{
+				name: 'mixed-chain-2',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Keyed run B',
+				schedule_times: ['08:00'],
+				agent_id: 'session-0',
+				target_node_key: 'k-B',
+				pipeline_name: 'mixed',
+			},
+		];
+		const sessions = makeSessions('Worker');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		// 3 distinct nodes: legacy unkeyed + 2 keyed. The keyed subs do
+		// not collapse into the legacy node despite sharing sessionName,
+		// because the legacy dedup loop is skipped when a key is present.
+		expect(agents).toHaveLength(3);
+		const keys = agents
+			.map((a) => (a.data as AgentNodeData).nodeKey)
+			.filter(Boolean)
+			.sort();
+		expect(keys).toEqual(['k-A', 'k-B']);
+	});
+
+	it('positions two distinct trigger-target agents at distinct Y coords (no pixel-perfect stacking)', () => {
+		// Regression: when two separate triggers each had a single target,
+		// the loader computed `pos.y = baseY + branchRow * spacing` with
+		// `branchRow=0` for both, landing both targets at the same y.
+		// They rendered as one node visually even though the model held
+		// two — only the "(2)" instance label hinted otherwise. The fix
+		// anchors target Y to the owning trigger's Y instead of a constant
+		// baseY, so distinct triggers produce distinct target rows.
+		const subs: CueSubscription[] = [
+			{
+				name: 'overlap-test',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Daily',
+				schedule_times: ['06:00'],
+				agent_id: 'session-0',
+				target_node_key: 'k-daily',
+				pipeline_name: 'overlap-test',
+			},
+			{
+				name: 'overlap-test-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Weekly',
+				schedule_times: ['08:00'],
+				schedule_days: ['sun'],
+				agent_id: 'session-0',
+				target_node_key: 'k-weekly',
+				pipeline_name: 'overlap-test',
+			},
+		];
+		const sessions = makeSessions('Polymarket');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(2);
+		// The two agents must not occupy identical positions, otherwise
+		// the canvas paints them on top of each other and the user sees
+		// one node where the model has two.
+		const positions = agents.map((a) => `${a.position.x},${a.position.y}`);
+		expect(new Set(positions).size).toBe(2);
+	});
+
+	it('merges two trigger subs targeting one command node via shared target_node_key', () => {
+		// Explicit fan-in onto a command node — same shape as agent
+		// fan-in but for a `action: command` target. Both trigger subs
+		// reference the same `target_node_key`, so the loader returns
+		// the same command node for both, producing one node with two
+		// incoming trigger edges.
+		const subs: CueSubscription[] = [
+			{
+				name: 'cmd-fanin',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'noop',
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				action: 'command',
+				command: { mode: 'shell', shell: 'echo morning' },
+				target_node_key: 'cmd-key',
+				pipeline_name: 'cmd-fanin',
+			},
+			{
+				name: 'cmd-fanin-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'noop',
+				schedule_times: ['18:00'],
+				agent_id: 'session-0',
+				action: 'command',
+				command: { mode: 'shell', shell: 'echo morning' },
+				target_node_key: 'cmd-key',
+				pipeline_name: 'cmd-fanin',
+			},
+		];
+		const sessions = makeSessions('Owner');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const commands = pipelines[0].nodes.filter((n) => n.type === 'command');
+		const triggers = pipelines[0].nodes.filter((n) => n.type === 'trigger');
+		expect(commands).toHaveLength(1);
+		expect(triggers).toHaveLength(2);
+		// Both trigger edges land on the single command node.
+		const targets = pipelines[0].edges.map((e) => e.target);
+		expect(new Set(targets).size).toBe(1);
+		expect(targets[0]).toBe(commands[0].id);
+		expect((commands[0].data as CommandNodeData).nodeKey).toBe('cmd-key');
+	});
+});
+
+describe('subscriptionsToPipelines — full round-trip via pipelineToYamlSubscriptions', () => {
+	it('round-trips two distinct visual nodes (same agent_id, different nodeKey) without merging', async () => {
+		const { pipelineToYamlSubscriptions } =
+			await import('../../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml');
+		const pipeline = {
+			id: 'p1',
+			name: 'multi-trigger',
+			color: '#06b6d4',
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger' as const,
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.scheduled' as const,
+						label: 'Scheduled',
+						customLabel: 'Aziz Outreach',
+						config: { schedule_times: ['06:30'] },
+					},
+				},
+				{
+					id: 't2',
+					type: 'trigger' as const,
+					position: { x: 0, y: 200 },
+					data: {
+						eventType: 'time.scheduled' as const,
+						label: 'Scheduled',
+						customLabel: 'Morning Briefing',
+						config: { schedule_times: ['07:00'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent' as const,
+					position: { x: 400, y: 0 },
+					data: {
+						sessionId: 'session-0',
+						sessionName: 'Pedsidian',
+						toolType: 'claude-code',
+						inputPrompt: 'Outreach prompt',
+						nodeKey: 'pedsidian-1',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent' as const,
+					position: { x: 400, y: 200 },
+					data: {
+						sessionId: 'session-0',
+						sessionName: 'Pedsidian',
+						toolType: 'claude-code',
+						inputPrompt: 'Briefing prompt',
+						nodeKey: 'pedsidian-2',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' as const },
+				{ id: 'e2', source: 't2', target: 'a2', mode: 'pass' as const },
+			],
+		};
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		// Inject pipeline_name like pipelinesToYaml would, since
+		// subscriptionsToPipelines uses pipeline_name to group.
+		const tagged = subs.map((s) => ({ ...s, pipeline_name: pipeline.name }));
+		const sessions = makeSessions('Pedsidian');
+		const reloaded = subscriptionsToPipelines(tagged, sessions);
+
+		expect(reloaded).toHaveLength(1);
+		const agents = reloaded[0].nodes.filter((n) => n.type === 'agent');
+		const triggers = reloaded[0].nodes.filter((n) => n.type === 'trigger');
+		// The fix: two distinct visual agent nodes round-trip as two
+		// distinct visual agent nodes — exactly what the user expected.
+		expect(agents).toHaveLength(2);
+		expect(triggers).toHaveLength(2);
+		const reloadedKeys = agents.map((a) => (a.data as AgentNodeData).nodeKey).sort();
+		expect(reloadedKeys).toEqual(['pedsidian-1', 'pedsidian-2']);
+	});
+});
+
 describe('graphSessionsToPipelines', () => {
 	it('extracts subscriptions from graph sessions and converts', () => {
 		const graphSessions: CueGraphSession[] = [

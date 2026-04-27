@@ -64,6 +64,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
@@ -76,6 +77,10 @@ import type {
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
+	NotifyToastParams,
+	NotifyCenterFlashParams,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -133,6 +138,7 @@ export interface WebServerCallbacks {
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
+	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
@@ -140,6 +146,8 @@ export interface WebServerCallbacks {
 	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
+	notifyToast: NotifyToastCallback | null;
+	notifyCenterFlash: NotifyCenterFlashCallback | null;
 }
 
 export class CallbackRegistry {
@@ -193,6 +201,7 @@ export class CallbackRegistry {
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
+		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
@@ -200,6 +209,8 @@ export class CallbackRegistry {
 		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
+		notifyToast: null,
+		notifyCenterFlash: null,
 	};
 
 	// ============ Getter Methods ============
@@ -231,10 +242,12 @@ export class CallbackRegistry {
 	async executeCommand(
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		force?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -306,8 +319,11 @@ export class CallbackRegistry {
 		return this.callbacks.openTerminalTab(sessionId, config);
 	}
 
-	async newAITabWithPrompt(sessionId: string, prompt: string): Promise<boolean> {
-		if (!this.callbacks.newAITabWithPrompt) return false;
+	async newAITabWithPrompt(
+		sessionId: string,
+		prompt: string
+	): Promise<{ success: boolean; tabId?: string }> {
+		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
 	}
 
@@ -377,6 +393,7 @@ export class CallbackRegistry {
 			audioFeedbackEnabled: false,
 			colorBlindMode: 'false',
 			conductorProfile: '',
+			maxOutputLines: null,
 			shortcuts: {},
 		};
 	}
@@ -484,6 +501,17 @@ export class CallbackRegistry {
 		return this.callbacks.summarizeContext(sessionId);
 	}
 
+	async createGist(
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		if (!this.callbacks.createGist) {
+			return { success: false, error: 'Gist creation not configured' };
+		}
+		return this.callbacks.createGist(sessionId, description, isPublic);
+	}
+
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
 		if (!this.callbacks.getCueSubscriptions) return [];
 		return this.callbacks.getCueSubscriptions(sessionId);
@@ -536,6 +564,16 @@ export class CallbackRegistry {
 			return { success: false, synopsis: '', error: "Director's Notes synopsis not available" };
 		}
 		return this.callbacks.generateDirectorNotesSynopsis(lookbackDays, provider);
+	}
+
+	async notifyToast(params: NotifyToastParams): Promise<boolean> {
+		if (!this.callbacks.notifyToast) return false;
+		return this.callbacks.notifyToast(params);
+	}
+
+	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
+		if (!this.callbacks.notifyCenterFlash) return false;
+		return this.callbacks.notifyCenterFlash(params);
 	}
 
 	// ============ Setter Methods ============
@@ -742,6 +780,10 @@ export class CallbackRegistry {
 		this.callbacks.summarizeContext = callback;
 	}
 
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbacks.createGist = callback;
+	}
+
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
 		this.callbacks.getCueSubscriptions = callback;
 	}
@@ -768,6 +810,14 @@ export class CallbackRegistry {
 
 	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
 		this.callbacks.generateDirectorNotesSynopsis = callback;
+	}
+
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbacks.notifyToast = callback;
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbacks.notifyCenterFlash = callback;
 	}
 
 	// ============ Check Methods ============

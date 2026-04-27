@@ -33,8 +33,11 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useMessageGistStore } from '../stores/messageGistStore';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -76,18 +79,32 @@ interface ToolSummary {
  * Tool logs are only emitted when thinking is enabled, so we show the full
  * command text without truncation to give complete visibility into agent actions.
  */
-const summarizeToolInput = (input: Record<string, unknown>): ToolSummary | null => {
+const summarizeToolInput = (input: unknown): ToolSummary | null => {
+	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
+	// as a raw string instead of an object — Object.entries on a string would
+	// iterate it character-by-character and produce garbled, space-separated
+	// output, so surface the string as-is.
+	if (typeof input === 'string') {
+		return input ? { detail: input } : null;
+	}
+	if (!input || typeof input !== 'object' || Array.isArray(input)) {
+		return null;
+	}
+	const inputRecord = input as Record<string, unknown>;
+
 	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(input.todos);
+	const todosResult = summarizeTodos(inputRecord.todos);
 	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =
-		typeof input.description === 'string' && input.description ? input.description : undefined;
+		typeof inputRecord.description === 'string' && inputRecord.description
+			? inputRecord.description
+			: undefined;
 
 	// Collect displayable values (skip huge blobs)
 	const parts: string[] = [];
-	for (const [key, val] of Object.entries(input)) {
+	for (const [key, val] of Object.entries(inputRecord)) {
 		if (val === undefined || val === null || val === '') continue;
 		// Skip description — rendered separately
 		if (key === 'description') continue;
@@ -114,6 +131,9 @@ const summarizeToolInput = (input: Record<string, unknown>): ToolSummary | null 
 	if (!detail && !description) return null;
 	return { description, detail: detail ?? '' };
 };
+
+const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
 
 // ============================================================================
 // LogItem - Memoized component for individual log entries
@@ -175,7 +195,8 @@ interface LogItemProps {
 	onSaveToFile?: (text: string) => void;
 	// Publish to GitHub Gist (AI mode only, non-user messages, requires gh CLI)
 	ghCliAvailable?: boolean;
-	onPublishGist?: (text: string) => void;
+	onPublishGist?: (text: string, messageId?: string) => void;
+	publishedGistUrl?: string;
 	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
 	bionifyReadingMode: boolean;
@@ -222,6 +243,7 @@ const LogItemComponent = memo(
 		onSaveToFile,
 		ghCliAvailable,
 		onPublishGist,
+		publishedGistUrl,
 		onForkConversation,
 		bionifyReadingMode,
 		bionifyIntensity,
@@ -517,14 +539,61 @@ const LogItemComponent = memo(
 							</div>
 						</div>
 					)}
+					{isHiddenProgressEntry(log) && (
+						<div
+							className="px-4 py-1.5 text-xs border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<div className="flex items-start gap-2">
+								<span
+									className="px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}30`,
+										color: theme.colors.accent,
+									}}
+								>
+									{log.metadata?.hiddenProgress?.kind === 'tool'
+										? log.metadata.hiddenProgress.toolName || 'working'
+										: 'thinking'}
+								</span>
+								{log.metadata?.toolState?.status === 'completed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
+										✓
+									</span>
+								) : log.metadata?.toolState?.status === 'failed' ||
+								  log.metadata?.toolState?.status === 'error' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+										!
+									</span>
+								) : (
+									<span
+										className="animate-pulse shrink-0 pt-0.5"
+										style={{ color: theme.colors.warning }}
+									>
+										●
+									</span>
+								)}
+								<span
+									className="break-words whitespace-pre-wrap opacity-80"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</span>
+							</div>
+						</div>
+					)}
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
 							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input as
-								| Record<string, unknown>
-								| undefined;
-							const toolSummary = toolInput ? summarizeToolInput(toolInput) : null;
+							const toolInput = log.metadata?.toolState?.input;
+							const toolSummary =
+								toolInput !== undefined && toolInput !== null
+									? summarizeToolInput(toolInput)
+									: null;
 
 							return (
 								<div
@@ -557,6 +626,11 @@ const LogItemComponent = memo(
 												✓
 											</span>
 										)}
+										{log.metadata?.toolState?.status === 'failed' && (
+											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+												!
+											</span>
+										)}
 										{toolSummary?.description && (
 											<span
 												className="opacity-50 break-words"
@@ -580,7 +654,8 @@ const LogItemComponent = memo(
 								</div>
 							);
 						})()}
-					{log.source !== 'error' &&
+					{!isHiddenProgressEntry(log) &&
+						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
 						(hasNoMatches ? (
@@ -693,7 +768,7 @@ const LogItemComponent = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{filteredText}</div>
+											<div>{linkifyNode(filteredText, theme)}</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -770,7 +845,7 @@ const LogItemComponent = memo(
 											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
-											{filteredText}
+											{linkifyNode(filteredText, theme)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -865,10 +940,18 @@ const LogItemComponent = memo(
 						{/* Publish to GitHub Gist - only for AI responses when gh CLI available */}
 						{log.source !== 'user' && isAIMode && ghCliAvailable && onPublishGist && (
 							<button
-								onClick={() => onPublishGist(log.text)}
-								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-								style={{ color: theme.colors.textDim }}
-								title="Publish as GitHub Gist"
+								onClick={() => onPublishGist(log.text, log.id)}
+								className={`p-1.5 rounded hover:!opacity-100 ${
+									publishedGistUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+								}`}
+								style={{
+									color: publishedGistUrl ? theme.colors.accent : theme.colors.textDim,
+								}}
+								title={
+									publishedGistUrl
+										? `Published as Gist: ${publishedGistUrl}`
+										: 'Publish as GitHub Gist'
+								}
 							>
 								<Share2 className="w-3.5 h-3.5" />
 							</button>
@@ -969,6 +1052,8 @@ const LogItemComponent = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
+			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
@@ -984,7 +1069,8 @@ const LogItemComponent = memo(
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
-			prevProps.onForkConversation === nextProps.onForkConversation
+			prevProps.onForkConversation === nextProps.onForkConversation &&
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl
 		);
 	}
 );
@@ -1034,7 +1120,7 @@ interface TerminalOutputProps {
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
 	userMessageAlignment?: 'left' | 'right'; // User message bubble alignment (default: right)
 	ghCliAvailable?: boolean; // Whether gh CLI is available for gist publishing
-	onPublishMessageGist?: (text: string) => void; // Callback to publish a single message as a gist
+	onPublishMessageGist?: (text: string, messageId?: string) => void; // Callback to publish a single message as a gist
 	onOpenInTab?: (file: {
 		path: string;
 		name: string;
@@ -1090,6 +1176,7 @@ export const TerminalOutput = memo(
 		} = props;
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const publishedGists = useMessageGistStore((s) => s.published);
 		const globalBionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 
 		// Use the forwarded ref if provided, otherwise create a local one
@@ -1132,9 +1219,6 @@ export const TerminalOutput = memo(
 		// Counter to force re-render when delete confirmation changes
 		const [_deleteConfirmTrigger, _setDeleteConfirmTrigger] = useState(0);
 
-		// Copy to clipboard notification state
-		const [showCopiedNotification, setShowCopiedNotification] = useState(false);
-
 		// Save markdown modal state
 		const [saveModalContent, setSaveModalContent] = useState<string | null>(null);
 
@@ -1165,12 +1249,11 @@ export const TerminalOutput = memo(
 		// Get active tab ID for resetting state on tab switch
 		const activeTabId = session.activeTabId;
 
-		// Copy text to clipboard with notification
+		// Copy text to clipboard with center flash
 		const copyToClipboard = useCallback(async (text: string) => {
 			const ok = await safeClipboardWrite(text);
 			if (ok) {
-				setShowCopiedNotification(true);
-				setTimeout(() => setShowCopiedNotification(false), 1500);
+				flashCopiedToClipboard(text);
 			}
 		}, []);
 
@@ -1995,6 +2078,7 @@ export const TerminalOutput = memo(
 							onSaveToFile={handleSaveToFile}
 							ghCliAvailable={ghCliAvailable}
 							onPublishGist={onPublishMessageGist}
+							publishedGistUrl={publishedGists[log.id]?.gistUrl}
 							bionifyReadingMode={globalBionifyReadingMode}
 							bionifyIntensity={globalBionifyIntensity}
 							bionifyAlgorithm={globalBionifyAlgorithm}
@@ -2067,19 +2151,7 @@ export const TerminalOutput = memo(
 					</button>
 				)}
 
-				{/* Copied to Clipboard Notification */}
-				{showCopiedNotification && (
-					<div
-						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
-						}}
-					>
-						Copied to Clipboard
-					</div>
-				)}
+				{/* Copy flash now rendered globally by <CenterFlash /> */}
 
 				{/* Save Markdown Modal */}
 				{saveModalContent !== null && (

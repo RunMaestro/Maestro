@@ -14,6 +14,7 @@
  */
 
 import { useCallback } from 'react';
+import { generateId } from '../../utils/ids';
 import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -194,11 +195,36 @@ export function useQuickActionsHandlers(
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
 		if (!activeSession || activeSession.executionQueue.length === 0) return;
 		const [nextItem, ...remainingQueue] = activeSession.executionQueue;
-		// Update state to remove item from queue
+		// Update state to remove item from queue and surface the user log entry
+		// for message items (mirrors what useAgentListeners onExit / useInterruptHandler
+		// do for their dequeue paths). processQueuedItem itself does not add the log.
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-				return { ...s, executionQueue: remainingQueue };
+				if (nextItem.type !== 'message' || !nextItem.text) {
+					return { ...s, executionQueue: remainingQueue };
+				}
+				const targetTabId = nextItem.tabId || s.activeTabId;
+				const updatedAiTabs = s.aiTabs.map((tab) =>
+					tab.id === targetTabId
+						? {
+								...tab,
+								logs: [
+									...tab.logs,
+									{
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user' as const,
+										text: nextItem.text!,
+										images: nextItem.images,
+										...(nextItem.forceParallel && { forceParallel: true }),
+										...(nextItem.readOnlyMode && { readOnly: true }),
+									},
+								],
+							}
+						: tab
+				);
+				return { ...s, executionQueue: remainingQueue, aiTabs: updatedAiTabs };
 			})
 		);
 		// Process the item

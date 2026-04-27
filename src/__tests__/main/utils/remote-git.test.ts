@@ -918,6 +918,97 @@ describe('remote-git.ts', () => {
 			expect(result.success).toBe(true);
 			expect(result.data!.branchMismatch).toBe(false);
 		});
+
+		it('should recover when remote branch is already checked out at another worktree', async () => {
+			// Check nested
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			// Check path exists
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			// Branch exists
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			// git worktree add fails because branch already attached
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already checked out at '/existing/wt/feature'", 128)
+			);
+			// findRemoteWorktreeForBranch → git worktree list --porcelain
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult(
+					[
+						'worktree /a',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /existing/wt/feature',
+						'HEAD bbb',
+						'branch refs/heads/feature',
+						'',
+					].join('\n')
+				)
+			);
+			// findRemoteWorktreeForBranch → test -d (path exists on remote)
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(true);
+			expect(result.data!.created).toBe(false);
+			expect(result.data!.alreadyExisted).toBe(true);
+			expect(result.data!.existingPath).toBe('/existing/wt/feature');
+			expect(result.data!.currentBranch).toBe('feature');
+			expect(result.data!.branchMismatch).toBe(false);
+		});
+
+		it('should fall through to error when porcelain returns a stale remote worktree path', async () => {
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already checked out at '/stale'", 128)
+			);
+			// porcelain still has a stale registration
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult(
+					[
+						'worktree /a',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /stale',
+						'HEAD bbb',
+						'branch refs/heads/feature',
+						'',
+					].join('\n')
+				)
+			);
+			// test -d on remote → MISSING (stale)
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('MISSING'));
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(false);
+			expect(result.data!.error).toContain('already checked out');
+		});
+
+		it('should still report error when "already used" but porcelain has no match', async () => {
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already used by worktree at '/gone'", 128)
+			);
+			// porcelain returns nothing matching
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult('worktree /a\nHEAD aaa\nbranch refs/heads/main\n')
+			);
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(false);
+			expect(result.data!.error).toContain('already used');
+		});
 	});
 
 	// =========================================================================

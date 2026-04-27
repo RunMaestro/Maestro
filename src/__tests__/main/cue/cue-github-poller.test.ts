@@ -24,12 +24,21 @@ const {
 	mockMarkGitHubItemSeen,
 	mockHasAnyGitHubSeen,
 	mockPruneGitHubSeen,
+	mockCaptureException,
 } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
 	mockIsGitHubItemSeen: vi.fn<(subId: string, key: string) => boolean>().mockReturnValue(false),
 	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string) => void>(),
 	mockHasAnyGitHubSeen: vi.fn<(subId: string) => boolean>().mockReturnValue(true),
 	mockPruneGitHubSeen: vi.fn<(olderThanMs: number) => void>(),
+	mockCaptureException: vi.fn(),
+}));
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (err: unknown, extra?: unknown) => {
+		mockCaptureException(err, extra);
+		return Promise.resolve();
+	},
 }));
 
 // Mock crypto.randomUUID
@@ -60,6 +69,8 @@ vi.mock('../../../main/cue/cue-db', () => ({
 
 import {
 	createCueGitHubPoller,
+	isGitHubRateLimitError,
+	GITHUB_RATE_LIMIT_MAX_BACKOFF_MS,
 	type CueGitHubPollerConfig,
 } from '../../../main/cue/cue-github-poller';
 
@@ -801,6 +812,127 @@ describe('cue-github-poller', () => {
 			const args = prListCall![1] as string[];
 			const stateIdx = args.indexOf('--state');
 			expect(args[stateIdx + 1]).toBe('open');
+
+			cleanup();
+		});
+	});
+
+	// ─── Phase 12C: rate-limit detection + backoff ─────────────────────────
+	describe('rate limit detection (isGitHubRateLimitError)', () => {
+		it('matches primary rate limit', () => {
+			expect(isGitHubRateLimitError(new Error('API rate limit exceeded'))).toBe(true);
+		});
+		it('matches secondary rate limit', () => {
+			expect(isGitHubRateLimitError(new Error('You have exceeded a secondary rate limit'))).toBe(
+				true
+			);
+		});
+		it('matches HTTP 403', () => {
+			const err = Object.assign(new Error('fail'), {
+				stderr: 'gh: HTTP 403: Forbidden (rate limited)',
+			});
+			expect(isGitHubRateLimitError(err)).toBe(true);
+		});
+		it('matches HTTP 429', () => {
+			const err = Object.assign(new Error('fail'), { stderr: 'HTTP 429: Too Many Requests' });
+			expect(isGitHubRateLimitError(err)).toBe(true);
+		});
+		it('is case insensitive', () => {
+			expect(isGitHubRateLimitError(new Error('API RATE LIMIT EXCEEDED'))).toBe(true);
+		});
+		it('does NOT match generic network errors', () => {
+			expect(isGitHubRateLimitError(new Error('ENOTFOUND api.github.com'))).toBe(false);
+		});
+		it('handles null/undefined safely', () => {
+			expect(isGitHubRateLimitError(null)).toBe(false);
+			expect(isGitHubRateLimitError(undefined)).toBe(false);
+		});
+	});
+
+	// ─── Phase 12C + 13A: backoff + Sentry behavior ────────────────────────
+	describe('rate-limit backoff and Sentry reporting', () => {
+		it('emits rateLimitBackoff payload on rate-limit error without Sentry', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'API rate limit exceeded');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+			// (chain) first execFile is --version (ok) but subsequent calls (pr list)
+			// match the reject pattern. Fall through to setupExecFileReject.
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const backoffLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => c[2] && (c[2] as { type?: string }).type === 'rateLimitBackoff'
+			);
+			expect(backoffLog).toBeDefined();
+			expect((backoffLog?.[2] as { backoffMs: number }).backoffMs).toBeGreaterThan(5 * 60 * 1000);
+			// Rate limits are NOT reported to Sentry
+			expect(mockCaptureException).not.toHaveBeenCalled();
+
+			cleanup();
+		});
+
+		it('reports non-rate-limit errors to Sentry with cue:github:doPoll tag', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'ENOTFOUND api.github.com');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls.length).toBeGreaterThan(0);
+
+			cleanup();
+		});
+
+		it('caps the backoff at GITHUB_RATE_LIMIT_MAX_BACKOFF_MS across many rate-limit hits', async () => {
+			// Sanity check: constant is 1 hour.
+			expect(GITHUB_RATE_LIMIT_MAX_BACKOFF_MS).toBe(60 * 60 * 1000);
+			const config = makeConfig();
+			let call = 0;
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				call++;
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				if ((args as string[]).includes('repo') && (args as string[]).includes('view'))
+					return cb(null, 'owner/repo', '');
+				return cb(new Error('secondary rate limit'), '', '');
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			// Many successive rate-limited cycles — advance by a huge amount each time.
+			for (let i = 0; i < 25; i++) {
+				await vi.advanceTimersByTimeAsync(GITHUB_RATE_LIMIT_MAX_BACKOFF_MS + 5000);
+			}
+
+			const backoffLogs = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.filter(
+				(c) => c[2] && (c[2] as { type?: string }).type === 'rateLimitBackoff'
+			);
+			const lastBackoff = backoffLogs.at(-1)?.[2] as { backoffMs: number } | undefined;
+			expect(lastBackoff?.backoffMs).toBe(GITHUB_RATE_LIMIT_MAX_BACKOFF_MS);
+			// Silences unused warning
+			expect(call).toBeGreaterThan(0);
+			cleanup();
+		});
+
+		it('Sentry-reports seed marker failure when markGitHubItemSeen throws during first-run poll failure', async () => {
+			mockHasAnyGitHubSeen.mockReturnValue(false); // first-run path
+			mockMarkGitHubItemSeen.mockImplementation(() => {
+				throw new Error('db not ready');
+			});
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'ECONNRESET');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const seedSentry = mockCaptureException.mock.calls.find(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:seedMarker'
+			);
+			expect(seedSentry).toBeDefined();
 
 			cleanup();
 		});

@@ -2,13 +2,17 @@
  * Cue CLI Executor — runs an `action: command` subscription whose
  * `command.mode` is `'cli'`.
  *
- * Currently supports one maestro-cli sub-command, `send`, which delivers a
- * message to a target session via `maestro-cli send <target> <message> --live`.
- * Both `target` and `message` (default: `{{CUE_SOURCE_OUTPUT}}`) go through
- * Cue template substitution before spawning. The same low-level
- * {@link runMaestroCliSend} helper backs the legacy `cli_output` Phase 3
- * post-completion side effect in `cue-run-manager.ts` so both paths share
- * one implementation.
+ * Delivers a message to a target session via
+ * `maestro-cli dispatch <target> <message>`. Both `target` and `message`
+ * (default: `{{CUE_SOURCE_OUTPUT}}`) go through Cue template substitution
+ * before spawning. The same low-level {@link runMaestroCliSend} helper
+ * backs the legacy `cli_output` Phase 3 post-completion side effect in
+ * `cue-run-manager.ts` so both paths share one implementation.
+ *
+ * Historically this called `maestro-cli send <target> <message> --live`;
+ * `--live` was renamed to the dedicated `dispatch` verb in PR1 of the CLI
+ * surface refactor. The desktop `send_command` WebSocket message that
+ * underlies the dispatch is unchanged, so behavior is identical.
  */
 
 import * as fs from 'fs';
@@ -138,7 +142,7 @@ function killCliProcess(child: ChildProcess, sync = false): void {
 }
 
 /**
- * Spawn `node maestro-cli.js send <target> <message> --live`. Used by both the
+ * Spawn `node maestro-cli.js dispatch <target> <message>`. Used by both the
  * primary cli executor and the legacy cli_output Phase 3 path. When `runId`
  * is provided, the child is registered in {@link activeCliProcesses} so
  * {@link stopCueCliRun} can cancel it on user stop.
@@ -156,7 +160,7 @@ export async function runMaestroCliSend(
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'send', target, truncated, '--live'], {
+			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
 				// Node — without this flag the spawn would launch the app instead
@@ -287,6 +291,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		sessionId: session.id,
 		sessionName: session.name,
 		subscriptionName: subscription.name,
+		pipelineName: subscription.pipeline_name,
 		event,
 		status: 'failed',
 		stdout: '',
@@ -321,7 +326,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 
 	onLog(
 		'cue',
-		`[CUE] Executing cli run ${runId}: "${subscription.name}" → maestro-cli send ${resolvedTarget} (message length=${resolvedMessage.length})`
+		`[CUE] Executing cli run ${runId}: "${subscription.name}" → maestro-cli dispatch ${resolvedTarget} (message length=${resolvedMessage.length})`
 	);
 
 	try {
@@ -342,15 +347,15 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		if (result.timedOut) {
 			onLog(
 				'warn',
-				`[CUE] "${subscription.name}" cli send timed out after ${clampedTimeout}ms — process killed`
+				`[CUE] "${subscription.name}" cli dispatch timed out after ${clampedTimeout}ms — process killed`
 			);
 		} else if (!result.ok) {
 			onLog(
 				'warn',
-				`[CUE] "${subscription.name}" cli send failed: exit=${result.exitCode} stderr=${result.stderr.slice(0, 500)}`
+				`[CUE] "${subscription.name}" cli dispatch failed: exit=${result.exitCode} stderr=${result.stderr.slice(0, 500)}`
 			);
 		} else {
-			onLog('cue', `[CUE] "${subscription.name}" cli send delivered to ${resolvedTarget}`);
+			onLog('cue', `[CUE] "${subscription.name}" cli dispatch delivered to ${resolvedTarget}`);
 		}
 		// CueRunResult only carries numeric exit codes; spawn-failure string codes
 		// (ENOENT etc.) are reported in stderr and surface as exitCode=null.
@@ -360,6 +365,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 			sessionId: session.id,
 			sessionName: session.name,
 			subscriptionName: subscription.name,
+			pipelineName: subscription.pipeline_name,
 			event,
 			status,
 			stdout: result.stdout,
@@ -375,7 +381,7 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 			subscription: subscription.name,
 			target: resolvedTarget,
 		});
-		const message = `cli send threw: ${err instanceof Error ? err.message : String(err)}`;
+		const message = `cli dispatch threw: ${err instanceof Error ? err.message : String(err)}`;
 		onLog('warn', `[CUE] "${subscription.name}" ${message}`);
 		return failedResult(message);
 	}

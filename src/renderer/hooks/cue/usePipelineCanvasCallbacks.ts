@@ -16,7 +16,7 @@
  * null on the first render after the drop.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
 	applyNodeChanges,
 	type Node,
@@ -39,6 +39,7 @@ import type {
 import { getNextPipelineColor } from '../../components/CuePipelineEditor/pipelineColors';
 import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 import { DEFAULT_TRIGGER_LABELS } from '../../components/CuePipelineEditor/utils/pipelineValidation';
+import { generateUUID } from '../../../shared/uuid';
 
 /** Delay before selecting a dropped node — lets ReactFlow mount the new node
  *  before selection fires, otherwise `selectedNode` resolves to null on the
@@ -232,27 +233,40 @@ export function usePipelineCanvasCallbacks({
 		[isAllPipelinesView, setPipelineState]
 	);
 
+	// Phase 14C — stabilize isValidConnection identity.
+	// ReactFlow re-registers its internal validation bookkeeping whenever the
+	// callback identity changes. Previously nodes/edges were in the dep array,
+	// so every node drag (which produces a new `nodes` array reference via
+	// applyNodeChanges) invalidated the callback. Ref-forwarding keeps the
+	// callback identity stable while still reading the latest state at call
+	// time (isValidConnection is called synchronously during a connection
+	// drag, so the refs are always up to date).
+	const nodesRef = useRef(nodes);
+	nodesRef.current = nodes;
+	const edgesRef = useRef(edges);
+	edgesRef.current = edges;
+
 	const isValidConnection = useCallback(
 		(connection: Connection) => {
 			if (isAllPipelinesView) return false;
 			if (!connection.source || !connection.target) return false;
 			if (connection.source === connection.target) return false;
 
-			const sourceNode = nodes.find((n) => n.id === connection.source);
-			const targetNode = nodes.find((n) => n.id === connection.target);
+			const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
+			const targetNode = nodesRef.current.find((n) => n.id === connection.target);
 			if (!sourceNode || !targetNode) return false;
 
 			if (sourceNode.type === 'trigger' && targetNode.type === 'trigger') return false;
 			if (targetNode.type === 'trigger') return false;
 
-			const exists = edges.some(
+			const exists = edgesRef.current.some(
 				(e) => e.source === connection.source && e.target === connection.target
 			);
 			if (exists) return false;
 
 			return true;
 		},
-		[isAllPipelinesView, nodes, edges]
+		[isAllPipelinesView]
 	);
 
 	const onDragOver = useCallback((event: React.DragEvent) => {
@@ -343,10 +357,17 @@ export function usePipelineCanvasCallbacks({
 						data: triggerData,
 					};
 				} else if (dropData.type === 'agent' && dropData.sessionId) {
+					// Each drop creates a fresh visual instance — even when the
+					// user drags the same agent onto the canvas twice. The
+					// `nodeKey` is what lets the YAML round-trip preserve those
+					// distinct instances instead of merging them by sessionName
+					// (the prior behavior, which silently fan-in'd two trigger
+					// edges into one shared node on reload).
 					const agentData: AgentNodeData = {
 						sessionId: dropData.sessionId,
 						sessionName: dropData.sessionName ?? 'Agent',
 						toolType: dropData.toolType ?? 'unknown',
+						nodeKey: generateUUID(),
 					};
 					newNode = {
 						id: `agent-${dropData.sessionId}-${Date.now()}`,
@@ -362,11 +383,12 @@ export function usePipelineCanvasCallbacks({
 					const suffix = Date.now().toString(36).slice(-5);
 					const ownerId = dropData.owningSessionId ?? '';
 					const commandData: CommandNodeData = {
-						name: `${targetPipeline.name}-cmd-${suffix}`,
+						name: `cmd-${suffix}`,
 						mode: 'shell',
 						shell: '',
 						owningSessionId: ownerId,
 						owningSessionName: dropData.owningSessionName ?? '',
+						nodeKey: generateUUID(),
 					};
 					newNode = {
 						id: `command-${ownerId || 'unbound'}-${Date.now()}`,

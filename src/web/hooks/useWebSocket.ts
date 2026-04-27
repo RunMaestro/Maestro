@@ -354,6 +354,8 @@ export interface SettingsChangedMessage extends ServerMessage {
 		audioFeedbackEnabled: boolean;
 		colorBlindMode: string;
 		conductorProfile: string;
+		/** Max agent output lines per message before truncation. `null` = All (Infinity serialized). */
+		maxOutputLines: number | null;
 		/** User-customized keyboard shortcut overrides (sparse; unset = use default). */
 		shortcuts: Record<string, import('../../shared/shortcut-types').Shortcut>;
 	};

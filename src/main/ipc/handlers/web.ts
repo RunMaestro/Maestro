@@ -50,6 +50,20 @@ export interface WebHandlerDependencies {
 }
 
 /**
+ * Write the CLI discovery file for the currently-running server so the CLI
+ * can locate it. Centralized so `ensureCliServer` and `live:startServer`
+ * cannot drift on pid/startedAt semantics or future fields.
+ */
+function refreshCliDiscoveryFile(port: number, token: string): void {
+	writeCliServerInfo({
+		port,
+		token,
+		pid: process.pid,
+		startedAt: Date.now(),
+	});
+}
+
+/**
  * Ensure the CLI server is running and write the discovery file.
  *
  * Called during app initialization to make the web server always available
@@ -74,22 +88,10 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<voi
 			logger.info('Starting CLI server', 'CliServer');
 			const { port, token } = await webServer.start();
 			logger.info(`CLI server running on port ${port}`, 'CliServer');
-
-			// Write discovery file so CLI can find us
-			writeCliServerInfo({
-				port,
-				token,
-				pid: process.pid,
-				startedAt: Date.now(),
-			});
+			refreshCliDiscoveryFile(port, token);
 		} else {
 			// Server already running — still write discovery file in case it's stale
-			writeCliServerInfo({
-				port: webServer.getPort(),
-				token: webServer.getSecurityToken(),
-				pid: process.pid,
-				startedAt: Date.now(),
-			});
+			refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
 		}
 	} catch (error: any) {
 		logger.error(`Failed to start CLI server: ${error.message}`, 'CliServer');
@@ -270,6 +272,30 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		try {
 			let webServer = getWebServer();
 
+			// Rotate the security token on every Live toggle unless the user
+			// opted into Persistent Web Link. After live:stopServer the CLI-only
+			// server (spun up by ensureCliServer) keeps the previous token —
+			// reusing it on the next Live ON would silently leak the prior URL.
+			// Tear it down so createWebServer() mints a fresh ephemeral token.
+			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
+			if (webServer && !persistentWebLink) {
+				try {
+					await webServer.stop();
+				} catch (err: any) {
+					// Don't drop the reference — the old server may still be bound
+					// to its port. Nulling it would leak a live server and the next
+					// start() would either collide on a custom port or run a second
+					// server in parallel on a random one.
+					logger.error(
+						`Failed to stop existing server before token rotation: ${err?.message ?? err}`,
+						'WebServer'
+					);
+					return { success: false, error: err?.message ?? String(err) };
+				}
+				setWebServer(null);
+				webServer = null;
+			}
+
 			// Create web server if it doesn't exist
 			if (!webServer) {
 				logger.info('Creating web server', 'WebServer');
@@ -280,12 +306,28 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// Start if not already running
 			if (!webServer.isActive()) {
 				logger.info('Starting web server', 'WebServer');
-				const { port, url } = await webServer.start();
+				const { port, token, url } = await webServer.start();
 				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
+
+				// Refresh CLI discovery file so the CLI can reconnect after a
+				// stop/start cycle (ensureCliServer only runs once at app launch).
+				// Non-fatal: the server is genuinely up — a failure here would only
+				// break CLI IPC, so don't let it mask the UI's success path.
+				try {
+					refreshCliDiscoveryFile(port, token);
+				} catch (err: any) {
+					logger.error(`Failed to write CLI discovery file: ${err?.message ?? err}`, 'WebServer');
+				}
 				return { success: true, url };
 			}
 
-			// Already running
+			// Already running — refresh discovery file in case it's stale.
+			// Same non-fatal treatment: server is up, CLI discovery is secondary.
+			try {
+				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
+			} catch (err: any) {
+				logger.error(`Failed to refresh CLI discovery file: ${err?.message ?? err}`, 'WebServer');
+			}
 			return { success: true, url: webServer.getSecureUrl() };
 		} catch (error: any) {
 			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
@@ -297,6 +339,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:stopServer', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			// Even with no server, ensure the CLI channel is available so
+			// maestro-cli works after Live Mode toggles.
+			await ensureCliServer(deps);
 			return { success: true };
 		}
 
@@ -304,13 +349,18 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
+			deleteCliServerInfo();
 			logger.info('Web server stopped and cleaned up', 'WebServer');
-			return { success: true };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
 			return { success: false, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token. The user
+		// turned off Live Mode (closing the public URL) but the CLI server
+		// must remain reachable for maestro-cli.
+		await ensureCliServer(deps);
+		return { success: true };
 	});
 
 	// Persist the current web server's security token and enable persistent web link.
@@ -370,6 +420,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:disableAll', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			await ensureCliServer(deps);
 			return { success: true, count: 0 };
 		}
 
@@ -385,12 +436,16 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
 			setWebServer(null);
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
-			return { success: true, count };
+			deleteCliServerInfo();
 		} catch (error: any) {
 			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
 			return { success: false, count, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token so maestro-cli
+		// continues working after Live Mode is fully disabled.
+		await ensureCliServer(deps);
+		return { success: true, count };
 	});
 
 	// Web server management

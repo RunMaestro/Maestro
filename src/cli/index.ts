@@ -2,9 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Command, Option } from 'commander';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -12,6 +10,7 @@ import { showPlaybook } from './commands/show-playbook';
 import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
+import { dispatch } from './commands/dispatch';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { openBrowser } from './commands/open-browser';
@@ -40,22 +39,20 @@ import {
 	settingsAgentReset,
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
+import { gistCreate } from './commands/gist';
+import { notifyToast } from './commands/notify-toast';
+import { notifyFlash } from './commands/notify-flash';
 
-// Read version from package.json at runtime
-function getVersion(): string {
-	try {
-		// When bundled, __dirname points to dist/cli, so go up to project root
-		const packagePath = path.resolve(__dirname, '../../package.json');
-		const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-		return packageJson.version;
-	} catch {
-		return '0.0.0';
-	}
-}
+// Injected at build time by scripts/build-cli.mjs via esbuild `define`.
+// The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
+// throwing a ReferenceError; in those paths the constant is never substituted.
+declare const __MAESTRO_CLI_VERSION__: string;
+const cliVersion: string =
+	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
 
 const program = new Command();
 
-program.name('maestro-cli').description('Command-line interface for Maestro').version(getVersion());
+program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
 
 // List commands
 const list = program.command('list').description('List resources');
@@ -119,6 +116,7 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
@@ -135,16 +133,55 @@ clean
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cleanPlaybooks);
 
-// Send command - send a message to an agent and get a JSON response
+// Send command - run an agent locally and return its response synchronously.
+// `--live`, `--new-tab`, and `--force` are retained as hidden aliases for
+// `dispatch` during the deprecation window; new callers should use
+// `maestro-cli dispatch` instead. Hiding them from `--help` keeps new users
+// off the deprecated path while still parsing the flags from existing scripts.
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
-	.option('-l, --live', 'Send message through Maestro desktop (appears in tab)')
-	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
+	.addOption(
+		new Option(
+			'-l, --live',
+			'Send message through Maestro desktop (deprecated: use `dispatch`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'--new-tab',
+			'Create a new AI tab instead of writing to the active one (deprecated: use `dispatch --new-tab`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'-f, --force',
+			'Bypass the busy-state guard when writing to the active tab (deprecated: use `dispatch --force`)'
+		).hideHelp()
+	)
 	.action(send);
+
+// Dispatch command - hand a prompt to the desktop and return tab/session ID.
+// Splits the desktop-handoff half of `send --live` into a dedicated verb so
+// callers can address the same tab again without owning a persistent channel.
+program
+	.command('dispatch <agent-id> <message>')
+	.description(
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+	)
+	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option(
+		'-s, --session <id>',
+		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
+	)
+	.option(
+		'-f, --force',
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
+	)
+	.action(dispatch);
 
 // Open file command - open a file in the Maestro desktop app
 program
@@ -265,7 +302,7 @@ program
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
 	.option(
 		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, gemini-cli, qwen3-coder, aider)',
+		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)',
 		'claude-code'
 	)
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
@@ -285,6 +322,10 @@ program
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
 	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--auto-run-folder <path>',
+		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -407,6 +448,63 @@ prompts
 	.description('Print a prompt by id (honors user customizations from Settings → Maestro Prompts)')
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
+
+// Gist commands — publish agent session transcripts to GitHub gists via the
+// running Maestro desktop app. Grouped as a subcommand so we can add more gist
+// operations (list, show, delete, etc.) later.
+const gist = program.command('gist').description('Publish session context to GitHub gists');
+
+gist
+	.command('create <agent-id>')
+	.description(
+		"Publish an agent's session transcript as a GitHub gist (requires running Maestro app)"
+	)
+	.option('-d, --description <text>', 'Gist description')
+	.option('-p, --public', 'Create a public gist (default: private)')
+	.action(gistCreate);
+
+// Notify commands — surface notifications in the Maestro desktop app
+const notify = program
+	.command('notify')
+	.description('Show notifications in the Maestro desktop app');
+
+notify
+	.command('toast <title> <message>')
+	.description('Show a toast notification (queued, click X or icon to dismiss)')
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
+	.option('-t, --type <type>', '[deprecated] success | info | warning | error — prefer --color')
+	.option(
+		'--timeout <seconds>',
+		'Auto-dismiss after N seconds (range: (0, 60]; wins over --duration)'
+	)
+	.option(
+		'-d, --duration <seconds>',
+		'Auto-dismiss after N seconds (range: (0, 60]; omitted = app default)'
+	)
+	.option(
+		'--dismissible',
+		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout/--duration'
+	)
+	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyToast);
+
+notify
+	.command('flash <message>')
+	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
+	.option(
+		'-v, --variant <variant>',
+		'[deprecated] success | info | warning | error — prefer --color'
+	)
+	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
+	.option(
+		'-t, --timeout <seconds>',
+		'Auto-dismiss after N seconds (range: (0, 5]; default 1.5; wins over --duration)'
+	)
+	.option('-d, --duration <ms>', 'Auto-dismiss after N ms (range: (0, 5000]; default 1500)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyFlash);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

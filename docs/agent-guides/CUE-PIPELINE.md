@@ -44,7 +44,7 @@ Canonical types now live in `src/shared/cue/contracts.ts` (re-exported via `src/
 
 - `CueEventType` - Union of all 8 trigger types (including `app.startup`)
 - `CueSubscription` - A trigger-prompt pairing with optional filter, fan-out, schedule, watch pattern, etc.
-- `CueSettings` - Global config: `timeout_minutes` (default 30), `timeout_on_fail` ("break"/"continue"), `max_concurrent` (default 1), `queue_size` (default 10)
+- `CueSettings` - Global config: `timeout_minutes` (default 30), `timeout_on_fail` ("break"/"continue"), `max_concurrent` (default 1), `queue_size` (default 512, max 10000)
 - `CueConfig` - Top-level parsed YAML: `{ subscriptions, settings }`
 - `CueEvent` - An event instance with id, type, timestamp, triggerName, payload
 - `CueRunResult` - Result of a completed/failed run (stdout, stderr, exitCode, durationMs, etc.)
@@ -319,6 +319,24 @@ Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 | `edges/`                  | Custom React Flow edge components                |
 | `panels/`                 | Node and edge configuration panels               |
 | `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
+
+#### Visual node identity round-trip (`target_node_key` / `fan_out_node_keys`)
+
+Every agent and command node dropped onto the canvas gets a stable
+`nodeKey` UUID (generated in `usePipelineCanvasCallbacks.ts`). On save,
+`pipelineToYaml.ts` writes that key as `target_node_key` (single-target
+subs) or `fan_out_node_keys[i]` (fan-out positions) on the owning
+subscription. On load, `yamlToPipeline.ts`'s `getOrCreateAgentNode` and
+`createCommandNode` resolve these keys via a per-pipeline `nodeKeyToNode`
+map: matching keys collapse to one shared visual node (explicit
+fan-in), distinct keys produce distinct visual nodes — even when both
+target the same `agent_id`. Subs with no key fall back to the legacy
+dedup-by-sessionName path (preserves load behavior for hand-written or
+pre-fix YAML). The main-process normalizer
+(`cue-config-normalizer.ts:normalizeSubscription`) must passthrough both
+fields — it allowlists every persisted field, and the renderer
+silently re-merges visual nodes if either field gets dropped there.
+The engine itself ignores these fields entirely.
 
 ### CueYamlEditor (`src/renderer/components/CueYamlEditor/`)
 

@@ -27,6 +27,13 @@ export interface UseCueGraphDataParams {
 export interface UseCueGraphDataReturn {
 	graphSessions: CueGraphSession[];
 	graphError: string | null;
+	/**
+	 * True until the FIRST fetch resolves (success or failure). Subsequent
+	 * refetches (tab change, refreshGraphData()) do NOT flip this back to true,
+	 * so the editor's loading spinner only appears on initial mount and not on
+	 * every refresh.
+	 */
+	initialLoading: boolean;
 	dashboardPipelines: ReturnType<typeof graphSessionsToPipelines>;
 	subscriptionPipelineMap: ReturnType<typeof buildSubscriptionPipelineMap>;
 	refreshGraphData: () => void;
@@ -38,6 +45,7 @@ export function useCueGraphData({
 }: UseCueGraphDataParams): UseCueGraphDataReturn {
 	const [graphSessions, setGraphSessions] = useState<CueGraphSession[]>([]);
 	const [graphError, setGraphError] = useState<string | null>(null);
+	const [initialLoading, setInitialLoading] = useState(true);
 
 	// Monotonic request id so older in-flight fetches cannot overwrite a newer one.
 	// Each fetch captures the id at start and bails out if a newer request began
@@ -62,11 +70,13 @@ export function useCueGraphData({
 				if (!mountedRef.current) return;
 				if (myId !== fetchIdRef.current) return;
 				setGraphSessions(data);
+				setInitialLoading(false);
 			})
 			.catch((err: unknown) => {
 				if (!mountedRef.current) return;
 				if (myId !== fetchIdRef.current) return;
 				setGraphError(err instanceof Error ? err.message : 'Failed to load graph data');
+				setInitialLoading(false);
 			});
 	}, []);
 
@@ -88,6 +98,7 @@ export function useCueGraphData({
 	return {
 		graphSessions,
 		graphError,
+		initialLoading,
 		dashboardPipelines,
 		subscriptionPipelineMap,
 		refreshGraphData: runFetch,

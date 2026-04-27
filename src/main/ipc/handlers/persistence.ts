@@ -17,6 +17,10 @@ import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
+import {
+	WEB_SETTINGS_BROADCAST_KEYS,
+	buildWebSettingsSnapshot,
+} from '../../web-server/web-settings-snapshot';
 
 // Re-export types from canonical source so existing imports from './persistence' still work
 export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
@@ -87,6 +91,14 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 				`Broadcasted custom commands change to web clients: ${value.length} commands`,
 				'WebServer'
 			);
+		}
+
+		// Broadcast generic web-relevant settings to connected web clients so
+		// desktop-originated edits land live (no reload required). The matching
+		// web→desktop write path also calls broadcastSettingsChanged via the
+		// same snapshot helper.
+		if (WEB_SETTINGS_BROADCAST_KEYS.has(key) && webServer && webServer.getWebClientCount() > 0) {
+			webServer.broadcastSettingsChanged(buildWebSettingsSnapshot(settingsStore));
 		}
 
 		return true;

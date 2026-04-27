@@ -147,6 +147,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 
 	// --- Editor / UI Behavior ---
+	spellCheck: {
+		description: 'Enable spell checking in input areas (prompt input, group chat, file editor).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	conductorProfile: {
 		description: 'Custom persona/instructions for the conductor (system prompt context).',
 		type: 'string',
@@ -281,6 +287,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		sensitive: true,
 		category: 'advanced',
 	},
+	allowConcurrentSend: {
+		description:
+			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 
 	// --- Shell ---
 	defaultShell: {
@@ -384,7 +397,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 
 	// --- Updates & Crash Reporting ---
 	checkForUpdatesOnStartup: {
-		description: 'Automatically check for Maestro updates on launch.',
+		description:
+			'Automatically check for Maestro updates on launch and once per day while running.',
 		type: 'boolean',
 		default: true,
 		category: 'updates',
@@ -489,6 +503,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'advanced',
 	},
+	dotfilesToggleHidden: {
+		description:
+			'Hide the ".files" (show/hide dotfiles) button in the file explorer toolbar. Intended for corporate/managed installs where dotfiles should remain hidden.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	autoRunInactivityTimeoutMin: {
 		description:
 			'Minutes of no agent output before the Auto Run watchdog considers a task stalled and force-kills it. Set to 0 to disable the watchdog (unlimited).',
@@ -575,9 +596,10 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'document-graph',
 	},
 	documentGraphLayoutType: {
-		description: 'Layout algorithm for the document graph. Values: mindmap, radial, force.',
+		description:
+			'Layout algorithm for the document graph. Values: mindmap, radial, hierarchical, force.',
 		type: 'string',
-		default: 'mindmap',
+		default: 'hierarchical',
 		category: 'document-graph',
 	},
 

@@ -322,7 +322,7 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider)
+			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
 			expect(agents.length).toBe(8);
 
 			const agentIds = agents.map((a) => a.id);
@@ -333,7 +333,7 @@ describe('agent-detector', () => {
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('opencode');
 			expect(agentIds).toContain('factory-droid');
-			expect(agentIds).toContain('aider');
+			expect(agentIds).toContain('copilot-cli');
 		});
 
 		it('should mark agents as available when binary is found', async () => {
@@ -968,7 +968,7 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
-			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider)
+			// Should have all 8 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, copilot-cli)
 			expect(result.length).toBe(8);
 		});
 
@@ -1619,6 +1619,28 @@ describe('agent-detector', () => {
 			// Should include union of visible models' reasoning levels, sorted by severity
 			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 			// Hidden model's levels should not be excluded (they share the same platform levels)
+		});
+
+		it('should fall back to static options for select config options without dynamic discovery', async () => {
+			// Copilot-CLI's reasoningEffort is declared with a static `options` array
+			// and no dynamic discovery branch. Without the static fallback the
+			// effort dropdown in the UI would stay empty and hidden.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'copilot') {
+					return { stdout: '/usr/bin/copilot\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('copilot-cli', 'reasoningEffort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh']);
 		});
 
 		it('should return empty array for unsupported option keys', async () => {

@@ -59,6 +59,11 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -74,6 +79,7 @@ interface RightPanelProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => Promise<void>;
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
+	cancelFileTreeLoad: (sessionId: string) => void;
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
 
@@ -163,11 +169,13 @@ export const RightPanel = memo(
 			fileTreeContainerRef,
 			fileTreeFilterInputRef,
 			toggleFolder,
+			toggleFolderRecursive,
 			handleFileClick,
 			expandAllFolders,
 			collapseAllFolders,
 			updateSessionWorkingDirectory,
 			refreshFileTree,
+			cancelFileTreeLoad,
 			onAutoRefreshChange,
 			onShowFlash,
 			onAutoRunContentChange,
@@ -206,7 +214,7 @@ export const RightPanel = memo(
 			transitionClass: rightPanelTransitionClass,
 		} = useResizablePanel({
 			width: rightPanelWidth,
-			minWidth: 384,
+			minWidth: 280,
 			maxWidth: 800,
 			settingsKey: 'rightPanelWidth',
 			setWidth: setRightPanelWidth,
@@ -512,11 +520,13 @@ export const RightPanel = memo(
 							setActiveFocus={setActiveFocus}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={toggleFolder}
+							toggleFolderRecursive={toggleFolderRecursive}
 							handleFileClick={handleFileClick}
 							expandAllFolders={expandAllFolders}
 							collapseAllFolders={collapseAllFolders}
 							updateSessionWorkingDirectory={updateSessionWorkingDirectory}
 							refreshFileTree={refreshFileTree}
+							cancelFileTreeLoad={cancelFileTreeLoad}
 							setSessions={setSessions}
 							onAutoRefreshChange={onAutoRefreshChange}
 							onShowFlash={onShowFlash}

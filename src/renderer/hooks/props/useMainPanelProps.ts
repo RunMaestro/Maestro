@@ -57,7 +57,6 @@ export interface UseMainPanelPropsDeps {
 	slashCommandOpen: boolean;
 	slashCommands: Array<{ command: string; description: string }>;
 	selectedSlashCommandIndex: number;
-	filePreviewLoading: { name: string; path: string } | null;
 
 	// Tab completion state
 	tabCompletionOpen: boolean;
@@ -331,7 +330,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			slashCommandOpen: deps.slashCommandOpen,
 			slashCommands: deps.slashCommands,
 			selectedSlashCommandIndex: deps.selectedSlashCommandIndex,
-			filePreviewLoading: deps.filePreviewLoading,
 			setGitDiffPreview: deps.setGitDiffPreview,
 			setLogViewerOpen: deps.setLogViewerOpen,
 			setAgentSessionsOpen: deps.setAgentSessionsOpen,
@@ -487,10 +485,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),
-			onPublishMessageGist: (text: string) => {
+			onPublishMessageGist: (text: string, messageId?: string) => {
 				if (!text.trim()) return;
 				const filename = `ai_response_${Date.now()}.md`;
-				useTabStore.getState().setTabGistContent({ filename, content: text });
+				useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
 				deps.setGistPublishModalOpen(true);
 			},
 			hasGist: deps.hasGist,
@@ -543,7 +541,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.slashCommandOpen,
 			deps.slashCommands,
 			deps.selectedSlashCommandIndex,
-			deps.filePreviewLoading,
 			deps.tabCompletionOpen,
 			deps.tabCompletionSuggestions,
 			deps.selectedTabCompletionIndex,

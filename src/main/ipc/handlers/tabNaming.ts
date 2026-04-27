@@ -153,6 +153,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// The prompt contains special characters that break when passed through multiple layers
 					// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
 					let shouldSendPromptViaStdin = false;
+					let promptAlreadyInArgs = false;
 					if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
 						const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 						const sshResult = getSshRemoteConfig(sshStoreAdapter, {
@@ -185,6 +186,26 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 										agentSupportsStreamJson,
 									}
 								);
+							} else {
+								// Non-stream-json agents (copilot-cli, factory-droid, etc.) need the
+								// prompt embedded inside the bash -c '<...>' wrapper. If we let
+								// ChildProcessSpawner append `-p <prompt>` after buildSshCommand wraps
+								// the agent invocation, those args land OUTSIDE the wrapper and get
+								// swallowed as positional params to the remote bash, never reaching
+								// the agent. Build the prompt into args here so it's quoted as part
+								// of the wrapped command.
+								if (agent.promptArgs) {
+									finalArgs = [...finalArgs, ...agent.promptArgs(fullPrompt)];
+								} else if (agent.noPromptSeparator) {
+									finalArgs = [...finalArgs, fullPrompt];
+								} else {
+									finalArgs = [...finalArgs, '--', fullPrompt];
+								}
+								promptAlreadyInArgs = true;
+								logger.debug('Embedded tab naming prompt inside SSH wrapper args', LOG_CONTEXT, {
+									sessionId,
+									promptLength: fullPrompt.length,
+								});
 							}
 
 							const sshCommand = await buildSshCommand(sshResult.config, {
@@ -311,8 +332,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							args: finalArgs,
 							prompt: fullPrompt,
 							customEnvVars,
+							promptArgs: agent.promptArgs,
+							noPromptSeparator: agent.noPromptSeparator,
 							sendPromptViaStdin: shouldSendPromptViaStdin,
 							sendPromptViaStdinRaw,
+							promptAlreadyInArgs,
 						});
 					});
 				} catch (error) {

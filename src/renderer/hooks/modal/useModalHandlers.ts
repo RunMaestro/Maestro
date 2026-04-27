@@ -18,10 +18,16 @@ import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateSessionWith,
+} from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
@@ -37,6 +43,12 @@ export interface ModalHandlersReturn {
 	/** The error to display — live session error or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
+	/**
+	 * When defined, jumps the Left Bar to the failing agent and activates the
+	 * failing AI tab. Undefined when not applicable (historical error, or the
+	 * user is already viewing the failing tab).
+	 */
+	handleJumpToFailingAgent?: () => void;
 
 	// Simple close handlers
 	handleCloseGitDiff: () => void;
@@ -468,6 +480,13 @@ export function useModalHandlers(
 	}, []);
 
 	const handleOpenFeedbackModal = useCallback(() => {
+		// If the modal is minimized to the sidebar Feedback button, restore it
+		// instead of opening a fresh one (preserves the in-flight draft).
+		const draft = useFeedbackDraftStore.getState();
+		if (draft.isMinimized) {
+			draft.setMinimized(false);
+			return;
+		}
 		getModalActions().setFeedbackModalOpen(true);
 	}, []);
 
@@ -816,10 +835,48 @@ export function useModalHandlers(
 	}, [settingsLoaded, sessionsLoaded]);
 
 	// ====================================================================
-	// Git Diff Opener (Tier 3C)
+	// Active Session Subscription (used by Git Diff, Director's Notes, and
+	// the Agent Error "Jump to failing tab" affordance)
 	// ====================================================================
 
 	const activeSession = useSessionStore(selectActiveSession);
+
+	// ====================================================================
+	// Agent Error: Jump to Failing Tab
+	// ====================================================================
+
+	// Only offer "Jump to failing tab" for live errors (not historical, since
+	// the user already navigated to view the historical entry) and only when
+	// the user isn't already focused on the failing tab. The failing tab id
+	// is recorded on the session as `agentErrorTabId`.
+	const failingTabId = !isHistorical ? errorSession?.agentErrorTabId : undefined;
+	const isAlreadyOnFailingTab =
+		errorSession != null &&
+		failingTabId != null &&
+		activeSession?.id === errorSession.id &&
+		activeSession.activeTabId === failingTabId &&
+		activeSession.inputMode === 'ai';
+
+	const handleJumpToFailingAgent = useMemo(() => {
+		if (!errorSession || !failingTabId || isAlreadyOnFailingTab) return undefined;
+		return () => {
+			useSessionStore.getState().setActiveSessionId(errorSession.id);
+			updateSessionWith(errorSession.id, (s) =>
+				s.aiTabs?.some((t) => t.id === failingTabId)
+					? {
+							...s,
+							activeTabId: failingTabId,
+							activeFileTabId: null,
+							inputMode: 'ai' as const,
+						}
+					: { ...s, activeFileTabId: null, inputMode: 'ai' as const }
+			);
+		};
+	}, [errorSession, failingTabId, isAlreadyOnFailingTab]);
+
+	// ====================================================================
+	// Git Diff Opener (Tier 3C)
+	// ====================================================================
 
 	const handleViewGitDiff = useCallback(async () => {
 		if (!activeSession || !activeSession.isGitRepo) return;
@@ -886,6 +943,7 @@ export function useModalHandlers(
 		errorSession,
 		effectiveAgentError: effectiveError ?? null,
 		recoveryActions,
+		handleJumpToFailingAgent,
 
 		// Simple close handlers
 		handleCloseGitDiff,

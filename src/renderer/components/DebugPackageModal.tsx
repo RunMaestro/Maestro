@@ -15,6 +15,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { notifyToast } from '../stores/notificationStore';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { logger } from '../utils/logger';
 
 interface DebugPackageModalProps {
@@ -160,11 +161,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 			navigator.clipboard
 				.writeText(resultPath)
 				.then(() => {
-					notifyToast({
-						type: 'success',
-						title: 'Copied',
-						message: 'File path copied to clipboard',
-					});
+					flashCopiedToClipboard(resultPath, 'File Path Copied');
 				})
 				.catch(console.error);
 		}

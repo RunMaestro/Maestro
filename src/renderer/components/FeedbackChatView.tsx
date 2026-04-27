@@ -41,6 +41,7 @@ import {
 import { isBetaAgent } from '../../shared/agentMetadata';
 import { ThemedSelect } from './shared/ThemedSelect';
 import { openUrl } from '../utils/openUrl';
+import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 
 // ============================================================================
 // Constants
@@ -220,8 +221,19 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	useEffect(() => {
 		return () => {
 			managerRef.current.cleanup();
+			useFeedbackDraftStore.getState().reset();
 		};
 	}, []);
+
+	// --- Publish draft state so the sidebar Feedback button + close handler
+	//     know whether the user has unsaved work that would be lost. Once the
+	//     issue is submitted (step === 'done') there's nothing left to lose.
+	useEffect(() => {
+		const hasContent =
+			messages.length > 0 || inputValue.trim().length > 0 || attachments.length > 0;
+		const hasDraft = hasContent && step !== 'done';
+		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
+	}, [messages, inputValue, attachments, step]);
 
 	// --- Background issue search — fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -538,14 +550,14 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					</div>
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Thank you for taking the time to give us feedback! Whether you're reporting an issue or
-						recommending a feature, you'll work with an AI agent that will understand what you need
-						and create a GitHub issue for us to act on.
+						recommending a feature, an AI will help shape it into a well-structured GitHub issue for
+						us to act on. Pick which AI provider powers that conversation below.
 					</p>
 				</div>
 
 				<div className="flex flex-col gap-2">
 					<label className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
-						Agent
+						AI Provider
 					</label>
 					<ThemedSelect
 						value={selectedAgent}
@@ -556,9 +568,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						onChange={(v) => setSelectedAgent(v as ToolType)}
 						theme={theme}
 					/>
+					<p className="text-[11px]" style={{ color: theme.colors.textDim }}>
+						This selects the provider that drives the feedback conversation — it doesn't create a
+						new agent in your sidebar.
+					</p>
 					{availableTiles.length === 0 && (
 						<p className="text-xs" style={{ color: theme.colors.warning }}>
-							No supported agents detected. Install Claude Code, Codex, or OpenCode.
+							No supported AI providers detected. Install Claude Code, Codex, or OpenCode.
 						</p>
 					)}
 				</div>
@@ -646,7 +662,10 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						</button>
 						<button
 							type="button"
-							onClick={() => openUrl(createdIssueUrl)}
+							onClick={() => {
+								openUrl(createdIssueUrl);
+								onCancel();
+							}}
 							className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
 							style={{ color: theme.colors.textDim }}
 							title="Open in browser"

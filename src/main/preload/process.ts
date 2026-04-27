@@ -128,6 +128,10 @@ export interface ToolExecutionEvent {
 	toolName: string;
 	state?: unknown;
 	timestamp: number;
+	/** Stable correlation id from the agent. When present, the renderer
+	 *  merges `running` and `completed`/`failed` events into a single log
+	 *  entry instead of appending two bubbles. */
+	toolCallId?: string;
 }
 
 /**
@@ -292,22 +296,32 @@ export function createProcessApi() {
 		 * inputMode is optional - if provided, renderer should use it instead of session state
 		 */
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				command: string,
-				inputMode?: 'ai' | 'terminal'
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
 					inputMode,
+					tabId,
+					force,
 				});
 				try {
-					callback(sessionId, command, inputMode);
+					callback(sessionId, command, inputMode, tabId, force);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -469,6 +483,43 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote toast notifications from CLI/web interface.
+		 * Color is one of the 5 canonical Toast/Center Flash colors.
+		 * `dismissible: true` makes the toast sticky (no auto-dismiss, click-to-close).
+		 */
+		onRemoteNotifyToast: (
+			callback: (params: {
+				title: string;
+				message: string;
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				duration?: number;
+				dismissible?: boolean;
+				sessionId?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyToast', handler);
+			return () => ipcRenderer.removeListener('remote:notifyToast', handler);
+		},
+
+		/**
+		 * Subscribe to remote center-flash notifications from CLI/web interface.
+		 * Color is one of the 5 canonical Center Flash colors.
+		 */
+		onRemoteNotifyCenterFlash: (
+			callback: (params: {
+				message: string;
+				detail?: string;
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				duration?: number;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyCenterFlash', handler);
+			return () => ipcRenderer.removeListener('remote:notifyCenterFlash', handler);
+		},
+
+		/**
 		 * Subscribe to remote open browser tab from CLI/web interface.
 		 * Renderer must ack success via sendRemoteOpenBrowserTabResponse.
 		 * If the callback throws synchronously, ack false first so the CLI
@@ -555,10 +606,17 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Send response for remote "new AI tab with prompt"
+		 * Send response for remote "new AI tab with prompt".
+		 * `tabId` is the id of the freshly-created tab — surfaced so
+		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
+		 * caller without owning a persistent channel.
 		 */
-		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
+		sendRemoteNewAITabWithPromptResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		): void => {
+			ipcRenderer.send(responseChannel, { success, tabId });
 		},
 
 		/**
@@ -1104,6 +1162,51 @@ export function createProcessApi() {
 		 */
 		sendRemoteSummarizeContextResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote create-gist requests from the web/CLI interface.
+		 * Uses request-response pattern with a unique responseChannel. Ack a
+		 * structured failure before rethrowing synchronous callback errors so
+		 * the CLI doesn't wait for the 60s response timeout.
+		 */
+		onRemoteCreateGist: (
+			callback: (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, description, isPublic, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:createGist', handler);
+			return () => ipcRenderer.removeListener('remote:createGist', handler);
+		},
+
+		/**
+		 * Send response for remote create-gist
+		 */
+		sendRemoteCreateGistResponse: (
+			responseChannel: string,
+			result: { success: boolean; gistUrl?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

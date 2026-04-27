@@ -115,7 +115,12 @@ describe('usePipelineLayout', () => {
 		);
 	});
 
-	it('cleanup clears timer on unmount', () => {
+	it('unmount flushes a pending debounced write and clears the timer', () => {
+		// Cancelling the timer outright on unmount used to drop writes that
+		// landed during the modal-close window — most painfully the post-save
+		// `writtenRoots` update, which left the next mount unable to clear
+		// orphaned cue.yaml files. Unmount now flushes the pending write
+		// synchronously and then clears the timer so it never fires again.
 		const params = createDefaultParams();
 		const { result, unmount } = renderHook(() => usePipelineLayout(params));
 
@@ -123,13 +128,20 @@ describe('usePipelineLayout', () => {
 			result.current.persistLayout();
 		});
 
+		// Not yet — still inside the 500ms debounce window.
+		expect((window as any).maestro.cue.savePipelineLayout).not.toHaveBeenCalled();
+
 		unmount();
+
+		// Unmount flushed the pending write synchronously.
+		expect((window as any).maestro.cue.savePipelineLayout).toHaveBeenCalledTimes(1);
 
 		act(() => {
 			vi.advanceTimersByTime(500);
 		});
 
-		expect((window as any).maestro.cue.savePipelineLayout).not.toHaveBeenCalled();
+		// Timer was cleared — no second call after the debounce window elapses.
+		expect((window as any).maestro.cue.savePipelineLayout).toHaveBeenCalledTimes(1);
 	});
 
 	it('restores layout from saved state using graphSessionsToPipelines and mergePipelinesWithSavedLayout', async () => {
@@ -621,6 +633,46 @@ describe('usePipelineLayout', () => {
 
 			const callArg = setPipelineState.mock.calls[0][0];
 			expect(callArg.selectedPipelineId).toBeNull();
+		});
+	});
+
+	describe('pipelinesLoaded', () => {
+		it('starts false on mount', () => {
+			const params = createDefaultParams({ graphSessions: [] });
+			const { result } = renderHook(() => usePipelineLayout(params));
+			expect(result.current.pipelinesLoaded).toBe(false);
+		});
+
+		it('stays false while graphSessions is empty (still waiting on data)', async () => {
+			const params = createDefaultParams({ graphSessions: [] });
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(false);
+		});
+
+		it('flips to true after a successful restore', async () => {
+			const livePipelines = [makePipeline('p1')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(null);
+			const params = createDefaultParams();
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(true);
+		});
+
+		it('flips to true even when graphSessions yields no live pipelines', async () => {
+			mockGraphSessionsToPipelines.mockReturnValue([]);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(null);
+			const params = createDefaultParams();
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(true);
 		});
 	});
 });

@@ -74,7 +74,7 @@ interface GroupChatPanelProps {
 	/** Whether gh CLI is available for gist publishing */
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
-	onPublishMessageGist?: (text: string) => void;
+	onPublishMessageGist?: (text: string, messageId?: string) => void;
 }
 
 export function GroupChatPanel({

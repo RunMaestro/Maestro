@@ -107,6 +107,33 @@ export function removeEmptyPromptsDir(projectRoot: string): boolean {
 }
 
 /**
+ * Remove `.maestro/` if it exists and is completely empty. Called after
+ * deleting `cue.yaml` (and after pruning prompts) so the project's footprint
+ * collapses fully when there is nothing left to own. Non-empty directories
+ * are left untouched — user-placed files (memories, other configs) are none
+ * of Cue's business.
+ *
+ * Returns `true` if the directory was removed, `false` otherwise. Swallows
+ * errors (reports to Sentry) so callers can use this as best-effort cleanup.
+ */
+export function removeEmptyMaestroDir(projectRoot: string): boolean {
+	const maestroDir = path.resolve(path.join(projectRoot, MAESTRO_DIR));
+	if (!fs.existsSync(maestroDir)) return false;
+	try {
+		const entries = fs.readdirSync(maestroDir);
+		if (entries.length > 0) return false;
+		fs.rmdirSync(maestroDir);
+		return true;
+	} catch (err) {
+		captureException(err, {
+			operation: 'removeEmptyMaestroDir',
+			dir: maestroDir,
+		});
+		return false;
+	}
+}
+
+/**
  * Write a Cue prompt file (a .md file referenced by `prompt_file:` in YAML).
  *
  * `relativePath` is interpreted relative to `projectRoot`. Parent directories

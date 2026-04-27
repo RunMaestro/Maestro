@@ -19,6 +19,7 @@ import {
 	PaginationOptions,
 	ORPHANED_SESSION_ID,
 	sortEntriesByTimestamp,
+	paginateEntries,
 } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import {
@@ -30,6 +31,13 @@ import {
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
+import {
+	getHistoryBucketCache,
+	fileFingerprint,
+	HISTORY_BUCKET_CACHE_VERSION,
+	type CachedGraphBucket,
+} from '../../utils/history-bucket-cache';
+import { buildBucketAggregate } from '../../utils/history-bucket-builder';
 
 const LOG_CONTEXT = '[History]';
 
@@ -37,6 +45,80 @@ const LOG_CONTEXT = '[History]';
 export interface SharedHistoryContext {
 	sshRemoteId: string;
 	remoteCwd: string;
+}
+
+/**
+ * Aggregated graph data returned by `history:getGraphData` and
+ * `director-notes:getGraphData`. Buckets are computed over the full source
+ * history (not the renderer's lookback window) so the graph view stays
+ * "all-encompassing" while the entry list paginates beneath it.
+ */
+export interface HistoryGraphData {
+	buckets: CachedGraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	/** True when served from the disk cache (diagnostics only). */
+	cached: boolean;
+}
+
+/** Internal: shape returned by `buildBucketAggregate`. */
+interface BucketAggregateLike {
+	buckets: CachedGraphBucket[];
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+}
+
+function aggregateToGraphData(
+	agg: BucketAggregateLike,
+	bucketCount: number,
+	cached: boolean
+): HistoryGraphData {
+	return {
+		buckets: agg.buckets,
+		bucketCount,
+		earliestTimestamp: agg.earliestTimestamp,
+		latestTimestamp: agg.latestTimestamp,
+		totalCount: agg.totalCount,
+		autoCount: agg.autoCount,
+		userCount: agg.userCount,
+		cueCount: agg.cueCount,
+		cached,
+	};
+}
+
+function cachedToGraphData(
+	cached: {
+		buckets: CachedGraphBucket[];
+		bucketCount: number;
+		earliestTimestamp: number;
+		latestTimestamp: number;
+		totalCount: number;
+		autoCount: number;
+		userCount: number;
+		cueCount: number;
+	},
+	fromCache: boolean
+): HistoryGraphData {
+	return {
+		buckets: cached.buckets,
+		bucketCount: cached.bucketCount,
+		earliestTimestamp: cached.earliestTimestamp,
+		latestTimestamp: cached.latestTimestamp,
+		totalCount: cached.totalCount,
+		autoCount: cached.autoCount,
+		userCount: cached.userCount,
+		cueCount: cached.cueCount,
+		cached: fromCache,
+	};
 }
 
 export interface HistoryHandlerDependencies {
@@ -139,7 +221,13 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		)
 	);
 
-	// Get history entries with pagination support
+	// Get history entries with pagination support.
+	//
+	// Accepts an optional `lookbackHours` to filter entries to the last N
+	// hours before pagination — keeps page boundaries meaningful when the
+	// renderer's lookback is tighter than the on-disk window. Also accepts
+	// `sharedContext` so SSH-shared history is merged in before paging,
+	// matching `history:getAll`'s behavior.
 	ipcMain.handle(
 		'history:getAllPaginated',
 		withIpcErrorLogging(
@@ -148,21 +236,186 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				projectPath?: string;
 				sessionId?: string;
 				pagination?: PaginationOptions;
+				lookbackHours?: number | null;
+				sharedContext?: SharedHistoryContext;
 			}) => {
-				const { projectPath, sessionId, pagination } = options || {};
+				const { projectPath, sessionId, pagination, lookbackHours, sharedContext } = options || {};
+				const cutoffTime =
+					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
+						? Date.now() - lookbackHours * 60 * 60 * 1000
+						: 0;
 
+				const applyLookback = (entries: HistoryEntry[]): HistoryEntry[] =>
+					cutoffTime > 0 ? entries.filter((e) => e.timestamp >= cutoffTime) : entries;
+
+				// Single-session path: optionally merge shared (SSH or local
+				// project-mirrored) entries before applying lookback + pagination.
 				if (sessionId) {
-					// Get paginated entries for specific session
-					return historyManager.getEntriesPaginated(sessionId, pagination);
+					let local = historyManager.getEntries(sessionId);
+					local = sortEntriesByTimestamp(local);
+
+					const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
+					if (hasShared || projectPath) {
+						const maxEntries = deps.getMaxEntries?.();
+						let sharedEntries: HistoryEntry[] = [];
+						try {
+							if (hasShared) {
+								const sshRemote = deps.getSshRemoteById?.(sharedContext!.sshRemoteId);
+								if (sshRemote) {
+									sharedEntries = await readRemoteEntriesSsh(
+										sharedContext!.remoteCwd,
+										sshRemote,
+										maxEntries
+									);
+								}
+							} else if (projectPath) {
+								sharedEntries = readRemoteEntriesLocal(projectPath, maxEntries);
+							}
+						} catch (error) {
+							void captureException(error);
+							logger.warn(`Failed to read shared history (paginated): ${error}`, LOG_CONTEXT);
+						}
+
+						if (sharedEntries.length > 0) {
+							const seen = new Set(local.map((e) => e.id));
+							for (const e of sharedEntries) {
+								if (!seen.has(e.id)) {
+									local.push(e);
+									seen.add(e.id);
+								}
+							}
+							local = sortEntriesByTimestamp(local);
+						}
+					}
+
+					return paginateEntries(applyLookback(local), pagination);
 				}
 
 				if (projectPath) {
-					// Get paginated entries for sessions in this project
-					return historyManager.getEntriesByProjectPathPaginated(projectPath, pagination);
+					const entries = historyManager.getEntriesByProjectPathPaginated(
+						projectPath,
+						undefined
+					).entries;
+					return paginateEntries(applyLookback(entries), pagination);
 				}
 
-				// Return paginated entries (for global view)
-				return historyManager.getAllEntriesPaginated(pagination);
+				const entries = historyManager.getAllEntriesPaginated(undefined).entries;
+				return paginateEntries(applyLookback(entries), pagination);
+			}
+		)
+	);
+
+	// Get graph data (buckets + counts) for a single session.
+	// Cached on disk keyed by (sessionId, bucketCount, lookbackHours,
+	// file mtime+size). The lookback is part of the cache key so each
+	// window the user picks gets its own cached aggregate; mtime
+	// invalidates them all at once when the file changes.
+	ipcMain.handle(
+		'history:getGraphData',
+		withIpcErrorLogging(
+			handlerOpts('getGraphData'),
+			async (
+				sessionId: string,
+				bucketCount: number,
+				lookbackHours: number | null,
+				sharedContext?: SharedHistoryContext
+			): Promise<HistoryGraphData> => {
+				const safeBucketCount = Math.max(1, bucketCount | 0);
+				const lookbackMs =
+					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
+				const filePath = historyManager.getHistoryFilePath(sessionId);
+				const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
+
+				// Cache only when there is no shared history overlay — shared
+				// entries come from arbitrary remote/local files we don't
+				// fingerprint. Bypassing the cache keeps the simple path simple.
+				if (filePath && !hasShared) {
+					const cache = getHistoryBucketCache();
+					const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
+					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}:lb=${lookbackKey}`;
+					const fp = fileFingerprint(filePath);
+					const hit = cache.get(cacheKey, fp);
+					if (hit) {
+						return cachedToGraphData(hit, true);
+					}
+
+					const entries = historyManager.getEntries(sessionId);
+					const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
+					cache.set({
+						version: HISTORY_BUCKET_CACHE_VERSION,
+						cacheKey,
+						sourceFingerprint: fp,
+						bucketCount: safeBucketCount,
+						buckets: agg.buckets,
+						earliestTimestamp: agg.earliestTimestamp,
+						latestTimestamp: agg.latestTimestamp,
+						totalCount: agg.totalCount,
+						autoCount: agg.autoCount,
+						userCount: agg.userCount,
+						cueCount: agg.cueCount,
+						computedAt: Date.now(),
+					});
+					return aggregateToGraphData(agg, safeBucketCount, false);
+				}
+
+				// Shared-history or missing-file path: compute inline, no cache.
+				const entries: HistoryEntry[] = filePath ? historyManager.getEntries(sessionId) : [];
+				const maxEntries = deps.getMaxEntries?.();
+				if (hasShared) {
+					try {
+						const sshRemote = deps.getSshRemoteById?.(sharedContext!.sshRemoteId);
+						if (sshRemote) {
+							const sharedEntries = await readRemoteEntriesSsh(
+								sharedContext!.remoteCwd,
+								sshRemote,
+								maxEntries
+							);
+							const seen = new Set(entries.map((e) => e.id));
+							for (const e of sharedEntries) {
+								if (!seen.has(e.id)) {
+									entries.push(e);
+									seen.add(e.id);
+								}
+							}
+						}
+					} catch (err) {
+						logger.warn(`Failed to read shared history for graph: ${err}`, LOG_CONTEXT);
+					}
+				}
+				const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
+				return aggregateToGraphData(agg, safeBucketCount, false);
+			}
+		)
+	);
+
+	// Find the offset of the first entry whose timestamp is <= the given
+	// timestamp, in the newest-first sorted order (with the same lookback
+	// filter the paginated list uses, so the offset lines up with the
+	// rendered indices). Used by the activity-graph click handler to jump
+	// the paginated list to a specific bucket.
+	ipcMain.handle(
+		'history:getOffsetForTimestamp',
+		withIpcErrorLogging(
+			handlerOpts('getOffsetForTimestamp'),
+			async (
+				sessionId: string,
+				timestamp: number,
+				lookbackHours?: number | null
+			): Promise<number> => {
+				const cutoffTime =
+					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
+						? Date.now() - lookbackHours * 60 * 60 * 1000
+						: 0;
+				let entries = historyManager.getEntries(sessionId);
+				if (cutoffTime > 0) entries = entries.filter((e) => e.timestamp >= cutoffTime);
+				if (entries.length === 0) return 0;
+				const sorted = sortEntriesByTimestamp(entries);
+				let offset = 0;
+				for (const entry of sorted) {
+					if (entry.timestamp <= timestamp) return offset;
+					offset++;
+				}
+				return Math.max(0, sorted.length - 1);
 			}
 		)
 	);

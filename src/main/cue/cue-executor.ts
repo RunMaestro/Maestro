@@ -17,6 +17,7 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import { sliceHeadByChars } from './cue-text-utils';
+import { buildCueRunSummary } from '../../shared/cue/cue-summary';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -125,6 +126,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sessionId: session.id,
 		sessionName: session.name,
 		subscriptionName: subscription.name,
+		pipelineName: subscription.pipeline_name,
 		event,
 		status: 'failed',
 		stdout: '',
@@ -146,6 +148,21 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	// 2. Build template context and substitute variables
 	templateContext.cue = buildCueTemplateContext(event, subscription, runId);
 	const substitutedPrompt = substituteTemplateVariables(trimmedPrompt, templateContext);
+
+	// Surface the "prompt was X, resolved to empty" case loudly. The most
+	// common cause is a downstream prompt like just `{{CUE_SOURCE_OUTPUT}}`
+	// where the upstream run produced no parseable stdout (for example Claude
+	// outputting stream-json with no `result` or `text` events). The spawn
+	// still proceeds — `forceBatchMode` on the Cue spawn builder keeps the
+	// agent in batch mode so it doesn't fall into interactive TUI and die with
+	// "stdin is not a terminal" — but the log line is what tells the user to
+	// look at their upstream prompt rather than at the downstream agent.
+	if (!substitutedPrompt.trim()) {
+		onLog(
+			'warn',
+			`[CUE] "${subscription.name}" prompt resolved to empty after template substitution — check the upstream agent's output and your prompt_file references (e.g. {{CUE_SOURCE_OUTPUT}})`
+		);
+	}
 
 	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
 	const buildResult = await buildSpawnSpec(config, substitutedPrompt);
@@ -183,6 +200,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sessionId: session.id,
 		sessionName: session.name,
 		subscriptionName: subscription.name,
+		pipelineName: subscription.pipeline_name,
 		event,
 		status: processResult.status,
 		stdout: extractCleanStdout(processResult.stdout, config.toolType),
@@ -242,7 +260,7 @@ export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo
 		id: crypto.randomUUID(),
 		type: 'CUE',
 		timestamp: Date.now(),
-		summary: `[CUE] "${result.subscriptionName}" (${result.event.type})`,
+		summary: buildCueRunSummary(result),
 		fullResponse: fullResponse || undefined,
 		projectPath: session.projectRoot || session.cwd,
 		sessionId: session.id,

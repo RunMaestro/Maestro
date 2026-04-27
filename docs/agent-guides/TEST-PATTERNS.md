@@ -444,7 +444,7 @@ afterEach(() => {
 });
 
 it('auto-dismisses toast after duration', () => {
-	notifyToast({ type: 'info', title: 'Test', message: 'Hi', duration: 5000 });
+	notifyToast({ color: 'theme', title: 'Test', message: 'Hi', duration: 5000 });
 
 	expect(useNotificationStore.getState().toasts).toHaveLength(1);
 

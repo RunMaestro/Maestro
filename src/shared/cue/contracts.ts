@@ -123,6 +123,14 @@ export interface CueSubscription {
 	 *  "something else in the same session completed." */
 	source_sub?: string | string[];
 	fan_out?: string[];
+	/** Stable session-id parallel to `fan_out`, one entry per fan-out target.
+	 *  Mirrors the `source_session` / `source_session_ids` pair: ids survive
+	 *  display-name renames, so the dispatcher prefers `fan_out_ids[i]` over
+	 *  `fan_out[i]` when resolving a target. Without this, renaming a fan-out
+	 *  target silently drops it from dispatch (the name in YAML no longer
+	 *  matches any live session). Optional for backward compat with legacy
+	 *  YAML; new writes always emit it alongside `fan_out`. */
+	fan_out_ids?: string[];
 	/** Per-target prompts for a fan-out subscription, one string per entry in
 	 *  `fan_out`. Legacy inline shape — kept for round-tripping YAML written
 	 *  by older versions or edited by hand. New writes prefer
@@ -181,6 +189,20 @@ export interface CueSubscription {
 	 *  absent on load (legacy YAML), the loader falls back to parsing the
 	 *  `-chain-N` suffix off subscription names. */
 	pipeline_name?: string;
+	/** Stable visual-node identifier for the subscription's target node
+	 *  (single-target subs only — fan-out uses `fan_out_node_keys`).
+	 *  Lets the loader distinguish "two separate visual nodes pointing at
+	 *  the same agent_id" from "one shared node with multiple inputs":
+	 *  subs sharing an `agent_id` but different `target_node_key` values
+	 *  emit separate visual nodes; sharing the same key collapses to one
+	 *  node (explicit user-drawn fan-in). Absent on legacy YAML — the
+	 *  loader falls back to dedup-by-sessionName behavior so legacy
+	 *  pipelines keep loading. */
+	target_node_key?: string;
+	/** Stable visual-node identifiers parallel to `fan_out`, one per
+	 *  position. Same dedup semantics as `target_node_key`: positions
+	 *  carrying distinct keys render as separate visual nodes. */
+	fan_out_node_keys?: string[];
 }
 
 /** Global Cue settings */
@@ -189,6 +211,16 @@ export interface CueSettings {
 	timeout_on_fail: 'break' | 'continue';
 	max_concurrent: number;
 	queue_size: number;
+	/**
+	 * When multiple agents share the same projectRoot, the config is otherwise
+	 * loaded N times (once per agent) and every trigger fires N times. Setting
+	 * `owner_agent_id` pins execution to a single agent. Accepts either the
+	 * agent's internal session id (UUID) or its display name.
+	 *
+	 * When unset and multiple agents share a projectRoot, the first agent in
+	 * the session list wins (deterministic per launch).
+	 */
+	owner_agent_id?: string;
 }
 
 /** Default Cue settings */
@@ -196,7 +228,7 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	timeout_minutes: 30,
 	timeout_on_fail: 'break',
 	max_concurrent: 1,
-	queue_size: 10,
+	queue_size: 512,
 };
 
 /** Top-level Cue configuration */
@@ -230,6 +262,14 @@ export interface CueRunResult {
 	sessionId: string;
 	sessionName: string;
 	subscriptionName: string;
+	/**
+	 * Human-friendly pipeline label (e.g. "PR Triage Main") taken from the
+	 * subscription's `pipeline_name`. Optional: legacy YAML and ad-hoc subs
+	 * without a named pipeline leave this undefined, in which case
+	 * `buildCueRunSummary` falls back to stripping the `-chain-N` / `-fanin`
+	 * suffix off `subscriptionName` to derive a base label.
+	 */
+	pipelineName?: string;
 	event: CueEvent;
 	status: CueRunStatus;
 	stdout: string;
@@ -251,6 +291,11 @@ export interface CueSessionStatus {
 	activeRuns: number;
 	lastTriggered?: string;
 	nextTrigger?: string;
+	/** Populated when this session's unowned subscriptions are suppressed because
+	 *  ownership of its cue.yaml is contested (multiple agents in the same
+	 *  projectRoot) or unresolvable (owner_agent_id matches no agent). The
+	 *  dashboard renders a red indicator with this text as the tooltip. */
+	ownershipWarning?: string;
 }
 
 /** Session data with subscriptions for the Cue graph visualization */

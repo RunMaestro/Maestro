@@ -1819,7 +1819,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('sorts agents alphabetically with group chats at the bottom', () => {
+		it('sorts agents alphabetically and excludes group chats', () => {
 			const props = createDefaultProps({
 				initialMode: 'agents',
 				sessions: [
@@ -1835,15 +1835,217 @@ describe('QuickActionsModal', () => {
 			const buttons = screen.getAllByRole('button');
 			const labels = buttons.map((b) => b.textContent?.replace(/\d/, '').trim() ?? '');
 
-			// Agents alphabetically first, then group chats
 			const alphaIdx = labels.findIndex((l) => l.startsWith('Alpha'));
 			const mikeIdx = labels.findIndex((l) => l.startsWith('Mike'));
 			const zuluIdx = labels.findIndex((l) => l.startsWith('Zulu'));
-			const gcIdx = labels.findIndex((l) => l.startsWith('Design Review'));
 
 			expect(alphaIdx).toBeLessThan(mikeIdx);
 			expect(mikeIdx).toBeLessThan(zuluIdx);
-			expect(zuluIdx).toBeLessThan(gcIdx);
+
+			// Group chats are intentionally excluded from the agent jumper.
+			expect(screen.queryByText('Design Review')).not.toBeInTheDocument();
+		});
+
+		it('buckets running agents above idle ones, alphabetical within each bucket', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Zulu', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-3', name: 'Mike', state: 'busy' }),
+					createMockSession({ id: 'session-4', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent?.replace(/\d/, '').trim() ?? '');
+
+			const bravoIdx = labels.findIndex((l) => l.startsWith('Bravo'));
+			const mikeIdx = labels.findIndex((l) => l.startsWith('Mike'));
+			const alphaIdx = labels.findIndex((l) => l.startsWith('Alpha'));
+			const zuluIdx = labels.findIndex((l) => l.startsWith('Zulu'));
+
+			// Running bucket first (Bravo, Mike), then idle bucket (Alpha, Zulu).
+			expect(bravoIdx).toBeLessThan(mikeIdx);
+			expect(mikeIdx).toBeLessThan(alphaIdx);
+			expect(alphaIdx).toBeLessThan(zuluIdx);
+		});
+
+		it('renders LIVE and IDLE section headers in agents mode when both buckets exist', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const liveIdx = dialog.textContent?.indexOf('LIVE') ?? -1;
+			const idleIdx = dialog.textContent?.indexOf('IDLE') ?? -1;
+			expect(liveIdx).toBeGreaterThanOrEqual(0);
+			expect(idleIdx).toBeGreaterThan(liveIdx);
+		});
+
+		it('suppresses both headers when all agents are idle (single bucket)', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'idle' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent?.trim() ?? '');
+			expect(headerTexts).not.toContain('LIVE');
+			expect(headerTexts).not.toContain('IDLE');
+		});
+
+		it('suppresses both headers when all agents are running (single bucket)', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'busy' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent?.trim() ?? '');
+			expect(headerTexts).not.toContain('LIVE');
+			expect(headerTexts).not.toContain('IDLE');
+		});
+
+		it('does not render LIVE/IDLE headers in main mode', () => {
+			const props = createDefaultProps({
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			// Main mode keeps the per-row state subtext and does not show section headers.
+			expect(dialog.textContent).not.toContain('LIVE');
+			// 'IDLE' may legitimately appear as the per-row state subtext in main mode,
+			// but never as a standalone section header — we assert via class lookup.
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
+			expect(headerTexts.some((t) => t.trim() === 'LIVE')).toBe(false);
+			expect(headerTexts.some((t) => t.trim() === 'IDLE')).toBe(false);
+		});
+
+		it('dismisses modal when clicking the backdrop', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const backdrop = dialog.parentElement;
+			expect(backdrop).not.toBeNull();
+			fireEvent.mouseDown(backdrop!);
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('shows elapsed time, busy tab name, and queue count for running agents', () => {
+			const startedAt = Date.now() - 65_000; // 1m 5s ago
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: startedAt,
+						aiTabs: [
+							{
+								id: 'tab-a',
+								agentSessionId: null,
+								name: 'fix login',
+								starred: false,
+								logs: [],
+								inputValue: '',
+								stagedImages: [],
+								createdAt: 0,
+								state: 'busy',
+								thinkingStartTime: startedAt,
+							},
+						],
+						activeTabId: 'tab-a',
+						executionQueue: [
+							{
+								id: 'q-1',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'next',
+							},
+							{
+								id: 'q-2',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'and another',
+							},
+						],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.textContent).toMatch(/1m\s+5s/);
+			expect(dialog.textContent).toContain('fix login');
+			expect(dialog.textContent).toContain('2 queued');
+			// Idle-style "BUSY" subtext should not appear when we're showing rich info.
+			expect(dialog.textContent).not.toContain('BUSY');
+		});
+
+		it('omits queue count when there are no queued items', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: Date.now() - 5_000,
+						executionQueue: [],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByRole('dialog').textContent).not.toMatch(/queued/);
+		});
+
+		it('alphabetizes by skipping leading emojis', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 's1', name: 'Charlie' }),
+					createMockSession({ id: 's2', name: '🚀 Atlas' }),
+					createMockSession({ id: 's3', name: '🎯 Bravo' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent ?? '');
+			const atlasIdx = labels.findIndex((l) => l.includes('Atlas'));
+			const bravoIdx = labels.findIndex((l) => l.includes('Bravo'));
+			const charlieIdx = labels.findIndex((l) => l.includes('Charlie'));
+
+			expect(atlasIdx).toBeLessThan(bravoIdx);
+			expect(bravoIdx).toBeLessThan(charlieIdx);
 		});
 	});
 

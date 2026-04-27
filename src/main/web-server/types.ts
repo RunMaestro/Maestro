@@ -241,11 +241,17 @@ export type WriteToSessionCallback = (sessionId: string, data: string) => boolea
  * This forwards the command to the renderer which handles spawn, state, and broadcasts.
  * Returns true if command was accepted (session not busy).
  * inputMode is optional - if provided, the renderer will use it instead of querying session state.
+ * tabId is optional - if provided, the renderer targets that specific tab instead of the active tab.
+ * force is optional - if true, bypasses the renderer's own busy-state guard so
+ *   `dispatch --force` lands on a busy tab. The server-side guard is a separate
+ *   check that is gated by the `allowConcurrentSend` setting.
  */
 export type ExecuteCommandCallback = (
 	sessionId: string,
 	command: string,
-	inputMode?: 'ai' | 'terminal'
+	inputMode?: 'ai' | 'terminal',
+	tabId?: string,
+	force?: boolean
 ) => Promise<boolean>;
 
 /**
@@ -295,7 +301,17 @@ export type ReorderTabCallback = (
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
-export type NewAITabWithPromptCallback = (sessionId: string, prompt: string) => Promise<boolean>;
+/**
+ * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
+ * Returns the new tab id alongside success so callers (e.g. `maestro-cli dispatch
+ * --new-tab`) can address the same tab on later calls without owning a persistent
+ * channel.
+ */
+export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
+export type NewAITabWithPromptCallback = (
+	sessionId: string,
+	prompt: string
+) => Promise<NewAITabWithPromptResult>;
 export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
@@ -307,6 +323,65 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+
+/**
+ * Notification kinds supported by the desktop app.
+ * Toast = persistent dismissable notification (queued).
+ * CenterFlash = momentary single-slot center-screen confirmation.
+ */
+
+/**
+ * Five canonical colors shared by Toast and Center Flash (one design language).
+ * `theme` adapts to the active theme.
+ *
+ *   green  - succeeded
+ *   yellow - heads-up / soft warning
+ *   orange - more emphatic warning
+ *   red    - failed / blocked
+ *   theme  - default; matches the active theme's accent color (no semantic)
+ */
+export type NotifyCenterFlashColor = 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+export type NotifyToastColor = NotifyCenterFlashColor;
+
+/**
+ * @deprecated Legacy semantic alias. Prefer `NotifyToastColor`.
+ *   success → green, info → theme, warning → yellow, error → red
+ */
+export type NotifyToastKind = 'success' | 'info' | 'warning' | 'error';
+
+/**
+ * @deprecated Legacy semantic alias. Prefer `NotifyCenterFlashColor`.
+ *   success → green, info → theme, warning → yellow, error → red
+ */
+export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
+
+export interface NotifyToastParams {
+	title: string;
+	message: string;
+	/** One of the 5 canonical colors. Default: `'theme'`. */
+	color: NotifyToastColor;
+	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
+	duration?: number;
+	/**
+	 * Sticky toast — no auto-dismiss, requires the user to click the close
+	 * button to dismiss. Use for critical messages the user must acknowledge.
+	 */
+	dismissible?: boolean;
+	/** Optional agent/session ID — clicking the toast jumps to it. */
+	sessionId?: string;
+}
+
+export interface NotifyCenterFlashParams {
+	message: string;
+	detail?: string;
+	/** One of the 5 canonical colors. Default: `'theme'`. */
+	color: NotifyCenterFlashColor;
+	/** Auto-dismiss ms; 0 = never. Omitted = renderer default (1500ms). */
+	duration?: number;
+}
+
+export type NotifyToastCallback = (params: NotifyToastParams) => Promise<boolean>;
+export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
 	config: {
@@ -378,6 +453,8 @@ export interface WebSettings {
 	audioFeedbackEnabled: boolean;
 	colorBlindMode: string;
 	conductorProfile: string;
+	/** Max agent output lines per message before truncation. `null` = All (Infinity serialized). */
+	maxOutputLines: number | null;
 	/** User-customized keyboard shortcuts (partial overrides of DEFAULT_SHORTCUTS). */
 	shortcuts: Record<string, Shortcut>;
 }
@@ -511,6 +588,7 @@ export interface CreateSessionConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	autoRunFolderPath?: string;
 }
 
 export type CreateSessionCallback = (
@@ -592,6 +670,11 @@ export type TransferContextCallback = (
 	targetSessionId: string
 ) => Promise<boolean>;
 export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
+export type CreateGistCallback = (
+	sessionId: string,
+	description: string,
+	isPublic: boolean
+) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 
 // =============================================================================
 // Cue Automation Types

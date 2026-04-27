@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, Plus, X, Database, FileText, Clock, Zap } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
+import { estimateTokenCount } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -323,13 +324,21 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 	const items = useMemo<DualPaneFileEditorItem[]>(
 		() =>
-			entries.map((e) => ({
-				id: e.name,
-				label: e.name,
-				description: `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`,
-				isModified: e.name === selectedName && hasUnsavedChanges,
-			})),
+			entries.map((e) => {
+				const isCurrent = e.name === selectedName;
+				return {
+					id: e.name,
+					label: e.name,
+					description: `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`,
+					isModified: isCurrent && hasUnsavedChanges,
+				};
+			}),
 		[entries, selectedName, hasUnsavedChanges]
+	);
+
+	const editorTokenCount = useMemo(
+		() => (selectedName ? estimateTokenCount(editedContent) : undefined),
+		[selectedName, editedContent]
 	);
 
 	const renderEditorBody = useCallback(() => {
@@ -472,6 +481,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						onSelect={handleSelect}
 						emptyStateMessage="Select a memory file to view"
 						editorTitle={selectedName ?? undefined}
+						editorTokenCount={editorTokenCount}
 						showModifiedBadge={hasUnsavedChanges}
 						renderEditorBody={renderEditorBody}
 						successMessage={successMessage}

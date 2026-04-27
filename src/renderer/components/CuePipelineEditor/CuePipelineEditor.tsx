@@ -45,6 +45,13 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
+	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
+	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
+	initialPipelineId?: { id: string | null; nonce: string };
+	/** True while the initial graph-data fetch is in flight. Combined with the
+	 *  hook's own pipeline-restore state to render a loading spinner instead of
+	 *  flashing the "Create your first pipeline" CTA before pipelines arrive. */
+	graphLoading?: boolean;
 }
 
 function CuePipelineEditorInner({
@@ -56,6 +63,8 @@ function CuePipelineEditorInner({
 	activeRuns: activeRunsProp,
 	onTriggerPipeline,
 	onSaveSuccess,
+	initialPipelineId,
+	graphLoading = false,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
@@ -114,6 +123,18 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
+	// When opened via "View in Pipeline", pre-select the resolved pipeline once
+	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
+	// (e.g. a pipeline being added) from overriding a subsequent user selection.
+	const appliedNonce = useRef<string | null>(null);
+	useEffect(() => {
+		const nonce = initialPipelineId?.nonce;
+		if (!nonce || stateHook.pipelineState.pipelines.length === 0) return;
+		if (nonce === appliedNonce.current) return;
+		appliedNonce.current = nonce;
+		stateHook.selectPipeline(initialPipelineId!.id);
+	}, [initialPipelineId?.nonce, stateHook.pipelineState.pipelines.length]);
+
 	// Update ref in render body so next render (and any post-render callback
 	// invocation) reads the latest selection values.
 	selectionRef.current = {
@@ -140,6 +161,7 @@ function CuePipelineEditorInner({
 		runningSubscriptionsByPipeline,
 		persistLayout,
 		pendingSavedViewportRef,
+		pipelinesLoaded,
 		handleSave,
 		handleDiscard,
 		createPipeline,
@@ -416,6 +438,7 @@ function CuePipelineEditorInner({
 				onTriggerPipeline={onTriggerPipeline}
 				isDirty={isDirty}
 				runningPipelineIds={runningPipelineIds}
+				isLoading={graphLoading || !pipelinesLoaded}
 			/>
 
 			{contextMenu && (

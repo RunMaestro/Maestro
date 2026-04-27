@@ -95,14 +95,17 @@ Reverse with `false` or `maestro-cli settings reset encoreFeatures.<flag>`.
 Send a message to another agent and receive a JSON response. Useful for inter-agent coordination.
 
 ```bash
-{{MAESTRO_CLI_PATH}} send <agent-id> "Your message here" [-s <session-id>] [-r] [-t]
+{{MAESTRO_CLI_PATH}} send <agent-id> "Your message here" [-s <session-id>] [-r] [-t] [-l] [--new-tab] [-f]
 ```
 
-| Flag                 | Description                                              |
-| -------------------- | -------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one |
-| `-r, --read-only`    | Run in read-only mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in Maestro            |
+| Flag                 | Description                                                                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                                                              |
+| `-r, --read-only`    | Run in read-only mode (agent cannot modify files)                                                                                                                                                                                     |
+| `-t, --tab`          | Open/focus the agent's session tab in Maestro                                                                                                                                                                                         |
+| `-l, --live`         | Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                                                                        |
+| `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                                                        |
+| `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Gated by the `allowConcurrentSend` setting (off by default); errors out with code `FORCE_NOT_ALLOWED` if not enabled |
 
 ### Resource Listing and Inspection
 
@@ -126,7 +129,10 @@ Configure and optionally launch an auto-run using documents you've created:
 {{MAESTRO_CLI_PATH}} auto-run doc1.md doc2.md [--agent <id>] [--prompt "Custom instructions"] [--loop] [--max-loops <n>] [--launch] [--save-as "My Playbook"] [--reset-on-completion]
 ```
 
-**Important:** Always pass `--agent {{AGENT_ID}}` when launching. Without it, the CLI selects the first available agent, which may not be the one you intended.
+**Important:**
+
+- Always pass `--agent {{AGENT_ID}}` when launching. Without it, the CLI selects the first available agent, which may not be the one you intended.
+- **When the user asks you to _run_ or _kick off_ an auto-run, you must launch it via this command with `--launch`.** Do not read the document and execute its tasks yourself in chat — that bypasses the Auto Run engine, leaves no record in the UI, and loses the per-task fresh-context isolation. The whole point of an auto-run is that it shows up in the Auto Run panel and the engine drives it.
 
 ```bash
 # Run a saved playbook by id (find ids with `list playbooks`)
@@ -163,6 +169,47 @@ Use these after filesystem changes so the user sees updates immediately:
 {{MAESTRO_CLI_PATH}} refresh-auto-run [--session <id>]
 ```
 
+### Notifications
+
+You can surface two distinct kinds of notifications inside the desktop app. Both share a unified five-color design language; pick the kind that matches the message intent — they are not interchangeable.
+
+| Kind             | When to use                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Toast**        | Persistent, queued, dismissable. Top-right of screen. Use for results the user may want to act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump behavior is valuable. Fires audio/OS notifications when configured. Use `--dismissible` for messages the user MUST acknowledge.   |
+| **Center Flash** | Momentary, single-slot, center-screen overlay (default 1.5s, max 5s). Use for "I did the thing" confirmation of a user-initiated action — quick acks, status nudges, brief success notes. Only one is visible at a time; a new flash replaces the active one. **Not** for errors, long-form messages, or anything the user might blink past. |
+
+#### Color palette (shared)
+
+`--color` accepts one of five values. Default is `theme` so the notification matches whatever theme the user is running.
+
+| Color    | Use for                                                        |
+| -------- | -------------------------------------------------------------- |
+| `theme`  | **Default.** Generic confirmation with no semantic             |
+| `green`  | Success ("Build passed", "Deploy complete")                    |
+| `yellow` | Soft heads-up ("Quota at 60%")                                 |
+| `orange` | Emphatic warning ("Approaching context limit", "Quota at 90%") |
+| `red`    | Failure / blocked ("CI failed", "Auth expired")                |
+
+```bash
+# Toast — default theme, queue-based, click X to dismiss.
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" [--color <color>] [--timeout <sec>] [-a <agent-id>] [--json]
+
+# Sticky toast — no auto-dismiss, requires user click. Use for critical messages.
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --color red --dismissible
+
+# Center flash — momentary, exclusive, replaces any active flash.
+{{MAESTRO_CLI_PATH}} notify flash "<message>" [--color <color>] [-D "<detail>"] [--timeout <sec>] [--json]
+```
+
+Caps:
+
+- **Toast:** `--timeout` range `(0, 60]` seconds. Use `--dismissible` (no timeout, click to close) for messages the user must acknowledge. `--timeout` and `--dismissible` are mutually exclusive.
+- **Center Flash:** `--timeout` range `(0, 5]` seconds (or `--duration <ms>` range `(0, 5000]`). No "never dismiss" option — flashes are by design momentary.
+
+Both commands accept `--variant` (toast: `--type`) as a deprecated alias for callers using the legacy semantic API (`success`/`info`/`warning`/`error` → `green`/`theme`/`yellow`/`red`). Prefer `--color` in new scripts.
+
+Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task — by the time it appears the user is no longer looking at the screen. Reach for `--dismissible` only when the message is genuinely critical — every sticky toast is a tiny piece of homework you're handing the user.
+
 ### Status
 
 ```bash
@@ -178,7 +225,8 @@ Lifecycle management of Maestro agents and remote-execution targets.
 {{MAESTRO_CLI_PATH}} create-agent <name> --cwd <path> [-t, --type <agent-type>] [-g, --group <id>] \
     [--nudge <message>] [--new-session-message <message>] [--custom-path <path>] \
     [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] \
-    [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] [--json]
+    [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] \
+    [--auto-run-folder <path>] [--json]
 {{MAESTRO_CLI_PATH}} remove-agent <agent-id> [--json]
 
 # SSH remotes (used by agents that execute on a remote host)

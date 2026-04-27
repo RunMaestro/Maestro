@@ -16,6 +16,7 @@
 import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { logger } from '../../utils/logger';
 
 // Default flush interval in milliseconds (imperceptible to users)
 export const DEFAULT_BATCH_FLUSH_INTERVAL = 150;
@@ -208,11 +209,13 @@ export function useBatchedSessionUpdates(
 								const logData = aiTabLogs.get(tab.id);
 								if (!logData) return tab;
 
-								// Clear thinking/tool entries when new AI output arrives (final result replaces thinking)
-								// BUT: if showThinking is 'sticky', preserve both thinking and tool logs
+								// ThinkingMode contract — inline clear point.
+								// When new assistant text arrives, drop transient thinking/tool entries
+								// from prior reasoning so the final answer replaces them. The matching
+								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
+								// Sticky mode opts out of BOTH clear points.
 								const existingLogs = tab.logs.filter((log) => {
 									if (log.source === 'thinking' || log.source === 'tool') {
-										// Only preserve thinking/tool logs in sticky mode
 										return tab.showThinking === 'sticky';
 									}
 									return true;
@@ -222,9 +225,25 @@ export function useBatchedSessionUpdates(
 								// Determine the source based on stderr flag
 								const logSource = logData.isStderr ? 'stderr' : 'stdout';
 
+								// Defensive: never coalesce streamed output into a non-stream entry
+								// (error/system/tool/user/thinking). The source-equality check below already
+								// excludes these in theory, but a UI bug exists where assistant text gets
+								// concatenated into an error bubble's text. Belt-and-suspenders allowlist
+								// + a warn lets us catch the upstream cause if it ever fires.
+								const isCoalescableSource =
+									lastLog?.source === 'stdout' || lastLog?.source === 'stderr';
+								if (lastLog && !isCoalescableSource && lastLog.source === logSource) {
+									logger.warn(
+										'[useBatchedSessionUpdates] Refusing to coalesce streamed output into non-stream log entry',
+										undefined,
+										{ tabId: tab.id, lastLogSource: lastLog.source, logSource }
+									);
+								}
+
 								// Time-based grouping for AI output (500ms window) - only group same source types
 								const shouldGroup =
 									lastLog &&
+									isCoalescableSource &&
 									lastLog.source === logSource &&
 									logData.timestamp - lastLog.timestamp < 500;
 

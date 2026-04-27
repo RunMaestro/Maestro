@@ -175,21 +175,31 @@ export function useAppInitialization(): AppInitializationReturn {
 		}
 	}, [settingsLoaded, enableBetaUpdates]);
 
-	// --- Check for updates on startup ---
+	// --- Check for updates on startup, then daily for long-running sessions ---
 	useEffect(() => {
-		if (settingsLoaded && checkForUpdatesOnStartup) {
-			const timer = setTimeout(async () => {
-				try {
-					const result = await window.maestro.updates.check(enableBetaUpdates);
-					if (result.updateAvailable && !result.error) {
-						getModalActions().setUpdateCheckModalOpen(true);
-					}
-				} catch (error) {
-					logger.error('Failed to check for updates on startup:', undefined, error);
+		if (!settingsLoaded || !checkForUpdatesOnStartup) return;
+
+		const runCheck = async () => {
+			try {
+				const result = await window.maestro.updates.check(enableBetaUpdates);
+				if (result.updateAvailable && !result.error) {
+					getModalActions().setUpdateCheckModalOpen(true);
 				}
-			}, 2000);
-			return () => clearTimeout(timer);
-		}
+			} catch (error) {
+				logger.error('Failed to check for updates:', undefined, error);
+			}
+		};
+
+		let intervalId: ReturnType<typeof setInterval> | undefined;
+		const timer = setTimeout(() => {
+			void runCheck();
+			intervalId = setInterval(runCheck, 24 * 60 * 60 * 1000);
+		}, 2000);
+
+		return () => {
+			clearTimeout(timer);
+			if (intervalId) clearInterval(intervalId);
+		};
 	}, [settingsLoaded, checkForUpdatesOnStartup, enableBetaUpdates]);
 
 	// --- Leaderboard startup sync ---

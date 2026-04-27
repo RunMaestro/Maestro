@@ -536,9 +536,9 @@ describe('CommandInputBar', () => {
 
 			const textarea = screen.getByRole('textbox');
 			const form = textarea.closest('form');
-			expect(
-				screen.queryByRole('button', { name: /open slash commands/i })
-			).not.toBeInTheDocument();
+			// Action buttons (voice/slash/thinking) are re-mounted on the bottom
+			// row in stacked mode so the lone send button doesn't float awkwardly.
+			expect(screen.getByRole('button', { name: /open slash commands/i })).toBeInTheDocument();
 			expect(form).toHaveStyle({ flexDirection: 'column' });
 			expect(Number.parseInt((textarea as HTMLTextAreaElement).style.height, 10)).toBeGreaterThan(
 				48

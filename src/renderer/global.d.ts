@@ -150,7 +150,9 @@ type GroupChatData = {
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
+import type { CueLogPayload } from '../shared/cue-log-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -273,7 +275,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
@@ -296,6 +304,24 @@ interface MaestroAPI {
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
+		onRemoteNotifyToast: (
+			callback: (params: {
+				title: string;
+				message: string;
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				duration?: number;
+				dismissible?: boolean;
+				sessionId?: string;
+			}) => void
+		) => () => void;
+		onRemoteNotifyCenterFlash: (
+			callback: (params: {
+				message: string;
+				detail?: string;
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+				duration?: number;
+			}) => void
+		) => () => void;
 		onRemoteOpenBrowserTab: (
 			callback: (sessionId: string, url: string, responseChannel: string) => void
 		) => () => void;
@@ -311,7 +337,11 @@ interface MaestroAPI {
 		onRemoteNewAITabWithPrompt: (
 			callback: (sessionId: string, prompt: string, responseChannel: string) => void
 		) => () => void;
-		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean) => void;
+		sendRemoteNewAITabWithPromptResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
@@ -393,6 +423,18 @@ interface MaestroAPI {
 			callback: (sessionId: string, filePath: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteGetGitDiffResponse: (responseChannel: string, result: any) => void;
+		onRemoteCreateGist: (
+			callback: (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCreateGistResponse: (
+			responseChannel: string,
+			result: { success: boolean; gistUrl?: string; error?: string }
+		) => void;
 		onRemoteTriggerCueSubscription: (
 			callback: (
 				subscriptionName: string,
@@ -659,24 +701,13 @@ interface MaestroAPI {
 			worktreePath: string,
 			branchName: string,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			created?: boolean;
-			currentBranch?: string;
-			requestedBranch?: string;
-			branchMismatch?: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeSetupResult>;
 		worktreeCheckout: (
 			worktreePath: string,
 			branchName: string,
 			createIfMissing: boolean,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			hasUncommittedChanges: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeCheckoutResult>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,
@@ -720,6 +751,7 @@ interface MaestroAPI {
 				branch: string | null;
 				repoRoot: string | null;
 			}>;
+			scanFailed?: boolean;
 		}>;
 		// File watching is not available for SSH remote sessions.
 		// For remote sessions, returns isRemote: true indicating polling should be used instead.
@@ -757,7 +789,22 @@ interface MaestroAPI {
 	fs: {
 		homeDir: () => Promise<string>;
 		readDir: (dirPath: string, sshRemoteId?: string) => Promise<DirectoryEntry[]>;
-		readFile: (filePath: string, sshRemoteId?: string) => Promise<string | null>;
+		listTreeRemote: (
+			rootPath: string,
+			sshRemoteId: string,
+			options: {
+				maxDepth?: number;
+				ignorePatterns?: string[];
+				excludePaths?: string[];
+				maxFiles?: number;
+			}
+		) => Promise<{ directories: string[]; files: string[]; truncated: boolean }>;
+		readFile: (
+			filePath: string,
+			sshRemoteId?: string,
+			requestId?: string
+		) => Promise<string | null>;
+		cancelReadFile: (requestId: string) => Promise<void>;
 		writeFile: (
 			filePath: string,
 			content: string,
@@ -867,7 +914,7 @@ interface MaestroAPI {
 			cwd: string,
 			customPath?: string,
 			sshRemoteId?: string
-		) => Promise<{ name: string; prompt?: string }[] | null>;
+		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {
@@ -1440,6 +1487,8 @@ interface MaestroAPI {
 			projectPath?: string;
 			sessionId?: string;
 			pagination?: { limit?: number; offset?: number };
+			lookbackHours?: number | null;
+			sharedContext?: { sshRemoteId: string; remoteCwd: string };
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -1493,6 +1542,27 @@ interface MaestroAPI {
 		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
 		getFilePath: (sessionId: string) => Promise<string | null>;
 		listSessions: () => Promise<string[]>;
+		getGraphData: (
+			sessionId: string,
+			bucketCount: number,
+			lookbackHours: number | null,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		) => Promise<{
+			buckets: Array<{ auto: number; user: number; cue: number }>;
+			bucketCount: number;
+			earliestTimestamp: number;
+			latestTimestamp: number;
+			totalCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			cached: boolean;
+		}>;
+		getOffsetForTimestamp: (
+			sessionId: string,
+			timestamp: number,
+			lookbackHours?: number | null
+		) => Promise<number>;
 		onExternalChange: (handler: () => void) => () => void;
 		reload: () => Promise<boolean>;
 	};
@@ -2964,6 +3034,31 @@ interface MaestroAPI {
 			};
 			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
 		}>;
+		getGraphData: (
+			bucketCount: number,
+			lookbackHours: number | null
+		) => Promise<{
+			buckets: Array<{ auto: number; user: number; cue: number }>;
+			bucketCount: number;
+			earliestTimestamp: number;
+			latestTimestamp: number;
+			totalCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			cached: boolean;
+			stats: {
+				agentCount: number;
+				sessionCount: number;
+				autoCount: number;
+				userCount: number;
+				totalCount: number;
+			};
+		}>;
+		getOffsetForTimestamp: (
+			timestamp: number,
+			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+		) => Promise<number>;
 		generateSynopsis: (options: {
 			lookbackDays: number;
 			provider: string;
@@ -3026,6 +3121,8 @@ interface MaestroAPI {
 			sourceAgentId?: string
 		) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
+		getMetrics: () => Promise<import('../main/cue/cue-metrics').CueMetrics | null>;
+		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
@@ -3038,7 +3135,7 @@ interface MaestroAPI {
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
-		onActivityUpdate: (callback: (data: CueRunResult) => void) => () => void;
+		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)

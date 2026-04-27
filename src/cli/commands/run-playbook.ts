@@ -69,6 +69,7 @@ interface RunPlaybookOptions {
 	json?: boolean;
 	debug?: boolean;
 	verbose?: boolean;
+	synopsis?: boolean; // commander uses --no-synopsis which becomes synopsis: false
 	wait?: boolean;
 }
 
@@ -259,6 +260,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			writeHistory: options.history !== false, // --no-history sets history to false
 			debug: options.debug,
 			verbose: options.verbose,
+			skipSynopsis: options.synopsis === false, // --no-synopsis sets synopsis to false
 		});
 
 		for await (const event of generator) {

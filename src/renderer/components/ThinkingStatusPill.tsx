@@ -5,7 +5,7 @@
  *
  * When AutoRun is active, shows a special AutoRun pill with total elapsed time instead.
  */
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
@@ -29,7 +29,7 @@ interface ThinkingStatusPillProps {
 // ElapsedTimeDisplay - shows time since thinking started
 const ElapsedTimeDisplay = memo(
 	({ startTime, textColor }: { startTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(
+		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
 			Math.floor((Date.now() - startTime) / 1000)
 		);
 
@@ -175,14 +175,37 @@ const AutoRunPill = memo(
 		onSessionClick?: (sessionId: string, tabId?: string) => void;
 	}) => {
 		const [isExpanded, setIsExpanded] = useState(false);
+		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
 		const { completedTasks, totalTasks, isStopping } = autoRunState;
 		const concurrentCount = thinkingItems?.length || 0;
 
+		const handleHoverEnter = () => {
+			if (closeTimerRef.current) {
+				clearTimeout(closeTimerRef.current);
+				closeTimerRef.current = null;
+			}
+			setIsExpanded(true);
+		};
+
+		const handleHoverLeave = () => {
+			if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = setTimeout(() => {
+				setIsExpanded(false);
+				closeTimerRef.current = null;
+			}, 150);
+		};
+
+		useEffect(() => {
+			return () => {
+				if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+			};
+		}, []);
+
 		return (
 			<div className="relative flex justify-center pb-2 -mt-2">
 				<div
-					className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+					className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
 					style={{
 						backgroundColor: theme.colors.accent + '20',
 						border: `1px solid ${theme.colors.accent}50`,
@@ -280,73 +303,73 @@ const AutoRunPill = memo(
 						<>
 							<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 							<div
-								className="relative"
-								onMouseEnter={() => setIsExpanded(true)}
-								onMouseLeave={() => setIsExpanded(false)}
+								onMouseEnter={handleHoverEnter}
+								onMouseLeave={handleHoverLeave}
+								className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+								style={{
+									backgroundColor: theme.colors.warning + '40',
+									border: `1px solid ${theme.colors.warning}60`,
+								}}
+								title={`+${concurrentCount} more running`}
 							>
-								<div
-									className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
-									style={{
-										backgroundColor: theme.colors.warning + '40',
-										border: `1px solid ${theme.colors.warning}60`,
-									}}
-									title={`+${concurrentCount} more running`}
-								>
-									<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
-										+{concurrentCount}
-									</span>
-								</div>
-
-								{/* Expanded dropdown — positioned above to avoid going off-screen */}
-								{isExpanded && (
-									<div className="absolute right-0 bottom-full pb-1 z-50">
-										<div
-											className="min-w-[320px] rounded-lg shadow-xl overflow-hidden"
-											style={{
-												backgroundColor: theme.colors.bgSidebar,
-												border: `1px solid ${theme.colors.border}`,
-											}}
-										>
-											<div
-												className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
-												style={{
-													color: theme.colors.textDim,
-													backgroundColor: theme.colors.bgActivity,
-												}}
-											>
-												Running Processes
-											</div>
-											{/* AutoRun entry */}
-											<div
-												className="flex items-center justify-between gap-3 w-full px-3 py-2"
-												style={{ color: theme.colors.textMain }}
-											>
-												<div className="flex items-center gap-2 min-w-0">
-													<div
-														className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-														style={{ backgroundColor: theme.colors.accent }}
-													/>
-													<span className="text-xs font-medium">AutoRun</span>
-												</div>
-												<span className="text-xs" style={{ color: theme.colors.textDim }}>
-													{completedTasks}/{totalTasks} tasks
-												</span>
-											</div>
-											{/* Concurrent thinking items */}
-											{thinkingItems?.map((item) => (
-												<ThinkingItemRow
-													key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
-													item={item}
-													theme={theme}
-													namedSessions={namedSessions}
-													onSessionClick={onSessionClick}
-												/>
-											))}
-										</div>
-									</div>
-								)}
+								<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+									+{concurrentCount}
+								</span>
 							</div>
 						</>
+					)}
+
+					{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+					{concurrentCount > 0 && isExpanded && (
+						<div
+							className="absolute inset-x-0 bottom-full pb-1 z-50"
+							onMouseEnter={handleHoverEnter}
+							onMouseLeave={handleHoverLeave}
+						>
+							<div
+								className="rounded-lg shadow-xl overflow-hidden"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div
+									className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+									style={{
+										color: theme.colors.textDim,
+										backgroundColor: theme.colors.bgActivity,
+									}}
+								>
+									Running Processes
+								</div>
+								{/* AutoRun entry */}
+								<div
+									className="flex items-center justify-between gap-3 w-full px-3 py-2"
+									style={{ color: theme.colors.textMain }}
+								>
+									<div className="flex items-center gap-2 min-w-0">
+										<div
+											className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+											style={{ backgroundColor: theme.colors.accent }}
+										/>
+										<span className="text-xs font-medium">AutoRun</span>
+									</div>
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>
+										{completedTasks}/{totalTasks} tasks
+									</span>
+								</div>
+								{/* Concurrent thinking items */}
+								{thinkingItems?.map((item) => (
+									<ThinkingItemRow
+										key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
+										item={item}
+										theme={theme}
+										namedSessions={namedSessions}
+										onSessionClick={onSessionClick}
+									/>
+								))}
+							</div>
+						</div>
 					)}
 				</div>
 			</div>
@@ -375,6 +398,29 @@ function ThinkingStatusPillInner({
 	onInterrupt,
 }: ThinkingStatusPillProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
+	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const handleHoverEnter = () => {
+		if (closeTimerRef.current) {
+			clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+		setIsExpanded(true);
+	};
+
+	const handleHoverLeave = () => {
+		if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+		closeTimerRef.current = setTimeout(() => {
+			setIsExpanded(false);
+			closeTimerRef.current = null;
+		}, 150);
+	};
+
+	useEffect(() => {
+		return () => {
+			if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+		};
+	}, []);
 
 	// If AutoRun is active for the current session, show the AutoRun pill
 	// with concurrent thinking items badge for parallel operations.
@@ -438,9 +484,9 @@ function ThinkingStatusPillInner({
 	return (
 		// Thinking Pill - centered container with negative top margin to offset parent padding
 		<div className="relative flex justify-center pb-2 -mt-2">
-			{/* Thinking Pill - shrinks to fit content */}
+			{/* Thinking Pill - shrinks to fit content; `relative` anchors the expanded dropdown to the pill's full width. */}
 			<div
-				className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+				className="relative flex items-center gap-2 px-4 py-1.5 rounded-full"
 				style={{
 					backgroundColor: theme.colors.warning + '20',
 					border: `1px solid ${theme.colors.border}`,
@@ -522,54 +568,18 @@ function ThinkingStatusPillInner({
 				{/* Additional thinking items indicator */}
 				{hasMultiple && (
 					<div
-						className="relative"
-						onMouseEnter={() => setIsExpanded(true)}
-						onMouseLeave={() => setIsExpanded(false)}
+						onMouseEnter={handleHoverEnter}
+						onMouseLeave={handleHoverLeave}
+						className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+						style={{
+							backgroundColor: theme.colors.warning + '40',
+							border: `1px solid ${theme.colors.warning}60`,
+						}}
+						title={`+${additionalItems.length} more thinking`}
 					>
-						<div
-							className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
-							style={{
-								backgroundColor: theme.colors.warning + '40',
-								border: `1px solid ${theme.colors.warning}60`,
-							}}
-							title={`+${additionalItems.length} more thinking`}
-						>
-							<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
-								+{additionalItems.length}
-							</span>
-						</div>
-
-						{/* Expanded dropdown - positioned above to avoid going off-screen */}
-						{isExpanded && (
-							<div className="absolute right-0 bottom-full pb-1 z-50">
-								<div
-									className="min-w-[320px] rounded-lg shadow-xl overflow-hidden"
-									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									<div
-										className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
-										style={{
-											color: theme.colors.textDim,
-											backgroundColor: theme.colors.bgActivity,
-										}}
-									>
-										All Thinking Sessions
-									</div>
-									{thinkingItems.map((item) => (
-										<ThinkingItemRow
-											key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
-											item={item}
-											theme={theme}
-											namedSessions={namedSessions}
-											onSessionClick={onSessionClick}
-										/>
-									))}
-								</div>
-							</div>
-						)}
+						<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+							+{additionalItems.length}
+						</span>
 					</div>
 				)}
 
@@ -593,6 +603,42 @@ function ThinkingStatusPillInner({
 							Stop
 						</button>
 					</>
+				)}
+
+				{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+				{hasMultiple && isExpanded && (
+					<div
+						className="absolute inset-x-0 bottom-full pb-1 z-50"
+						onMouseEnter={handleHoverEnter}
+						onMouseLeave={handleHoverLeave}
+					>
+						<div
+							className="rounded-lg shadow-xl overflow-hidden"
+							style={{
+								backgroundColor: theme.colors.bgSidebar,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							<div
+								className="px-3 py-1.5 text-[10px] uppercase tracking-wide font-semibold"
+								style={{
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
+								}}
+							>
+								All Thinking Sessions
+							</div>
+							{thinkingItems.map((item) => (
+								<ThinkingItemRow
+									key={`${item.session.id}-${item.tab?.id ?? 'legacy'}`}
+									item={item}
+									theme={theme}
+									namedSessions={namedSessions}
+									onSessionClick={onSessionClick}
+								/>
+							))}
+						</div>
+					</div>
 				)}
 			</div>
 			{/* End Thinking Pill */}

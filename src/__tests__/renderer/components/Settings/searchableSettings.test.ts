@@ -146,6 +146,9 @@ describe('searchableSettings', () => {
 			['environment variables', 'general-storage'],
 			['migrate', 'general-storage'],
 			['final response', 'general-thinking-mode'],
+			['spell check', 'general-spell-check'],
+			['spelling', 'general-spell-check'],
+			['typo', 'general-spell-check'],
 
 			// Display tab
 			['x-large', 'display-font-size'],

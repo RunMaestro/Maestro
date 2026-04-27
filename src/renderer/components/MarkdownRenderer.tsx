@@ -15,6 +15,11 @@ import { extractHexColor } from '../../shared/hexColor';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdownConfig';
+import {
+	INLINE_CODE_CLICK_PROPS,
+	INLINE_CODE_CLICK_STYLE,
+	buildInlineCodeHandlers,
+} from '../utils/inlineCodeCopy';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
@@ -510,12 +515,20 @@ export const MarkdownRenderer = memo(
 							node: _node,
 							className,
 							children,
+							style,
 							...props
 						}: JSX.IntrinsicElements['code'] & ExtraProps) => {
 							// Inline code only — block code is handled by the pre component above
 							const hexColor = extractHexColor(children);
+							const handlers = buildInlineCodeHandlers(children);
 							return (
-								<code className={className} {...props}>
+								<code
+									className={className}
+									{...props}
+									{...INLINE_CODE_CLICK_PROPS}
+									{...handlers}
+									style={{ ...(style ?? {}), ...INLINE_CODE_CLICK_STYLE }}
+								>
 									{hexColor && (
 										<span
 											style={{

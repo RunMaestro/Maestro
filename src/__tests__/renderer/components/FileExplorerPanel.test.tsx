@@ -287,6 +287,7 @@ describe('FileExplorerPanel', () => {
 			fileTreeContainerRef: React.createRef<HTMLDivElement>(),
 			fileTreeFilterInputRef: React.createRef<HTMLInputElement>(),
 			toggleFolder: vi.fn(),
+			toggleFolderRecursive: vi.fn(),
 			handleFileClick: vi.fn().mockResolvedValue(undefined),
 			expandAllFolders: vi.fn(),
 			collapseAllFolders: vi.fn(),
@@ -455,6 +456,98 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+		});
+	});
+
+	describe('Find Button (#759)', () => {
+		it('opens the filter input when clicked while closed', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={false} />);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('closes the filter input when clicked while open and empty', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="" />);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('does not close the filter input when it has a query', () => {
+			render(
+				<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="src" />
+			);
+			fireEvent.click(screen.getByText('Find'));
+			expect(defaultProps.setFileTreeFilterOpen).not.toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('Dotfiles Toggle (#757)', () => {
+		it('keeps .maestro visible when showHiddenFiles is false (other dotfiles still hidden)', () => {
+			// Invariant: `.maestro` is the project's Maestro workspace and must
+			// never be hidden by the dotfiles toggle. Other dotfiles (e.g. `.git`)
+			// are still filtered out. See FileExplorerPanel.filterHiddenFiles.
+			const treeWithMaestro = [
+				{ name: '.maestro', type: 'folder' as const, children: [] },
+				{ name: '.git', type: 'folder' as const, children: [] },
+				{ name: 'src', type: 'folder' as const, children: [] },
+			];
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					showHiddenFiles={false}
+					filteredFileTree={treeWithMaestro}
+				/>
+			);
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
+			expect(screen.queryByText('.git')).not.toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+		});
+
+		it('shows .maestro when showHiddenFiles is true', () => {
+			const treeWithMaestro = [
+				{ name: '.maestro', type: 'folder' as const, children: [] },
+				{ name: 'src', type: 'folder' as const, children: [] },
+			];
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					showHiddenFiles={true}
+					filteredFileTree={treeWithMaestro}
+				/>
+			);
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
+			expect(screen.getByText('src')).toBeInTheDocument();
+		});
+
+		it('renders the toggle button labeled ".files"', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+			expect(screen.getByText('.files')).toBeInTheDocument();
+			expect(screen.getByTitle('Show dotfiles')).toBeInTheDocument();
+		});
+
+		it('exposes a "Hide dotfiles" tooltip while dotfiles are shown', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={true} />);
+			expect(screen.getByText('.files')).toBeInTheDocument();
+			expect(screen.getByTitle('Hide dotfiles')).toBeInTheDocument();
+		});
+
+		it('toggles showHiddenFiles when clicked', () => {
+			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+			fireEvent.click(screen.getByText('.files'));
+			expect(defaultProps.setShowHiddenFiles).toHaveBeenCalledWith(true);
+		});
+
+		it('hides the .files toggle when dotfilesToggleHidden setting is true', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			const prev = useSettingsStore.getState().dotfilesToggleHidden;
+			useSettingsStore.setState({ dotfilesToggleHidden: true });
+			try {
+				render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+				expect(screen.queryByText('.files')).not.toBeInTheDocument();
+				expect(screen.queryByTitle('Show dotfiles')).not.toBeInTheDocument();
+			} finally {
+				useSettingsStore.setState({ dotfilesToggleHidden: prev });
+			}
 		});
 	});
 
@@ -988,6 +1081,20 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+			expect(defaultProps.toggleFolderRecursive).not.toHaveBeenCalled();
+		});
+
+		it('calls toggleFolderRecursive on Alt+click of a folder', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const srcFolder = screen.getByText('src');
+			fireEvent.click(srcFolder, { altKey: true });
+
+			expect(defaultProps.toggleFolderRecursive).toHaveBeenCalledWith(
+				'src',
+				'session-1',
+				expect.any(Function)
+			);
+			expect(defaultProps.toggleFolder).not.toHaveBeenCalled();
 		});
 
 		it('sets selectedFileIndex and activeFocus when clicking a file', () => {
@@ -997,6 +1104,25 @@ describe('FileExplorerPanel', () => {
 
 			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
 			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+		});
+
+		it('sets selectedFileIndex and activeFocus when clicking a folder (#768)', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const folder = screen.getByText('src');
+			fireEvent.click(folder);
+
+			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
+			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+			expect(defaultProps.toggleFolder).toHaveBeenCalled();
+		});
+
+		it('does not change focus when clicking a folder while filtering', () => {
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilter="src" />);
+			const folder = screen.getByText('src');
+			fireEvent.click(folder);
+
+			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalled();
+			expect(defaultProps.setActiveFocus).not.toHaveBeenCalled();
 		});
 
 		it('calls handleFileClick on double-click of file', async () => {
@@ -1233,6 +1359,33 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
 
 			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+		});
+
+		it('hides Stop loading when cancelFileTreeLoad is not provided', () => {
+			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
+		});
+
+		it('invokes cancelFileTreeLoad with session id when Stop loading clicked', () => {
+			const session = createMockSession({
+				id: 'session-xyz',
+				fileTree: [],
+				fileTreeLoading: true,
+			});
+			const cancelFileTreeLoad = vi.fn();
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={[]}
+					cancelFileTreeLoad={cancelFileTreeLoad}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stop loading'));
+			expect(cancelFileTreeLoad).toHaveBeenCalledWith('session-xyz');
 		});
 
 		it('shows no files found when fileTree is empty and not loading', () => {

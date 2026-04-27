@@ -88,6 +88,66 @@ describe('CommandConfigPanel owning-session picker', () => {
 		expect(screen.getByTitle('Unbind to pick a different session')).toBeInTheDocument();
 	});
 
+	it('alphabetizes the agent picker options regardless of input order', () => {
+		const unsorted: CuePipelineSessionInfo[] = [
+			{ id: 'sess-z', name: 'Zulu', toolType: 'claude-code' },
+			{ id: 'sess-c', name: 'charlie', toolType: 'codex' },
+			{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' },
+			{ id: 'sess-b', name: 'Bravo', toolType: 'codex' },
+		];
+
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({ owningSessionId: '' })}
+				theme={theme}
+				sessions={unsorted}
+				onUpdateNode={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(screen.getByText('Select an agent…'));
+
+		// All four real options should render; their DOM order should be
+		// alphabetical (case-insensitive) — Alpha, Bravo, charlie, Zulu —
+		// not the input order (Zulu, charlie, Alpha, Bravo).
+		const optionLabels = screen
+			.getAllByRole('option')
+			.map((el) => el.textContent ?? '')
+			.filter((t) => t !== 'Select an agent…');
+		expect(optionLabels).toEqual([
+			'Alpha · claude-code',
+			'Bravo · codex',
+			'charlie · codex',
+			'Zulu · claude-code',
+		]);
+	});
+
+	it('renders a filter input in the agent picker and narrows by label', () => {
+		const many: CuePipelineSessionInfo[] = [
+			{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' },
+			{ id: 'sess-b', name: 'Bravo', toolType: 'codex' },
+			{ id: 'sess-c', name: 'Charlie', toolType: 'claude-code' },
+		];
+
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({ owningSessionId: '' })}
+				theme={theme}
+				sessions={many}
+				onUpdateNode={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(screen.getByText('Select an agent…'));
+		const filter = screen.getByPlaceholderText('Filter agents…');
+		expect(filter).toBeInTheDocument();
+
+		fireEvent.change(filter, { target: { value: 'char' } });
+		expect(screen.getByRole('option', { name: /Charlie · claude-code/ })).toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: /Alpha/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: /Bravo/ })).not.toBeInTheDocument();
+	});
+
 	it('clears the owning session when the user clicks Change', () => {
 		const onUpdateNode = vi.fn();
 		render(

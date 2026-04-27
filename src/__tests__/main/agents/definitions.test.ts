@@ -25,7 +25,7 @@ describe('agent-definitions', () => {
 			expect(agentIds).toContain('opencode');
 			expect(agentIds).toContain('gemini-cli');
 			expect(agentIds).toContain('qwen3-coder');
-			expect(agentIds).toContain('aider');
+			expect(agentIds).toContain('copilot-cli');
 		});
 
 		it('should have required properties on all definitions', () => {
@@ -69,6 +69,19 @@ describe('agent-definitions', () => {
 			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
 			// noPromptSeparator removed: '--' separator prevents yargs from misinterpreting prompt content (#527)
 			expect(opencode?.noPromptSeparator).toBeUndefined();
+		});
+
+		it('should have copilot configured to use a PTY for interactive sessions', () => {
+			const copilot = AGENT_DEFINITIONS.find((def) => def.id === 'copilot-cli');
+			expect(copilot).toBeDefined();
+			expect(copilot?.requiresPty).toBe(true);
+			expect(copilot?.jsonOutputArgs).toEqual(['--output-format', 'json']);
+			expect(copilot?.readOnlyArgs).toEqual([
+				'--allow-tool=read,url',
+				'--deny-tool=write,shell,memory,github',
+				'--no-ask-user',
+			]);
+			expect(copilot?.readOnlyCliEnforced).toBe(true);
 		});
 
 		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {
@@ -115,7 +128,14 @@ describe('agent-definitions', () => {
 		});
 
 		it('should return definition for all known agents', () => {
-			const knownAgents = ['terminal', 'claude-code', 'codex', 'opencode', 'gemini-cli', 'aider'];
+			const knownAgents = [
+				'terminal',
+				'claude-code',
+				'codex',
+				'opencode',
+				'gemini-cli',
+				'copilot-cli',
+			];
 			for (const agentId of knownAgents) {
 				const def = getAgentDefinition(agentId);
 				expect(def).toBeDefined();
@@ -205,6 +225,14 @@ describe('agent-definitions', () => {
 			expect(args).toEqual(['-C', '/path/to/project']);
 		});
 
+		it('should use = syntax for Copilot resume args', () => {
+			const copilot = getAgentDefinition('copilot-cli');
+			expect(copilot?.resumeArgs).toBeDefined();
+
+			const args = copilot?.resumeArgs?.('session-789');
+			expect(args).toEqual(['--resume=session-789']);
+		});
+
 		it('should have imageArgs function for codex', () => {
 			const codex = getAgentDefinition('codex');
 			expect(codex?.imageArgs).toBeDefined();
@@ -219,6 +247,18 @@ describe('agent-definitions', () => {
 
 			const args = opencode?.imageArgs?.('/path/to/image.png');
 			expect(args).toEqual(['-f', '/path/to/image.png']);
+		});
+
+		it('should embed Copilot images into prompts using @mentions', () => {
+			const copilot = getAgentDefinition('copilot-cli');
+			expect(copilot?.imagePromptBuilder).toBeDefined();
+
+			const promptPrefix = copilot?.imagePromptBuilder?.([
+				'/tmp/screenshot-1.png',
+				'/tmp/screenshot-2.jpg',
+			]);
+			expect(promptPrefix).toContain('@/tmp/screenshot-1.png');
+			expect(promptPrefix).toContain('@/tmp/screenshot-2.jpg');
 		});
 	});
 
@@ -252,6 +292,31 @@ describe('agent-definitions', () => {
 			expect(modelOption?.argBuilder?.('ollama/qwen3:8b')).toEqual(['--model', 'ollama/qwen3:8b']);
 			expect(modelOption?.argBuilder?.('')).toEqual([]);
 			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+		});
+
+		it('should expose only the batch-meaningful Copilot config knobs', () => {
+			const copilot = getAgentDefinition('copilot-cli');
+			expect(copilot?.configOptions).toBeDefined();
+
+			// The only user-facing knobs we expose are model, contextWindow, and
+			// reasoningEffort. The autopilot / allow-all-paths / allow-all-urls /
+			// experimental / screen-reader flags are intentionally omitted: batch
+			// mode already runs with --allow-all, and the rest are either
+			// interactive-only or general user preferences (see definitions.ts).
+			const keys = (copilot?.configOptions || []).map((opt) => opt.key).sort();
+			expect(keys).toEqual(['contextWindow', 'model', 'reasoningEffort']);
+
+			const reasoningEffort = copilot?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+			expect(reasoningEffort?.type).toBe('select');
+			expect(reasoningEffort?.argBuilder?.('high')).toEqual(['--reasoning-effort', 'high']);
+			expect(reasoningEffort?.argBuilder?.('')).toEqual([]);
+		});
+
+		it('should run Copilot batch with --allow-all (no --silent, no per-flag toggles)', () => {
+			const copilot = getAgentDefinition('copilot-cli');
+			expect(copilot?.batchModeArgs).toEqual(['--allow-all']);
+			expect(copilot?.batchModeArgs).not.toContain('--silent');
+			expect(copilot?.yoloModeArgs).toEqual(['--allow-all']);
 		});
 	});
 

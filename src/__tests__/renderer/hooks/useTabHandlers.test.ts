@@ -17,6 +17,7 @@ import {
 	createMockFileTab as createBaseMockFileTab,
 } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
+import { setLiveDraft, clearLiveDraft, getLiveDraft } from '../../../renderer/utils/liveDraftStore';
 
 // ============================================================================
 // window.maestro is mocked globally in src/__tests__/setup.ts
@@ -154,6 +155,11 @@ describe('useTabHandlers', () => {
 				.fn()
 				.mockResolvedValue(undefined);
 		}
+
+		// Live draft store is module-level; reset known test entries.
+		clearLiveDraft('tab-1');
+		clearLiveDraft('tab-2');
+		clearLiveDraft('draft-1');
 	});
 
 	afterEach(() => {
@@ -1568,10 +1574,17 @@ describe('useTabHandlers', () => {
 	// ========================================================================
 
 	describe('handleTabClose wizard tab', () => {
-		it('shows confirmation modal for wizard tab', () => {
+		it('shows confirmation modal for wizard tab with user interaction', () => {
 			const wizardTab = createMockAITab({
 				id: 'wizard-1',
-				wizardState: { isActive: true, currentStep: 0, steps: ['step1'] },
+				wizardState: {
+					isActive: true,
+					currentStep: 0,
+					steps: ['step1'],
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+				},
 			} as any);
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			setupSessionWithTabs([wizardTab, tab2], [], 'wizard-1');
@@ -1585,6 +1598,25 @@ describe('useTabHandlers', () => {
 			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 			const modal = useModalStore.getState().modals.get('confirm');
 			expect((modal?.data as any)?.message).toContain('wizard');
+		});
+
+		it('closes wizard tab directly when no user interaction', () => {
+			const wizardTab = createMockAITab({
+				id: 'wizard-1',
+				wizardState: { isActive: true, currentStep: 0, steps: ['step1'], conversationHistory: [] },
+			} as any);
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([wizardTab, tab2], [], 'wizard-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('wizard-1');
+			});
+
+			// Should close directly without modal
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
 		});
 
 		it('closes directly for non-wizard tab', () => {
@@ -1674,6 +1706,59 @@ describe('useTabHandlers', () => {
 			const session = getSession();
 			expect(session.aiTabs).toHaveLength(1);
 			expect(session.aiTabs[0].id).toBe('tab-2');
+		});
+
+		it('uses live draft store when tab.inputValue is stale empty', () => {
+			// Simulates a fresh tab where the user has typed text but not yet
+			// blurred — tab.inputValue is empty but liveDraftStore has the live value.
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: '' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+			setLiveDraft('tab-1', 'live typed text');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('tab-1');
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			clearLiveDraft('tab-1');
+		});
+
+		it('skips draft modal when live draft is empty even if tab.inputValue is stale', () => {
+			// Simulates a tab whose user typed and then cleared the textarea —
+			// tab.inputValue still has the old text, but liveDraftStore reflects empty.
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'stale persisted text' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+			setLiveDraft('tab-1', '');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('tab-1');
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+			clearLiveDraft('tab-1');
+		});
+
+		it('clears the live draft entry when a tab is closed', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+			setLiveDraft('tab-1', 'some text');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				// Confirm the modal that pops up
+				result.current.handleTabClose('tab-1');
+				const modal = useModalStore.getState().modals.get('confirm');
+				(modal?.data as any)?.onConfirm();
+			});
+
+			expect(getLiveDraft('tab-1')).toBeUndefined();
 		});
 	});
 

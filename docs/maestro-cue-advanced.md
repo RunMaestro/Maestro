@@ -330,9 +330,9 @@ settings:
   queue_size: 20 # Buffer up to 20 events
 ```
 
-**Range:** 0–50. **Default:** 10.
+**Range:** 0–10000. **Default:** 512 (generous buffer; absorbs bursty triggers without overflow toasts).
 
-- Events beyond the queue limit are **dropped** (silently discarded)
+- Events beyond the queue limit are **dropped** (and surfaced as a "Cue queue overflow" toast)
 - Set to `0` to disable queuing — events that can't run immediately are discarded
 - The current queue depth is visible in the Cue Modal's sessions table
 

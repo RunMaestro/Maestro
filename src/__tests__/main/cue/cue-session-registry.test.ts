@@ -27,11 +27,9 @@ function makeState(overrides: Partial<SessionState> = {}): SessionState {
 	};
 	return {
 		config,
-		timers: [],
-		watchers: [],
-		yamlWatcher: null,
+		triggerSources: [],
+		yamlWatchers: [],
 		sleepPrevented: false,
-		nextTriggers: new Map(),
 		...overrides,
 	};
 }
@@ -168,6 +166,31 @@ describe('cue-session-registry', () => {
 			expect(registry.markStartupFired('s1', 'init-b')).toBe(true);
 			// s2 untouched
 			expect(registry.markStartupFired('s2', 'init-a')).toBe(false);
+		});
+	});
+
+	describe('clearAllStartupKeys', () => {
+		it('clears all startup fired-keys so subsequent fires are allowed', () => {
+			registry.markStartupFired('s1', 'init-a');
+			registry.markStartupFired('s1', 'init-b');
+			registry.markStartupFired('s2', 'init-a');
+
+			registry.clearAllStartupKeys();
+
+			expect(registry.markStartupFired('s1', 'init-a')).toBe(true);
+			expect(registry.markStartupFired('s1', 'init-b')).toBe(true);
+			expect(registry.markStartupFired('s2', 'init-a')).toBe(true);
+		});
+
+		it('does not affect sessions, scheduled keys, or session state', () => {
+			registry.register('s1', makeState());
+			registry.markScheduledFired('s1', 'sub-1', '09:00');
+			registry.markStartupFired('s1', 'init');
+
+			registry.clearAllStartupKeys();
+
+			expect(registry.has('s1')).toBe(true);
+			expect(registry.markScheduledFired('s1', 'sub-1', '09:00')).toBe(false); // still deduped
 		});
 	});
 

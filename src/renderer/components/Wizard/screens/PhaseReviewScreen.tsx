@@ -22,7 +22,8 @@ import { useWizard } from '../WizardContext';
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
-import { ToggleSwitch } from '../../ui/ToggleSwitch';
+import { RadioGroup, type RadioOption } from '../../ui/RadioGroup';
+import type { WizardAutoRunMode } from '../WizardContext';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { logger } from '../../../utils/logger';
 
@@ -76,7 +77,7 @@ function DocumentReview({
 		getPhase1Content,
 		setWantsTour,
 		setCurrentDocumentIndex,
-		setRunAllDocuments,
+		setAutoRunMode,
 	} = useWizard();
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
@@ -488,37 +489,38 @@ function DocumentReview({
 					backgroundColor: theme.colors.bgSidebar,
 				}}
 			>
-				{/* Run All toggle - only shown when there are multiple documents */}
-				{generatedDocuments.length > 1 && (
-					<div
-						className="flex items-center gap-3 mb-3 px-3 py-2.5 rounded-lg border cursor-pointer"
-						style={{
-							borderColor: theme.colors.border,
-							backgroundColor: theme.colors.bgMain,
-						}}
-						onClick={() => setRunAllDocuments(!state.runAllDocuments)}
-						role="button"
-						tabIndex={0}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') {
-								e.preventDefault();
-								setRunAllDocuments(!state.runAllDocuments);
-							}
-						}}
-					>
-						<ToggleSwitch
-							checked={state.runAllDocuments}
-							onChange={setRunAllDocuments}
-							theme={theme}
-							ariaLabel={
-								state.runAllDocuments ? 'Auto Run All Phases' : 'Auto Run First Phase Only For Now'
-							}
-						/>
-						<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							{state.runAllDocuments ? 'Auto Run All Phases' : 'Auto Run First Phase Only For Now'}
-						</span>
-					</div>
-				)}
+				{/* Auto Run launch mode selector */}
+				<div className="mb-3">
+					<RadioGroup<WizardAutoRunMode>
+						value={state.autoRunMode}
+						onChange={setAutoRunMode}
+						theme={theme}
+						ariaLabel="Auto Run launch mode"
+						options={
+							[
+								{
+									value: 'all',
+									label: 'Execute all Auto Run phases',
+									description:
+										generatedDocuments.length > 1
+											? 'Run every generated phase sequentially after launch'
+											: 'Run the generated phase after launch',
+								},
+								{
+									value: 'first',
+									label: 'Start first Auto Run phase',
+									description: 'Only run the first phase; you can launch the rest manually',
+									disabled: generatedDocuments.length < 2,
+								},
+								{
+									value: 'none',
+									label: "Don't start Auto Run",
+									description: 'Drop straight into the agent without kicking off Auto Run',
+								},
+							] as ReadonlyArray<RadioOption<WizardAutoRunMode>>
+						}
+					/>
+				</div>
 
 				<div className="flex flex-col sm:flex-row gap-3">
 					{/* Primary button - Ready to Go */}

@@ -29,6 +29,8 @@ export interface IProcessManager {
 		readOnlyMode?: boolean;
 		prompt?: string;
 		customEnvVars?: Record<string, string>;
+		/** Global shell env vars from Settings → Shell Configuration (merged by envBuilder). */
+		shellEnvVars?: Record<string, string>;
 		contextWindow?: number;
 		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;

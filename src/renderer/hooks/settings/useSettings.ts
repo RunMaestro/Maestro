@@ -282,6 +282,10 @@ export interface UseSettingsReturn {
 	setFileExplorerMaxDepth: (value: number) => void;
 	fileExplorerMaxEntries: number;
 	setFileExplorerMaxEntries: (value: number) => void;
+	sshReduceEntryCapEnabled: boolean;
+	setSshReduceEntryCapEnabled: (value: boolean) => void;
+	sshReduceEntryCapFraction: number;
+	setSshReduceEntryCapFraction: (value: number) => void;
 
 	// SSH Remote file indexing settings
 	sshRemoteIgnorePatterns: string[];
@@ -352,6 +356,14 @@ export interface UseSettingsReturn {
 	setAutoRunDisabled: (value: boolean) => void;
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+
+	// Hide ".files" (dotfiles) toggle in file explorer toolbar
+	dotfilesToggleHidden: boolean;
+	setDotfilesToggleHidden: (value: boolean) => void;
+
+	// Spell check
+	spellCheck: boolean;
+	setSpellCheck: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {

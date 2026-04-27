@@ -54,7 +54,14 @@ import {
 	convertToMindMapData,
 	NodePositionOverride,
 } from './MindMap';
-import { type MindMapLayoutType, LAYOUT_LABELS } from './mindMapLayouts';
+import {
+	type MindMapLayoutType,
+	LAYOUT_LABELS,
+	SPACING_SCALE_DEFAULT,
+	SPACING_SCALE_MIN,
+	SPACING_SCALE_MAX,
+	SPACING_SCALE_STEP,
+} from './mindMapLayouts';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -203,7 +210,7 @@ export function DocumentGraphView({
 	onNeighborDepthChange,
 	defaultPreviewCharLimit = 100,
 	onPreviewCharLimitChange,
-	defaultLayoutType = 'mindmap',
+	defaultLayoutType = 'hierarchical',
 	onLayoutTypeChange,
 	sshRemoteId,
 }: DocumentGraphViewProps) {
@@ -224,6 +231,7 @@ export function DocumentGraphView({
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
+	const [spacingScale, setSpacingScale] = useState<number>(SPACING_SCALE_DEFAULT);
 
 	// Close all other dropdowns when opening one
 	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
@@ -1234,7 +1242,7 @@ export function DocumentGraphView({
 	);
 
 	/**
-	 * Handle container keyboard shortcuts (Cmd+F for search)
+	 * Handle container keyboard shortcuts (Cmd+F for search; +/- for node spacing)
 	 */
 	const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
 		// Cmd+F or Ctrl+F to focus search
@@ -1242,7 +1250,29 @@ export function DocumentGraphView({
 			e.preventDefault();
 			searchInputRef.current?.focus();
 			searchInputRef.current?.select();
+			return;
 		}
+
+		// +/- adjust node spacing in any layout. Skip when modifiers are held so
+		// browser zoom (Cmd/Ctrl +/-) and similar shortcuts still work, and skip
+		// when typing into an input (search box, sliders).
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		const target = e.target as HTMLElement | null;
+		const tag = target?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+
+		// '=' is the unshifted '+' key on US layouts; accept both for ergonomics.
+		const isIncrease = e.key === '+' || e.key === '=';
+		const isDecrease = e.key === '-' || e.key === '_';
+		if (!isIncrease && !isDecrease) return;
+
+		e.preventDefault();
+		setSpacingScale((prev) => {
+			const next = isIncrease ? prev + SPACING_SCALE_STEP : prev - SPACING_SCALE_STEP;
+			const clamped = Math.min(SPACING_SCALE_MAX, Math.max(SPACING_SCALE_MIN, next));
+			// Round to one decimal to avoid floating-point drift.
+			return Math.round(clamped * 10) / 10;
+		});
 	}, []);
 
 	if (!isOpen) return null;
@@ -1386,30 +1416,32 @@ export function DocumentGraphView({
 										minWidth: 200,
 									}}
 								>
-									{(['mindmap', 'radial', 'force'] as MindMapLayoutType[]).map((type) => (
-										<button
-											key={type}
-											onClick={() => handleLayoutTypeChange(type)}
-											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
-											style={{
-												backgroundColor:
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
-												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
-											}}
-											onMouseEnter={(e) =>
-												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-											}
-											onMouseLeave={(e) =>
-												(e.currentTarget.style.backgroundColor =
-													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
-											}
-										>
-											<span>{LAYOUT_LABELS[type].name}</span>
-											<span className="text-xs" style={{ color: theme.colors.textDim }}>
-												{LAYOUT_LABELS[type].description}
-											</span>
-										</button>
-									))}
+									{(['mindmap', 'radial', 'hierarchical', 'force'] as MindMapLayoutType[]).map(
+										(type) => (
+											<button
+												key={type}
+												onClick={() => handleLayoutTypeChange(type)}
+												className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
+												style={{
+													backgroundColor:
+														layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+													color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+												}}
+												onMouseEnter={(e) =>
+													(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+												}
+												onMouseLeave={(e) =>
+													(e.currentTarget.style.backgroundColor =
+														layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+												}
+											>
+												<span>{LAYOUT_LABELS[type].name}</span>
+												<span className="text-xs" style={{ color: theme.colors.textDim }}>
+													{LAYOUT_LABELS[type].description}
+												</span>
+											</button>
+										)
+									)}
 								</div>
 							)}
 						</div>
@@ -1443,7 +1475,7 @@ export function DocumentGraphView({
 
 							{showDepthSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -1516,7 +1548,7 @@ export function DocumentGraphView({
 
 							{showPreviewSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -1779,6 +1811,7 @@ export function DocumentGraphView({
 							searchQuery={searchQuery}
 							previewCharLimit={previewCharLimit}
 							layoutType={layoutType}
+							spacingScale={spacingScale}
 							nodePositions={nodePositions}
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}

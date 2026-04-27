@@ -200,7 +200,7 @@ subscriptions:
 			expect(result!.settings.timeout_minutes).toBe(30);
 			expect(result!.settings.timeout_on_fail).toBe('break');
 			expect(result!.settings.max_concurrent).toBe(1);
-			expect(result!.settings.queue_size).toBe(10);
+			expect(result!.settings.queue_size).toBe(512);
 		});
 
 		it('defaults enabled to true when not specified', () => {
@@ -360,6 +360,81 @@ subscriptions:
 
 			const result = loadCueConfig('/projects/test');
 			expect(result!.subscriptions[0].source_session).toEqual(['agent-1', 'agent-2']);
+		});
+
+		it('drops malformed target_node_key / fan_out_node_keys instead of leaking bad types', () => {
+			// Defense-in-depth: hand-edited YAML or a future serializer
+			// bug could produce non-string values. The normalizer's type
+			// guards must reject them so the renderer never sees a
+			// non-string node key (which would fail strict-equality
+			// dedup checks downstream).
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: bad-key
+    event: time.scheduled
+    prompt: Run
+    schedule_times:
+      - '07:00'
+    target_node_key: 123
+  - name: bad-fanout-keys
+    event: time.heartbeat
+    interval_minutes: 10
+    prompt: Go
+    fan_out:
+      - worker-a
+      - worker-b
+    fan_out_node_keys:
+      - key-a
+      - 42
+  - name: empty-key
+    event: time.scheduled
+    prompt: Run
+    schedule_times:
+      - '08:00'
+    target_node_key: ''
+`);
+
+			const result = loadCueConfig('/projects/test');
+			// Numeric value rejected
+			expect(result!.subscriptions[0].target_node_key).toBeUndefined();
+			// Mixed string/non-string array rejected entirely
+			expect(result!.subscriptions[1].fan_out_node_keys).toBeUndefined();
+			// Empty string rejected so the loader's "key absent" branch fires
+			expect(result!.subscriptions[2].target_node_key).toBeUndefined();
+		});
+
+		it('preserves target_node_key on subscriptions through normalization', () => {
+			// Regression: the normalizer's allowlist used to drop these
+			// renderer-only fields, which silently re-merged distinct visual
+			// nodes by sessionName on every reload. The renderer needs the
+			// keys intact to round-trip "two visual nodes pointing at the
+			// same agent" as two separate nodes instead of one.
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: morning
+    event: time.scheduled
+    agent_id: 8ba583cc-5ae7-4e66-b52e-4b6511e68548
+    prompt: Run
+    schedule_times:
+      - '07:00'
+    target_node_key: 7b1e9c84-4f3a-4d2b-8e95-6c7a2b1f3d8a
+  - name: fan-out
+    event: time.heartbeat
+    interval_minutes: 10
+    prompt: Go
+    fan_out:
+      - worker-a
+      - worker-b
+    fan_out_node_keys:
+      - key-a
+      - key-b
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result!.subscriptions[0].target_node_key).toBe('7b1e9c84-4f3a-4d2b-8e95-6c7a2b1f3d8a');
+			expect(result!.subscriptions[1].fan_out_node_keys).toEqual(['key-a', 'key-b']);
 		});
 	});
 
@@ -618,8 +693,14 @@ subscriptions:
 			expect(result.errors).toHaveLength(0);
 		});
 
-		it('rejects non-object config', () => {
+		it('treats null config as valid empty config (comments-only file)', () => {
 			const result = validateCueConfig(null);
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('rejects non-object non-null config', () => {
+			const result = validateCueConfig(42);
 			expect(result.valid).toBe(false);
 			expect(result.errors[0]).toContain('non-null object');
 		});
@@ -834,10 +915,10 @@ subscriptions:
 			);
 		});
 
-		it('rejects queue_size above 50', () => {
+		it('rejects queue_size above 10000', () => {
 			const result = validateCueConfig({
 				subscriptions: [],
-				settings: { queue_size: 51 },
+				settings: { queue_size: 10001 },
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
@@ -849,6 +930,128 @@ subscriptions:
 			const result = validateCueConfig({
 				subscriptions: [],
 				settings: { queue_size: 0 },
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		// `timeout_minutes: 0` reaches `cue-run-manager` as a `0 ms` timeout
+		// and aborts every dispatched run on arrival — pipeline appears to do
+		// nothing with no obvious error. Validate it the same way as the other
+		// settings fields.
+		it('rejects timeout_minutes of 0', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { timeout_minutes: 0 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('timeout_minutes')])
+			);
+		});
+
+		it('rejects negative timeout_minutes', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { timeout_minutes: -5 },
+			});
+			expect(result.valid).toBe(false);
+		});
+
+		it('rejects non-integer timeout_minutes', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { timeout_minutes: 1.5 },
+			});
+			expect(result.valid).toBe(false);
+		});
+
+		it('rejects timeout_minutes above 1440 (24 hours)', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { timeout_minutes: 1441 },
+			});
+			expect(result.valid).toBe(false);
+		});
+
+		it('accepts valid timeout_minutes values', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { timeout_minutes: 30 },
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		// Same failure mode as timeout_minutes but per-subscription —
+		// `fan_in_timeout_minutes: 0` makes the fan-in tracker expire every
+		// fan-in immediately on the first source's arrival, so the converging
+		// agent never fires.
+		it('rejects fan_in_timeout_minutes of 0 on a subscription', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fanin',
+						event: 'agent.completed',
+						prompt: 'Do it',
+						source_session: ['a', 'b'],
+						fan_in_timeout_minutes: 0,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('fan_in_timeout_minutes')])
+			);
+		});
+
+		it('accepts valid fan_in_timeout_minutes values', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fanin',
+						event: 'agent.completed',
+						prompt: 'Do it',
+						source_session: ['a', 'b'],
+						fan_in_timeout_minutes: 60,
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		// `fan_out_ids` is the rename-stable mirror of `fan_out`. Mismatched
+		// length means the dispatcher would index out of bounds; an array
+		// containing non-strings would crash the id lookup.
+		it('rejects fan_out_ids whose length differs from fan_out', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fanout',
+						event: 'time.heartbeat',
+						interval_minutes: 5,
+						prompt: 'Do it',
+						fan_out: ['a', 'b'],
+						fan_out_ids: ['id-a'],
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('fan_out_ids')])
+			);
+		});
+
+		it('accepts fan_out_ids when length matches fan_out', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fanout',
+						event: 'time.heartbeat',
+						interval_minutes: 5,
+						prompt: 'Do it',
+						fan_out: ['a', 'b'],
+						fan_out_ids: ['id-a', 'id-b'],
+					},
+				],
 			});
 			expect(result.valid).toBe(true);
 		});
@@ -1710,6 +1913,43 @@ subscriptions:
 			const timeErrors = result.errors.filter((e: string) => e.includes('invalid hour'));
 			expect(timeErrors).toHaveLength(0);
 		});
+
+		// The trigger config UI lets users type either `6:30` or `06:30`. Save
+		// emits canonical HH:MM, but legacy YAML and hand-edits may carry the
+		// short form — accept it at validation time and let the normalizer
+		// pad to two digits so the trigger source's includes-check still matches
+		// the wall clock.
+		it('accepts schedule_times with single-digit hour (6:30)', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'time.scheduled',
+						prompt: 'Do it',
+						schedule_times: ['6:30'],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('normalizes single-digit hours to HH:MM when loading the config', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: morning
+    event: time.scheduled
+    prompt: Do it
+    schedule_times:
+      - '6:30'
+      - '17:00'
+`);
+			const result = loadCueConfigDetailed('/projects/test');
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.config.subscriptions[0].schedule_times).toEqual(['06:30', '17:00']);
+			}
+		});
 	});
 
 	describe('validateCueConfig — interval_minutes upper bound', () => {
@@ -2054,6 +2294,33 @@ subscriptions:
 			});
 			const result = findAncestorCueConfigRoot('/projects/parent/child');
 			expect(result).toBe('/projects/parent');
+		});
+	});
+
+	describe('findAncestorCueConfigRoots', () => {
+		it('returns every ancestor with a cue.yaml in closest-first order', async () => {
+			mockExistsSync.mockImplementation((p: string) => {
+				const s = String(p);
+				return (
+					s === '/users/alice/projects/.maestro/cue.yaml' || s === '/users/alice/.maestro/cue.yaml'
+				);
+			});
+			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
+			const result = findAncestorCueConfigRoots('/users/alice/projects/sub-agent');
+			expect(result).toEqual(['/users/alice/projects', '/users/alice']);
+		});
+
+		it('returns empty array when no ancestor has a cue config', async () => {
+			mockExistsSync.mockReturnValue(false);
+			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
+			expect(findAncestorCueConfigRoots('/users/alice/projects/sub')).toEqual([]);
+		});
+
+		it('respects the depth limit', async () => {
+			mockExistsSync.mockImplementation((p: string) => String(p) === '/a/.maestro/cue.yaml');
+			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
+			// /a is 6 levels up — outside the 5-level search depth
+			expect(findAncestorCueConfigRoots('/a/b/c/d/e/f/g')).toEqual([]);
 		});
 	});
 });

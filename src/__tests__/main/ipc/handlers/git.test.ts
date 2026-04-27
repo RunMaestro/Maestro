@@ -50,6 +50,11 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		rmdir: vi.fn(),
+		// realpath: identity by default so symlink-resolution paths in scanWorktreeDirectory
+		// and the chokidar discovery validator behave like a no-op in tests. Individual
+		// tests can override this via vi.mocked(fs.realpath).mockResolvedValue(...) to
+		// exercise the symlink-resolution behavior.
+		realpath: vi.fn().mockImplementation(async (p: string) => p),
 	},
 }));
 
@@ -103,16 +108,20 @@ const { mockSpawnSync } = vi.hoisted(() => ({
 	mockSpawnSync: vi.fn(),
 }));
 
-vi.mock('child_process', () => ({
-	spawnSync: mockSpawnSync,
-	// Include other exports that might be needed
-	spawn: vi.fn(),
-	exec: vi.fn(),
-	execSync: vi.fn(),
-	execFile: vi.fn(),
-	execFileSync: vi.fn(),
-	fork: vi.fn(),
-}));
+vi.mock('child_process', () => {
+	const mock = {
+		spawnSync: mockSpawnSync,
+		// Include other exports that might be needed
+		spawn: vi.fn(),
+		exec: vi.fn(),
+		execSync: vi.fn(),
+		execFile: vi.fn(),
+		execFileSync: vi.fn(),
+		fork: vi.fn(),
+	};
+	// Also expose as default for modules that import via CJS interop
+	return { ...mock, default: mock };
+});
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -2359,8 +2368,155 @@ export function Component() {
 			});
 		});
 
-		it('should handle git worktree creation failure', async () => {
-			// Mock fs.access to throw (path doesn't exist)
+		it('should recover when branch is already checked out at another worktree', async () => {
+			// fs.access is called twice:
+			//  1) for the requested /worktrees/feature path (must reject — doesn't exist)
+			//  2) for the recovered /existing/wt/feature-branch path (must resolve — does exist)
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
+				if (String(p) === '/existing/wt/feature-branch') return undefined;
+				throw new Error('ENOENT');
+			});
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// git rev-parse --verify branchName (branch exists)
+					stdout: 'abc123456789',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					// git worktree add fails because branch already attached elsewhere
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already checked out at '/existing/wt/feature-branch'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// findLocalWorktreeForBranch → git worktree list --porcelain
+					stdout: [
+						'worktree /main/repo',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /existing/wt/feature-branch',
+						'HEAD bbb',
+						'branch refs/heads/feature-branch',
+						'',
+					].join('\n'),
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/existing/wt/feature-branch',
+				currentBranch: 'feature-branch',
+				requestedBranch: 'feature-branch',
+				branchMismatch: false,
+			});
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'list', '--porcelain'],
+				'/main/repo'
+			);
+		});
+
+		it('should fall through to error when porcelain returns a stale worktree path that no longer exists on disk', async () => {
+			// fs.access rejects → recovered path is stale, treat as no match
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// porcelain returns the stale path
+					stdout: [
+						'worktree /main/repo',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /stale/path',
+						'HEAD bbb',
+						'branch refs/heads/feature-branch',
+						'',
+					].join('\n'),
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+			});
+			expect(fsPromises.default.access).toHaveBeenCalledWith('/stale/path');
+		});
+
+		it('should still surface error when branch is "already used" but porcelain lookup yields no match', async () => {
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// git rev-parse --verify branchName (branch exists)
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					// git worktree add fails
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already used by worktree at '/gone'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// porcelain returns nothing matching
+					stdout: 'worktree /main/repo\nHEAD aaa\nbranch refs/heads/main\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already used by worktree at '/gone'",
+			});
+		});
+
+		it('should surface unrelated git worktree creation failures unchanged', async () => {
 			const fsPromises = await import('fs/promises');
 			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
 
@@ -2372,9 +2528,9 @@ export function Component() {
 					exitCode: 128,
 				})
 				.mockResolvedValueOnce({
-					// git worktree add -b fails
+					// git worktree add -b fails for an unrelated reason
 					stdout: '',
-					stderr: "fatal: 'feature-branch' is already checked out at '/other/path'",
+					stderr: 'fatal: permission denied',
 					exitCode: 128,
 				});
 
@@ -2388,8 +2544,14 @@ export function Component() {
 
 			expect(result).toEqual({
 				success: false,
-				error: "fatal: 'feature-branch' is already checked out at '/other/path'",
+				error: 'fatal: permission denied',
 			});
+			// porcelain lookup must NOT run for non-"already used" errors
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalledWith(
+				'git',
+				['worktree', 'list', '--porcelain'],
+				'/main/repo'
+			);
 		});
 	});
 
@@ -3777,10 +3939,12 @@ branch refs/heads/bugfix-123
 			const handler = handlers.get('git:scanWorktreeDirectory');
 			const result = await handler!({} as any, '/nonexistent/path');
 
-			// The handler catches errors and returns empty gitSubdirs
+			// The handler catches errors and returns empty gitSubdirs along with
+			// scanFailed: true so the renderer knows not to bulk-remove sessions.
 			expect(result).toEqual({
 				success: true,
 				gitSubdirs: [],
+				scanFailed: true,
 			});
 		});
 
@@ -3964,6 +4128,55 @@ branch refs/heads/bugfix-123
 			// Only good-worktree should be included; broken-repo should be filtered out
 			expect(result.gitSubdirs).toHaveLength(1);
 			expect(result.gitSubdirs[0].name).toBe('good-worktree');
+		});
+
+		it('should accept worktrees on symlinked basePaths via realpath canonicalization', async () => {
+			// Regression: on Linux/Windows, if the configured basePath traverses a symlink
+			// (e.g. /home/user/work → /data/work), git rev-parse --show-toplevel returns
+			// the realpath while the constructed subdirPath does not. Without realpath
+			// canonicalization the comparison rejected every subdir and the renderer
+			// then bulk-flagged every existing worktree as removed.
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'feature-branch', isDirectory: () => true },
+			] as any);
+
+			vi.mocked(mockFs.realpath).mockImplementation(async (p: any) => {
+				const s = String(p);
+				if (s === '/home/user/worktrees/feature-branch') {
+					return '/data/worktrees/feature-branch';
+				}
+				if (s === '/data/worktrees/feature-branch') {
+					return '/data/worktrees/feature-branch';
+				}
+				return s;
+			});
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					// git always returns realpath, not the symlink path
+					return { stdout: '/data/worktrees/feature-branch', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--git-dir')) {
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--git-common-dir')) {
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/home/user/worktrees');
+
+			expect(result.gitSubdirs).toHaveLength(1);
+			expect(result.gitSubdirs[0].branch).toBe('feature-branch');
+			expect(result.scanFailed).toBeFalsy();
 		});
 	});
 

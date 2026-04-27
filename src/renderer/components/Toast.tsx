@@ -60,16 +60,16 @@ const ToastItem = memo(function ToastItem({
 	// Check if toast is clickable (has session navigation or custom action)
 	const isClickable = toast.onClick || (toast.sessionId && onSessionClick);
 
-	// Icon based on type
+	// Icon based on the toast color (5-color design language).
 	const getIcon = () => {
-		switch (toast.type) {
-			case 'success':
+		switch (toast.color) {
+			case 'green':
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
 					</svg>
 				);
-			case 'error':
+			case 'red':
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -80,18 +80,8 @@ const ToastItem = memo(function ToastItem({
 						/>
 					</svg>
 				);
-			case 'warning':
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-						/>
-					</svg>
-				);
-			default:
+			case 'yellow':
+				// Info-style "i" — yellow is a soft heads-up.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -102,17 +92,48 @@ const ToastItem = memo(function ToastItem({
 						/>
 					</svg>
 				);
+			case 'orange':
+				// AlertTriangle — more emphatic warning than yellow.
+				return (
+					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+						/>
+					</svg>
+				);
+			case 'theme':
+			default:
+				// Sparkles — themed default, no semantic.
+				return (
+					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+						/>
+					</svg>
+				);
 		}
 	};
 
+	/** Fixed orange — no theme defines this slot. Matches CenterFlash. */
+	const ORANGE_HEX = '#f97316';
+
 	const getTypeColor = () => {
-		switch (toast.type) {
-			case 'success':
+		switch (toast.color) {
+			case 'green':
 				return theme.colors.success;
-			case 'error':
+			case 'red':
 				return theme.colors.error;
-			case 'warning':
+			case 'yellow':
 				return theme.colors.warning;
+			case 'orange':
+				return ORANGE_HEX;
+			case 'theme':
 			default:
 				return theme.colors.accent;
 		}
@@ -246,11 +267,21 @@ const ToastItem = memo(function ToastItem({
 					)}
 				</div>
 
-				{/* Close button */}
+				{/* Close button — emphasized when toast is dismissible (sticky) */}
 				<button
 					onClick={handleClose}
-					className="flex-shrink-0 p-1 rounded hover:bg-opacity-10 transition-colors"
-					style={{ color: theme.colors.textDim }}
+					className="flex-shrink-0 p-1 rounded transition-colors"
+					style={
+						toast.dismissible
+							? {
+									color: getTypeColor(),
+									backgroundColor: `${getTypeColor()}1F`,
+									boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
+								}
+							: { color: theme.colors.textDim }
+					}
+					title={toast.dismissible ? 'Dismiss' : undefined}
+					aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
 				>
 					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -263,8 +294,8 @@ const ToastItem = memo(function ToastItem({
 				</button>
 			</div>
 
-			{/* Progress bar */}
-			{toast.duration && toast.duration > 0 && (
+			{/* Progress bar — hidden for dismissible (sticky) toasts */}
+			{!toast.dismissible && toast.duration && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{

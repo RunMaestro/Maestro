@@ -303,6 +303,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
+				// NOTE: The user-visible log entry for this message is appended by the
+				// caller that dequeued the item (e.g. useAgentListeners onExit,
+				// useInterruptHandler, useQueueProcessing.dispatchQueuedItem,
+				// handleQuickActionsDebugReleaseQueuedItem) so it lands atomically with
+				// the dequeue/state-busy transition. Adding it here too would duplicate.
+
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: targetTab.id,
@@ -405,6 +411,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
 					);

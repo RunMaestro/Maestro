@@ -418,6 +418,20 @@ export class YourAgentOutputParser implements AgentOutputParser {
 						raw: event,
 					};
 
+				// IMPORTANT: tag reasoning deltas with isReasoning: true so the
+				// renderer routes them to source: 'thinking' logs and the
+				// ThinkingMode lifecycle (inline + on-exit clearing) applies.
+				// See docs/agent-guides/AGENT-INFRA.md → "Thinking / Tool Log Contract".
+				case 'your_reasoning_event':
+					return {
+						type: 'text',
+						sessionId: event.sessionId,
+						text: event.content,
+						isPartial: true,
+						isReasoning: true,
+						raw: event,
+					};
+
 				case 'your_finish_event':
 					return {
 						type: 'result',
@@ -938,13 +952,15 @@ codex exec --json resume <thread_id> "continue"
 
 ---
 
-### Qwen3 Coder 📋 Planned
+### Copilot-CLI ✅ Fully Implemented
 
-**Status:** Not yet implemented
+**Status:** Beta (shipped in RC; marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
 
-**To Add:**
-
-1. Agent definition in `agents/definitions.ts`
-2. Capabilities in `agents/capabilities.ts` (likely local model, no cost tracking)
-3. Output parser for Qwen JSON format
-4. Error patterns (likely minimal for local models)
+- **Agent ID:** `copilot-cli`
+- **Binary:** `copilot`
+- **CLI Flags:** `-p/--prompt`, `--output-format json`, `--continue`, `--resume[=session-id]`, `--allow-tool`, `--deny-tool`, `--no-ask-user`, `--model`
+- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` — handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
+- **Session Storage:** `src/main/storage/copilot-session-storage.ts` — reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
+- **Error Patterns:** auth failures, rate limiting, token exhaustion (7 variants), network errors, model-availability errors, session-not-found.
+- **Model Discovery:** Fetches the `github-copilot` model list from [models.dev](https://models.dev) (3s timeout) and merges it with the user's configured model from `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
+- **Known Limitations:** Interactive PTY mode does not go through `wrapSpawnWithSsh()`, so interactive Copilot-CLI over SSH is not supported. Batch mode (`-p`) works over SSH.

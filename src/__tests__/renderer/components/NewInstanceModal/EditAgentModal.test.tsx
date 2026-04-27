@@ -231,8 +231,8 @@ describe('EditAgentModal', () => {
 		);
 
 		await waitFor(() => {
-			const select = screen.getByRole('combobox');
-			expect(select).toBeInTheDocument();
+			const providerSelect = screen.getByDisplayValue('Claude Code');
+			expect(providerSelect).toBeInTheDocument();
 		});
 	});
 
@@ -248,13 +248,10 @@ describe('EditAgentModal', () => {
 			/>
 		);
 
-		await waitFor(() => {
-			const select = screen.getByRole('combobox');
-			expect(select).toBeInTheDocument();
-		});
+		const providerSelect = await screen.findByDisplayValue('Claude Code');
 
 		// Change provider
-		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'codex' } });
+		fireEvent.change(providerSelect, { target: { value: 'codex' } });
 
 		await waitFor(() => {
 			expect(

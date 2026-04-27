@@ -1441,6 +1441,47 @@ Some text with [x] in it that's not a checkbox
 			await resultPromise;
 		});
 
+		it('should spawn copilot-cli with -p prompt arg and parse its result event', async () => {
+			const resultPromise = spawnAgent('copilot-cli', '/project', 'Hello copilot');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(cmd).toBeTruthy();
+
+			// Copilot-CLI batch mode: copilot --allow-all --output-format json -p "prompt"
+			expect(args).toContain('--allow-all');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('json');
+			expect(args).toContain('-p');
+			expect(args).toContain('Hello copilot');
+			// promptArgs path replaces the '--' separator
+			expect(args).not.toContain('--');
+
+			// Emit a session.start init event
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ type: 'session.start', data: { sessionId: 'cop-1' } }) + '\n')
+			);
+			// Emit a final assistant.message (no toolRequests + non-empty content → result)
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'assistant.message',
+						sessionId: 'cop-1',
+						data: { content: 'Final answer from copilot', toolRequests: [] },
+					}) + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Final answer from copilot');
+			expect(result.agentSessionId).toBe('cop-1');
+		});
+
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
@@ -1754,16 +1795,18 @@ Some text with [x] in it that's not a checkbox
 			const prev = process.env.MAESTRO_TEST_ENV;
 			process.env.MAESTRO_TEST_ENV = 'from-shell';
 
-			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
-				customEnvVars: { MAESTRO_TEST_ENV: 'from-session' },
-			});
-			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			try {
+				const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+					customEnvVars: { MAESTRO_TEST_ENV: 'from-session' },
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			const { options } = spawnCall();
-			expect(options.env.MAESTRO_TEST_ENV).toBe('from-session');
-
-			if (prev === undefined) delete process.env.MAESTRO_TEST_ENV;
-			else process.env.MAESTRO_TEST_ENV = prev;
+				const { options } = spawnCall();
+				expect(options.env.MAESTRO_TEST_ENV).toBe('from-session');
+			} finally {
+				if (prev === undefined) delete process.env.MAESTRO_TEST_ENV;
+				else process.env.MAESTRO_TEST_ENV = prev;
+			}
 		});
 
 		it('session customEnvVars wins over agent-level customEnvVars', async () => {
@@ -1778,6 +1821,43 @@ Some text with [x] in it that's not a checkbox
 
 			const { options } = spawnCall();
 			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
+		});
+
+		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
+			// Regression: agent.defaultEnvVars must NOT silently override a value
+			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
+			// its defaultEnvVars — if the shell sets it, that shell value should
+			// survive to the spawned process.
+			const prev = process.env.OPENCODE_CONFIG_CONTENT;
+			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
+
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
+			} finally {
+				if (prev === undefined) delete process.env.OPENCODE_CONFIG_CONTENT;
+				else process.env.OPENCODE_CONFIG_CONTENT = prev;
+			}
+		});
+
+		it('agent defaultEnvVars is applied when the shell has not set it', async () => {
+			// Complements the "shell wins" test: when the shell does NOT export
+			// the key, the agent default must still reach the spawned process.
+			const prev = process.env.OPENCODE_CONFIG_CONTENT;
+			delete process.env.OPENCODE_CONFIG_CONTENT;
+
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+			} finally {
+				if (prev !== undefined) process.env.OPENCODE_CONFIG_CONTENT = prev;
+			}
 		});
 
 		it('applies customModel via configOptions argBuilder for Claude', async () => {
@@ -1969,6 +2049,24 @@ Some text with [x] in it that's not a checkbox
 			];
 			expect(wrapConfig.customEnvVars).toBeDefined();
 			expect(wrapConfig.customEnvVars!.REMOTE_TOKEN).toBe('abc');
+		});
+
+		it('forwards agent defaultEnvVars to the SSH wrapper even without user customEnvVars', async () => {
+			// Defaults must still reach the remote host (which has no shell env
+			// to fall back on). Session customEnvVars is omitted here — we're
+			// asserting that the default-only path survived the env-layer fix.
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('opencode', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+			await driveSpawnToCompletion(p, 0);
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ customEnvVars?: Record<string, string> },
+			];
+			expect(wrapConfig.customEnvVars).toBeDefined();
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
 		});
 	});
 

@@ -24,7 +24,11 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { buildWorktreeSession } from '../../utils/worktreeSession';
-import { isRecentlyCreatedWorktreePath } from '../../utils/worktreeDedup';
+import {
+	isRecentlyCreatedWorktreePath,
+	normalizePath,
+	sessionMatchesWorktreeRoot,
+} from '../../utils/worktreeDedup';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -83,12 +87,8 @@ function isSkippableBranch(branch: string | null | undefined): boolean {
 	return branch === 'main' || branch === 'master' || branch === 'HEAD';
 }
 
-/** Normalize file path for comparison: convert backslashes to forward slashes, collapse duplicate slashes, and remove trailing slash. */
-function normalizePath(p: string): string {
-	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
-}
-
 // buildWorktreeSession and BuildWorktreeSessionParams are imported from ../../utils/worktreeSession
+// normalizePath and sessionMatchesWorktreeRoot are imported from ../../utils/worktreeDedup
 
 // ============================================================================
 // Hook
@@ -324,12 +324,42 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					throw new Error(result.error || 'Failed to create worktree');
 				}
 
+				// If the branch was already attached to another worktree on disk,
+				// open that existing path instead of failing the user's flow.
+				const actualPath = result.existingPath || worktreePath;
+				const reusedExisting = !!result.alreadyExisted && !!result.existingPath;
+
+				// If we ended up using a different path, drop the original mark and
+				// avoid re-marking — there was nothing newly created on disk to race with.
+				if (reusedExisting) {
+					recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
+				}
+
+				// If a session for the existing worktree path already exists, focus it
+				// and skip the duplicate creation. Done before fetchGitInfo so we don't
+				// pay for an unnecessary git round-trip when there's nothing to build.
+				if (reusedExisting) {
+					const normalizedActual = normalizePath(actualPath);
+					const existingSession = useSessionStore
+						.getState()
+						.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+					if (existingSession) {
+						useSessionStore.getState().setActiveSessionId(existingSession.id);
+						notifyToast({
+							type: 'info',
+							title: 'Worktree Already Open',
+							message: branchName,
+						});
+						return;
+					}
+				}
+
 				// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
-				const gitInfo = await fetchGitInfo(worktreePath, sshRemoteId);
+				const gitInfo = await fetchGitInfo(actualPath, sshRemoteId);
 
 				const worktreeSession = buildWorktreeSession({
 					parentSession: activeSession,
-					path: worktreePath,
+					path: actualPath,
 					branch: branchName,
 					name: branchName,
 					defaultSaveToHistory: savToHist,
@@ -349,9 +379,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				useSessionStore.getState().setActiveSessionId(worktreeSession.id);
 
 				notifyToast({
-					type: 'success',
-					title: 'Worktree Created',
-					message: branchName,
+					type: reusedExisting ? 'info' : 'success',
+					title: reusedExisting ? 'Worktree Already Existed' : 'Worktree Created',
+					message: reusedExisting ? `Opened existing worktree at ${actualPath}` : branchName,
 				});
 			} catch (err) {
 				recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
@@ -410,12 +440,39 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				throw new Error(result.error || 'Failed to create worktree');
 			}
 
+			// If the branch was already attached to another worktree on disk,
+			// open that existing path instead of failing the user's flow.
+			const actualPath = result.existingPath || worktreePath;
+			const reusedExisting = !!result.alreadyExisted && !!result.existingPath;
+
+			if (reusedExisting) {
+				recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
+			}
+
+			// If a session for the existing worktree path already exists, focus it
+			// and skip the duplicate creation.
+			if (reusedExisting) {
+				const normalizedActual = normalizePath(actualPath);
+				const existingSession = useSessionStore
+					.getState()
+					.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+				if (existingSession) {
+					useSessionStore.getState().setActiveSessionId(existingSession.id);
+					notifyToast({
+						type: 'info',
+						title: 'Worktree Already Open',
+						message: branchName,
+					});
+					return;
+				}
+			}
+
 			// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
-			const gitInfo = await fetchGitInfo(worktreePath, sshRemoteId);
+			const gitInfo = await fetchGitInfo(actualPath, sshRemoteId);
 
 			const worktreeSession = buildWorktreeSession({
 				parentSession: createWtSession,
-				path: worktreePath,
+				path: actualPath,
 				branch: branchName,
 				name: branchName,
 				defaultSaveToHistory: savToHist,
@@ -441,9 +498,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			useSessionStore.getState().setActiveSessionId(worktreeSession.id);
 
 			notifyToast({
-				type: 'success',
-				title: 'Worktree Created',
-				message: branchName,
+				type: reusedExisting ? 'info' : 'success',
+				title: reusedExisting ? 'Worktree Already Existed' : 'Worktree Created',
+				message: reusedExisting ? `Opened existing worktree at ${actualPath}` : branchName,
 			});
 		} catch (err) {
 			recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
@@ -506,7 +563,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					parentSession.worktreeConfig!.basePath,
 					sshRemoteId
 				);
-				const { gitSubdirs } = scanResult;
+				const { gitSubdirs, scanFailed } = scanResult;
 
 				// Detect additions
 				for (const subdir of gitSubdirs) {
@@ -542,13 +599,36 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					);
 				}
 
-				// Detect removals: child sessions whose cwd is no longer in scan results
-				const diskPaths = new Set(gitSubdirs.map((d) => normalizePath(d.path)));
-				const latestSessions = useSessionStore.getState().sessions;
-				const childSessions = latestSessions.filter((s) => s.parentSessionId === parentSession.id);
-				for (const child of childSessions) {
-					if (!diskPaths.has(normalizePath(child.cwd))) {
-						staleSessionIds.push(child.id);
+				// Detect removals: child sessions whose cwd is no longer in scan results.
+				//
+				// Guards against false-positive bulk removals (the bug that produced a
+				// stack of "Worktree Removed" toasts on Linux/Windows when a transient
+				// scan failure or symlinked basePath caused gitSubdirs to come back empty):
+				//   1. If the scan flagged itself as failed, trust nothing — skip.
+				//   2. If the scan returned zero subdirs while child sessions exist, treat
+				//      that as suspicious and skip. A real "user removed every worktree"
+				//      case is rare and will be surfaced one at a time via chokidar
+				//      unlinkDir events instead.
+				if (scanFailed) {
+					logger.warn(
+						`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan failed`
+					);
+				} else {
+					const diskPaths = new Set(gitSubdirs.map((d) => normalizePath(d.path)));
+					const latestSessions = useSessionStore.getState().sessions;
+					const childSessions = latestSessions.filter(
+						(s) => s.parentSessionId === parentSession.id
+					);
+					if (gitSubdirs.length === 0 && childSessions.length > 0) {
+						logger.warn(
+							`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan returned zero subdirs but ${childSessions.length} child sessions exist (suspicious)`
+						);
+					} else {
+						for (const child of childSessions) {
+							if (!diskPaths.has(normalizePath(child.cwd))) {
+								staleSessionIds.push(child.id);
+							}
+						}
 					}
 				}
 			} catch (err) {

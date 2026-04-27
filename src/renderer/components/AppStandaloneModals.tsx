@@ -2,7 +2,7 @@ import { lazy, memo, Suspense } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
-import { useUIStore } from '../stores/uiStore';
+import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -216,10 +216,6 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
-	// Self-source flash notifications from UI store
-	const flashNotification = useUIStore((s) => s.flashNotification);
-	const successFlashNotification = useUIStore((s) => s.successFlashNotification);
-
 	// Self-source modal open states from stores
 	const {
 		debugPackageModalOpen,
@@ -415,12 +411,22 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					onSuccess={(gistUrl, isPublic) => {
+						const publishedAt = Date.now();
 						// Save gist URL for the file if it's from file preview tab (not tab context)
 						if (activeFileTab && !tabGistContent) {
 							saveFileGistUrl(activeFileTab.path, {
 								gistUrl,
 								isPublic,
-								publishedAt: Date.now(),
+								publishedAt,
+							});
+						}
+						// Save gist URL for the individual message, if the publish originated from one.
+						// In-memory only — intentionally not persisted across app restarts.
+						if (tabGistContent?.messageId) {
+							useMessageGistStore.getState().setMessageGist(tabGistContent.messageId, {
+								gistUrl,
+								isPublic,
+								publishedAt,
 							});
 						}
 						// Copy the gist URL to clipboard
@@ -438,7 +444,11 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					existingGist={
-						activeFileTab && !tabGistContent ? fileGistUrls[activeFileTab.path] : undefined
+						tabGistContent?.messageId
+							? useMessageGistStore.getState().published[tabGistContent.messageId]
+							: activeFileTab && !tabGistContent
+								? fileGistUrls[activeFileTab.path]
+								: undefined
 					}
 				/>
 			)}
@@ -598,33 +608,7 @@ function AppStandaloneModalsInner({
 				/>
 			)}
 
-			{/* --- FLASH NOTIFICATION (centered, auto-dismiss) --- */}
-			{flashNotification && (
-				<div
-					className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
-					style={{
-						backgroundColor: theme.colors.warning,
-						color: '#000000',
-						textShadow: '0 1px 2px rgba(255, 255, 255, 0.3)',
-					}}
-				>
-					{flashNotification}
-				</div>
-			)}
-
-			{/* --- SUCCESS FLASH NOTIFICATION (centered, auto-dismiss) --- */}
-			{successFlashNotification && (
-				<div
-					className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
-					style={{
-						backgroundColor: theme.colors.accent,
-						color: theme.colors.accentForeground,
-						textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
-					}}
-				>
-					{successFlashNotification}
-				</div>
-			)}
+			{/* Flash notifications now rendered globally via <CenterFlash /> in App.tsx */}
 		</>
 	);
 }

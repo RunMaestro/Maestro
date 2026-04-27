@@ -666,6 +666,122 @@ describe('handleCreateWorktreeFromConfig', () => {
 			})
 		);
 	});
+
+	it('opens existing worktree path when branch is already attached elsewhere', async () => {
+		useSessionStore.setState({
+			sessions: [mockParentSession],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		mockGit.worktreeSetup.mockResolvedValueOnce({
+			success: true,
+			created: false,
+			alreadyExisted: true,
+			existingPath: '/projects/other/feature-new',
+			currentBranch: 'feature-new',
+			requestedBranch: 'feature-new',
+			branchMismatch: false,
+		});
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		const created = sessions.find((s) => s.worktreeBranch === 'feature-new');
+		expect(created).toBeDefined();
+		// Session must point at the resolved existing path, not the requested one
+		expect(created?.cwd).toBe('/projects/other/feature-new');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'info',
+				title: 'Worktree Already Existed',
+			})
+		);
+	});
+
+	it('focuses existing session and skips duplicate when branch is already open in Maestro', async () => {
+		const existingChild = createChildSession({
+			id: 'child-existing',
+			cwd: '/projects/other/feature-new',
+			worktreeBranch: 'feature-new',
+		});
+
+		useSessionStore.setState({
+			sessions: [mockParentSession, existingChild],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		mockGit.worktreeSetup.mockResolvedValueOnce({
+			success: true,
+			created: false,
+			alreadyExisted: true,
+			existingPath: '/projects/other/feature-new',
+			currentBranch: 'feature-new',
+			requestedBranch: 'feature-new',
+			branchMismatch: false,
+		});
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
+		});
+
+		// No new session was added — count stays at 2
+		expect(useSessionStore.getState().sessions.length).toBe(2);
+		expect(useSessionStore.getState().activeSessionId).toBe('child-existing');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'info',
+				title: 'Worktree Already Open',
+			})
+		);
+	});
+
+	it('focuses existing session via projectRoot match even when cwd has drifted into a subdir', async () => {
+		// Child session has navigated into a subdirectory of the worktree.
+		// The recovery flow must still detect the open session via projectRoot,
+		// not cwd, otherwise it builds a duplicate session for the same worktree.
+		const existingChild = createChildSession({
+			id: 'child-drifted',
+			cwd: '/projects/other/feature-new/src/components',
+			projectRoot: '/projects/other/feature-new',
+			worktreeBranch: 'feature-new',
+		});
+
+		useSessionStore.setState({
+			sessions: [mockParentSession, existingChild],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		mockGit.worktreeSetup.mockResolvedValueOnce({
+			success: true,
+			created: false,
+			alreadyExisted: true,
+			existingPath: '/projects/other/feature-new',
+			currentBranch: 'feature-new',
+			requestedBranch: 'feature-new',
+			branchMismatch: false,
+		});
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
+		});
+
+		expect(useSessionStore.getState().sessions.length).toBe(2);
+		expect(useSessionStore.getState().activeSessionId).toBe('child-drifted');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'info',
+				title: 'Worktree Already Open',
+			})
+		);
+	});
 });
 
 // ============================================================================
@@ -1193,6 +1309,94 @@ describe('Effects', () => {
 			expect(sessions.some((s) => s.id === 'valid-child')).toBe(true);
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ type: 'info', title: 'Worktree Removed' })
+			);
+		});
+
+		it('does NOT remove child sessions when scan reports scanFailed', async () => {
+			vi.useFakeTimers();
+
+			const child = createChildSession({
+				id: 'child-on-disk',
+				cwd: '/projects/worktrees/feature-branch',
+				worktreeBranch: 'feature-branch',
+				parentSessionId: 'parent-1',
+			});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [],
+				scanFailed: true,
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, child],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(notifyToast as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'child-on-disk')).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Removed' })
+			);
+		});
+
+		it('does NOT remove all child sessions when scan returns zero subdirs (suspicious empty)', async () => {
+			vi.useFakeTimers();
+
+			const childA = createChildSession({
+				id: 'child-a',
+				cwd: '/projects/worktrees/feature-a',
+				worktreeBranch: 'feature-a',
+				parentSessionId: 'parent-1',
+			});
+			const childB = createChildSession({
+				id: 'child-b',
+				cwd: '/projects/worktrees/feature-b',
+				worktreeBranch: 'feature-b',
+				parentSessionId: 'parent-1',
+			});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			// Scan succeeded but found nothing — most commonly because of a symlinked
+			// basePath or transient filesystem hiccup. Should NOT bulk-remove sessions.
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, childA, childB],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(notifyToast as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'child-a')).toBe(true);
+			expect(sessions.some((s) => s.id === 'child-b')).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Removed' })
 			);
 		});
 

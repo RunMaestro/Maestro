@@ -26,6 +26,7 @@ import {
 	PartyPopper,
 	Tag,
 	User,
+	SpellCheck,
 	ExternalLink,
 	Keyboard,
 	AlertTriangle,
@@ -44,6 +45,7 @@ import { ForcedParallelWarningModal } from '../../ForcedParallelWarningModal';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
@@ -79,6 +81,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
+		// Spell check
+		spellCheck,
+		setSpellCheck,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -270,28 +275,25 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					communicate with you. As the conductor, you orchestrate the symphony of AI agents.
 					(Optional, max 5000 characters)
 				</p>
-				<div className="relative">
-					<textarea
-						value={conductorProfile}
-						onChange={(e) => setConductorProfile(e.target.value)}
-						placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
-						className="w-full p-3 pb-8 rounded border bg-transparent outline-none text-sm resize-y"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							minHeight: '100px',
-						}}
-						maxLength={5000}
-					/>
-					<div
-						className="absolute bottom-2 right-2 text-xs px-1 rounded"
-						style={{
-							color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
-							backgroundColor: theme.colors.bgSidebar,
-						}}
-					>
-						{conductorProfile.length}/5000
-					</div>
+				<textarea
+					value={conductorProfile}
+					onChange={(e) => setConductorProfile(e.target.value)}
+					placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
+					className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						minHeight: '100px',
+					}}
+					maxLength={5000}
+				/>
+				<div
+					className="text-xs mt-1 text-right"
+					style={{
+						color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
+					}}
+				>
+					{conductorProfile.length}/5000
 				</div>
 			</div>
 
@@ -909,6 +911,19 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				/>
 			</div>
 
+			{/* Spell Check */}
+			<div data-setting-id="general-spell-check">
+				<SettingCheckbox
+					icon={SpellCheck}
+					sectionLabel="Spell Check"
+					title="Enable spell checking"
+					description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+					checked={spellCheck}
+					onChange={setSpellCheck}
+					theme={theme}
+				/>
+			</div>
+
 			{/* Sleep Prevention */}
 			<div data-setting-id="general-power">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
@@ -1081,30 +1096,82 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
-			{/* Check for Updates on Startup */}
-			<div data-setting-id="general-updates">
-				<SettingCheckbox
-					icon={Download}
-					sectionLabel="Updates"
-					title="Check for updates on startup"
-					description="Automatically check for new Maestro versions when the app starts"
-					checked={checkForUpdatesOnStartup}
-					onChange={setCheckForUpdatesOnStartup}
-					theme={theme}
-				/>
-			</div>
+			{/* Updates */}
+			<div>
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Download className="w-3 h-3" />
+					Updates
+				</div>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					{/* Check for Updates Toggle */}
+					<div
+						data-setting-id="general-updates"
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setCheckForUpdatesOnStartup(!checkForUpdatesOnStartup)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setCheckForUpdatesOnStartup(!checkForUpdatesOnStartup);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Check for updates automatically
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								Check for new Maestro versions on startup and once per day while the app is running
+							</div>
+						</div>
+						<ToggleSwitch
+							checked={checkForUpdatesOnStartup}
+							onChange={setCheckForUpdatesOnStartup}
+							theme={theme}
+							ariaLabel="Check for updates automatically"
+						/>
+					</div>
 
-			{/* Beta Updates */}
-			<div data-setting-id="general-beta-updates">
-				<SettingCheckbox
-					icon={FlaskConical}
-					sectionLabel="Pre-release Channel"
-					title="Include beta and release candidate updates"
-					description="Opt-in to receive pre-release versions (e.g., v0.11.1-rc, v0.12.0-beta). These may contain experimental features and bugs."
-					checked={enableBetaUpdates}
-					onChange={setEnableBetaUpdates}
-					theme={theme}
-				/>
+					{/* Pre-release Channel Toggle */}
+					<div
+						data-setting-id="general-beta-updates"
+						className="flex items-center justify-between cursor-pointer pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+						onClick={() => setEnableBetaUpdates(!enableBetaUpdates)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setEnableBetaUpdates(!enableBetaUpdates);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<FlaskConical className="w-4 h-4" />
+								Include beta and release candidate updates
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								Opt-in to receive pre-release versions (e.g., v0.11.1-rc, v0.12.0-beta). These may
+								contain experimental features and bugs.
+							</div>
+						</div>
+						<ToggleSwitch
+							checked={enableBetaUpdates}
+							onChange={setEnableBetaUpdates}
+							theme={theme}
+							ariaLabel="Include beta and release candidate updates"
+						/>
+					</div>
+				</div>
 			</div>
 
 			{/* Crash Reporting */}

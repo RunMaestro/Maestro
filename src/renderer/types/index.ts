@@ -207,9 +207,13 @@ export interface LogEntry {
 	// For tool execution entries - stores tool state and details
 	metadata?: {
 		toolState?: {
-			status?: 'running' | 'completed' | 'error';
+			status?: 'running' | 'completed' | 'error' | 'failed';
 			input?: unknown;
 			output?: unknown;
+		};
+		hiddenProgress?: {
+			kind: 'thinking' | 'tool';
+			toolName?: string;
 		};
 	};
 }
@@ -485,6 +489,7 @@ export interface FilePreviewTab {
 	// SSH remote support
 	sshRemoteId?: string; // SSH remote ID for re-fetching content if needed
 	isLoading?: boolean; // True while content is being loaded (for SSH remote files)
+	loadRequestId?: string; // While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load
 	// Navigation history for breadcrumb navigation (per-tab)
 	navigationHistory?: FilePreviewHistoryEntry[]; // Stack of visited files
 	navigationIndex?: number; // Current position in history (-1 or undefined = at end)
@@ -764,7 +769,7 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
-	documentGraphLayout?: 'mindmap' | 'radial' | 'force'; // Document Graph layout algorithm preference (overrides global default)
+	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
 	sessionSshRemoteConfig?: {

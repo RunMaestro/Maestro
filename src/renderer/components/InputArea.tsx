@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	Bell,
 	Keyboard,
@@ -276,6 +277,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const effortMenuRef = useRef<HTMLDivElement>(null);
 
+	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
+
 	// Close dropdown when clicking outside
 	useEffect(() => {
 		if (!modelMenuOpen && !effortMenuOpen) return;
@@ -371,6 +374,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		const query = inputValueLower.replace(/^\//, '');
 		return filterSlashCommands(slashCommands, query, isTerminalMode);
 	}, [slashCommands, isTerminalMode, inputValueLower]);
+
+	// Reset the highlighted item to the top whenever the query changes or the
+	// menu opens. Without this, the index lingers from prior arrow navigation
+	// and gets clamped to the (often shorter) filtered list, leaving a non-top
+	// item highlighted by default.
+	useEffect(() => {
+		if (slashCommandOpen) {
+			setSelectedSlashCommandIndex(0);
+		}
+	}, [inputValueLower, slashCommandOpen, setSelectedSlashCommandIndex]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
 	const safeSelectedIndex = Math.min(
@@ -931,6 +944,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 								}
 								value={inputValue}
+								spellCheck={spellCheckEnabled}
 								onFocus={onInputFocus}
 								onBlur={onInputBlur}
 								onChange={(e) => {

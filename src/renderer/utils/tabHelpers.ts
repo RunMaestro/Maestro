@@ -21,6 +21,7 @@ import { createTerminalTab } from './terminalTabHelpers';
 import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
+import { getLiveDraft } from './liveDraftStore';
 
 /**
  * Build the unified tab list from a session's tab data.
@@ -185,18 +186,20 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 /**
- * Get the display name for a tab.
- * Priority: name > agent session ID marker > "New Session"
+ * Get the display name for a tab. Strictly per-tab — the title only reflects
+ * THIS tab's own state, never another tab's id from the session level.
  *
- * Handles different agent session ID formats:
- * - Claude UUID: "abc123-def456-ghi789" → "ABC123" (first octet)
- * - OpenCode: "SES_4BCDFE8C5FFE4KC1UV9NSMYEDB" → "SES_4BCD" (prefix + 4 chars)
- * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
+ * Resolution order:
+ *   1. `tab.name` if set (auto-rename or manual rename)
+ *   2. `tab.agentSessionId` formatted (e.g. `SES_4BCD`, `THR_ABC1`, first UUID octet)
+ *   3. "New Session"
  *
- * Shows "New Session" until the agent session is established and an
- * agentSessionId is assigned, at which point the formatted ID is shown.
+ * The `sessionAgentSessionId` parameter is accepted for signature compatibility
+ * but intentionally ignored: borrowing it caused freshly-created sibling tabs
+ * to inherit the previously-active tab's id (e.g. multiple OpenCode tabs all
+ * displaying the same `SES_XXXX`).
  */
-export function getTabDisplayName(tab: AITab): string {
+export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | null): string {
 	if (tab.name) {
 		return tab.name;
 	}
@@ -288,14 +291,18 @@ const MAX_CLOSED_TAB_HISTORY = 25;
  * Check if a tab has draft content (unsent input or staged images).
  * Used for determining if a tab should be shown in "unread only" filter mode.
  *
+ * Prefers the live textarea value from liveDraftStore (which the active tab
+ * keeps current on every keystroke) over `tab.inputValue` (only synced on
+ * blur/submit). This keeps the draft indicator and close confirmation in
+ * sync with what's actually on screen.
+ *
  * @param tab - The AI tab to check
  * @returns True if the tab has unsent text input or staged images
  */
 export function hasDraft(tab: AITab): boolean {
-	return (
-		(tab.inputValue && tab.inputValue.trim() !== '') ||
-		(tab.stagedImages && tab.stagedImages.length > 0)
-	);
+	const liveValue = getLiveDraft(tab.id);
+	const text = liveValue !== undefined ? liveValue : (tab.inputValue ?? '');
+	return text.trim() !== '' || (tab.stagedImages && tab.stagedImages.length > 0);
 }
 
 /**
@@ -307,6 +314,23 @@ export function hasDraft(tab: AITab): boolean {
  */
 export function hasActiveWizard(tab: AITab): boolean {
 	return tab.wizardState?.isActive === true;
+}
+
+/**
+ * Check if a tab's active wizard has any user interaction.
+ * Returns true if the user has sent messages, typed input, or staged images.
+ * Used to decide whether closing the wizard should show a confirmation dialog.
+ *
+ * @param tab - The AI tab to check
+ * @returns True if the wizard has user interaction worth confirming loss of
+ */
+export function hasWizardInteraction(tab: AITab): boolean {
+	if (!tab.wizardState?.isActive) return false;
+	const hasUserMessages =
+		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
+	const hasInput = (tab.inputValue ?? '').trim() !== '';
+	const hasImages = tab.stagedImages?.length > 0;
+	return hasUserMessages || hasInput || hasImages;
 }
 
 /**

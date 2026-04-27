@@ -249,10 +249,19 @@ describe('MessageHistory', () => {
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();
 		});
 
-		it('truncates text with more than 8 lines', () => {
+		it('truncates text with more than 8 lines when a finite line cap is configured', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
+			// With the default "All" cap (Infinity) line-based truncation is off —
+			// mirror the desktop Max Output Lines setting by passing an explicit cap.
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();
+		});
+
+		it('does not truncate by lines when maxOutputLines is "All" (Infinity)', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={Infinity} />);
+			// 15 lines but only ~75 chars, so char-based truncation does not kick in.
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
 		});
 
 		it('does not truncate short text', () => {
@@ -295,11 +304,11 @@ describe('MessageHistory', () => {
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();
 		});
 
-		it('truncates by lines when line count exceeds threshold', () => {
+		it('truncates by lines when line count exceeds the configured cap', () => {
 			const tenLines =
 				'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
 			const logs: LogEntry[] = [createLogEntry({ text: tenLines })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 
 			// Should show truncation indicator
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();

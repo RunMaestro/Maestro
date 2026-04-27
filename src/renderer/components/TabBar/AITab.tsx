@@ -14,6 +14,8 @@ export interface AITabProps {
 	theme: Theme;
 	/** The Maestro session/agent ID that owns these tabs */
 	sessionId?: string;
+	/** Session-level agentSessionId fallback for tab title display */
+	sessionAgentSessionId?: string | null;
 	canClose: boolean;
 	/** Stable callback - receives tabId as first argument */
 	onSelect: (tabId: string) => void;
@@ -88,6 +90,7 @@ export const AITab = memo(function AITab({
 	isActive,
 	theme,
 	sessionId,
+	sessionAgentSessionId,
 	canClose,
 	onSelect,
 	onClose,
@@ -365,9 +368,12 @@ export const AITab = memo(function AITab({
 	);
 
 	// Memoize display name to avoid recalculation on every render.
-	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId) —
+	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) —
 	// using [tab] would invalidate on every logs/state change which is too aggressive.
-	const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
+	const displayName = useMemo(
+		() => getTabDisplayName(tab, sessionAgentSessionId),
+		[tab.name, tab.agentSessionId, sessionAgentSessionId]
+	);
 
 	// Hover background varies by theme mode for proper contrast
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
