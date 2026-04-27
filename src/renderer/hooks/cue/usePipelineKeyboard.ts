@@ -6,10 +6,13 @@
  *   - Escape: cascading close — drawer first, then selection.
  *   - Cmd/Ctrl+S: triggers handleSave, always (even in text inputs, matching
  *     pre-extraction behavior).
+ *   - P / S: switch canvas interaction mode (Pan / Select). Bare keys, ignored
+ *     while typing in inputs and when modifier keys are held.
  */
 
 import { useEffect } from 'react';
 import type { Node, Edge } from 'reactflow';
+import type { CanvasInteractionMode } from '../../components/CuePipelineEditor/PipelineCanvas';
 
 export interface UsePipelineKeyboardParams {
 	isAllPipelinesView: boolean;
@@ -27,6 +30,7 @@ export interface UsePipelineKeyboardParams {
 	setSelectedEdgeId: (id: string | null) => void;
 	setTriggerDrawerOpen: (open: boolean) => void;
 	setAgentDrawerOpen: (open: boolean) => void;
+	setInteractionMode: (mode: CanvasInteractionMode) => void;
 	handleSave: () => void | Promise<void>;
 }
 
@@ -47,6 +51,7 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 		handleSave,
 	} = params;
 
@@ -80,6 +85,18 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 			} else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				void handleSave();
+			} else if (
+				(e.key === 'p' || e.key === 'P' || e.key === 's' || e.key === 'S') &&
+				!e.metaKey &&
+				!e.ctrlKey &&
+				!e.altKey
+			) {
+				// Bare P / S switch the canvas interaction mode. Skipped while
+				// typing into an input (lets the user actually type a 'p' or 's')
+				// and when a modifier is held (Cmd+S already saves above).
+				if (isInput) return;
+				e.preventDefault();
+				setInteractionMode(e.key === 'p' || e.key === 'P' ? 'hand' : 'pointer');
 			}
 		};
 
@@ -102,5 +119,6 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 	]);
 }

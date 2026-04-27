@@ -77,6 +77,8 @@ export interface PipelineCanvasProps {
 	onEdgeClick: (event: React.MouseEvent, edge: Edge) => void;
 	onPaneClick: () => void;
 	onNodeContextMenu: (event: React.MouseEvent, node: Node) => void;
+	onNodeDragStart: (event: React.MouseEvent, node: Node, nodes: Node[]) => void;
+	onNodeDrag: (event: React.MouseEvent, node: Node, nodes: Node[]) => void;
 	onNodeDragStop: (event: React.MouseEvent, node: Node, nodes: Node[]) => void;
 	onDragOver: (event: React.DragEvent) => void;
 	onDrop: (event: React.DragEvent) => void;
@@ -153,6 +155,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	onEdgeClick,
 	onPaneClick,
 	onNodeContextMenu,
+	onNodeDragStart,
+	onNodeDrag,
 	onNodeDragStop,
 	onDragOver,
 	onDrop,
@@ -242,6 +246,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				onEdgeClick={onEdgeClick}
 				onPaneClick={onPaneClick}
 				onNodeContextMenu={onNodeContextMenu}
+				onNodeDragStart={onNodeDragStart}
+				onNodeDrag={onNodeDrag}
 				onNodeDragStop={onNodeDragStop}
 				onDragOver={onDragOver}
 				onDrop={onDrop}
@@ -335,11 +341,15 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			>
 				{(
 					[
-						{ mode: 'hand' as const, Icon: Hand, title: 'Pan (left-drag to move canvas)' },
+						{
+							mode: 'hand' as const,
+							Icon: Hand,
+							title: 'Pan — left-drag to move canvas (P)',
+						},
 						{
 							mode: 'pointer' as const,
 							Icon: MousePointer2,
-							title: 'Select (left-drag for bounding box)',
+							title: 'Select — left-drag for bounding box (S)',
 						},
 					] satisfies {
 						mode: CanvasInteractionMode;

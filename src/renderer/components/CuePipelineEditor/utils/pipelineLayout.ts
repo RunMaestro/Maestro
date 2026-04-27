@@ -139,6 +139,10 @@ export function mergePipelinesWithSavedLayout(
 			...pipeline,
 			name: mergedName,
 			color: mergedColor,
+			// viewOffset is layout-only and lives only in the saved layout JSON,
+			// not in YAML. Pull it from the saved match so manual All-Pipelines
+			// arrangements survive a reload.
+			viewOffset: savedMatch?.viewOffset,
 			nodes: pipeline.nodes.map((node) => {
 				// Prefer semantic lookup so first-save positions (keyed
 				// under UI timestamp ids on disk) still apply after reload

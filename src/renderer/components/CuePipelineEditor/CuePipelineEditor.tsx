@@ -321,6 +321,7 @@ function CuePipelineEditorInner({
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 		handleSave,
 	});
 
@@ -400,6 +401,8 @@ function CuePipelineEditorInner({
 				onEdgeClick={onEdgeClickGuarded}
 				onPaneClick={onPaneClick}
 				onNodeContextMenu={onNodeContextMenu}
+				onNodeDragStart={canvasCallbacks.onNodeDragStart}
+				onNodeDrag={canvasCallbacks.onNodeDrag}
 				onNodeDragStop={canvasCallbacks.onNodeDragStop}
 				onDragOver={canvasCallbacks.onDragOver}
 				onDrop={canvasCallbacks.onDrop}

@@ -425,7 +425,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								}
 							}}
 						>
-							{activeTab.agentSessionId.split('-')[0].toUpperCase()}
+							{activeTab.agentSessionId.split('-')[0].toUpperCase().slice(0, 8)}
 						</button>
 					)}
 

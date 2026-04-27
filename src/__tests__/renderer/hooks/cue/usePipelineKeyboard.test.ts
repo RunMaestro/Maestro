@@ -30,6 +30,7 @@ function setup(opts: SetupOpts = {}) {
 	const setSelectedEdgeId = vi.fn();
 	const setTriggerDrawerOpen = vi.fn();
 	const setAgentDrawerOpen = vi.fn();
+	const setInteractionMode = vi.fn();
 	const handleSave = vi.fn();
 
 	renderHook(() =>
@@ -49,6 +50,7 @@ function setup(opts: SetupOpts = {}) {
 			setSelectedEdgeId,
 			setTriggerDrawerOpen,
 			setAgentDrawerOpen,
+			setInteractionMode,
 			handleSave,
 		})
 	);
@@ -60,6 +62,7 @@ function setup(opts: SetupOpts = {}) {
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 		handleSave,
 	};
 }
@@ -207,12 +210,55 @@ describe('usePipelineKeyboard', () => {
 					setSelectedEdgeId: vi.fn(),
 					setTriggerDrawerOpen: vi.fn(),
 					setAgentDrawerOpen: vi.fn(),
+					setInteractionMode: vi.fn(),
 					handleSave: vi.fn(),
 				})
 			);
 			unmount();
 			dispatch('Delete');
 			expect(onDeleteNode).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Interaction mode (P / S)', () => {
+		it('plain "p" switches to hand mode', () => {
+			const h = setup();
+			dispatch('p');
+			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+		});
+
+		it('plain "P" (uppercase) switches to hand mode', () => {
+			const h = setup();
+			dispatch('P');
+			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+		});
+
+		it('plain "s" switches to pointer mode', () => {
+			const h = setup();
+			dispatch('s');
+			expect(h.setInteractionMode).toHaveBeenCalledWith('pointer');
+		});
+
+		it('plain "S" (uppercase) switches to pointer mode', () => {
+			const h = setup();
+			dispatch('S');
+			expect(h.setInteractionMode).toHaveBeenCalledWith('pointer');
+		});
+
+		it('does not change mode when typing in an input', () => {
+			const h = setup();
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+			dispatch('p', { target: input });
+			dispatch('s', { target: input });
+			expect(h.setInteractionMode).not.toHaveBeenCalled();
+		});
+
+		it('does not change mode when Cmd is held (Cmd+S still saves)', () => {
+			const h = setup();
+			dispatch('s', { metaKey: true });
+			expect(h.setInteractionMode).not.toHaveBeenCalled();
+			expect(h.handleSave).toHaveBeenCalled();
 		});
 	});
 });

@@ -241,6 +241,13 @@ export interface CuePipeline {
 	color: string;
 	nodes: PipelineNode[];
 	edges: PipelineEdge[];
+	/**
+	 * Per-pipeline manual offset applied only in the "All Pipelines" view so
+	 * users can drag entire pipeline groups around the canvas. When undefined,
+	 * the auto-stacking layout (computePipelineYOffsets) places the pipeline.
+	 * Layout-only — never written to YAML, only to the layout-state JSON.
+	 */
+	viewOffset?: { x: number; y: number };
 }
 
 export interface CuePipelineState {
