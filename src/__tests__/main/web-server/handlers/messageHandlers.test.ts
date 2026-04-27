@@ -189,7 +189,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Hello Claude!',
 					'ai',
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -211,7 +212,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'ls -la',
 					'terminal',
-					undefined
+					undefined,
+					false
 				);
 			});
 		});
@@ -231,11 +233,12 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 		});
 
-		it('surfaces the active tabId in command_result so `dispatch` can chain to the same tab', async () => {
-			// `getSessionDetail` is the source of truth for activeTabId. The
-			// handler echoes it back in command_result whenever no explicit
-			// tabId was supplied — that's what `dispatch <agent> <prompt>`
-			// (no --session) relies on to surface an addressable id.
+		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
+			// The server's `activeTabId` snapshot can diverge from the renderer's
+			// actual write target if the user switches tabs between IPC send and
+			// receive. Echoing it would mislead `dispatch --session <returnedTabId>`
+			// callers chaining a follow-up. We only echo when the caller passed an
+			// explicit, authoritative tabId.
 			(callbacks.getSessionDetail as any).mockReturnValue({
 				state: 'idle',
 				inputMode: 'ai',
@@ -256,7 +259,7 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
-			expect(response.tabId).toBe('tab-active-77');
+			expect(response.tabId).toBeUndefined();
 		});
 
 		it('forwards an explicit tabId to the executeCommand callback and echoes it in command_result', async () => {
@@ -273,7 +276,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Hello',
 					'ai',
-					'tab-explicit'
+					'tab-explicit',
+					false
 				);
 			});
 
@@ -298,7 +302,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'concurrent write',
 					'ai',
-					undefined
+					undefined,
+					true
 				);
 			});
 

@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import { listGroups } from './commands/list-groups';
@@ -138,19 +138,33 @@ clean
 	.action(cleanPlaybooks);
 
 // Send command - run an agent locally and return its response synchronously.
-// `--live` is retained as a hidden alias for `dispatch` during the deprecation
-// window; new callers should use `maestro-cli dispatch` instead.
+// `--live`, `--new-tab`, and `--force` are retained as hidden aliases for
+// `dispatch` during the deprecation window; new callers should use
+// `maestro-cli dispatch` instead. Hiding them from `--help` keeps new users
+// off the deprecated path while still parsing the flags from existing scripts.
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
-	.option('-l, --live', 'Send message through Maestro desktop (deprecated: use `dispatch`)')
-	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
-	.option(
-		'-f, --force',
-		'Bypass the busy-state guard when writing to the active tab (requires --live); enables concurrent writes to a single agent'
+	.addOption(
+		new Option(
+			'-l, --live',
+			'Send message through Maestro desktop (deprecated: use `dispatch`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'--new-tab',
+			'Create a new AI tab instead of writing to the active one (deprecated: use `dispatch --new-tab`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'-f, --force',
+			'Bypass the busy-state guard when writing to the active tab (deprecated: use `dispatch --force`)'
+		).hideHelp()
 	)
 	.action(send);
 

@@ -84,7 +84,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	// --- Store subscriptions ---
 	const sessions = useSessionStore(selectSessions);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
-	const addLogToActiveTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
+	const addLogToTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
 	const setSuccessFlashNotification = useMemo(
 		() => useUIStore.getState().setSuccessFlashNotification,
 		[]
@@ -120,14 +120,22 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				command: string;
 				inputMode?: 'ai' | 'terminal';
 				/** Optional explicit tab target (from `maestro-cli dispatch --session
-				 *  <tabId>`). When unset or unknown, falls back to the active tab. */
+				 *  <tabId>`). When unset, falls back to the active tab. When set
+				 *  but unknown, the command is dropped (we never silently re-route
+				 *  to the active tab — callers chaining `--session <tabId>` would
+				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
+				/** When true, bypass the renderer's busy-state guard. Mirrors the
+				 *  server-side `force` bit so `dispatch --force` can land on a
+				 *  busy session without being dropped at this boundary. */
+				force?: boolean;
 			}>;
 			const {
 				sessionId,
 				command,
 				inputMode: webInputMode,
 				tabId: requestedTabId,
+				force,
 			} = customEvent.detail;
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
@@ -241,11 +249,32 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy
-			if (session.state === 'busy') {
+			// Check if session is busy. `force: true` (from `dispatch --force`)
+			// bypasses this guard — without that escape hatch, the renderer would
+			// silently drop forced dispatches and the server-side allow-list
+			// would be moot.
+			if (session.state === 'busy' && !force) {
 				logger.info('[Remote] Session is busy, cannot process command');
 				return;
 			}
+
+			// Resolve the target tab BEFORE the slash-command branch so unknown-
+			// command error logs land on the targeted tab instead of whichever
+			// tab happens to be active. This also lets us short-circuit early
+			// when `--session <tabId>` names a tab that no longer exists, rather
+			// than silently re-routing to the active tab (which would mislead
+			// callers chaining `command_result.tabId` back as `--session`).
+			const requestedTab = requestedTabId
+				? session.aiTabs?.find((t) => t.id === requestedTabId)
+				: undefined;
+			if (requestedTabId && !requestedTab) {
+				logger.warn(
+					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} — dropping command (avoiding silent re-route to active tab)`
+				);
+				return;
+			}
+			const targetTab = requestedTab ?? getActiveTab(session);
+			const writeTabId = targetTab?.id;
 
 			// Check for slash commands (built-in and custom)
 			let promptToSend = command;
@@ -308,12 +337,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Read conductorProfile from settings store at call time
 					const conductorProfile = useSettingsStore.getState().conductorProfile;
 
-					// Substitute template variables
+					// Substitute template variables. Use the resolved target tab
+					// id for `activeTabId` so substitutions reflect the dispatch
+					// target rather than whatever tab is actually active in the UI.
 					promptToSend = substituteTemplateVariables(matchingCommand.prompt, {
 						session,
 						gitBranch,
 						groupId: session.groupId,
-						activeTabId: session.activeTabId,
+						activeTabId: writeTabId ?? session.activeTabId,
 						conductorProfile,
 					});
 					commandMetadata = {
@@ -327,23 +358,21 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						promptToSend.substring(0, 100)
 					);
 				} else {
-					// Unknown slash command
+					// Unknown slash command — route the error log to the targeted
+					// tab (not whichever tab happens to be active) so the caller
+					// sees the error in the conversation they dispatched into.
 					logger.info('[Remote] Unknown slash command:', undefined, commandText);
-					addLogToActiveTab(sessionId, {
-						source: 'system',
-						text: `Unknown command: ${commandText}`,
-					});
+					addLogToTab(
+						sessionId,
+						{
+							source: 'system',
+							text: `Unknown command: ${commandText}`,
+						},
+						writeTabId
+					);
 					return;
 				}
 			}
-
-			// Resolve the target tab outside the try/catch so the error path can
-			// write its log entry to the same tab we tried to write into.
-			const requestedTab = requestedTabId
-				? session.aiTabs?.find((t) => t.id === requestedTabId)
-				: undefined;
-			const targetTab = requestedTab ?? getActiveTab(session);
-			const writeTabId = targetTab?.id;
 
 			try {
 				// Get agent configuration for this session's tool type
@@ -351,6 +380,21 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				if (!agent) {
 					logger.info(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
 					return;
+				}
+
+				// The agent-config await above is a real microtask gap. Re-check
+				// that the tab we resolved still exists; if it was closed in the
+				// interim, abort before spawning so the agent doesn't start with
+				// a `${sessionId}-ai-${tabId}` route that nothing reads from.
+				if (writeTabId) {
+					const liveSession = sessionsRef.current.find((s) => s.id === sessionId);
+					const tabStillExists = liveSession?.aiTabs?.some((t) => t.id === writeTabId);
+					if (!tabStillExists) {
+						logger.warn(
+							`[Remote] Target tab "${writeTabId}" was closed before spawn — dropping command`
+						);
+						return;
+					}
 				}
 
 				const tabAgentSessionId = targetTab?.agentSessionId;

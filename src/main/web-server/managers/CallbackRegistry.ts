@@ -232,10 +232,11 @@ export class CallbackRegistry {
 		sessionId: string,
 		command: string,
 		inputMode?: 'ai' | 'terminal',
-		tabId?: string
+		tabId?: string,
+		force?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {

@@ -78,12 +78,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		logger.info('[useRemoteIntegration] Setting up onRemoteCommand listener');
 		const unsubscribeRemote = window.maestro.process.onRemoteCommand(
-			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal', tabId?: string) => {
+			(
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => {
 				logger.info('[useRemoteIntegration] onRemoteCommand callback invoked:', undefined, {
 					sessionId,
 					command: command?.substring(0, 50),
 					inputMode,
 					tabId,
+					force,
 				});
 
 				// Verify the session exists
@@ -99,8 +106,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server, but double-check)
-				if (targetSession.state === 'busy') {
+				// Check if session is busy (should have been checked by web server,
+				// but double-check). `force: true` (from `dispatch --force`) opts
+				// out of the guard so a queued follow-up can land on a busy tab.
+				if (targetSession.state === 'busy' && !force) {
 					logger.warn(
 						'[useRemoteIntegration] Session is busy, dropping command. State:',
 						undefined,
@@ -142,10 +151,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					command: command?.substring(0, 50),
 					inputMode,
 					tabId,
+					force,
 				});
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId },
+						detail: { sessionId, command, inputMode, tabId, force },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');

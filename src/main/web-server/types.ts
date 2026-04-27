@@ -242,12 +242,16 @@ export type WriteToSessionCallback = (sessionId: string, data: string) => boolea
  * Returns true if command was accepted (session not busy).
  * inputMode is optional - if provided, the renderer will use it instead of querying session state.
  * tabId is optional - if provided, the renderer targets that specific tab instead of the active tab.
+ * force is optional - if true, bypasses the renderer's own busy-state guard so
+ *   `dispatch --force` lands on a busy tab. The server-side guard is a separate
+ *   check that is gated by the `allowConcurrentSend` setting.
  */
 export type ExecuteCommandCallback = (
 	sessionId: string,
 	command: string,
 	inputMode?: 'ai' | 'terminal',
-	tabId?: string
+	tabId?: string,
+	force?: boolean
 ) => Promise<boolean>;
 
 /**

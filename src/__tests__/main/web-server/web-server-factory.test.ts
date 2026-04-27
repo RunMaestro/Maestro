@@ -494,6 +494,7 @@ describe('web-server/web-server-factory', () => {
 				'session-1',
 				'test command',
 				'ai',
+				undefined,
 				undefined
 			);
 		});
@@ -513,8 +514,47 @@ describe('web-server/web-server-factory', () => {
 				'session-1',
 				'follow up',
 				'ai',
-				'tab-7'
+				'tab-7',
+				undefined
 			);
+		});
+
+		it('forwards force=true to the renderer so `dispatch --force` bypasses the renderer busy guard', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', 'concurrent write', 'ai', undefined, true);
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'concurrent write',
+				'ai',
+				undefined,
+				true
+			);
+		});
+
+		it('does not log raw command text at info level (info shows length only)', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			await callback('session-1', 'super-secret-token-do-not-leak', 'ai');
+
+			const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls;
+			const forwardingInfoCall = infoCalls.find(
+				(c: unknown[]) => typeof c[0] === 'string' && c[0].includes('[Web → Renderer]')
+			);
+			expect(forwardingInfoCall).toBeDefined();
+			expect(forwardingInfoCall?.[0]).not.toContain('super-secret-token-do-not-leak');
+			expect(forwardingInfoCall?.[0]).toContain('CommandLength: 30');
 		});
 	});
 

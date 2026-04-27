@@ -114,7 +114,8 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		command: string,
 		inputMode?: 'ai' | 'terminal',
-		tabId?: string
+		tabId?: string,
+		force?: boolean
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -576,18 +577,23 @@ export class WebSocketMessageHandler {
 			LOG_CONTEXT
 		);
 
-		// Resolve which tab the command will target. If the caller passed an
-		// explicit tabId we echo it back; otherwise fall back to the session's
-		// current activeTabId (legacy active-tab behavior). The renderer applies
-		// the same fallback when handling the dispatched event.
-		const resolvedTabId = requestedTabId ?? sessionDetail.activeTabId;
+		// Only echo a tabId in command_result when the caller passed one
+		// explicitly. Returning the server's snapshot of `activeTabId` for the
+		// no-tabId path would lie when the user switches active tabs between
+		// the IPC send and IPC receive — callers chaining `dispatch --session
+		// <returnedTabId>` would think they are continuing a conversation that
+		// actually went to a different tab. For deterministic addressing,
+		// callers should use `dispatch --new-tab` (returns the new tabId from
+		// the renderer ack) and then `dispatch --session <tabId>` (echoes back
+		// the caller-supplied authoritative tabId).
+		const resolvedTabId = requestedTabId;
 
 		// Route ALL commands through the renderer for consistent handling
 		// The renderer handles both AI and terminal modes, updating UI and state
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, requestedTabId)
+				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',

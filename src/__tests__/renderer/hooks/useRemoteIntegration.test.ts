@@ -315,7 +315,30 @@ describe('useRemoteIntegration', () => {
 						command: 'test command',
 						inputMode: 'ai',
 						tabId: undefined,
+						force: undefined,
 					},
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('forwards force=true so `dispatch --force` survives the IPC boundary into the renderer', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'concurrent', 'ai', undefined, true);
+			});
+
+			// busy guard is bypassed when force=true
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ force: true }),
 				})
 			);
 

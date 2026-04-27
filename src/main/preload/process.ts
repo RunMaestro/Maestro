@@ -300,7 +300,8 @@ export function createProcessApi() {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
-				tabId?: string
+				tabId?: string,
+				force?: boolean
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -309,16 +310,18 @@ export function createProcessApi() {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
-				tabId?: string
+				tabId?: string,
+				force?: boolean
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
 					inputMode,
 					tabId,
+					force,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId);
+					callback(sessionId, command, inputMode, tabId, force);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',

@@ -274,14 +274,15 @@ describe('Process Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId', () => {
+		it('should register listener and invoke callback with all parameters including tabId and force', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
-				tabId?: string
+				tabId?: string,
+				force?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -291,19 +292,20 @@ describe('Process Preload API', () => {
 			});
 
 			api.onRemoteCommand(callback);
-			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7');
+			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true);
 
-			expect(callback).toHaveBeenCalledWith('session-123', 'test command', 'ai', 'tab-7');
+			expect(callback).toHaveBeenCalledWith('session-123', 'test command', 'ai', 'tab-7', true);
 		});
 
-		it('forwards undefined tabId when the IPC sender omits it (legacy callers)', () => {
+		it('forwards undefined tabId/force when the IPC sender omits them (legacy callers)', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
-				tabId?: string
+				tabId?: string,
+				force?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -315,7 +317,13 @@ describe('Process Preload API', () => {
 			api.onRemoteCommand(callback);
 			registeredHandler!({}, 'session-123', 'test command', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-123', 'test command', 'ai', undefined);
+			expect(callback).toHaveBeenCalledWith(
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined
+			);
 		});
 	});
 });

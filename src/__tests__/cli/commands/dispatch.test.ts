@@ -237,6 +237,26 @@ describe('dispatch command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
+		// MaestroClient throws three distinct error strings before any WebSocket
+		// activity. They must map to MAESTRO_NOT_RUNNING — not COMMAND_FAILED —
+		// so downstream consumers (Maestro-Discord, Cue) can distinguish "app
+		// down" from "command rejected" via the error code.
+		it.each([
+			['Maestro desktop app is not running'],
+			['Maestro discovery file is stale (app may have crashed)'],
+			['Not connected to Maestro'],
+		])('maps MaestroClient error "%s" to MAESTRO_NOT_RUNNING', async (errorMessage) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockRejectedValue(new Error(errorMessage));
+
+			await dispatch('agent-abc', 'Hello', {});
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
 		it('maps unknown-session errors to SESSION_NOT_FOUND', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('bad-session-id');
 			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Unknown session ID'));

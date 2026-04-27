@@ -107,12 +107,22 @@ export async function runDispatch(
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		const lowerMsg = msg.toLowerCase();
+		// Map MaestroClient's own throw messages alongside socket-level ones.
+		// MaestroClient throws three distinct strings before any WebSocket
+		// activity ("Maestro desktop app is not running", "Maestro discovery
+		// file is stale (app may have crashed)", "Not connected to Maestro");
+		// without these, those errors fall through to COMMAND_FAILED and break
+		// the error-code contract downstream consumers (Maestro-Discord, Cue)
+		// rely on to distinguish "app down" from "command rejected".
 		if (
 			lowerMsg.includes('econnrefused') ||
 			lowerMsg.includes('connection refused') ||
 			lowerMsg.includes('websocket') ||
 			lowerMsg.includes('enotfound') ||
-			lowerMsg.includes('etimedout')
+			lowerMsg.includes('etimedout') ||
+			lowerMsg.includes('maestro desktop app is not running') ||
+			lowerMsg.includes('discovery file is stale') ||
+			lowerMsg.includes('not connected to maestro')
 		) {
 			return {
 				success: false,
