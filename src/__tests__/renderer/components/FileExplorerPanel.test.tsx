@@ -267,9 +267,15 @@ const mockFileTree = [
 describe('FileExplorerPanel', () => {
 	let defaultProps: React.ComponentProps<typeof FileExplorerPanel>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+
+		// Force non-compact toolbar so RefreshCw icon renders. Default
+		// rightPanelWidth (384) is below RIGHT_PANEL_COMPACT_THRESHOLD (420),
+		// which would hide the icon and break tests that assert on it.
+		const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+		useSettingsStore.setState({ rightPanelWidth: 500 });
 
 		defaultProps = {
 			session: createMockSession(),

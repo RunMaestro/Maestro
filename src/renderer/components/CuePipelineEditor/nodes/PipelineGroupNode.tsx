@@ -31,9 +31,9 @@ export const PipelineGroupNode = memo(function PipelineGroupNode({
 			<div
 				style={{
 					position: 'absolute',
-					top: -24,
+					top: -38,
 					left: 12,
-					fontSize: 11,
+					fontSize: 22,
 					fontWeight: 600,
 					color: data.color,
 					textTransform: 'uppercase',
