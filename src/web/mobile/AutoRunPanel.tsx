@@ -29,6 +29,8 @@ export interface AutoRunPanelProps {
 	onResumeAfterError?: () => Promise<unknown> | void;
 	onSkipAfterError?: () => Promise<unknown> | void;
 	onAbortAfterError?: () => Promise<unknown> | void;
+	/** Bubble selection changes up so the launch sheet can pre-fill the active doc. */
+	onSelectedDocumentChange?: (filename: string | null) => void;
 }
 
 /**
@@ -45,6 +47,7 @@ export function AutoRunPanel({
 	onResumeAfterError,
 	onSkipAfterError,
 	onAbortAfterError,
+	onSelectedDocumentChange,
 }: AutoRunPanelProps) {
 	const colors = useThemeColors();
 
@@ -159,6 +162,7 @@ export function AutoRunPanel({
 					onResumeAfterError={onResumeAfterError}
 					onSkipAfterError={onSkipAfterError}
 					onAbortAfterError={onAbortAfterError}
+					onSelectedDocumentChange={onSelectedDocumentChange}
 				/>
 			</div>
 

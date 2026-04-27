@@ -24,6 +24,14 @@ export interface AutoRunSetupSheetProps {
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	/** WebSocket send — passed through to useAutoRun (unused inside the sheet directly). */
 	send: UseWebSocketReturn['send'];
+	/**
+	 * The document currently focused in the inline panel — used as the initial
+	 * single-document selection so the sheet opens like desktop's BatchRunnerModal
+	 * (which pre-fills `currentDocument`) rather than checking every document. The
+	 * user can still add more from the document list. Falls back to the first
+	 * document when not provided.
+	 */
+	currentDocument?: string | null;
 }
 
 /**
@@ -39,11 +47,23 @@ export function AutoRunSetupSheet({
 	onClose,
 	sendRequest,
 	send,
+	currentDocument,
 }: AutoRunSetupSheetProps) {
 	const colors = useThemeColors();
-	const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
-		() => new Set(documents.map((d) => d.path || d.filename))
-	);
+	const [selectedFiles, setSelectedFiles] = useState<Set<string>>(() => {
+		// Match desktop BatchRunnerModal: open with just the active doc selected,
+		// not the full list. The user can still add more from the doc list below.
+		const initial: string[] = [];
+		if (currentDocument) {
+			const match = documents.find((d) => (d.path || d.filename) === currentDocument);
+			if (match) initial.push(match.path || match.filename);
+		}
+		if (initial.length === 0 && documents.length > 0) {
+			const first = documents[0];
+			initial.push(first.path || first.filename);
+		}
+		return new Set(initial);
+	});
 	const [prompt, setPrompt] = useState('');
 	const [loopEnabled, setLoopEnabled] = useState(false);
 	const [maxLoops, setMaxLoops] = useState(3);

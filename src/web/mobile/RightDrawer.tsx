@@ -35,6 +35,8 @@ export interface RightDrawerProps {
 	/** Props forwarded to AutoRunPanel */
 	onAutoRunOpenDocument?: (filename: string) => void;
 	onAutoRunOpenSetup?: () => void;
+	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
+	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	/** Callback when a git file is tapped for diff viewing */
@@ -66,6 +68,7 @@ export function RightDrawer({
 	projectPath,
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
+	onAutoRunSelectedDocumentChange,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -247,6 +250,7 @@ export function RightDrawer({
 							sendRequest={sendRequest}
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
+							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
 						/>
 					)}
 					{currentTab === 'git' && (
@@ -678,6 +682,7 @@ function AutoRunTabContent({
 	sendRequest,
 	send,
 	onOpenDocument,
+	onSelectedDocumentChange,
 }: {
 	sessionId: string;
 	autoRunState: AutoRunState | null;
@@ -685,6 +690,7 @@ function AutoRunTabContent({
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onOpenDocument?: (filename: string) => void;
+	onSelectedDocumentChange?: (filename: string | null) => void;
 }) {
 	const handleOpenSetup = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -700,6 +706,7 @@ function AutoRunTabContent({
 				send={send}
 				onOpenSetup={handleOpenSetup}
 				onExpandDocument={onOpenDocument}
+				onSelectedDocumentChange={onSelectedDocumentChange}
 			/>
 		</div>
 	);

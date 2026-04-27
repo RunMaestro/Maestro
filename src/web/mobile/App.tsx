@@ -1117,6 +1117,11 @@ export default function MobileApp() {
 	const [showUnreadAgentsOnly, setShowUnreadAgentsOnly] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
+	// Tracks the document currently focused inside `AutoRunInline` so the launch
+	// sheet can pre-fill it as the active selection — mirrors desktop's
+	// `BatchRunnerModal` `currentDocument` semantics. Bubbled up from
+	// `AutoRunInline` via `onSelectedDocumentChange`.
+	const [autoRunSelectedDoc, setAutoRunSelectedDoc] = useState<string | null>(null);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [thinkingMode, setThinkingMode] = useState<ThinkingMode>('off');
 	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
@@ -3196,6 +3201,7 @@ export default function MobileApp() {
 					onClose={handleAutoRunCloseSetup}
 					sendRequest={sendRequest}
 					send={send}
+					currentDocument={autoRunSelectedDoc}
 				/>
 			)}
 
@@ -3377,6 +3383,7 @@ export default function MobileApp() {
 						projectPath={activeSession?.cwd}
 						onAutoRunOpenDocument={handleAutoRunOpenDocument}
 						onAutoRunOpenSetup={handleAutoRunOpenSetup}
+						onAutoRunSelectedDocumentChange={setAutoRunSelectedDoc}
 						sendRequest={sendRequest}
 						send={send}
 						onViewDiff={handleViewGitDiff}

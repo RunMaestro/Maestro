@@ -26,6 +26,8 @@ export interface RightPanelProps {
 	projectPath?: string;
 	onAutoRunOpenDocument?: (filename: string) => void;
 	onAutoRunOpenSetup?: () => void;
+	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
+	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onViewDiff?: (filePath: string) => void;
@@ -56,6 +58,7 @@ export function RightPanel({
 	projectPath,
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
+	onAutoRunSelectedDocumentChange,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -280,6 +283,7 @@ export function RightPanel({
 							sendRequest={sendRequest}
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
+							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
 						/>
 					)}
 					{currentTab === 'git' && (

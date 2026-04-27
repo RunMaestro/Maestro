@@ -107,6 +107,13 @@ export interface AutoRunInlineProps {
 	onResumeAfterError?: () => Promise<unknown> | void;
 	onSkipAfterError?: () => Promise<unknown> | void;
 	onAbortAfterError?: () => Promise<unknown> | void;
+	/**
+	 * Notifies the parent when the in-panel selection changes so the launch sheet
+	 * (and other consumers) can pre-fill the active doc the way desktop's
+	 * BatchRunnerModal pre-fills `currentDocument`. Fires with `null` when the
+	 * panel clears its selection (e.g. on session change).
+	 */
+	onSelectedDocumentChange?: (filename: string | null) => void;
 }
 
 type EditorMode = 'preview' | 'edit';
@@ -124,6 +131,7 @@ export function AutoRunInline({
 	onResumeAfterError,
 	onSkipAfterError,
 	onAbortAfterError,
+	onSelectedDocumentChange,
 }: AutoRunInlineProps) {
 	const colors = useThemeColors();
 	const {
@@ -222,6 +230,12 @@ export function AutoRunInline({
 		if (selectedFile || documents.length === 0) return;
 		setSelectedFile(documents[0].path || documents[0].filename);
 	}, [documents, selectedFile]);
+
+	// Notify the parent on selection changes so the launch sheet can pre-fill
+	// the active doc — desktop parity for `BatchRunnerModal`'s `currentDocument`.
+	useEffect(() => {
+		onSelectedDocumentChange?.(selectedFile);
+	}, [selectedFile, onSelectedDocumentChange]);
 
 	// Load content whenever the selected file changes.
 	useEffect(() => {
