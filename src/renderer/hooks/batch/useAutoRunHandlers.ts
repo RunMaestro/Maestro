@@ -13,6 +13,25 @@ import { captureException } from '../../utils/sentry';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 
+/** Normalize file path for comparison: convert backslashes to forward slashes, collapse duplicate slashes, and remove trailing slash. */
+function normalizePath(p: string): string {
+	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+/**
+ * Match a session against a worktree root path. We check both `projectRoot`
+ * (the stable worktree root captured at session creation) and `cwd` (which
+ * may drift if the user `cd`s into a subdirectory of the worktree). Without
+ * the projectRoot fallback, a child session that has navigated into a subdir
+ * is missed and the recovery flow builds a duplicate session for the same
+ * worktree.
+ */
+function sessionMatchesWorktreeRoot(session: Session, normalizedRoot: string): boolean {
+	if (session.projectRoot && normalizePath(session.projectRoot) === normalizedRoot) return true;
+	if (session.cwd && normalizePath(session.cwd) === normalizedRoot) return true;
+	return false;
+}
+
 /**
  * Tree node structure for Auto Run document tree
  */
@@ -139,11 +158,32 @@ async function spawnWorktreeAgentAndDispatch(
 			});
 			return null;
 		}
+		// If the branch was already attached to another worktree on disk, the main
+		// process resolved its path and returned it. Open that worktree instead of
+		// the requested path so the user isn't blocked by a stale registration.
+		if (result.alreadyExisted && result.existingPath) {
+			clearRecentlyCreatedWorktreePath(worktreePath);
+			worktreePath = result.existingPath;
+			notifyToast({
+				type: 'info',
+				title: 'Worktree Already Existed',
+				message: `Opened existing worktree at ${worktreePath}`,
+			});
+		}
 	} else {
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;
 		branchName = worktreePath.split('/').pop() || 'worktree';
 	}
+
+	// If a session for this worktree path already exists (e.g., the resolved
+	// existing worktree is already open in Maestro), reuse it instead of
+	// building a duplicate. We still fall through to populate config.worktree
+	// below so PR creation continues to work.
+	const normalizedWorktreePath = normalizePath(worktreePath);
+	const existingSession = useSessionStore
+		.getState()
+		.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedWorktreePath));
 
 	// Step 3: Fetch git info for the worktree
 	let gitBranches: string[] | undefined;
@@ -159,25 +199,43 @@ async function spawnWorktreeAgentAndDispatch(
 		branchName = gitBranches[0];
 	}
 
-	// Step 4: Build the session
-	const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
-	const newSession = buildWorktreeSession({
-		parentSession,
-		path: worktreePath,
-		branch: branchName,
-		name: branchName,
-		gitBranches,
-		defaultSaveToHistory,
-		defaultShowThinking,
-	});
+	let dispatchSessionId: string;
+	if (existingSession) {
+		// Mirror the existing-open guard (handleStartBatchRun line ~392): refuse
+		// to dispatch onto an in-flight agent. Without this, a recovery into a
+		// busy worktree session silently queues the batch on top of an active
+		// run.
+		if (existingSession.state === 'busy' || existingSession.state === 'connecting') {
+			notifyToast({
+				type: 'warning',
+				title: 'Target Agent Busy',
+				message: 'Existing worktree agent is busy. Please try again.',
+			});
+			return null;
+		}
+		dispatchSessionId = existingSession.id;
+	} else {
+		// Step 4: Build the session
+		const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
+		const newSession = buildWorktreeSession({
+			parentSession,
+			path: worktreePath,
+			branch: branchName,
+			name: branchName,
+			gitBranches,
+			defaultSaveToHistory,
+			defaultShowThinking,
+		});
 
-	// Step 5: Add session to store and expand parent's worktrees
-	useSessionStore
-		.getState()
-		.setSessions((prev) => [
-			...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
-			newSession,
-		]);
+		// Step 5: Add session to store and expand parent's worktrees
+		useSessionStore
+			.getState()
+			.setSessions((prev) => [
+				...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
+				newSession,
+			]);
+		dispatchSessionId = newSession.id;
+	}
 
 	// Step 6: Populate config.worktree for PR creation if requested
 	if (target.createPROnCompletion) {
@@ -190,7 +248,7 @@ async function spawnWorktreeAgentAndDispatch(
 		};
 	}
 
-	return newSession.id;
+	return dispatchSessionId;
 }
 
 /**

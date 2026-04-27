@@ -152,6 +152,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -690,24 +691,13 @@ interface MaestroAPI {
 			worktreePath: string,
 			branchName: string,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			created?: boolean;
-			currentBranch?: string;
-			requestedBranch?: string;
-			branchMismatch?: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeSetupResult>;
 		worktreeCheckout: (
 			worktreePath: string,
 			branchName: string,
 			createIfMissing: boolean,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			hasUncommittedChanges: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeCheckoutResult>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,
