@@ -680,6 +680,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote set Auto Run folder from web interface — repoints a session
+	// at a different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
+	// + `handleAutoRunFolderSelected` flow.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSetAutoRunFolder(
+			(sessionId: string, folderPath: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:setAutoRunFolder', {
+						detail: { sessionId, folderPath, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote get auto-run docs from web interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocs(

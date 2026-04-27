@@ -153,6 +153,8 @@ export interface SessionBroadcastData {
 	/** Worktree subagent support */
 	parentSessionId?: string | null;
 	worktreeBranch?: string | null;
+	/** The session's configured Auto Run folder; null when not set yet. */
+	autoRunFolderPath?: string | null;
 }
 
 // =============================================================================
@@ -319,6 +321,17 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+
+/**
+ * Updates the Auto Run folder for an existing session. Mirrors what the desktop
+ * app does when the user picks a different folder via `dialog.selectFolder` —
+ * the renderer reloads the document list from the new path and persists the
+ * choice to session storage. Used by the web UI's `FolderPickerSheet`.
+ */
+export type SetSessionAutoRunFolderCallback = (
+	sessionId: string,
+	folderPath: string
+) => Promise<{ success: boolean; error?: string }>;
 
 /**
  * Notification kinds supported by the desktop app.

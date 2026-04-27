@@ -29,6 +29,7 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -122,6 +123,7 @@ export interface WebServerCallbacks {
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
 	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
@@ -192,6 +194,7 @@ export class CallbackRegistry {
 		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		setSessionAutoRunFolder: null,
 		getHistory: null,
 		getAutoRunDocs: null,
 		getAutoRunDocContent: null,
@@ -370,6 +373,14 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async setSessionAutoRunFolder(
+		sessionId: string,
+		folderPath: string
+	): Promise<{ success: boolean; error?: string }> {
+		if (!this.callbacks.setSessionAutoRunFolder) return { success: false, error: 'Not configured' };
+		return this.callbacks.setSessionAutoRunFolder(sessionId, folderPath);
 	}
 
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
@@ -743,6 +754,10 @@ export class CallbackRegistry {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
+		this.callbacks.setSessionAutoRunFolder = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

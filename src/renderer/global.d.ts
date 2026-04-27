@@ -349,6 +349,13 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
 		) => void;
+		onRemoteSetAutoRunFolder: (
+			callback: (sessionId: string, folderPath: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetAutoRunFolderResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteGetAutoRunDocs: (
 			callback: (sessionId: string, responseChannel: string) => void
 		) => () => void;

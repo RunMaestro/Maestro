@@ -28,6 +28,8 @@ export interface RightPanelProps {
 	onAutoRunOpenSetup?: () => void;
 	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
 	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
+	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
+	onAutoRunOpenFolderPicker?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onViewDiff?: (filePath: string) => void;
@@ -59,6 +61,7 @@ export function RightPanel({
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
 	onAutoRunSelectedDocumentChange,
+	onAutoRunOpenFolderPicker,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -284,6 +287,7 @@ export function RightPanel({
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
 							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
+							onOpenFolderPicker={onAutoRunOpenFolderPicker}
 						/>
 					)}
 					{currentTab === 'git' && (

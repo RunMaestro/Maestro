@@ -73,6 +73,7 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -462,6 +463,10 @@ export class WebServer {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbackRegistry.setConfigureAutoRunCallback(callback);
+	}
+
+	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
+		this.callbackRegistry.setSessionAutoRunFolderCallback(callback);
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

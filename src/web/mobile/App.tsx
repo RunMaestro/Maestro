@@ -45,6 +45,7 @@ import { AutoRunIndicator } from './AutoRunIndicator';
 import { AutoRunPanel } from './AutoRunPanel';
 import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
 import { AutoRunSetupSheet } from './AutoRunSetupSheet';
+import { FolderPickerSheet } from './FolderPickerSheet';
 import { NotificationSettingsSheet } from './NotificationSettingsSheet';
 import { SettingsPanel } from './SettingsPanel';
 import { AgentCreationSheet } from './AgentCreationSheet';
@@ -1122,6 +1123,12 @@ export default function MobileApp() {
 	// `BatchRunnerModal` `currentDocument` semantics. Bubbled up from
 	// `AutoRunInline` via `onSelectedDocumentChange`.
 	const [autoRunSelectedDoc, setAutoRunSelectedDoc] = useState<string | null>(null);
+	// Server-driven folder picker — mobile/web parity for desktop's
+	// `dialog.selectFolder` flow that repoints a session at a different
+	// `.maestro/` folder. The picker uses `get_file_tree` to navigate and sends
+	// `set_auto_run_folder` on confirm; the server bridges to the renderer's
+	// `handleAutoRunFolderSelected`-equivalent listener for state + persistence.
+	const [showFolderPicker, setShowFolderPicker] = useState(false);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [thinkingMode, setThinkingMode] = useState<ThinkingMode>('off');
 	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
@@ -1522,6 +1529,34 @@ export default function MobileApp() {
 	const handleAutoRunCloseSetup = useCallback(() => {
 		setShowAutoRunSetup(false);
 	}, []);
+
+	const handleAutoRunOpenFolderPicker = useCallback(() => {
+		setShowFolderPicker(true);
+	}, []);
+
+	const handleAutoRunCloseFolderPicker = useCallback(() => {
+		setShowFolderPicker(false);
+	}, []);
+
+	// Persists the chosen folder via `set_auto_run_folder`. The server bridges to
+	// the renderer's `maestro:setAutoRunFolder` listener which lists docs from
+	// the new path and updates the session atomically. After confirmation the
+	// inline panel re-loads via the normal `useAutoRun` document refresh.
+	const handleAutoRunFolderConfirm = useCallback(
+		async (folderPath: string) => {
+			if (!activeSessionId) return;
+			const result = await sendRequest<{ success: boolean; error?: string }>(
+				'set_auto_run_folder',
+				{ sessionId: activeSessionId, folderPath }
+			);
+			if (!result?.success) {
+				throw new Error(result?.error || 'Failed to set Auto Run folder');
+			}
+			// Refresh the in-panel document list so the new folder's docs appear.
+			loadAutoRunDocuments(activeSessionId);
+		},
+		[activeSessionId, sendRequest, loadAutoRunDocuments]
+	);
 
 	// Notification settings handlers
 	const handleOpenNotificationSettings = useCallback(() => {
@@ -3205,6 +3240,20 @@ export default function MobileApp() {
 				/>
 			)}
 
+			{/* Auto Run folder picker — desktop parity for `dialog.selectFolder`.
+				Browses the server filesystem via `get_file_tree` and persists the
+				chosen folder onto the session via `set_auto_run_folder`. */}
+			{activeSessionId && showFolderPicker && activeSession?.cwd && (
+				<FolderPickerSheet
+					sessionId={activeSessionId}
+					startPath={activeSession.cwd}
+					initialPath={activeSession.autoRunFolderPath ?? null}
+					onClose={handleAutoRunCloseFolderPicker}
+					onConfirm={handleAutoRunFolderConfirm}
+					sendRequest={sendRequest}
+				/>
+			)}
+
 			{/* Notification settings bottom sheet */}
 			{showNotificationSettings && (
 				<NotificationSettingsSheet
@@ -3383,6 +3432,7 @@ export default function MobileApp() {
 						projectPath={activeSession?.cwd}
 						onAutoRunOpenDocument={handleAutoRunOpenDocument}
 						onAutoRunOpenSetup={handleAutoRunOpenSetup}
+						onAutoRunOpenFolderPicker={handleAutoRunOpenFolderPicker}
 						onAutoRunSelectedDocumentChange={setAutoRunSelectedDoc}
 						sendRequest={sendRequest}
 						send={send}

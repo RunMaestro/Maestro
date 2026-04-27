@@ -37,6 +37,8 @@ export interface RightDrawerProps {
 	onAutoRunOpenSetup?: () => void;
 	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
 	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
+	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
+	onAutoRunOpenFolderPicker?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	/** Callback when a git file is tapped for diff viewing */
@@ -69,6 +71,7 @@ export function RightDrawer({
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
 	onAutoRunSelectedDocumentChange,
+	onAutoRunOpenFolderPicker,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -251,6 +254,7 @@ export function RightDrawer({
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
 							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
+							onOpenFolderPicker={onAutoRunOpenFolderPicker}
 						/>
 					)}
 					{currentTab === 'git' && (
@@ -683,6 +687,7 @@ function AutoRunTabContent({
 	send,
 	onOpenDocument,
 	onSelectedDocumentChange,
+	onOpenFolderPicker,
 }: {
 	sessionId: string;
 	autoRunState: AutoRunState | null;
@@ -691,6 +696,7 @@ function AutoRunTabContent({
 	send: UseWebSocketReturn['send'];
 	onOpenDocument?: (filename: string) => void;
 	onSelectedDocumentChange?: (filename: string | null) => void;
+	onOpenFolderPicker?: () => void;
 }) {
 	const handleOpenSetup = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -707,6 +713,7 @@ function AutoRunTabContent({
 				onOpenSetup={handleOpenSetup}
 				onExpandDocument={onOpenDocument}
 				onSelectedDocumentChange={onSelectedDocumentChange}
+				onOpenFolderPicker={onOpenFolderPicker}
 			/>
 		</div>
 	);

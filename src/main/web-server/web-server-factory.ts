@@ -171,6 +171,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					// Worktree subagent support
 					parentSessionId: s.parentSessionId || null,
 					worktreeBranch: s.worktreeBranch || null,
+					// Auto Run folder — exposes the session's configured `.maestro/`
+					// playbook folder to web clients so the folder picker can show
+					// the current selection.
+					autoRunFolderPath: s.autoRunFolderPath || null,
 				};
 			});
 		});
@@ -838,6 +842,58 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolved = true;
 					ipcMain.removeListener(responseChannel, handleResponse);
 					logger.warn(`configureAutoRun callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Timeout' });
+				}, 10000);
+			});
+		});
+
+		// Set up callback for web server to update the Auto Run folder on a session.
+		// Mirrors `configureAutoRun` IPC pattern: bridge to renderer via remote IPC,
+		// renderer-side `handleAutoRunFolderSelected` reloads docs and persists the
+		// choice through normal session storage.
+		server.setSessionAutoRunFolderCallback(async (sessionId: string, folderPath: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for setSessionAutoRunFolder', 'WebServer');
+				return { success: false, error: 'Main window not available' };
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:setAutoRunFolder:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (
+					_event: Electron.IpcMainEvent,
+					result: { success: boolean; error?: string } | undefined
+				) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for setSessionAutoRunFolder', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:setAutoRunFolder',
+					sessionId,
+					folderPath,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`setSessionAutoRunFolder callback timed out for session ${sessionId}`,
+						'WebServer'
+					);
 					resolve({ success: false, error: 'Timeout' });
 				}, 10000);
 			});

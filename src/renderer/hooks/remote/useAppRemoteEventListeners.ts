@@ -232,6 +232,89 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
+	// Handle remote set Auto Run folder events from web interface — repoints
+	// a session at a different `.maestro/` folder, mirroring desktop's
+	// `dialog.selectFolder` + `handleAutoRunFolderSelected` flow. Lists docs
+	// from the new path via the autorun preload API and writes the new folder
+	// + first doc + content into the session atomically; the session storage
+	// layer persists `autoRunFolderPath` on the next save tick.
+	useEventListener('maestro:setAutoRunFolder', async (e: Event) => {
+		const { sessionId, folderPath, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			folderPath: string;
+			responseChannel: string;
+		};
+
+		try {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) {
+				window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+					success: false,
+					error: `Session ${sessionId} not found`,
+				});
+				return;
+			}
+
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
+			let listResult: {
+				success: boolean;
+				files?: string[];
+				tree?: unknown[];
+				error?: string;
+			} | null = null;
+			try {
+				listResult = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
+			} catch (error) {
+				listResult = {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+
+			const firstFile = listResult?.success ? listResult.files?.[0] : undefined;
+			let firstFileContent = '';
+			if (firstFile) {
+				try {
+					const contentResult = await window.maestro.autorun.readDoc(
+						folderPath,
+						firstFile + '.md',
+						sshRemoteId
+					);
+					if (contentResult.success) {
+						firstFileContent = contentResult.content || '';
+					}
+				} catch {
+					/* leave empty; the autoRunContent useEffect will retry on next select */
+				}
+			}
+
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? {
+								...s,
+								autoRunFolderPath: folderPath,
+								autoRunSelectedFile: firstFile,
+								autoRunContent: firstFileContent,
+								autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+							}
+						: s
+				)
+			);
+
+			window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+				success: true,
+			});
+		} catch (error) {
+			window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	});
+
 	// Handle remote configure auto-run events from CLI/web interface
 	useEventListener('maestro:configureAutoRun', async (e: Event) => {
 		const { sessionId, config, responseChannel } = (e as CustomEvent).detail;

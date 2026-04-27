@@ -31,6 +31,8 @@ export interface AutoRunPanelProps {
 	onAbortAfterError?: () => Promise<unknown> | void;
 	/** Bubble selection changes up so the launch sheet can pre-fill the active doc. */
 	onSelectedDocumentChange?: (filename: string | null) => void;
+	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
+	onOpenFolderPicker?: () => void;
 }
 
 /**
@@ -48,6 +50,7 @@ export function AutoRunPanel({
 	onSkipAfterError,
 	onAbortAfterError,
 	onSelectedDocumentChange,
+	onOpenFolderPicker,
 }: AutoRunPanelProps) {
 	const colors = useThemeColors();
 
@@ -163,6 +166,7 @@ export function AutoRunPanel({
 					onSkipAfterError={onSkipAfterError}
 					onAbortAfterError={onAbortAfterError}
 					onSelectedDocumentChange={onSelectedDocumentChange}
+					onOpenFolderPicker={onOpenFolderPicker}
 				/>
 			</div>
 

@@ -114,6 +114,12 @@ export interface AutoRunInlineProps {
 	 * panel clears its selection (e.g. on session change).
 	 */
 	onSelectedDocumentChange?: (filename: string | null) => void;
+	/**
+	 * Opens a folder-picker (mirrors desktop's `dialog.selectFolder`). When
+	 * omitted, the "Change folder…" affordance falls back to `onOpenSetup` for
+	 * backwards compatibility.
+	 */
+	onOpenFolderPicker?: () => void;
 }
 
 type EditorMode = 'preview' | 'edit';
@@ -132,6 +138,7 @@ export function AutoRunInline({
 	onSkipAfterError,
 	onAbortAfterError,
 	onSelectedDocumentChange,
+	onOpenFolderPicker,
 }: AutoRunInlineProps) {
 	const colors = useThemeColors();
 	const {
@@ -801,7 +808,7 @@ export function AutoRunInline({
 					onSelect={handleSelectDocument}
 					onRefresh={handleRefresh}
 					onCreateDocument={() => setShowCreate(true)}
-					onChangeFolder={onOpenSetup}
+					onChangeFolder={onOpenFolderPicker ?? onOpenSetup}
 					isLoading={isLoadingDocs}
 				/>
 			</div>

@@ -162,6 +162,10 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	setSessionAutoRunFolder: (
+		sessionId: string,
+		folderPath: string
+	) => Promise<{ success: boolean; error?: string }>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -381,6 +385,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				this.handleConfigureAutoRun(client, message);
+				break;
+
+			case 'set_auto_run_folder':
+				this.handleSetAutoRunFolder(client, message);
 				break;
 
 			case 'get_auto_run_docs':
@@ -1450,6 +1458,52 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to configure auto-run: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle set_auto_run_folder message - update the Auto Run folder for an
+	 * existing session. Mirrors desktop's `dialog.selectFolder` flow: the renderer
+	 * lists docs from the new path, persists the choice to session storage, and
+	 * broadcasts the updated session.
+	 */
+	private handleSetAutoRunFolder(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const folderPath = message.folderPath as string;
+		logger.info(
+			`[Web] Received set_auto_run_folder message: session=${sessionId}, folderPath=${folderPath}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (typeof folderPath !== 'string' || folderPath.trim() === '') {
+			this.sendError(client, 'Missing or invalid folderPath');
+			return;
+		}
+
+		if (!this.callbacks.setSessionAutoRunFolder) {
+			this.sendError(client, 'Auto Run folder updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.setSessionAutoRunFolder(sessionId, folderPath)
+			.then((result) => {
+				this.send(client, {
+					type: 'set_auto_run_folder_result',
+					success: result.success,
+					error: result.error,
+					sessionId,
+					folderPath,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to set Auto Run folder: ${error.message}`);
 			});
 	}
 

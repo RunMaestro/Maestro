@@ -644,6 +644,49 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote set Auto Run folder from web interface
+		 * (request-response). Web clients use this to repoint a session at a
+		 * different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
+		 * + `handleAutoRunFolderSelected` flow.
+		 */
+		onRemoteSetAutoRunFolder: (
+			callback: (sessionId: string, folderPath: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				folderPath: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, folderPath, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:setAutoRunFolder', handler);
+			return () => ipcRenderer.removeListener('remote:setAutoRunFolder', handler);
+		},
+
+		/**
+		 * Send response for remote set Auto Run folder
+		 */
+		sendRemoteSetAutoRunFolderResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote get auto-run docs from web interface (request-response)
 		 */
 		onRemoteGetAutoRunDocs: (
