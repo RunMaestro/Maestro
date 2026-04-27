@@ -120,13 +120,13 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag                 | Description                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `--new-tab`          | Create a fresh AI tab in the target agent. Mutually exclusive with `-s`                           |
-| `-s, --session <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`    |
-| `-f, --force`        | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED` |
+| Flag                 | Description                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`          | Create a fresh AI tab in the target agent. Mutually exclusive with `-s` and `-f` (a new tab is never busy, so `--force` has nothing to bypass) |
+| `-s, --session <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                 |
+| `-f, --force`        | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`         |
 
-Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`. Requires the Maestro desktop app to be running.
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
 ### Listing Sessions
 

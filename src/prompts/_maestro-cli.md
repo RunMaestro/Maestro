@@ -115,11 +115,11 @@ Hand a prompt to an agent in the running Maestro desktop and get back the tab/se
 {{MAESTRO_CLI_PATH}} dispatch <agent-id> "Your message here" [--new-tab] [-s <tab-id>] [-f]
 ```
 
-| Flag                 | Description                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`          | Create a fresh AI tab in the target agent and dispatch the prompt into it. Mutually exclusive with `-s`                                           |
-| `-s, --session <id>` | Target an existing tab by its tab id (returned from a previous `dispatch`). Mutually exclusive with `--new-tab`                                   |
-| `-f, --force`        | Bypass the busy-state guard when writing to a busy tab. Gated by `allowConcurrentSend` (off by default); errors out with code `FORCE_NOT_ALLOWED` |
+| Flag                 | Description                                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`          | Create a fresh AI tab in the target agent and dispatch the prompt into it. Mutually exclusive with `-s` and `-f` (a new tab is never busy)                                             |
+| `-s, --session <id>` | Target an existing tab by its tab id (returned from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                        |
+| `-f, --force`        | Bypass the busy-state guard when writing to a busy tab. Gated by `allowConcurrentSend` (off by default); errors out with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab` |
 
 Output (always JSON; `sessionId` and `tabId` are duplicates of the same value, kept for caller convenience):
 
@@ -127,7 +127,7 @@ Output (always JSON; `sessionId` and `tabId` are duplicates of the same value, k
 { "success": true, "agentId": "a1b2c3d4-...", "sessionId": "tab-xyz", "tabId": "tab-xyz" }
 ```
 
-Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`. Requires the desktop app to be running.
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop acks `--new-tab` without returning a tab id, leaving nothing to chain follow-up dispatches against. Requires the desktop app to be running.
 
 ### Resource Listing and Inspection
 
