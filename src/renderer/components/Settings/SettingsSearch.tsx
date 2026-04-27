@@ -73,6 +73,8 @@ export function useSettingsSearch({
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
 				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
 				inputRef.current?.focus();
 				return;
 			}

@@ -7,10 +7,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import type { Session } from '../../../renderer/types';
 import {
 	markWorktreePathAsRecentlyCreated,
 	clearRecentlyCreatedWorktreePath,
 	isRecentlyCreatedWorktreePath,
+	normalizePath,
+	sessionMatchesWorktreeRoot,
 } from '../../../renderer/utils/worktreeDedup';
 
 describe('worktreeDedup', () => {
@@ -122,5 +125,81 @@ describe('worktreeDedup', () => {
 
 		vi.advanceTimersByTime(1);
 		expect(isRecentlyCreatedWorktreePath('/projects/worktrees/clear-timer')).toBe(false);
+	});
+});
+
+describe('normalizePath', () => {
+	it('converts backslashes to forward slashes', () => {
+		expect(normalizePath('C:\\Users\\test\\repo')).toBe('C:/Users/test/repo');
+	});
+
+	it('collapses duplicate slashes', () => {
+		expect(normalizePath('/a//b///c')).toBe('/a/b/c');
+	});
+
+	it('strips trailing slash', () => {
+		expect(normalizePath('/projects/worktrees/feature/')).toBe('/projects/worktrees/feature');
+	});
+
+	it('handles mixed separators, duplicates, and trailing slash together', () => {
+		expect(normalizePath('C:\\Users//test\\\\repo/')).toBe('C:/Users/test/repo');
+	});
+
+	it('returns empty string unchanged', () => {
+		expect(normalizePath('')).toBe('');
+	});
+});
+
+describe('sessionMatchesWorktreeRoot', () => {
+	const root = '/projects/worktrees/feature-x';
+
+	function makeSession(overrides: Partial<Session>): Session {
+		return {
+			id: 'sess-1',
+			cwd: '',
+			...overrides,
+		} as Session;
+	}
+
+	it('matches on projectRoot exact equality', () => {
+		const s = makeSession({ projectRoot: root, cwd: '/elsewhere' });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(true);
+	});
+
+	it('matches on cwd exact equality when projectRoot is unset', () => {
+		const s = makeSession({ cwd: root });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(true);
+	});
+
+	it('matches projectRoot with trailing slash via normalization', () => {
+		const s = makeSession({ projectRoot: `${root}/`, cwd: '/elsewhere' });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(true);
+	});
+
+	it('matches projectRoot with backslashes via normalization', () => {
+		const s = makeSession({ projectRoot: 'C:\\projects\\worktrees\\feature-x' });
+		expect(sessionMatchesWorktreeRoot(s, 'C:/projects/worktrees/feature-x')).toBe(true);
+	});
+
+	it('does NOT match a session whose cwd is a subdir of the worktree root', () => {
+		// projectRoot fallback exists precisely so this case still matches via
+		// projectRoot — but if projectRoot is missing, cwd-only must NOT match.
+		const s = makeSession({ cwd: `${root}/src/components` });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(false);
+	});
+
+	it('matches via projectRoot even when cwd has drifted into a subdir', () => {
+		const s = makeSession({ projectRoot: root, cwd: `${root}/src/components` });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(true);
+	});
+
+	it('returns false when neither projectRoot nor cwd is set', () => {
+		const s = makeSession({ cwd: '' });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(false);
+	});
+
+	it('returns false for a different worktree root', () => {
+		const s = makeSession({ projectRoot: '/projects/worktrees/other' });
+		expect(sessionMatchesWorktreeRoot(s, root)).toBe(false);
 	});
 });

@@ -171,24 +171,44 @@ Use these after filesystem changes so the user sees updates immediately:
 
 ### Notifications
 
-You can surface two distinct kinds of notifications inside the desktop app. Pick the one that matches the message intent — they are not interchangeable.
+You can surface two distinct kinds of notifications inside the desktop app. Both share a unified five-color design language; pick the kind that matches the message intent — they are not interchangeable.
 
-| Kind             | When to use                                                                                                                                                                                                                                                                                                                                                |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Toast**        | Persistent, queued, dismissable. Top-right of screen. Use for results the user may want to act on later (build done, tests failed, PR opened, long task finished), errors, or anything where the click-to-jump behavior is valuable. Also fires audio/OS notifications when the user has those configured. Fine to attach to a specific agent for context. |
-| **Center Flash** | Momentary, single-slot, center-screen overlay (≈1.5s). Use for "I did the thing" confirmation of a user-initiated action — quick acks, status nudges, brief success notes. Only one is visible at a time; a new flash replaces the active one. **Not** for errors, long-form messages, or anything the user might miss if they blinked.                    |
+| Kind             | When to use                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Toast**        | Persistent, queued, dismissable. Top-right of screen. Use for results the user may want to act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump behavior is valuable. Fires audio/OS notifications when configured. Use `--dismissible` for messages the user MUST acknowledge.   |
+| **Center Flash** | Momentary, single-slot, center-screen overlay (default 1.5s, max 5s). Use for "I did the thing" confirmation of a user-initiated action — quick acks, status nudges, brief success notes. Only one is visible at a time; a new flash replaces the active one. **Not** for errors, long-form messages, or anything the user might blink past. |
+
+#### Color palette (shared)
+
+`--color` accepts one of five values. Default is `theme` so the notification matches whatever theme the user is running.
+
+| Color    | Use for                                                        |
+| -------- | -------------------------------------------------------------- |
+| `theme`  | **Default.** Generic confirmation with no semantic             |
+| `green`  | Success ("Build passed", "Deploy complete")                    |
+| `yellow` | Soft heads-up ("Quota at 60%")                                 |
+| `orange` | Emphatic warning ("Approaching context limit", "Quota at 90%") |
+| `red`    | Failure / blocked ("CI failed", "Auth expired")                |
 
 ```bash
-# Toast: title + message, optional type/duration, optional agent association
-{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" [-t success|info|warning|error] [-d <seconds>] [-a <agent-id>] [--json]
+# Toast — default theme, queue-based, click X to dismiss.
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" [--color <color>] [--timeout <sec>] [-a <agent-id>] [--json]
 
-# Center flash: short message, optional detail line, optional variant
-{{MAESTRO_CLI_PATH}} notify flash "<message>" [-v success|info|warning|error] [-D "<detail>"] [-d <ms>] [--json]
+# Sticky toast — no auto-dismiss, requires user click. Use for critical messages.
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --color red --dismissible
+
+# Center flash — momentary, exclusive, replaces any active flash.
+{{MAESTRO_CLI_PATH}} notify flash "<message>" [--color <color>] [-D "<detail>"] [--timeout <sec>] [--json]
 ```
 
-Defaults: toast type = `info`, flash variant = `success`, flash duration = 1500ms. `-d 0` disables auto-dismiss in both cases (use sparingly — only for messages that genuinely require dismissal). When attaching a toast to an agent with `-a`, clicking the toast switches focus to that agent's tab.
+Caps:
 
-Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task — by the time it appears the user is no longer looking at the screen.
+- **Toast:** `--timeout` range `(0, 60]` seconds. Use `--dismissible` (no timeout, click to close) for messages the user must acknowledge. `--timeout` and `--dismissible` are mutually exclusive.
+- **Center Flash:** `--timeout` range `(0, 5]` seconds (or `--duration <ms>` range `(0, 5000]`). No "never dismiss" option — flashes are by design momentary.
+
+Both commands accept `--variant` (toast: `--type`) as a deprecated alias for callers using the legacy semantic API (`success`/`info`/`warning`/`error` → `green`/`theme`/`yellow`/`red`). Prefer `--color` in new scripts.
+
+Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task — by the time it appears the user is no longer looking at the screen. Reach for `--dismissible` only when the message is genuinely critical — every sticky toast is a tiny piece of homework you're handing the user.
 
 ### Status
 

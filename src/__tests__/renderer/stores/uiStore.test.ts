@@ -209,28 +209,28 @@ describe('uiStore', () => {
 	});
 
 	describe('flash notification setters (compatibility shims → centerFlashStore)', () => {
-		it('setFlashNotification fires a warning center flash', async () => {
+		it('setFlashNotification fires a yellow center flash', async () => {
 			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
 			useCenterFlashStore.getState().setActive(null);
 
 			useUIStore.getState().setFlashNotification('Commands disabled');
 			const active = useCenterFlashStore.getState().active;
 			expect(active?.message).toBe('Commands disabled');
-			expect(active?.variant).toBe('warning');
+			expect(active?.color).toBe('yellow');
 
 			// Passing null is a no-op (auto-dismiss handles clearing)
 			useUIStore.getState().setFlashNotification(null);
 			expect(useCenterFlashStore.getState().active?.message).toBe('Commands disabled');
 		});
 
-		it('setSuccessFlashNotification fires a success center flash', async () => {
+		it('setSuccessFlashNotification fires a themed center flash', async () => {
 			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
 			useCenterFlashStore.getState().setActive(null);
 
 			useUIStore.getState().setSuccessFlashNotification('Refresh complete');
 			const active = useCenterFlashStore.getState().active;
 			expect(active?.message).toBe('Refresh complete');
-			expect(active?.variant).toBe('success');
+			expect(active?.color).toBe('theme');
 
 			useUIStore.getState().setSuccessFlashNotification(null);
 			expect(useCenterFlashStore.getState().active?.message).toBe('Refresh complete');

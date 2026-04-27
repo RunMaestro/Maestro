@@ -162,7 +162,7 @@ const handleScroll = useThrottledCallback(() => {
 ```typescript
 // During AI streaming, IPC triggers 100+ updates/second
 // Without batching: 100+ React re-renders/second
-// With batching at 150ms: ~6 renders/second
+// With batching at 200ms: ~5 renders/second
 // See: src/renderer/hooks/session/useBatchedSessionUpdates.ts
 
 // Update types that get batched:

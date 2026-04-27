@@ -79,18 +79,32 @@ interface ToolSummary {
  * Tool logs are only emitted when thinking is enabled, so we show the full
  * command text without truncation to give complete visibility into agent actions.
  */
-const summarizeToolInput = (input: Record<string, unknown>): ToolSummary | null => {
+const summarizeToolInput = (input: unknown): ToolSummary | null => {
+	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
+	// as a raw string instead of an object — Object.entries on a string would
+	// iterate it character-by-character and produce garbled, space-separated
+	// output, so surface the string as-is.
+	if (typeof input === 'string') {
+		return input ? { detail: input } : null;
+	}
+	if (!input || typeof input !== 'object' || Array.isArray(input)) {
+		return null;
+	}
+	const inputRecord = input as Record<string, unknown>;
+
 	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(input.todos);
+	const todosResult = summarizeTodos(inputRecord.todos);
 	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =
-		typeof input.description === 'string' && input.description ? input.description : undefined;
+		typeof inputRecord.description === 'string' && inputRecord.description
+			? inputRecord.description
+			: undefined;
 
 	// Collect displayable values (skip huge blobs)
 	const parts: string[] = [];
-	for (const [key, val] of Object.entries(input)) {
+	for (const [key, val] of Object.entries(inputRecord)) {
 		if (val === undefined || val === null || val === '') continue;
 		// Skip description — rendered separately
 		if (key === 'description') continue;
@@ -575,10 +589,11 @@ const LogItemComponent = memo(
 					{log.source === 'tool' &&
 						(() => {
 							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input as
-								| Record<string, unknown>
-								| undefined;
-							const toolSummary = toolInput ? summarizeToolInput(toolInput) : null;
+							const toolInput = log.metadata?.toolState?.input;
+							const toolSummary =
+								toolInput !== undefined && toolInput !== null
+									? summarizeToolInput(toolInput)
+									: null;
 
 							return (
 								<div

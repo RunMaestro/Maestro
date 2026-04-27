@@ -585,7 +585,7 @@ export const FilePreview = React.memo(
 				} catch {
 					// Non-critical — worst case the banner appears briefly
 				}
-				notifyCenterFlash({ message: 'File Saved', variant: 'success' });
+				notifyCenterFlash({ message: 'File Saved', color: 'theme' });
 			} catch (err) {
 				logger.error('Failed to save file:', undefined, err);
 				notifyToast({

@@ -3,8 +3,12 @@
  * Used by desktop and mobile markdown renderers to show color swatches.
  */
 
-/** Matches standalone CSS hex color codes: #RGB, #RGBA, #RRGGBB, #RRGGBBAA */
-const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+/**
+ * Matches standalone CSS hex color codes: #RRGGBB, #RRGGBBAA.
+ * Short 3/4-digit forms are intentionally excluded — they collide with
+ * issue/PR references like `#197` that show up constantly in chat.
+ */
+const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 /**
  * Extract a hex color from React children if the entire content is a hex color code.

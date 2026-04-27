@@ -37,7 +37,7 @@ function makeState(config?: CueConfig): SessionState {
 	return {
 		config: config ?? makeConfig(),
 		triggerSources: [],
-		yamlWatcher: null,
+		yamlWatchers: [],
 		sleepPrevented: false,
 	};
 }

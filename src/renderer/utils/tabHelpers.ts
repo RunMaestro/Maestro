@@ -21,6 +21,7 @@ import { createTerminalTab } from './terminalTabHelpers';
 import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
+import { getLiveDraft } from './liveDraftStore';
 
 /**
  * Build the unified tab list from a session's tab data.
@@ -290,14 +291,18 @@ const MAX_CLOSED_TAB_HISTORY = 25;
  * Check if a tab has draft content (unsent input or staged images).
  * Used for determining if a tab should be shown in "unread only" filter mode.
  *
+ * Prefers the live textarea value from liveDraftStore (which the active tab
+ * keeps current on every keystroke) over `tab.inputValue` (only synced on
+ * blur/submit). This keeps the draft indicator and close confirmation in
+ * sync with what's actually on screen.
+ *
  * @param tab - The AI tab to check
  * @returns True if the tab has unsent text input or staged images
  */
 export function hasDraft(tab: AITab): boolean {
-	return (
-		(tab.inputValue && tab.inputValue.trim() !== '') ||
-		(tab.stagedImages && tab.stagedImages.length > 0)
-	);
+	const liveValue = getLiveDraft(tab.id);
+	const text = liveValue !== undefined ? liveValue : (tab.inputValue ?? '');
+	return text.trim() !== '' || (tab.stagedImages && tab.stagedImages.length > 0);
 }
 
 /**

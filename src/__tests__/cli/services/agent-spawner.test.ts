@@ -1441,6 +1441,47 @@ Some text with [x] in it that's not a checkbox
 			await resultPromise;
 		});
 
+		it('should spawn copilot-cli with -p prompt arg and parse its result event', async () => {
+			const resultPromise = spawnAgent('copilot-cli', '/project', 'Hello copilot');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(cmd).toBeTruthy();
+
+			// Copilot-CLI batch mode: copilot --allow-all --output-format json -p "prompt"
+			expect(args).toContain('--allow-all');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('json');
+			expect(args).toContain('-p');
+			expect(args).toContain('Hello copilot');
+			// promptArgs path replaces the '--' separator
+			expect(args).not.toContain('--');
+
+			// Emit a session.start init event
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ type: 'session.start', data: { sessionId: 'cop-1' } }) + '\n')
+			);
+			// Emit a final assistant.message (no toolRequests + non-empty content → result)
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'assistant.message',
+						sessionId: 'cop-1',
+						data: { content: 'Final answer from copilot', toolRequests: [] },
+					}) + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Final answer from copilot');
+			expect(result.agentSessionId).toBe('cop-1');
+		});
+
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';

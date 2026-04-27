@@ -1158,6 +1158,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const actualSessionId = parsed.actualSessionId;
 				const tabId = parsed.tabId ?? undefined;
 
+				let resumeFailureDetected = false;
+
 				setSessions((prev) => {
 					const session = prev.find((s) => s.id === actualSessionId);
 					if (!session) return prev;
@@ -1203,12 +1205,54 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							return { ...s, agentSessionId };
 						}
 
-						if (
-							targetTab.agentSessionId &&
-							targetTab.agentSessionId !== agentSessionId &&
-							!targetTab.awaitingSessionId
-						) {
-							return s;
+						// Accept the new ID to prevent a death spiral of failed resumes.
+						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
+							// Claude Code 2.1.x in batch mode (`--print --output-format stream-json
+							// --resume <id>`) always emits a fresh `session_id` on every spawn —
+							// even when resume succeeds and the prior context is fully loaded. The
+							// new ID forks a JSONL but the conversation continues correctly. So a
+							// mismatch here is expected for claude-code and is NOT a failure
+							// signal. Silently accept the new ID without warning the user.
+							const isExpectedFork = s.toolType === 'claude-code';
+
+							if (!isExpectedFork) {
+								logger.warn(
+									'[onSessionId] Session resume failed — agent returned a new session ID',
+									undefined,
+									{
+										expected: targetTab.agentSessionId,
+										received: agentSessionId,
+										tabId: targetTab.id,
+										sessionId: actualSessionId,
+									}
+								);
+
+								resumeFailureDetected = true;
+
+								const resumeFailLog: LogEntry = {
+									id: generateId(),
+									timestamp: Date.now(),
+									source: 'system',
+									text: '⚠️ Session resume failed — agent started a new session. Previous context was lost.',
+								};
+
+								const updatedAiTabs = s.aiTabs.map((tab) => {
+									if (tab.id !== targetTab.id) return tab;
+									return {
+										...tab,
+										agentSessionId,
+										awaitingSessionId: false,
+										usageStats: undefined,
+										logs: [...tab.logs, resumeFailLog],
+									};
+								});
+
+								return {
+									...s,
+									aiTabs: updatedAiTabs,
+									agentSessionId,
+								};
+							}
 						}
 
 						const updatedAiTabs = s.aiTabs.map((tab) => {
@@ -1229,6 +1273,16 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						};
 					});
 				});
+
+				if (resumeFailureDetected) {
+					deps.batchedUpdater.updateContextUsage(actualSessionId, 0);
+					notifyToast({
+						color: 'yellow',
+						title: 'Session Resume Failed',
+						message: 'Agent started a new session. Previous context was lost.',
+						sessionId: actualSessionId,
+					});
+				}
 			}
 		);
 

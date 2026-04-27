@@ -180,7 +180,7 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 					<input
 						type="number"
 						min={0}
-						max={50}
+						max={10000}
 						value={queueSizeStr}
 						onChange={(e) => {
 							const raw = e.target.value;
@@ -189,7 +189,7 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 							if (!Number.isNaN(parsed)) {
 								onChange({
 									...settings,
-									queue_size: Math.min(50, Math.max(0, parsed)),
+									queue_size: Math.min(10000, Math.max(0, parsed)),
 								});
 							}
 						}}
@@ -198,7 +198,7 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 					/>
 					<div style={descriptionStyle}>
 						Events that arrive while the concurrent limit is reached are buffered here. When the
-						queue is full, the oldest event is dropped. Set to 0 to disable buffering. Default: 0.
+						queue is full, the oldest event is dropped. Set to 0 to disable buffering. Default: 512.
 					</div>
 				</div>
 			</div>

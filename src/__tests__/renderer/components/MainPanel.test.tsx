@@ -2015,7 +2015,7 @@ describe('MainPanel', () => {
 				const active = useCenterFlashStore.getState().active;
 				expect(active?.message).toBe('Session ID Copied');
 				expect(active?.detail).toBe('abc12345-def6-7890');
-				expect(active?.variant).toBe('success');
+				expect(active?.color).toBe('theme');
 			});
 		});
 

@@ -107,6 +107,13 @@ export interface UsePipelineStateReturn {
 	persistLayout: () => void;
 	/** Saved viewport awaiting application once ReactFlow has measured nodes. */
 	pendingSavedViewportRef: React.MutableRefObject<Viewport | null>;
+	/**
+	 * Mirrors `usePipelineLayout.pipelinesLoaded`: true once the layout-restore
+	 * effect has reached a terminal state for the current `graphSessions`.
+	 * Editor uses this (combined with `useCueGraphData.initialLoading`) to
+	 * render a loading spinner instead of the empty-state CTA.
+	 */
+	pipelinesLoaded: boolean;
 	handleSave: () => Promise<void>;
 	handleDiscard: () => Promise<void>;
 	createPipeline: () => void;
@@ -165,7 +172,7 @@ export function usePipelineState({
 	const { cueSettings, setCueSettings, settingsLoaded, showSettings, setShowSettings } =
 		useCueSettings();
 
-	const { persistLayout, pendingSavedViewportRef } = usePipelineLayout({
+	const { persistLayout, pendingSavedViewportRef, pipelinesLoaded } = usePipelineLayout({
 		reactFlowInstance,
 		graphSessions,
 		sessions,
@@ -331,6 +338,7 @@ export function usePipelineState({
 		runningSubscriptionsByPipeline,
 		persistLayout,
 		pendingSavedViewportRef,
+		pipelinesLoaded,
 		handleSave: persistence.handleSave,
 		handleDiscard: persistence.handleDiscard,
 		createPipeline: crud.createPipeline,

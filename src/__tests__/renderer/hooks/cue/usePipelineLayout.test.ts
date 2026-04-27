@@ -635,4 +635,44 @@ describe('usePipelineLayout', () => {
 			expect(callArg.selectedPipelineId).toBeNull();
 		});
 	});
+
+	describe('pipelinesLoaded', () => {
+		it('starts false on mount', () => {
+			const params = createDefaultParams({ graphSessions: [] });
+			const { result } = renderHook(() => usePipelineLayout(params));
+			expect(result.current.pipelinesLoaded).toBe(false);
+		});
+
+		it('stays false while graphSessions is empty (still waiting on data)', async () => {
+			const params = createDefaultParams({ graphSessions: [] });
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(false);
+		});
+
+		it('flips to true after a successful restore', async () => {
+			const livePipelines = [makePipeline('p1')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(null);
+			const params = createDefaultParams();
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(true);
+		});
+
+		it('flips to true even when graphSessions yields no live pipelines', async () => {
+			mockGraphSessionsToPipelines.mockReturnValue([]);
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(null);
+			const params = createDefaultParams();
+			const { result } = renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+			expect(result.current.pipelinesLoaded).toBe(true);
+		});
+	});
 });

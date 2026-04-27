@@ -48,6 +48,13 @@ const savedMySetting = allSettings['mySetting'];
 if (savedMySetting !== undefined) setMySettingState(savedMySetting);
 ```
 
+**MANDATORY: Register the setting with Settings Search.** Every user-facing setting must be findable from the Settings modal search bar (Cmd+F). Two steps, both required:
+
+1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside the appropriate tab file (e.g., `src/renderer/components/Settings/tabs/GeneralTab.tsx`). The id must be unique and kebab-case.
+2. Add a matching entry to the corresponding array in `src/renderer/components/Settings/searchableSettings.ts` (`GENERAL_SETTINGS`, `DISPLAY_SETTINGS`, etc.) with `id`, `tab`, `tabLabel`, `label`, `description`, and `keywords` covering every visible string a user might type after seeing the section in the UI.
+
+The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSettings.test.ts` enforces both directions (rendered-id ↔ registry-entry). It will fail CI if either is missing. For any new visible string you want guaranteed-findable, add a query to the `it.each` block in that test.
+
 ## 4. Adding Modals
 
 1. Create component in `src/renderer/components/`

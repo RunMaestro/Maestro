@@ -240,6 +240,7 @@ export class CueEngine {
 				prompt,
 				event,
 				subscriptionName,
+				pipelineName,
 				outputPrompt,
 				chainDepth,
 				cliOutput,
@@ -255,7 +256,9 @@ export class CueEngine {
 					chainDepth,
 					cliOutput,
 					action,
-					command
+					command,
+					undefined, // queuedAtOverride — fresh dispatch, not a restore
+					pipelineName
 				);
 			},
 			onLog: meteredOnLog,
@@ -443,7 +446,12 @@ export class CueEngine {
 					entry.cliOutput,
 					entry.action,
 					entry.command,
-					entry.queuedAt
+					entry.queuedAt,
+					// Persisted queue rows don't carry pipelineName (no schema
+					// column for it). The summary builder will fall back to
+					// stripping the `-chain-N` suffix off subscriptionName, so
+					// restored runs degrade gracefully to the legacy label.
+					undefined
 				);
 			}
 		}

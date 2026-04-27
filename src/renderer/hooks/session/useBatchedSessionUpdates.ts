@@ -3,10 +3,10 @@
  *
  * A hook that batches session state updates to reduce React re-renders.
  * During AI streaming, IPC handlers can trigger 100+ state updates per second.
- * This hook accumulates updates in a ref and flushes them every 150ms.
+ * This hook accumulates updates in a ref and flushes them on a fixed cadence.
  *
  * Features:
- * - Configurable flush interval (default 150ms)
+ * - Configurable flush interval (default 200ms)
  * - Support for multiple update types: appendLog, setStatus, updateUsage, etc.
  * - Proper ordering of updates within each flush
  * - Immediate flush capability for critical moments (user input, session switch)
@@ -18,8 +18,12 @@ import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 
-// Default flush interval in milliseconds (imperceptible to users)
-export const DEFAULT_BATCH_FLUSH_INTERVAL = 150;
+// Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
+// - 150ms collided with high-throughput streams (jitter from setInterval drift
+//   produced visible micro-stutters during peak agent output)
+// - 250ms is perceptibly laggy for users typing in the input area
+// - 200ms keeps streaming smooth without measurable input latency
+export const DEFAULT_BATCH_FLUSH_INTERVAL = 200;
 
 /**
  * Accumulated log data for efficient string concatenation

@@ -75,6 +75,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
@@ -157,6 +158,7 @@ export interface WebServerCallbacks {
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
+	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
@@ -228,6 +230,7 @@ export class CallbackRegistry {
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
+		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
@@ -268,10 +271,12 @@ export class CallbackRegistry {
 	async executeCommand(
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		force?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -343,8 +348,11 @@ export class CallbackRegistry {
 		return this.callbacks.openTerminalTab(sessionId, config);
 	}
 
-	async newAITabWithPrompt(sessionId: string, prompt: string): Promise<boolean> {
-		if (!this.callbacks.newAITabWithPrompt) return false;
+	async newAITabWithPrompt(
+		sessionId: string,
+		prompt: string
+	): Promise<{ success: boolean; tabId?: string }> {
+		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
 	}
 
@@ -481,6 +489,7 @@ export class CallbackRegistry {
 			audioFeedbackEnabled: false,
 			colorBlindMode: 'false',
 			conductorProfile: '',
+			maxOutputLines: null,
 			shortcuts: {},
 		};
 	}
@@ -586,6 +595,17 @@ export class CallbackRegistry {
 	async summarizeContext(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.summarizeContext) return false;
 		return this.callbacks.summarizeContext(sessionId);
+	}
+
+	async createGist(
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		if (!this.callbacks.createGist) {
+			return { success: false, error: 'Gist creation not configured' };
+		}
+		return this.callbacks.createGist(sessionId, description, isPublic);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
@@ -890,6 +910,10 @@ export class CallbackRegistry {
 
 	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
 		this.callbacks.summarizeContext = callback;
+	}
+
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbacks.createGist = callback;
 	}
 
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {

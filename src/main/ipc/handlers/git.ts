@@ -22,6 +22,8 @@ import {
 	countUncommittedChanges,
 	isImageFile,
 	getImageMimeType,
+	isWorktreeAlreadyUsedError,
+	parseWorktreePathForBranch,
 } from '../../../shared/gitUtils';
 import {
 	worktreeInfoRemote,
@@ -58,6 +60,36 @@ const handlerOpts = (operation: string, logSuccess = false): CreateHandlerOption
 	operation,
 	logSuccess,
 });
+
+/**
+ * Look up the worktree path currently checked out on the given branch
+ * by running `git worktree list --porcelain` against the local repo.
+ *
+ * Used to recover from `git worktree add` failures with the "already used /
+ * already checked out" error: instead of bubbling up an opaque error, we
+ * return the existing worktree path so callers can open it as a session.
+ *
+ * Stale registrations (where the directory was deleted manually without
+ * `git worktree prune`) are filtered out by an `fs.access` check so callers
+ * never get a path that points at nothing.
+ *
+ * @returns Absolute worktree path, or null if not found / stale
+ */
+async function findLocalWorktreeForBranch(
+	mainRepoCwd: string,
+	branchName: string
+): Promise<string | null> {
+	const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], mainRepoCwd);
+	if (result.exitCode !== 0) return null;
+	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
+	if (!existingPath) return null;
+	try {
+		await fs.access(existingPath);
+		return existingPath;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Register all Git-related IPC handlers.
@@ -680,6 +712,24 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				}
 
 				if (createResult.exitCode !== 0) {
+					// Recover from "already used / already checked out" — the branch is
+					// already registered with another worktree on disk. Resolve that path
+					// from `git worktree list --porcelain` so the caller can open it.
+					const errMsg = createResult.stderr || '';
+					if (isWorktreeAlreadyUsedError(errMsg)) {
+						const existingPath = await findLocalWorktreeForBranch(mainRepoCwd, branchName);
+						if (existingPath) {
+							return {
+								success: true,
+								created: false,
+								alreadyExisted: true,
+								existingPath,
+								currentBranch: branchName,
+								requestedBranch: branchName,
+								branchMismatch: false,
+							};
+						}
+					}
 					return { success: false, error: createResult.stderr || 'Failed to create worktree' };
 				}
 

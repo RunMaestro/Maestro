@@ -1135,6 +1135,9 @@ export default function MobileApp() {
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
+	// Measured height of the sticky CommandInputBar — drives dynamic bottom padding
+	// so the last chat line stays visible when the bar grows with multi-line drafts.
+	const [inputBarHeight, setInputBarHeight] = useState(80);
 
 	// Custom slash commands from desktop
 	const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -3040,6 +3043,12 @@ export default function MobileApp() {
 						thinkingMode={thinkingMode}
 						sessionState={activeSession?.state}
 						enableBionifyReadingMode={bionifyReadingMode}
+						maxOutputLines={
+							// null (wire-serialized Infinity) and undefined both map to "All".
+							settingsHook.settings?.maxOutputLines == null
+								? Infinity
+								: settingsHook.settings.maxOutputLines
+						}
 					/>
 				)}
 			</div>
@@ -3388,8 +3397,11 @@ export default function MobileApp() {
 						alignItems: currentInputMode === 'terminal' ? 'stretch' : 'center',
 						justifyContent: 'flex-start',
 						padding: currentInputMode === 'terminal' ? '0' : '12px',
-						paddingBottom:
-							currentInputMode === 'terminal' ? '0' : 'calc(80px + env(safe-area-inset-bottom))',
+						// CommandInputBar already includes `max(12px, env(safe-area-inset-bottom))`
+						// in its own padding and reports its border-box height, so reserve just
+						// that height — adding the inset again would leave a visible gap on
+						// notched devices.
+						paddingBottom: currentInputMode === 'terminal' ? '0' : `${inputBarHeight}px`,
 						textAlign: currentInputMode === 'terminal' ? 'left' : 'center',
 						overflow: 'hidden',
 						minHeight: 0,
@@ -3474,6 +3486,7 @@ export default function MobileApp() {
 					thinkingMode={thinkingMode}
 					onToggleThinking={handleToggleThinking}
 					supportsThinking={activeSession?.toolType === 'claude-code'}
+					onHeightChange={setInputBarHeight}
 				/>
 			)}
 

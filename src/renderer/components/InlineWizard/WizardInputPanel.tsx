@@ -177,10 +177,17 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 				}
 				return;
 			}
+			// Block Enter (any modifier combo) from triggering send while the wizard is
+			// busy — otherwise the message gets eaten by processInput's clear and the
+			// user's draft is lost. Shift+Enter is allowed so newlines still work.
+			if (isBusy && e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				return;
+			}
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard]
+		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard, isBusy]
 	);
 
 	// Handle exit confirmation
@@ -396,12 +403,13 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 					<button
 						type="button"
 						onClick={() => processInput()}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
+						disabled={isBusy}
+						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
 						}}
-						title="Send message"
+						title={isBusy ? 'Wizard is thinking…' : 'Send message'}
 					>
 						<ArrowUp className="w-4 h-4" />
 					</button>

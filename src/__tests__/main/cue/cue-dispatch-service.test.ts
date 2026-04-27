@@ -79,6 +79,7 @@ describe('createCueDispatchService', () => {
 				'override!',
 				expect.anything(),
 				'my-sub',
+				undefined, // pipelineName
 				undefined,
 				0,
 				undefined,
@@ -192,6 +193,7 @@ describe('createCueDispatchService', () => {
 				'hello',
 				expect.anything(),
 				'my-sub',
+				undefined, // pipelineName
 				undefined,
 				undefined,
 				undefined,
@@ -217,6 +219,7 @@ describe('createCueDispatchService', () => {
 				'hello',
 				expect.anything(),
 				'my-sub',
+				undefined, // pipelineName
 				undefined,
 				undefined,
 				undefined,

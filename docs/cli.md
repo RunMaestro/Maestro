@@ -535,30 +535,81 @@ maestro-cli refresh-auto-run [--session <id>]
 
 #### Notifications
 
-Surface notifications in the running desktop app from any script, hook, or agent. Two delivery modes are available:
+Surface notifications in the running desktop app from any script, hook, or agent. Two delivery modes are available, both built on the same five-color design language so they feel unified:
 
-- **Toast** — persistent, dismissable notification that lands in the toast queue (top-right). Use this when you want the user to see a result they may want to act on later, when an OS notification should also fire, or when the message benefits from being clickable to jump to a specific agent.
-- **Center Flash** — momentary, single-slot center-screen confirmation that auto-dismisses (default 1.5s). Use this for "I did the thing" feedback for a user-initiated action — clipboard acks, quick status nudges, brief success notes. Only one flash is visible at a time; firing a new one replaces the active one.
+- **Toast** — persistent notification that lands in the toast queue (top-right). Auto-dismisses by default. Use this when you want the user to see a result they may want to act on later, when an OS notification should also fire, or when the message benefits from being clickable to jump to a specific agent. Toasts can be made **sticky** with `--dismissible` so they require an explicit click to dismiss — use this for messages the user must acknowledge.
+- **Center Flash** — momentary, single-slot center-screen confirmation that auto-dismisses (default 1.5s, max 5s). Use this for "I did the thing" feedback for a user-initiated action — clipboard acks, quick status nudges, brief success notes. Only one flash is visible at a time; firing a new one replaces the active one.
+
+##### Color palette (shared by both)
+
+Both commands accept `--color`, one of five canonical values:
+
+| Color    | Looks like                  | When to use                                                         |
+| -------- | --------------------------- | ------------------------------------------------------------------- |
+| `theme`  | Active Maestro theme accent | **Default.** Generic confirmation with no semantic                  |
+| `green`  | Success green               | Succeeded ("Build passed", "Tests green", "Deploy complete")        |
+| `yellow` | Warning yellow              | Soft heads-up ("Quota at 60%", "Slow query detected")               |
+| `orange` | Warm orange (`#f97316`)     | More emphatic warning ("Approaching context limit", "Quota at 90%") |
+| `red`    | Error red                   | Failure / blocked ("CI failed", "Auth expired", "Sync error")       |
+
+Pick `theme` when you don't have an opinion — the flash/toast will visually match whatever theme the user is running.
+
+##### Toasts
 
 ```bash
-# Toast: title + message, optional type, optional duration in seconds
-maestro-cli notify toast "Build complete" "Compiled in 3.2s with 0 errors"
-maestro-cli notify toast "Tests failing" "12 failures in auth.test.ts" --type error
-maestro-cli notify toast "PR opened" "https://github.com/.../pull/42" --type success --duration 30
+# Default — themed, queue-based, auto-dismisses on the app's default schedule.
+maestro-cli notify toast "Build" "Compiled in 3.2s"
 
-# Toast linked to an agent (clicking the toast jumps to the agent)
+# Pick a color and a custom timeout (in seconds, max 60).
+maestro-cli notify toast "Tests" "All green" --color green --timeout 10
+maestro-cli notify toast "Quota" "Approaching limit" --color orange --timeout 30
+maestro-cli notify toast "Tests failing" "12 failures in auth.test.ts" --color red
+
+# Sticky — user must click to dismiss. Cannot combine with --timeout/--duration.
+maestro-cli notify toast "Action required" "Approve the PR before EOD" \
+    --color red --dismissible
+
+# Toast linked to an agent (clicking jumps to it).
 maestro-cli notify toast "Auto Run done" "All tasks completed" --agent <agent-id>
-
-# Center flash: single message, optional detail, optional variant
-maestro-cli notify flash "Deployed"
-maestro-cli notify flash "Saved" --variant success
-maestro-cli notify flash "Cache cleared" --detail "1.2 GB freed" --duration 2000
 ```
 
-| Command                          | Flags                                                                                                                                                     |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `notify toast <title> <message>` | `-t, --type <success\|info\|warning\|error>` (default `info`), `-d, --duration <seconds>` (0 = never dismiss), `-a, --agent <id>` (click-to-jump target)  |
-| `notify flash <message>`         | `-v, --variant <success\|info\|warning\|error>` (default `success`), `-D, --detail <text>` (second line), `-d, --duration <ms>` (default 1500, 0 = never) |
+| Flag               | Description                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `-c, --color`      | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                   |
+| `-t, --type`       | **[deprecated]** `success \| info \| warning \| error` — prefer `--color`                        |
+| `--timeout <sec>`  | Auto-dismiss after N seconds (range: `(0, 60]`; wins over `--duration`)                          |
+| `-d, --duration`   | Same as `--timeout` (legacy alias; range: `(0, 60]`)                                             |
+| `--dismissible`    | Sticky toast — no auto-dismiss, click to close. Mutually exclusive with `--timeout`/`--duration` |
+| `-a, --agent <id>` | Associate with an agent so clicking the toast jumps to it                                        |
+| `--json`           | JSON output for scripting                                                                        |
+
+##### Center Flash
+
+```bash
+# Default — themed, auto-dismisses after 1.5s.
+maestro-cli notify flash "Deployed"
+
+# Pick a color. Use --timeout in seconds (max 5).
+maestro-cli notify flash "Tests passed" --color green
+maestro-cli notify flash "Production deploy starting" --color orange --detail "v1.42.0"
+maestro-cli notify flash "CI failed on main" --color red --timeout 5
+
+# Add a second line of detail.
+maestro-cli notify flash "Cache cleared" --detail "1.2 GB freed" --timeout 3
+```
+
+| Flag             | Description                                                               |
+| ---------------- | ------------------------------------------------------------------------- |
+| `-c, --color`    | `green \| yellow \| orange \| red \| theme` (default: `theme`)            |
+| `-v, --variant`  | **[deprecated]** `success \| info \| warning \| error` — prefer `--color` |
+| `-D, --detail`   | Optional mono-font second line shown beneath the message                  |
+| `-t, --timeout`  | Auto-dismiss after N seconds (range: `(0, 5]`; wins over `--duration`)    |
+| `-d, --duration` | Auto-dismiss after N **milliseconds** (range: `(0, 5000]`; legacy)        |
+| `--json`         | JSON output for scripting                                                 |
+
+##### Caps and dismissibility
+
+External (CLI/web) callers are capped to **5 seconds** for Center Flash and **60 seconds** for Toast. The cap exists so external scripts can't stick a permanent overlay on the user. The only way to leave a notification on screen indefinitely is `--dismissible` on a toast — there is no equivalent for Center Flash (it is, by design, momentary).
 
 Both commands support `--json` for scripting. Toasts respect the user's notification settings (audio feedback, OS desktop notifications) configured in the app.
 

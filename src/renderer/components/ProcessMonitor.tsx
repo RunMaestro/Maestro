@@ -1085,23 +1085,19 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									{activeCount} running
 								</span>
 							)}
-							<span
-								className="px-1.5 py-0.5 rounded text-xs"
-								style={{
-									backgroundColor: node.sshRemote
-										? `${theme.colors.accent}20`
-										: `${theme.colors.textDim}15`,
-									color: node.sshRemote ? theme.colors.accent : theme.colors.textDim,
-								}}
-								title={
-									node.sshRemote
-										? `SSH: ${node.sshRemote.name} (${node.sshRemote.host})`
-										: 'Running locally'
-								}
-							>
-								{node.sshRemote ? `SSH: ${node.sshRemote.name}` : 'Local'}
-							</span>
-							<span>Session: {node.sessionId?.substring(0, 8)}</span>
+							{node.sshRemote && (
+								<span
+									className="px-1.5 py-0.5 rounded text-xs"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+									}}
+									title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
+								>
+									SSH: {node.sshRemote.name}
+								</span>
+							)}
+							<span className="font-mono">{node.sessionId?.substring(0, 8)}</span>
 						</span>
 						{node.sessionId && onNavigateToSession && (
 							<button
@@ -1144,7 +1140,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 					<div
 						ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLDivElement>) : null}
 						tabIndex={0}
-						className="px-4 py-1.5 cursor-pointer group"
+						className="px-4 py-1 cursor-pointer group"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							color: theme.colors.textMain,
@@ -1165,7 +1161,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							if (!isSelected) e.currentTarget.style.backgroundColor = altBg;
 						}}
 					>
-						{/* First line: status dot, label, badges, kill button */}
 						<div className="flex items-center gap-2">
 							{hasChildren ? (
 								isExpanded ? (
@@ -1186,11 +1181,54 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								className="w-2 h-2 rounded-full flex-shrink-0"
 								style={{ backgroundColor: theme.colors.success }}
 							/>
-							<span className="text-sm flex-1 truncate">{node.label}</span>
-							<div className="flex items-center gap-2 ml-auto flex-shrink-0">
+							<span className="text-sm truncate min-w-0">{node.label}</span>
+							{/* Metadata cluster: dim mono, takes remaining space, right-aligns at end */}
+							<div
+								className="flex items-center gap-3 ml-auto flex-shrink-0 text-xs font-mono"
+								style={{ color: theme.colors.textDim }}
+							>
+								{node.agentSessionId && node.sessionId && onNavigateToSession && (
+									<button
+										className="hover:underline cursor-pointer"
+										style={{ color: theme.colors.accent }}
+										onClick={(e) => {
+											e.stopPropagation();
+											onNavigateToSession(node.sessionId!, node.tabId, node.processType);
+											onClose();
+										}}
+										title="Click to navigate to this session"
+									>
+										{node.agentSessionId.substring(0, 8)}
+									</button>
+								)}
+								{node.agentSessionId && (!node.sessionId || !onNavigateToSession) && (
+									<span style={{ color: theme.colors.accent }}>
+										{node.agentSessionId.substring(0, 8)}
+									</span>
+								)}
+								{(isGroupChatProcess || isWizardProcess) && node.toolType && (
+									<span>{node.toolType}</span>
+								)}
+								<span>PID {node.pid}</span>
+								{node.startTime && <span>{formatRuntime(node.startTime)}</span>}
+								{node.sshRemote && (
+									<span
+										className="px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: `${theme.colors.accent}20`,
+											color: theme.colors.accent,
+										}}
+										title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
+									>
+										SSH
+									</span>
+								)}
+							</div>
+							{/* Action cluster: type badges + jump/kill */}
+							<div className="flex items-center gap-2 flex-shrink-0">
 								{node.isAutoRun && (
 									<span
-										className="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -1199,7 +1237,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										AUTO
 									</span>
 								)}
-								{/* Group Chat badges */}
 								{node.processType === 'moderator' && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -1224,7 +1261,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										PARTICIPANT
 									</span>
 								)}
-								{/* Wizard badges */}
 								{node.processType === 'wizard' && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -1249,7 +1285,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										GENERATING
 									</span>
 								)}
-								{/* Cue badge */}
 								{node.processType === 'cue' && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -1262,14 +1297,13 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
 									</span>
 								)}
-								{/* Jump to agent button */}
 								{node.sessionId &&
 									onNavigateToSession &&
 									!isGroupChatProcess &&
 									!isWizardProcess &&
 									!isCueProcess && (
 										<button
-											className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+											className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
 											style={{ color: theme.colors.accent }}
 											onClick={(e) => {
 												e.stopPropagation();
@@ -1285,10 +1319,9 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 											<ExternalLink className="w-4 h-4" />
 										</button>
 									)}
-								{/* Jump to group chat button */}
 								{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
 									<button
-										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
 										style={{ color: theme.colors.accent }}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -1304,7 +1337,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 										<ExternalLink className="w-4 h-4" />
 									</button>
 								)}
-								{/* Kill button */}
 								{node.processSessionId && (
 									<button
 										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
@@ -1324,63 +1356,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									</button>
 								)}
 							</div>
-						</div>
-						{/* Second line: Claude session ID, PID, runtime, status - indented */}
-						<div className="flex items-center gap-3 mt-1" style={{ paddingLeft: '24px' }}>
-							{node.agentSessionId && node.sessionId && onNavigateToSession && (
-								<button
-									className="text-xs font-mono hover:underline cursor-pointer"
-									style={{ color: theme.colors.accent }}
-									onClick={(e) => {
-										e.stopPropagation();
-										onNavigateToSession(node.sessionId!, node.tabId, node.processType);
-										onClose();
-									}}
-									title="Click to navigate to this session"
-								>
-									{node.agentSessionId.substring(0, 8)}
-								</button>
-							)}
-							{node.agentSessionId && (!node.sessionId || !onNavigateToSession) && (
-								<span className="text-xs font-mono" style={{ color: theme.colors.accent }}>
-									{node.agentSessionId.substring(0, 8)}
-								</span>
-							)}
-							{/* For group chat and wizard processes, show tool type */}
-							{(isGroupChatProcess || isWizardProcess) && node.toolType && (
-								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-									{node.toolType}
-								</span>
-							)}
-							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-								PID: {node.pid}
-							</span>
-							{node.startTime && (
-								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-									{formatRuntime(node.startTime)}
-								</span>
-							)}
-							<span
-								className="text-xs px-2 py-0.5 rounded"
-								style={{
-									backgroundColor: `${theme.colors.success}20`,
-									color: theme.colors.success,
-								}}
-							>
-								Running
-							</span>
-							{node.sshRemote && (
-								<span
-									className="text-xs px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-									}}
-									title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
-								>
-									SSH
-								</span>
-							)}
 						</div>
 					</div>
 					{isExpanded && hasChildren && (
@@ -1981,20 +1956,13 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								color: theme.colors.textDim,
 							}}
 						>
-							<div className="flex items-center gap-4 whitespace-nowrap">
-								<span>
-									{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} •{' '}
-									{groups.length} {groups.length === 1 ? 'group' : 'groups'}
-								</span>
-								<span style={{ opacity: 0.7 }}>↑↓ navigate • Enter view details • R refresh</span>
-							</div>
-							<div className="flex items-center gap-2 flex-shrink-0 whitespace-nowrap">
-								<div
-									className="w-2 h-2 rounded-full"
-									style={{ backgroundColor: theme.colors.success }}
-								/>
-								<span>Running</span>
-							</div>
+							<span className="whitespace-nowrap">
+								{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} • {groups.length}{' '}
+								{groups.length === 1 ? 'group' : 'groups'}
+							</span>
+							<span className="whitespace-nowrap" style={{ opacity: 0.7 }}>
+								↑↓ navigate • Enter view details • R refresh
+							</span>
 						</div>
 					</>
 				)}

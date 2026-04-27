@@ -22,6 +22,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { setLiveDraft } from '../../utils/liveDraftStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
@@ -202,11 +203,24 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// PERF: Refs to access current input values without triggering re-renders
 	const terminalInputValueRef = useRef(terminalInputValue);
 	const aiInputValueLocalRef = useRef(aiInputValueLocal);
+	// Ref-mirror of activeTab.id so the live-draft sync below isn't re-triggered
+	// on tab-switch alone (which would briefly write the OLD tab's text into the
+	// NEW tab's slot before setAiInputValueLocal lands).
+	const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+	useEffect(() => {
+		activeTabIdRef.current = activeTab?.id;
+	}, [activeTab?.id]);
 	useEffect(() => {
 		terminalInputValueRef.current = terminalInputValue;
 	}, [terminalInputValue]);
 	useEffect(() => {
 		aiInputValueLocalRef.current = aiInputValueLocal;
+		// Mirror the live value into liveDraftStore so hasDraft() reflects what's
+		// on screen for the active tab (tab.inputValue only updates on blur/submit).
+		const currentTabId = activeTabIdRef.current;
+		if (currentTabId) {
+			setLiveDraft(currentTabId, aiInputValueLocal);
+		}
 	}, [aiInputValueLocal]);
 
 	// Derived input value

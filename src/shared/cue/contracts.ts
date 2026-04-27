@@ -228,7 +228,7 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	timeout_minutes: 30,
 	timeout_on_fail: 'break',
 	max_concurrent: 1,
-	queue_size: 0,
+	queue_size: 512,
 };
 
 /** Top-level Cue configuration */
@@ -262,6 +262,14 @@ export interface CueRunResult {
 	sessionId: string;
 	sessionName: string;
 	subscriptionName: string;
+	/**
+	 * Human-friendly pipeline label (e.g. "PR Triage Main") taken from the
+	 * subscription's `pipeline_name`. Optional: legacy YAML and ad-hoc subs
+	 * without a named pipeline leave this undefined, in which case
+	 * `buildCueRunSummary` falls back to stripping the `-chain-N` / `-fanin`
+	 * suffix off `subscriptionName` to derive a base label.
+	 */
+	pipelineName?: string;
 	event: CueEvent;
 	status: CueRunStatus;
 	stdout: string;

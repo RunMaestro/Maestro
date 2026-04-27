@@ -1058,7 +1058,7 @@ describe('cue-executor', () => {
 
 			expect(entry.type).toBe('CUE');
 			expect(entry.id).toBe('test-uuid-1234');
-			expect(entry.summary).toBe('[CUE] "Watch config" (file.changed)');
+			expect(entry.summary).toBe('"Watch config" · Test Session — config.yaml');
 			expect(entry.fullResponse).toBe('Task completed successfully');
 			expect(entry.projectPath).toBe('/projects/test');
 			expect(entry.sessionId).toBe('session-1');
@@ -1088,7 +1088,7 @@ describe('cue-executor', () => {
 			const entry = recordCueHistoryEntry(result, createMockSession());
 
 			expect(entry.success).toBe(false);
-			expect(entry.summary).toBe('[CUE] "Periodic check" (time.heartbeat)');
+			expect(entry.summary).toBe('"Periodic check" · Test Session');
 		});
 
 		it('should truncate long stdout in fullResponse', () => {

@@ -2,8 +2,10 @@
  * Convenience helper for the canonical "Copied to Clipboard" center flash.
  *
  * Use this instead of `notifyCenterFlash` directly for clipboard copy
- * acknowledgements so the wording, variant, and duration stay consistent
+ * acknowledgements so the wording, color, and duration stay consistent
  * across the app.
+ *
+ * Defaults to `color: 'theme'` so the flash matches the active theme.
  */
 
 import { notifyCenterFlash } from '../stores/centerFlashStore';
@@ -19,6 +21,6 @@ export function flashCopiedToClipboard(detail?: string, message = 'Copied to Cli
 	notifyCenterFlash({
 		message,
 		detail,
-		variant: 'success',
+		color: 'theme',
 	});
 }

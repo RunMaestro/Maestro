@@ -357,6 +357,10 @@ export interface UseSettingsReturn {
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 
+	// Hide ".files" (dotfiles) toggle in file explorer toolbar
+	dotfilesToggleHidden: boolean;
+	setDotfilesToggleHidden: (value: boolean) => void;
+
 	// Spell check
 	spellCheck: boolean;
 	setSpellCheck: (value: boolean) => void;

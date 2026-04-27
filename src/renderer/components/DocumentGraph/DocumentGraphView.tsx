@@ -210,7 +210,7 @@ export function DocumentGraphView({
 	onNeighborDepthChange,
 	defaultPreviewCharLimit = 100,
 	onPreviewCharLimitChange,
-	defaultLayoutType = 'mindmap',
+	defaultLayoutType = 'hierarchical',
 	onLayoutTypeChange,
 	sshRemoteId,
 }: DocumentGraphViewProps) {

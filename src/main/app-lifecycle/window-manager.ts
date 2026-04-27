@@ -4,7 +4,7 @@
  */
 
 import * as path from 'path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, Menu, ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -193,6 +193,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					contextIsolation: true,
 					nodeIntegration: false,
 					sandbox: true,
+					spellcheck: true,
 					// Embedded browser tabs use Electron's guest webview surface in the renderer.
 					webviewTag: true,
 				},
@@ -407,6 +408,57 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					}
 				}
 			);
+
+			// Spell check suggestions: Electron renders red squiggles automatically when
+			// `spellcheck` is true on a form element, but the right-click "Did you mean..."
+			// menu has to be wired up in the main process.
+			mainWindow.webContents.on('context-menu', (_event, params) => {
+				logger.debug('context-menu fired', 'Window', {
+					isEditable: params.isEditable,
+					misspelledWord: params.misspelledWord,
+					suggestions: params.dictionarySuggestions,
+					selectionText: params.selectionText,
+				});
+
+				if (!params.isEditable) return;
+
+				const template: Electron.MenuItemConstructorOptions[] = [];
+
+				const suggestions = params.dictionarySuggestions ?? [];
+				if (params.misspelledWord) {
+					if (suggestions.length === 0) {
+						template.push({ label: 'No suggestions', enabled: false });
+					} else {
+						for (const suggestion of suggestions) {
+							template.push({
+								label: suggestion,
+								click: () => mainWindow.webContents.replaceMisspelling(suggestion),
+							});
+						}
+					}
+					template.push(
+						{ type: 'separator' },
+						{
+							label: 'Add to Dictionary',
+							click: () =>
+								mainWindow.webContents.session.addWordToSpellCheckerDictionary(
+									params.misspelledWord
+								),
+						},
+						{ type: 'separator' }
+					);
+				}
+
+				template.push(
+					{ role: 'cut' },
+					{ role: 'copy' },
+					{ role: 'paste' },
+					{ type: 'separator' },
+					{ role: 'selectAll' }
+				);
+
+				Menu.buildFromTemplate(template).popup({ window: mainWindow });
+			});
 
 			mainWindow.on('closed', () => {
 				logger.info('Browser window closed', 'Window');

@@ -36,6 +36,7 @@ import {
 	normalizeBrowserTabUrl,
 } from '../../utils/browserTabPersistence';
 import { generateId } from '../../utils/ids';
+import { clearLiveDraft } from '../../utils/liveDraftStore';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -895,6 +896,7 @@ export function useTabHandlers(): TabHandlersReturn {
 	 */
 	const performTabClose = useCallback((tabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+		clearLiveDraft(tabId);
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -955,7 +957,9 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, []);
 
 	const performCloseAllTabs = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { setSessions, activeSessionId, sessions } = useSessionStore.getState();
+		const activeSession = sessions.find((s) => s.id === activeSessionId);
+		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -1002,6 +1006,7 @@ export function useTabHandlers(): TabHandlersReturn {
 			(ref) => !(ref.type === activeRef.type && ref.id === activeRef.id)
 		);
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
 
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
@@ -1079,6 +1084,7 @@ export function useTabHandlers(): TabHandlersReturn {
 
 		const tabsToClose = session.unifiedTabOrder.slice(0, activeIndex);
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
 
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
@@ -1165,6 +1171,7 @@ export function useTabHandlers(): TabHandlersReturn {
 
 		const tabsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
 
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {

@@ -17,6 +17,7 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import { sliceHeadByChars } from './cue-text-utils';
+import { buildCueRunSummary } from '../../shared/cue/cue-summary';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -125,6 +126,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sessionId: session.id,
 		sessionName: session.name,
 		subscriptionName: subscription.name,
+		pipelineName: subscription.pipeline_name,
 		event,
 		status: 'failed',
 		stdout: '',
@@ -198,6 +200,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sessionId: session.id,
 		sessionName: session.name,
 		subscriptionName: subscription.name,
+		pipelineName: subscription.pipeline_name,
 		event,
 		status: processResult.status,
 		stdout: extractCleanStdout(processResult.stdout, config.toolType),
@@ -257,7 +260,7 @@ export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo
 		id: crypto.randomUUID(),
 		type: 'CUE',
 		timestamp: Date.now(),
-		summary: `[CUE] "${result.subscriptionName}" (${result.event.type})`,
+		summary: buildCueRunSummary(result),
 		fullResponse: fullResponse || undefined,
 		projectPath: session.projectRoot || session.cwd,
 		sessionId: session.id,

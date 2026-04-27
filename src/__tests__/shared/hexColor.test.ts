@@ -8,21 +8,22 @@ describe('extractHexColor', () => {
 		expect(extractHexColor('#000000')).toBe('#000000');
 	});
 
-	it('should match 3-digit hex colors', () => {
-		expect(extractHexColor('#FFF')).toBe('#FFF');
-		expect(extractHexColor('#abc')).toBe('#abc');
-	});
-
-	it('should match 4-digit hex colors (RGBA shorthand)', () => {
-		expect(extractHexColor('#FFFA')).toBe('#FFFA');
-	});
-
 	it('should match 8-digit hex colors (RRGGBBAA)', () => {
 		expect(extractHexColor('#FF000080')).toBe('#FF000080');
 	});
 
 	it('should trim whitespace', () => {
 		expect(extractHexColor(' #FF0000 ')).toBe('#FF0000');
+	});
+
+	it('should NOT match 3-digit hex (collides with issue/PR refs like #197)', () => {
+		expect(extractHexColor('#FFF')).toBeNull();
+		expect(extractHexColor('#abc')).toBeNull();
+		expect(extractHexColor('#197')).toBeNull();
+	});
+
+	it('should NOT match 4-digit hex shorthand', () => {
+		expect(extractHexColor('#FFFA')).toBeNull();
 	});
 
 	it('should return null for non-hex content', () => {

@@ -42,6 +42,11 @@ export interface QueuedEvent {
 	prompt: string;
 	outputPrompt?: string;
 	subscriptionName: string;
+	/** `pipeline_name` from the subscription, for human-friendly run labels.
+	 *  Not persisted to the queue DB (no schema column); restored entries
+	 *  fall back to undefined and the summary builder degrades to the legacy
+	 *  `<base>-chain-N` strip. */
+	pipelineName?: string;
 	queuedAt: number;
 	chainDepth?: number;
 	cliOutput?: { target: string };
@@ -119,7 +124,17 @@ export interface CueRunManager {
 		 * before the app crashed, effectively converting staleness into a
 		 * free pass across restarts.
 		 */
-		queuedAtOverride?: number
+		queuedAtOverride?: number,
+		/**
+		 * `pipeline_name` from the dispatching subscription, propagated onto
+		 * the resulting CueRunResult so list views (history, activity log)
+		 * can label the run with the user-facing pipeline name instead of
+		 * the legacy `Maestro-chain-2` plumbing name. Optional — undefined
+		 * for restored persisted-queue rows, legacy YAML, and ad-hoc tests.
+		 * Trailing-positional rather than wedged into the middle so existing
+		 * 4-arg `execute(...)` call sites keep working without churn.
+		 */
+		pipelineName?: string
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -225,6 +240,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.prompt,
 				entry.event,
 				entry.subscriptionName,
+				entry.pipelineName,
 				entry.outputPrompt,
 				entry.chainDepth,
 				entry.cliOutput,
@@ -244,6 +260,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		prompt: string,
 		event: CueEvent,
 		subscriptionName: string,
+		pipelineName: string | undefined,
 		outputPrompt?: string,
 		chainDepth?: number,
 		cliOutput?: { target: string },
@@ -260,6 +277,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			sessionId,
 			sessionName,
 			subscriptionName,
+			pipelineName,
 			event,
 			status: 'running',
 			stdout: '',
@@ -555,7 +573,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			cliOutput?: { target: string },
 			action?: CueSubscription['action'],
 			command?: CueCommand,
-			queuedAtOverride?: number
+			queuedAtOverride?: number,
+			pipelineName?: string
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -618,6 +637,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					prompt,
 					outputPrompt,
 					subscriptionName,
+					pipelineName,
 					queuedAt,
 					chainDepth,
 					cliOutput,
@@ -658,6 +678,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				prompt,
 				event,
 				subscriptionName,
+				pipelineName,
 				outputPrompt,
 				chainDepth,
 				cliOutput,

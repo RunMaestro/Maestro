@@ -181,6 +181,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
+		onRemoteCreateGist: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCreateGistResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -339,7 +343,35 @@ describe('useRemoteIntegration', () => {
 			expect(dispatchEventSpy).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'maestro:remoteCommand',
-					detail: { sessionId: 'session-1', command: 'test command', inputMode: 'ai' },
+					detail: {
+						sessionId: 'session-1',
+						command: 'test command',
+						inputMode: 'ai',
+						tabId: undefined,
+						force: undefined,
+					},
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('forwards force=true so `dispatch --force` survives the IPC boundary into the renderer', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'concurrent', 'ai', undefined, true);
+			});
+
+			// busy guard is bypassed when force=true
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ force: true }),
 				})
 			);
 
@@ -640,7 +672,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote new AI tab with prompt', () => {
-		it('creates tab, dispatches remoteCommand, and acks true on idle session', () => {
+		it('creates tab, dispatches remoteCommand, and acks true with the new tab id on idle session', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
@@ -653,13 +685,27 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			// The dispatched event carries the freshly-created tabId so
+			// useRemoteHandlers writes into the new tab even if the user
+			// switches active tabs while the event is in flight.
 			expect(dispatchEventSpy).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'maestro:remoteCommand',
-					detail: { sessionId: 'session-1', command: 'Hello', inputMode: 'ai' },
+					detail: expect.objectContaining({
+						sessionId: 'session-1',
+						command: 'Hello',
+						inputMode: 'ai',
+						tabId: expect.any(String),
+					}),
 				})
 			);
-			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan-1', true);
+			// The renderer surfaces the new tab id through the IPC ack so
+			// `maestro-cli dispatch --new-tab` can return an addressable id.
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'chan-1',
+				true,
+				expect.any(String)
+			);
 
 			dispatchEventSpy.mockRestore();
 		});

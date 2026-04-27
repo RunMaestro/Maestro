@@ -604,7 +604,7 @@ describe('useQuickActionsHandlers', () => {
 			});
 
 			expect(useCenterFlashStore.getState().active?.message).toBe('Files, Git, History Refreshed');
-			expect(useCenterFlashStore.getState().active?.variant).toBe('success');
+			expect(useCenterFlashStore.getState().active?.color).toBe('theme');
 		});
 
 		it('center flash auto-dismisses on its own timer', async () => {

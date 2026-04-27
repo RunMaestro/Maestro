@@ -35,6 +35,8 @@ export interface UseSettingsReturn {
 	setAudioFeedbackEnabled: (value: boolean) => Promise<boolean>;
 	setColorBlindMode: (value: string) => Promise<boolean>;
 	setConductorProfile: (value: string) => Promise<boolean>;
+	/** Pass Infinity for "All"; it serializes to null on the wire and desktop rehydrates it. */
+	setMaxOutputLines: (value: number) => Promise<boolean>;
 	/** Handler for settings_changed broadcasts — wire to onSettingsChanged in WebSocket handlers */
 	handleSettingsChanged: (settings: WebSettings) => void;
 }
@@ -53,6 +55,7 @@ const SETTING_KEY_TO_FIELD: Record<string, keyof WebSettings> = {
 	audioFeedbackEnabled: 'audioFeedbackEnabled',
 	colorBlindMode: 'colorBlindMode',
 	conductorProfile: 'conductorProfile',
+	maxOutputLines: 'maxOutputLines',
 };
 
 /**
@@ -181,6 +184,12 @@ export function useSettings(
 		[setSetting]
 	);
 
+	const setMaxOutputLines = useCallback(
+		// Infinity ("All") serializes as null on the wire — desktop rehydrates it.
+		(value: number) => setSetting('maxOutputLines', Number.isFinite(value) ? value : null),
+		[setSetting]
+	);
+
 	return {
 		settings,
 		isLoading,
@@ -195,6 +204,7 @@ export function useSettings(
 		setAudioFeedbackEnabled,
 		setColorBlindMode,
 		setConductorProfile,
+		setMaxOutputLines,
 		handleSettingsChanged,
 	};
 }

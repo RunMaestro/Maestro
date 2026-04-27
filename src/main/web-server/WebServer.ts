@@ -114,6 +114,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	TriggerCueSubscriptionCallback,
@@ -601,6 +602,10 @@ export class WebServer {
 		this.callbackRegistry.setSummarizeContextCallback(callback);
 	}
 
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbackRegistry.setCreateGistCallback(callback);
+	}
+
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
 		this.callbackRegistry.setGetCueSubscriptionsCallback(callback);
 	}
@@ -781,8 +786,13 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
-			executeCommand: async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
+			executeCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
@@ -883,6 +893,8 @@ export class WebServer {
 				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
 			summarizeContext: async (sessionId: string) =>
 				this.callbackRegistry.summarizeContext(sessionId),
+			createGist: async (sessionId: string, description: string, isPublic: boolean) =>
+				this.callbackRegistry.createGist(sessionId, description, isPublic),
 			getCueSubscriptions: async (sessionId?: string) =>
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>

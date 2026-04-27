@@ -214,7 +214,7 @@ export const RightPanel = memo(
 			transitionClass: rightPanelTransitionClass,
 		} = useResizablePanel({
 			width: rightPanelWidth,
-			minWidth: 320,
+			minWidth: 280,
 			maxWidth: 800,
 			settingsKey: 'rightPanelWidth',
 			setWidth: setRightPanelWidth,

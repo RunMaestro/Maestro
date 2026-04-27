@@ -112,6 +112,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const {
 		graphSessions,
 		graphError,
+		initialLoading: graphInitialLoading,
 		dashboardPipelines,
 		subscriptionPipelineMap,
 		refreshGraphData,
@@ -296,6 +297,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								onTriggerPipeline={triggerSubscription}
 								onSaveSuccess={refreshGraphData}
 								initialPipelineId={pendingPipelineId ?? undefined}
+								graphLoading={graphInitialLoading}
 							/>
 						)}
 					</div>

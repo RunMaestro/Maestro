@@ -5,7 +5,7 @@
  * layout restoration on mount by merging saved positions with live graph data.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactFlowInstance, Viewport } from 'reactflow';
 import type {
 	AgentNodeData,
@@ -111,6 +111,15 @@ export interface UsePipelineLayoutReturn {
 	 * on first open.
 	 */
 	pendingSavedViewportRef: React.MutableRefObject<Viewport | null>;
+	/**
+	 * Flips to true once the layout-restore effect has reached a terminal state
+	 * for the current `graphSessions`: either successfully populated
+	 * `pipelineState.pipelines`, or determined that there are no live pipelines
+	 * to restore. Stays false while we're still waiting on graph data or while
+	 * the load is in flight, so the editor can render a loading spinner instead
+	 * of flashing the "Create your first pipeline" CTA.
+	 */
+	pipelinesLoaded: boolean;
 }
 
 export function usePipelineLayout({
@@ -127,6 +136,7 @@ export function usePipelineLayout({
 	const hasRestoredLayoutRef = useRef(false);
 	const latestRestoreIdRef = useRef(0);
 	const pendingSavedViewportRef = useRef<Viewport | null>(null);
+	const [pipelinesLoaded, setPipelinesLoaded] = useState(false);
 
 	// Keep a ref to current pipeline state for layout persistence (avoids unstable callback)
 	const pipelineStateRef = useRef(pipelineState);
@@ -273,7 +283,13 @@ export function usePipelineLayout({
 
 		const loadLayout = async () => {
 			const livePipelines = graphSessionsToPipelines(graphSessions, sessions);
-			if (livePipelines.length === 0) return;
+			if (livePipelines.length === 0) {
+				// Terminal state: graph data is in but yields no pipelines. Mark
+				// loaded so the editor stops showing a spinner and falls through
+				// to "Create your first pipeline".
+				if (reqId === latestRestoreIdRef.current) setPipelinesLoaded(true);
+				return;
+			}
 
 			let savedLayout: PipelineLayoutState | null = null;
 			try {
@@ -386,10 +402,11 @@ export function usePipelineLayout({
 
 			hasRestoredLayoutRef.current = true;
 			setIsDirty(false);
+			setPipelinesLoaded(true);
 		};
 
 		loadLayout();
 	}, [graphSessions, sessions]);
 
-	return { persistLayout, pendingSavedViewportRef };
+	return { persistLayout, pendingSavedViewportRef, pipelinesLoaded };
 }

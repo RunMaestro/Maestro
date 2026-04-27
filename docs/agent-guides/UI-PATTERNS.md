@@ -308,14 +308,17 @@ Shortcut usage is tracked for a gamification system (`keyboardMasteryStats`). Th
 
 ## Notification System (Toast)
 
+Toasts use the **same five-color design language** as Center Flash (`green | yellow | orange | red | theme`) so the two systems feel unified. The difference is durability: toasts queue, sit in the corner, and stay until the user (or a timer) dismisses them; Center Flashes are exclusive, momentary, and center-screen.
+
 ### Architecture
 
 ```text
 src/renderer/stores/notificationStore.ts - Zustand store + notifyToast()
 src/renderer/components/Toast.tsx        - ToastContainer + ToastItem
+src/cli/commands/notify-toast.ts         - `maestro-cli notify toast` command (external trigger)
 ```
 
-### Firing a Toast
+### Firing a Toast (in-app)
 
 Use `notifyToast()` from anywhere (React or non-React code):
 
@@ -323,10 +326,12 @@ Use `notifyToast()` from anywhere (React or non-React code):
 import { notifyToast } from '../stores/notificationStore';
 
 notifyToast({
-	type: 'success', // 'success' | 'info' | 'warning' | 'error'
+	color: 'theme', // 'green' | 'yellow' | 'orange' | 'red' | 'theme' (default)
 	title: 'Task Complete',
 	message: 'Auto Run finished phase-01.md',
 	// Optional fields:
+	dismissible: false, // true = sticky, no auto-dismiss, click X to close
+	duration: 20000, // ms; ignored when dismissible:true
 	group: 'Backend',
 	project: 'My Agent',
 	taskDuration: 45000,
@@ -341,12 +346,65 @@ notifyToast({
 `notifyToast` handles:
 
 1. ID generation and timestamp
-2. Duration calculation (config seconds to milliseconds)
-3. Adding to visible queue (unless toasts disabled with `defaultDuration: -1`)
-4. Logging via `window.maestro.logger.toast`
-5. Audio feedback via `window.maestro.notification.speak` (if enabled)
-6. OS desktop notification via `window.maestro.notification.show` (if enabled)
-7. Auto-dismiss timer
+2. Color resolution (color > legacy type > 'theme')
+3. Duration calculation (config seconds → ms; sticky when `dismissible: true`)
+4. Adding to visible queue (unless toasts disabled with `defaultDuration: -1`)
+5. Logging via `window.maestro.logger.toast`
+6. Audio feedback via `window.maestro.notification.speak` (if enabled)
+7. OS desktop notification via `window.maestro.notification.show` (if enabled)
+8. Auto-dismiss timer (skipped for dismissible toasts)
+
+### Firing a Toast (external — `maestro-cli`)
+
+```bash
+# Default — themed, auto-dismisses on the app's default schedule.
+maestro-cli notify toast "Build" "Build succeeded on main"
+
+# Pick a color and a custom duration.
+maestro-cli notify toast "Tests" "All green" --color green --timeout 10
+maestro-cli notify toast "Quota" "Approaching limit" --color orange --timeout 30
+
+# Sticky — user must click to dismiss. Cannot combine with --timeout/--duration.
+maestro-cli notify toast "Action required" "Approve the PR before EOD" \
+    --color red --dismissible
+```
+
+`--dismissible` is the **only** way external scripts can leave a toast on screen indefinitely. `--timeout 0` and `--duration 0` are rejected — use `--dismissible` instead. Numeric durations are capped at **60 seconds** (toasts are corner-only and less obtrusive than Center Flash, so the cap is more generous than 5 s).
+
+### Toast vs Center Flash: when each fits
+
+| Scenario                                                        | Pick this                            |
+| --------------------------------------------------------------- | ------------------------------------ |
+| User-initiated micro-confirmation ("Copied", "Saved")           | Center Flash                         |
+| Async result with context (PR posted, export complete)          | Toast                                |
+| Critical message the user **must** acknowledge                  | Toast `dismissible: true`            |
+| Quick mode-toggle indicator                                     | Center Flash                         |
+| Click-to-navigate to a session/tab                              | Toast (Center Flash isn't clickable) |
+| Long-form message the user might want to re-read after a moment | Toast                                |
+
+### Color palette (shared with Center Flash)
+
+| Color    | Source                          | Toast use cases                                          |
+| -------- | ------------------------------- | -------------------------------------------------------- |
+| `theme`  | `theme.colors.accent`           | **Default.** Generic notifications with no semantic      |
+| `green`  | `theme.colors.success`          | Success / completion ("Build succeeded", "Tests pass")   |
+| `yellow` | `theme.colors.warning`          | Soft heads-up ("Approaching context window limit")       |
+| `orange` | Fixed `#f97316` (no theme slot) | Emphatic warning ("Quota at 90%")                        |
+| `red`    | `theme.colors.error`            | Failure / blocking issue ("Sync failed", "Auth expired") |
+
+Same icons as Center Flash: green→Check, yellow→Info, orange→AlertTriangle, red→AlertCircle, theme→Sparkles. **Do not** add a sixth color — keep the design language consistent across both systems.
+
+### Dismissible toasts
+
+Set `dismissible: true` (or pass `--dismissible` from the CLI) when the toast is something the user **must** see — a critical error, a required action, a security alert, etc. Behavior:
+
+- No auto-dismiss timer is set.
+- The progress bar is hidden.
+- The close button is rendered with the toast's accent color (filled background + ring) instead of the muted `textDim` it gets for auto-dismissing toasts. This signals "you need to click this."
+- `aria-label` becomes "Dismiss notification" for screen readers.
+- `dismissible` is mutually exclusive with `duration` / `--timeout` (the CLI rejects the combination; in-app, `dismissible: true` overrides any `duration` value).
+
+Use sparingly — every dismissible toast is a tiny piece of homework for the user.
 
 ### Toast Configuration
 
@@ -374,13 +432,27 @@ actions.clearToasts();
 
 Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each `ToastItem` shows:
 
-- Type icon (success/error/warning/info)
+- Color-coded icon (resolved from `toast.color` — see palette above)
 - Optional group badge, project name, tab name
 - Title and message
 - Optional action link
 - Optional task duration
-- Progress bar for auto-dismiss countdown
+- Progress bar for auto-dismiss countdown (hidden for `dismissible` toasts)
 - Slide-in/out animations
+- Close button — emphasized (color-tinted) when `dismissible: true`
+
+### Back-compat: legacy `type` API
+
+The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is still accepted for back-compat (both in-app via `notifyToast({ type })` and in the CLI via `--type`) but is **deprecated**. New code should use `color`. Mapping:
+
+| Legacy type | Maps to color |
+| ----------- | ------------- |
+| `success`   | `green`       |
+| `info`      | `theme`       |
+| `warning`   | `yellow`      |
+| `error`     | `red`         |
+
+Existing in-app callers using `type:` continue to work without changes.
 
 ---
 
@@ -388,15 +460,17 @@ Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each 
 
 **Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system — they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
 
+The Center Flash visual is **themed** — every Maestro theme produces a visually distinct flash by default. The card uses the active theme's `bgSidebar` with an accent-tinted overlay; the icon, border, and glow take the resolved color (default: `theme.colors.accent`).
+
 ### Decision: Center Flash vs Toast
 
 | You want to...                                                                 | Use                                              |
 | ------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Confirm a _user-initiated_ action they just took ("Copied", "Saved", "Pinned") | **Center Flash**                                 |
+| Confirm a _user-initiated_ action they just took ("Copied", "Saved", "Pinned") | **Center Flash** (default `theme` color)         |
 | Surface an _async_ result tied to context (PR posted, export complete, etc.)   | Toast                                            |
 | Report an error or failure                                                     | Toast (persistent, dismissable, has icon + body) |
-| Show a brief mode-switch indicator ("Bionify: ON")                             | Center Flash (`success` variant)                 |
-| Warn the user about something they should read ("Commands disabled")           | Center Flash (`warning` variant)                 |
+| Show a brief mode-switch indicator ("Bionify: ON")                             | Center Flash (`theme` color)                     |
+| Warn the user about something they should read ("Commands disabled")           | Center Flash (`yellow` or `orange` color)        |
 | Anything that the user might want to click, navigate from, or dismiss manually | Toast                                            |
 
 **Litmus test:** if the message would still be useful 10 seconds from now, it is a Toast. If the user only needs to see "yep, that happened" before getting on with their work, it is a Center Flash.
@@ -407,11 +481,12 @@ Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each 
 src/renderer/stores/centerFlashStore.ts  - Zustand store + notifyCenterFlash() / dismissCenterFlash()
 src/renderer/components/CenterFlash/     - <CenterFlash /> component (mounted once in App.tsx via portal)
 src/renderer/utils/flashCopiedToClipboard.ts - clipboard-ack helper
+src/cli/commands/notify-flash.ts         - `maestro-cli notify flash` command (external trigger)
 ```
 
 Center Flash is **exclusive** — only one is visible at a time. A new flash replaces the previous one (no queue). The component is mounted once in `App.tsx` next to `<ToastContainer />`; do not mount it locally inside features.
 
-### Firing a flash
+### Firing a flash (in-app)
 
 ```typescript
 import { notifyCenterFlash } from '../stores/centerFlashStore';
@@ -419,12 +494,12 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 notifyCenterFlash({
 	message: 'File Saved', // required, primary line
 	detail: '/path/to/file.md', // optional second line, mono font, truncates with title attr
-	variant: 'success', // 'success' (default) | 'info' | 'warning' | 'error'
+	color: 'theme', // default; matches the active theme. See "Color palette" below.
 	duration: 1500, // optional ms; default 1500; 0 = no auto-dismiss
 });
 ```
 
-Convenience helper for the most common case (clipboard acks):
+Convenience helper for the most common case (clipboard acks — always defaults to `color: 'theme'`):
 
 ```typescript
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
@@ -433,50 +508,82 @@ flashCopiedToClipboard(value); // "Copied to Clipboard" + value as detail
 flashCopiedToClipboard(value, 'Session ID Copied'); // custom title
 ```
 
-**Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, variant, and duration stay consistent across the app.
+**Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, color, and duration stay consistent across the app.
 
-### Design language
+### Firing a flash (external — `maestro-cli`)
 
-The Center Flash component implements a single, consistent visual treatment that should look identical in every feature. Do not attempt to override its styling:
+```bash
+# Default — themed, matches the active Maestro theme. Auto-dismisses after 1.5 s.
+maestro-cli notify flash "Build complete"
 
-- **Frosted glass card** centered on screen via fixed-position portal, `pointer-events: none` (never blocks input).
-- **Variant-tinted accent** drives the icon color, the icon's tinted circle background, the card's border, and the card's outer glow.
-- **Variant icons** (lucide): `success → Check`, `info → Info`, `warning → AlertTriangle`, `error → AlertCircle`. The icon sits in a 36 px tinted circle.
-- **Two-line layout when `detail` is provided:** semibold title (`textMain`) on top, mono `textDim` detail below (truncated, full value on hover via `title=`).
-- **Bottom progress bar** animates from full width to zero over `duration`, using the variant accent color at low opacity.
-- **Entrance:** 180 ms scale (0.94 → 1) + fade. **Exit:** 160 ms reverse. No bounce, no spring, no drop-and-fade — keep it crisp.
-- **Z-index:** sits above toasts (`100001`), below modal-stack overlays.
-- **Theme tokens:** colors are pulled from `theme.colors.{success,warning,error,accent,bgSidebar,textMain,textDim,border}`. Do not introduce new color tokens for flash usage.
+# Pick an explicit color. One of: green, yellow, orange, red, theme.
+maestro-cli notify flash "Tests passed" --color green
+maestro-cli notify flash "Production deploy starting" --color orange --detail "v1.42.0"
+
+# Control how long it stays. --timeout is in seconds (max 5); --duration is in ms (max 5000).
+maestro-cli notify flash "CI failed on main" --color red --timeout 5
+maestro-cli notify flash "Quick blip" --duration 800
+```
+
+External integrations should pass `--color` (one of the 5 canonical values) so the flash visibly matches their intent without depending on the user's theme. The `--variant` flag (`success`/`info`/`warning`/`error`) is accepted for backward compatibility but **deprecated** — prefer `--color`.
+
+**Duration cap:** CLI-triggered flashes are capped at **5 seconds**. The cap is enforced both client-side (CLI rejects values above the limit before sending) and at the IPC boundary in the main process (rejects oversized payloads from any external client). The cap exists so external scripts can't stick a permanent overlay on the user. Internal in-app callers using `notifyCenterFlash()` directly are not capped.
+
+### Color palette (the design language)
+
+These five colors are the **only** colors the Center Flash will ever render. They are deliberately limited so the visual language stays consistent and instantly recognizable across the app and across CLI integrations.
+
+| Color    | Source                          | Icon            | Use for                                                                                                  |
+| -------- | ------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `theme`  | `theme.colors.accent`           | `Sparkles`      | **Default.** Themed acknowledgement with no semantic — clipboard acks, mode toggles, quiet confirmations |
+| `green`  | `theme.colors.success`          | `Check`         | Explicit success semantic when the user benefits from "yes it worked" coloring (CLI status, test passes) |
+| `yellow` | `theme.colors.warning`          | `Info`          | Soft heads-up, not a failure ("Commands disabled", "No unread tabs")                                     |
+| `orange` | Fixed `#f97316` (no theme slot) | `AlertTriangle` | More emphatic warning than yellow ("Production deploy starting", "Quota at 90%")                         |
+| `red`    | `theme.colors.error`            | `AlertCircle`   | Failure / blocking outcome from a CLI or external trigger (in-app failures usually go to Toast instead)  |
+
+**Why these five?** They cover the full traffic-light range (green → yellow → orange → red) plus a neutral themed default. Adding a sixth color would dilute their meaning. If a use case does not fit, it is probably a Toast, an inline banner, or a modal.
+
+### Visual treatment (do not override)
+
+The component implements one consistent treatment that adapts to color and theme. Do not attempt to restyle it:
+
+- **Themed frosted glass card.** Background = `theme.colors.bgSidebar` + a 135° linear gradient overlay tinted with the resolved color (slightly stronger for `theme` so the theme accent reads clearly). `backdrop-filter: blur(16px) saturate(160%)`.
+- **Color-tinted accents.** Icon color, icon's tinted circle, card border, and outer glow all use the resolved color. Each Maestro theme therefore produces a visually distinct flash for the same color value.
+- **Color icons** (lucide): see Color palette table. Icon sits in a 36 px tinted circle (`color * 26%` bg, `color * 33%` inner ring).
+- **Two-line layout when `detail` is provided.** Semibold title (`textMain`) on top, mono `textDim` detail below (truncated, full value on hover via `title=`).
+- **Bottom progress bar** animates from full width to zero over `duration` using the resolved color at 85% opacity.
+- **Entrance:** 180 ms scale (0.94 → 1) + fade. **Exit:** 160 ms reverse. No bounce, no spring, no drop-and-fade.
+- **Z-index:** `100001` (sits above toasts, below modal-stack overlays). `pointer-events: none` (never blocks input).
+- **Theme tokens used:** `bgSidebar`, `textMain`, `textDim`, `border`, plus the resolved color (one of `success`, `warning`, `accent`, `error`, or the fixed orange). No new color tokens needed for flash usage.
 - **A11y:** `role="status"`, `aria-live="polite"`, `aria-atomic="true"`. Do not add a close button — flashes are not interactive.
-
-### Variant guidance
-
-| Variant   | Use for                                              | Examples                                                  |
-| --------- | ---------------------------------------------------- | --------------------------------------------------------- |
-| `success` | Action succeeded (default)                           | "Copied to Clipboard", "File Saved", "Bionify: ON"        |
-| `info`    | Neutral feedback, mode change with no value judgment | "Read-only mode"                                          |
-| `warning` | Soft warning the user should read before proceeding  | "Commands disabled", "No unread or draft tabs"            |
-| `error`   | A user-initiated action did _not_ succeed silently   | (Rare — most failures should be Toasts so user can read.) |
-
-**Do not add new variants.** If a use case does not fit the four above, the use case is probably wrong (it should be a Toast, an inline banner, or a modal).
 
 ### Duration guidance
 
 - **Default 1500 ms** is correct for almost everything. Do not pass `duration` unless you have a specific reason.
-- Use a longer duration (`2500`–`3000`) only for a `warning` flash with a longer message the user must read.
-- Use `duration: 0` (no auto-dismiss) only for the rarest cases — it requires you to call `dismissCenterFlash()` explicitly later, and Center Flash is exclusive, so a non-dismissed flash blocks every subsequent one.
+- Use a longer duration (`2500`–`3000`) only for `yellow`/`orange`/`red` flashes with longer messages the user must read.
+- Use `duration: 0` (no auto-dismiss) only for the rarest cases — it requires you to call `dismissCenterFlash()` explicitly later, and Center Flash is exclusive, so a non-dismissed flash blocks every subsequent one. **Note:** `0` is rejected for externally-triggered flashes (CLI / web). External callers are also capped at 5000 ms.
 
 ### Anti-patterns (do not do these)
 
 - ❌ **Do not** create a new center-screen overlay component. Use `notifyCenterFlash`.
 - ❌ **Do not** roll your own `useState` + `setTimeout` for clipboard acks. Use `flashCopiedToClipboard`.
 - ❌ **Do not** use `notifyToast` for clipboard-success acks. Use `flashCopiedToClipboard`.
+- ❌ **Do not** add a sixth color or override the visual treatment. The five-color palette is the design language — extending it would defeat the purpose.
 - ❌ **Do not** add `flashNotification` / `successFlashNotification` state to a store. The legacy `setFlashNotification` and `setSuccessFlashNotification` setters in `uiStore` are compatibility shims that delegate to `notifyCenterFlash`; do not extend them — call `notifyCenterFlash` directly in new code.
 - ❌ **Do not** stack flashes (queue them). The system is intentionally exclusive; the latest flash wins.
 
-### Migration note
+### Back-compat: legacy `variant` API
 
-Pre-existing call sites that use `setFlashNotification` / `setSuccessFlashNotification` (via `uiStore` or via `showFlashNotification` / `showSuccessFlash` in `useAgentExecution`) continue to work — they fire `notifyCenterFlash` under the hood. New code should call `notifyCenterFlash` (or `flashCopiedToClipboard`) directly.
+The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is still accepted for back-compat (both in-app via `notifyCenterFlash({ variant })` and in the CLI via `--variant`) but is **deprecated**. New code should use `color`. The mapping is fixed:
+
+| Legacy variant | Maps to color |
+| -------------- | ------------- |
+| `success`      | `green`       |
+| `info`         | `theme`       |
+| `warning`      | `yellow`      |
+| `error`        | `red`         |
+
+Pre-existing call sites using `setFlashNotification` / `setSuccessFlashNotification` (via `uiStore` or via `showFlashNotification` / `showSuccessFlash` in `useAgentExecution`) continue to work — they fire `notifyCenterFlash` with `color: 'yellow'` and `color: 'theme'` respectively under the hood.
 
 ---
 

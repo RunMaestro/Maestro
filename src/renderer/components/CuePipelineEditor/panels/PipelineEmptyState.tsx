@@ -1,9 +1,11 @@
 /**
  * PipelineEmptyState — Phase 14B extraction from PipelineCanvas.
  *
- * Shown when there are zero nodes on the canvas. Two shapes depending on
- * whether any pipelines exist:
- *  - `pipelineCount === 0`: full-CTA mode ("Create your first pipeline").
+ * Shown when there are zero nodes on the canvas. Three shapes:
+ *  - `isLoading === true`: centered spinner while pipelines are being fetched
+ *    or restored. Suppresses the CTA so users with existing pipelines don't
+ *    momentarily see "Create your first pipeline" before their pipelines load.
+ *  - `pipelineCount === 0` (loaded): full-CTA mode ("Create your first pipeline").
  *  - otherwise: instructional ("drag a trigger / agent") with pointer events
  *    disabled so the user can still click onto the canvas behind it.
  *
@@ -13,6 +15,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Zap, Plus } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { Spinner } from '../../ui/Spinner';
 
 const DRAWER_OPEN_DELAY_MS = 50;
 
@@ -23,6 +26,12 @@ export interface PipelineEmptyStateProps {
 	createPipeline: () => void;
 	setTriggerDrawerOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	setAgentDrawerOpen: React.Dispatch<React.SetStateAction<boolean>>;
+	/**
+	 * When true, render a centered spinner instead of either CTA or
+	 * instructional text. Lets the editor avoid flashing
+	 * "Create your first pipeline" while pipelines are still loading.
+	 */
+	isLoading?: boolean;
 }
 
 function PipelineEmptyStateInner({
@@ -32,6 +41,7 @@ function PipelineEmptyStateInner({
 	createPipeline,
 	setTriggerDrawerOpen,
 	setAgentDrawerOpen,
+	isLoading = false,
 }: PipelineEmptyStateProps) {
 	const drawerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -42,6 +52,17 @@ function PipelineEmptyStateInner({
 	}, []);
 
 	if (nodeCount !== 0) return null;
+	if (isLoading) {
+		return (
+			<div
+				className="absolute inset-0 flex items-center justify-center"
+				style={{ zIndex: 5, pointerEvents: 'none' }}
+				data-testid="pipeline-empty-state-loading"
+			>
+				<Spinner size={28} color={theme.colors.textDim} ariaLabel="Loading pipelines" />
+			</div>
+		);
+	}
 	return (
 		<div
 			className="absolute inset-0 flex items-center justify-center"

@@ -39,11 +39,15 @@ export function createLoggerApi() {
 		autorun: (message: string, context?: string, data?: unknown) =>
 			ipcRenderer.invoke('logger:log', 'autorun', message, context || 'AutoRun', data),
 
-		// Subscribe to new log entries in real-time
+		// Subscribe to new log entries in real-time.
+		// Main forwards entries in batches via `logger:newLogBatch` to amortize
+		// IPC overhead — we fan them out here so consumers keep a per-entry API.
 		onNewLog: (callback: (log: SystemLogEntry) => void) => {
-			const handler = (_: Electron.IpcRendererEvent, log: SystemLogEntry) => callback(log);
-			ipcRenderer.on('logger:newLog', handler);
-			return () => ipcRenderer.removeListener('logger:newLog', handler);
+			const batchHandler = (_: Electron.IpcRendererEvent, batch: SystemLogEntry[]) => {
+				for (const log of batch) callback(log);
+			};
+			ipcRenderer.on('logger:newLogBatch', batchHandler);
+			return () => ipcRenderer.removeListener('logger:newLogBatch', batchHandler);
 		},
 
 		// File logging (enabled by default on Windows for debugging)

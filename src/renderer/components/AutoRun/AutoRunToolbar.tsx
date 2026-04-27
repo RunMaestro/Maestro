@@ -67,7 +67,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					}}
 					title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
 				>
-					{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
+					{isStopping ? <Spinner size={14} /> : !compact && <Square className="w-3.5 h-3.5" />}
 					{isStopping ? 'Stopping' : 'Stop'}
 				</button>
 			) : (

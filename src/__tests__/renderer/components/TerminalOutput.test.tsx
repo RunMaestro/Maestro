@@ -588,7 +588,7 @@ describe('TerminalOutput', () => {
 				const active = useCenterFlashStore.getState().active;
 				expect(active?.message).toBe('Copied to Clipboard');
 				expect(active?.detail).toBe('Copy this text');
-				expect(active?.variant).toBe('success');
+				expect(active?.color).toBe('theme');
 			});
 		});
 	});

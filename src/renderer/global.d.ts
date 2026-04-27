@@ -152,6 +152,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -274,7 +275,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
@@ -301,8 +308,9 @@ interface MaestroAPI {
 			callback: (params: {
 				title: string;
 				message: string;
-				toastType: 'success' | 'info' | 'warning' | 'error';
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
 				duration?: number;
+				dismissible?: boolean;
 				sessionId?: string;
 			}) => void
 		) => () => void;
@@ -310,7 +318,7 @@ interface MaestroAPI {
 			callback: (params: {
 				message: string;
 				detail?: string;
-				variant: 'success' | 'info' | 'warning' | 'error';
+				color: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
 				duration?: number;
 			}) => void
 		) => () => void;
@@ -329,7 +337,11 @@ interface MaestroAPI {
 		onRemoteNewAITabWithPrompt: (
 			callback: (sessionId: string, prompt: string, responseChannel: string) => void
 		) => () => void;
-		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean) => void;
+		sendRemoteNewAITabWithPromptResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
@@ -455,6 +467,18 @@ interface MaestroAPI {
 			callback: (sessionId: string, filePath: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteGetGitDiffResponse: (responseChannel: string, result: any) => void;
+		onRemoteCreateGist: (
+			callback: (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCreateGistResponse: (
+			responseChannel: string,
+			result: { success: boolean; gistUrl?: string; error?: string }
+		) => void;
 		onRemoteTriggerCueSubscription: (
 			callback: (
 				subscriptionName: string,
@@ -728,24 +752,13 @@ interface MaestroAPI {
 			worktreePath: string,
 			branchName: string,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			created?: boolean;
-			currentBranch?: string;
-			requestedBranch?: string;
-			branchMismatch?: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeSetupResult>;
 		worktreeCheckout: (
 			worktreePath: string,
 			branchName: string,
 			createIfMissing: boolean,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			hasUncommittedChanges: boolean;
-			error?: string;
-		}>;
+		) => Promise<GitWorktreeCheckoutResult>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

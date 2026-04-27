@@ -5,6 +5,7 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -81,11 +82,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		logger.info('[useRemoteIntegration] Setting up onRemoteCommand listener');
 		const unsubscribeRemote = window.maestro.process.onRemoteCommand(
-			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			(
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => {
+				// Log metadata only at info level — remote commands can carry
+				// secrets, proprietary code, or PII. Mirror the redaction the
+				// main process applies in web-server-factory; the truncated
+				// preview moves to debug, which only opted-in users enable.
 				logger.info('[useRemoteIntegration] onRemoteCommand callback invoked:', undefined, {
 					sessionId,
-					command: command?.substring(0, 50),
+					commandLength: command?.length ?? 0,
 					inputMode,
+					tabId,
+					force,
+				});
+				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
+					sessionId,
+					commandPreview: command?.substring(0, 50),
 				});
 
 				// Verify the session exists
@@ -101,8 +118,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server, but double-check)
-				if (targetSession.state === 'busy') {
+				// Check if session is busy (should have been checked by web server,
+				// but double-check). `force: true` (from `dispatch --force`) opts
+				// out of the guard so a queued follow-up can land on a busy tab.
+				if (targetSession.state === 'busy' && !force) {
 					logger.warn(
 						'[useRemoteIntegration] Session is busy, dropping command. State:',
 						undefined,
@@ -141,12 +160,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// Pass the inputMode from web so handleRemoteCommand uses it
 				logger.info('[useRemoteIntegration] Dispatching maestro:remoteCommand event:', undefined, {
 					sessionId,
-					command: command?.substring(0, 50),
+					commandLength: command?.length ?? 0,
 					inputMode,
+					tabId,
+					force,
 				});
+				logger.debug(
+					'[useRemoteIntegration] Dispatching maestro:remoteCommand preview:',
+					undefined,
+					{ sessionId, commandPreview: command?.substring(0, 50) }
+				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode },
+						detail: { sessionId, command, inputMode, tabId, force },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -362,7 +388,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
 					return;
 				}
-				let tabCreated = false;
+				let createdTabId: string | undefined;
 				flushSync(() => {
 					setSessions((prev) =>
 						prev.map((s) => {
@@ -372,27 +398,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								showThinking: defaultShowThinking,
 							});
 							if (!result) return s;
-							tabCreated = true;
+							createdTabId = result.tab.id;
 							return result.session;
 						})
 					);
-					if (tabCreated) {
+					if (createdTabId) {
 						setActiveSessionId(sessionId);
 					}
 				});
-				if (!tabCreated) {
+				if (!createdTabId) {
 					logger.warn(
 						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
 					);
 					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
 					return;
 				}
+				// Pass the new tab id explicitly so the renderer writes into the tab
+				// we just created — without it, useRemoteHandlers would fall back to
+				// activeTabId, which is correct here but would race in any future
+				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command: prompt, inputMode: 'ai' },
+						detail: { sessionId, command: prompt, inputMode: 'ai', tabId: createdTabId },
 					})
 				);
-				window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, true);
+				window.maestro.process.sendRemoteNewAITabWithPromptResponse(
+					responseChannel,
+					true,
+					createdTabId
+				);
 			}
 		);
 
@@ -568,7 +602,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// enabling click-to-jump behavior.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteNotifyToast((params) => {
-			const { title, message, toastType, duration, sessionId } = params;
+			const { title, message, color, duration, dismissible, sessionId } = params;
 			let project: string | undefined;
 			let tabId: string | undefined;
 			let tabName: string | undefined;
@@ -580,10 +614,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabName = activeTab?.name ?? undefined;
 			}
 			notifyToast({
-				type: toastType,
+				color,
 				title,
 				message,
 				duration: duration !== undefined ? duration * 1000 : undefined,
+				dismissible,
 				sessionId,
 				tabId,
 				tabName,
@@ -601,7 +636,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			notifyCenterFlash({
 				message: params.message,
 				detail: params.detail,
-				variant: params.variant,
+				color: params.color,
 				duration: params.duration,
 			});
 		});
@@ -1207,6 +1242,81 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 		return unsubscribe;
 	}, []);
+
+	// Handle remote create-gist requests (from CLI / web clients).
+	// Gathers every AI tab's transcript for the session, formats it the same
+	// way the desktop "Publish Gist" flow does, and shells out to `gh gist
+	// create` via the existing git IPC handler.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCreateGist(
+			async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => {
+				try {
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: `Session not found: ${sessionId}`,
+						});
+						return;
+					}
+
+					const sections: string[] = [];
+					for (const tab of session.aiTabs) {
+						const body = formatLogsForClipboard(tab.logs);
+						if (!body) continue;
+						const header = tab.name || tab.id.slice(0, 8);
+						sections.push(`## Tab: ${header}\n\n${body}`);
+					}
+
+					if (sections.length === 0) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: 'Session has no conversation history to publish',
+						});
+						return;
+					}
+
+					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
+					const safeName =
+						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
+					const filename = `${safeName}_context.md`;
+
+					const result = await window.maestro.git.createGist(
+						filename,
+						content,
+						description,
+						isPublic
+					);
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, result);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					// Known recoverable modes (session missing, empty history, `gh`
+					// not installed/authenticated) already returned above as
+					// structured results. Anything that lands here is unexpected —
+					// report to Sentry without the transcript/description/filename,
+					// which can carry PII/secrets.
+					captureException(error, {
+						extra: {
+							context: 'remoteCreateGist',
+							sessionId,
+							isPublic,
+							descriptionProvided: Boolean(description),
+						},
+					});
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+						success: false,
+						error: message,
+					});
+				}
+			}
+		);
+		return unsubscribe;
+	}, [sessionsRef]);
 
 	return {};
 }

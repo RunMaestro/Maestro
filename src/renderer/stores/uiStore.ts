@@ -90,14 +90,14 @@ export interface UIStoreActions {
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
 
 	/**
-	 * Compatibility shim — fires a center flash with the `warning` variant.
-	 * New code should call `notifyCenterFlash({ message, variant: 'warning' })` directly.
+	 * Compatibility shim — fires a yellow center flash.
+	 * New code should call `notifyCenterFlash({ message, color: 'yellow' })` directly.
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
 	/**
-	 * Compatibility shim — fires a center flash with the `success` variant.
-	 * New code should call `notifyCenterFlash({ message })` directly.
+	 * Compatibility shim — fires a themed center flash.
+	 * New code should call `notifyCenterFlash({ message })` directly (defaults to `theme`).
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */
 	setSuccessFlashNotification: (
@@ -193,12 +193,12 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setFlashNotification: (v) => {
 		const value = typeof v === 'function' ? v(null) : v;
 		if (value === null) return;
-		notifyCenterFlash({ message: value, variant: 'warning' });
+		notifyCenterFlash({ message: value, color: 'yellow' });
 	},
 	setSuccessFlashNotification: (v) => {
 		const value = typeof v === 'function' ? v(null) : v;
 		if (value === null) return;
-		notifyCenterFlash({ message: value, variant: 'success' });
+		notifyCenterFlash({ message: value, color: 'theme' });
 	},
 
 	setOutputSearchOpen: (v) => set((s) => ({ outputSearchOpen: resolve(v, s.outputSearchOpen) })),

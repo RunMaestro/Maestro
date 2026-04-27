@@ -303,18 +303,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
-				// Surface the user's queued message in the target tab's logs so it appears
-				// in the chat history when the queue flushes. Without this, the agent
-				// processes the message but the user never sees what was sent.
-				useSessionStore.getState().addLogToTab(
-					sessionId,
-					{
-						source: 'user',
-						text: item.text || '',
-						...(hasImages && { images: item.images }),
-					},
-					targetTab.id
-				);
+				// NOTE: The user-visible log entry for this message is appended by the
+				// caller that dequeued the item (e.g. useAgentListeners onExit,
+				// useInterruptHandler, useQueueProcessing.dispatchQueuedItem,
+				// handleQuickActionsDebugReleaseQueuedItem) so it lands atomically with
+				// the dequeue/state-busy transition. Adding it here too would duplicate.
 
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,

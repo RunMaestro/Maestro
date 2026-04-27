@@ -13,6 +13,8 @@ import {
 	remoteUrlToBrowserUrl,
 	isImageFile,
 	getImageMimeType,
+	isWorktreeAlreadyUsedError,
+	parseWorktreePathForBranch,
 } from '../../shared/gitUtils';
 
 describe('gitUtils', () => {
@@ -307,6 +309,78 @@ describe('gitUtils', () => {
 			expect(getImageMimeType('webp')).toBe('image/webp');
 			expect(getImageMimeType('ico')).toBe('image/ico');
 			expect(getImageMimeType('bmp')).toBe('image/bmp');
+		});
+	});
+
+	describe('isWorktreeAlreadyUsedError', () => {
+		it('detects modern git "already checked out" message', () => {
+			expect(
+				isWorktreeAlreadyUsedError(
+					"fatal: 'fix/files-panel-polish' is already checked out at '/home/chris/code/wt/fix/files-panel-polish'"
+				)
+			).toBe(true);
+		});
+
+		it('detects legacy "already used by worktree" message', () => {
+			expect(
+				isWorktreeAlreadyUsedError(
+					"fatal: 'main' is already used by worktree at '/home/chris/code/repo'"
+				)
+			).toBe(true);
+		});
+
+		it('is case insensitive', () => {
+			expect(isWorktreeAlreadyUsedError("FATAL: 'b' IS ALREADY CHECKED OUT AT '/x'")).toBe(true);
+		});
+
+		it('returns false for unrelated errors', () => {
+			expect(isWorktreeAlreadyUsedError('fatal: not a git repository')).toBe(false);
+			expect(isWorktreeAlreadyUsedError("fatal: '/x' already exists")).toBe(false);
+			expect(isWorktreeAlreadyUsedError('')).toBe(false);
+		});
+	});
+
+	describe('parseWorktreePathForBranch', () => {
+		const sample = [
+			'worktree /home/chris/code/repo',
+			'HEAD abc123',
+			'branch refs/heads/main',
+			'',
+			'worktree /home/chris/code/wt/fix/files-panel-polish',
+			'HEAD def456',
+			'branch refs/heads/fix/files-panel-polish',
+			'',
+			'worktree /home/chris/code/wt/detached',
+			'HEAD 789abc',
+			'detached',
+		].join('\n');
+
+		it('returns the worktree path for a matching branch', () => {
+			expect(parseWorktreePathForBranch(sample, 'fix/files-panel-polish')).toBe(
+				'/home/chris/code/wt/fix/files-panel-polish'
+			);
+		});
+
+		it('returns the worktree path for the main repo branch', () => {
+			expect(parseWorktreePathForBranch(sample, 'main')).toBe('/home/chris/code/repo');
+		});
+
+		it('returns null when the branch is not found', () => {
+			expect(parseWorktreePathForBranch(sample, 'nope')).toBeNull();
+		});
+
+		it('skips detached worktrees', () => {
+			expect(parseWorktreePathForBranch(sample, 'detached')).toBeNull();
+		});
+
+		it('handles CRLF line endings', () => {
+			const crlf = sample.replace(/\n/g, '\r\n');
+			expect(parseWorktreePathForBranch(crlf, 'main')).toBe('/home/chris/code/repo');
+		});
+
+		it('returns null for empty input', () => {
+			expect(parseWorktreePathForBranch('', 'main')).toBeNull();
+			expect(parseWorktreePathForBranch(sample, '')).toBeNull();
 		});
 	});
 });

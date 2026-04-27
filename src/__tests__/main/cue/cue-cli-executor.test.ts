@@ -122,7 +122,7 @@ describe('cue-cli-executor', () => {
 		vi.clearAllMocks();
 	});
 
-	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli send', async () => {
+	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
 		const config = createConfig();
 		const promise = executeCueCli(config as any);
 		// Let the microtask scheduler register the close handler before we emit.
@@ -133,10 +133,13 @@ describe('cue-cli-executor', () => {
 		expect(mockSpawn).toHaveBeenCalledTimes(1);
 		const args = mockSpawn.mock.calls[0][1] as string[];
 		expect(args[0]).toContain('maestro-cli.js');
-		expect(args[1]).toBe('send');
+		// PR1: Cue migrated from `send --live` to the dedicated `dispatch` verb.
+		// `dispatch` accepts the same positional args (target, message) without
+		// the `--live` flag, since "live" is now its only mode.
+		expect(args[1]).toBe('dispatch');
 		expect(args[2]).toBe('session-research'); // CUE_FROM_AGENT resolved from sourceSessionId
 		expect(args[3]).toBe('computed answer = 42');
-		expect(args[4]).toBe('--live');
+		expect(args).toHaveLength(4);
 		expect(result.status).toBe('completed');
 	});
 

@@ -26,7 +26,7 @@ import { usePipelineCanvasCallbacks } from '../../hooks/cue/usePipelineCanvasCal
 import { usePipelineKeyboard } from '../../hooks/cue/usePipelineKeyboard';
 import { usePipelineContextMenu } from '../../hooks/cue/usePipelineContextMenu';
 import { PipelineToolbar } from './PipelineToolbar';
-import { PipelineCanvas } from './PipelineCanvas';
+import { PipelineCanvas, type CanvasInteractionMode } from './PipelineCanvas';
 import { PipelineContextMenu } from './PipelineContextMenu';
 
 export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
@@ -48,6 +48,10 @@ export interface CuePipelineEditorProps {
 	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
 	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
 	initialPipelineId?: { id: string | null; nonce: string };
+	/** True while the initial graph-data fetch is in flight. Combined with the
+	 *  hook's own pipeline-restore state to render a loading spinner instead of
+	 *  flashing the "Create your first pipeline" CTA before pipelines arrive. */
+	graphLoading?: boolean;
 }
 
 function CuePipelineEditorInner({
@@ -60,12 +64,16 @@ function CuePipelineEditorInner({
 	onTriggerPipeline,
 	onSaveSuccess,
 	initialPipelineId,
+	graphLoading = false,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
 	// Local drawer state — consumed by multiple hooks and children
 	const [triggerDrawerOpen, setTriggerDrawerOpen] = useState(false);
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+
+	// Canvas interaction mode: hand (pan on drag) vs pointer (box-select on drag).
+	const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>('hand');
 
 	// Selection bridge: usePipelineState needs selection IDs for its mutation
 	// callbacks, but usePipelineSelection needs pipelineState. We resolve the
@@ -156,6 +164,7 @@ function CuePipelineEditorInner({
 		runningSubscriptionsByPipeline,
 		persistLayout,
 		pendingSavedViewportRef,
+		pipelinesLoaded,
 		handleSave,
 		handleDiscard,
 		createPipeline,
@@ -312,6 +321,7 @@ function CuePipelineEditorInner({
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 		handleSave,
 	});
 
@@ -391,6 +401,8 @@ function CuePipelineEditorInner({
 				onEdgeClick={onEdgeClickGuarded}
 				onPaneClick={onPaneClick}
 				onNodeContextMenu={onNodeContextMenu}
+				onNodeDragStart={canvasCallbacks.onNodeDragStart}
+				onNodeDrag={canvasCallbacks.onNodeDrag}
 				onNodeDragStop={canvasCallbacks.onNodeDragStop}
 				onDragOver={canvasCallbacks.onDragOver}
 				onDrop={canvasCallbacks.onDrop}
@@ -432,6 +444,9 @@ function CuePipelineEditorInner({
 				onTriggerPipeline={onTriggerPipeline}
 				isDirty={isDirty}
 				runningPipelineIds={runningPipelineIds}
+				isLoading={graphLoading || !pipelinesLoaded}
+				interactionMode={interactionMode}
+				setInteractionMode={setInteractionMode}
 			/>
 
 			{contextMenu && (

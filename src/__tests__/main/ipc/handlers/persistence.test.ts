@@ -77,6 +77,7 @@ describe('persistence IPC handlers', () => {
 		broadcastThemeChange: ReturnType<typeof vi.fn>;
 		broadcastBionifyReadingModeChange: ReturnType<typeof vi.fn>;
 		broadcastCustomCommands: ReturnType<typeof vi.fn>;
+		broadcastSettingsChanged: ReturnType<typeof vi.fn>;
 		broadcastSessionStateChange: ReturnType<typeof vi.fn>;
 		broadcastSessionAdded: ReturnType<typeof vi.fn>;
 		broadcastSessionRemoved: ReturnType<typeof vi.fn>;
@@ -109,6 +110,7 @@ describe('persistence IPC handlers', () => {
 			broadcastThemeChange: vi.fn(),
 			broadcastBionifyReadingModeChange: vi.fn(),
 			broadcastCustomCommands: vi.fn(),
+			broadcastSettingsChanged: vi.fn(),
 			broadcastSessionStateChange: vi.fn(),
 			broadcastSessionAdded: vi.fn(),
 			broadcastSessionRemoved: vi.fn(),
@@ -293,6 +295,41 @@ describe('persistence IPC handlers', () => {
 			await handler!({} as any, 'customAICommands', []);
 
 			expect(mockWebServer.broadcastCustomCommands).not.toHaveBeenCalled();
+		});
+
+		it('should broadcast generic web settings (e.g. maxOutputLines) to connected web clients', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) => {
+				if (key === 'maxOutputLines') return 25;
+				return def;
+			});
+
+			const handler = handlers.get('settings:set');
+			await handler!({} as any, 'maxOutputLines', 25);
+
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('maxOutputLines', 25);
+			expect(mockWebServer.broadcastSettingsChanged).toHaveBeenCalledTimes(1);
+			expect(mockWebServer.broadcastSettingsChanged).toHaveBeenCalledWith(
+				expect.objectContaining({ maxOutputLines: 25 })
+			);
+		});
+
+		it('should not broadcast generic web settings when no web clients are connected', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(0);
+
+			const handler = handlers.get('settings:set');
+			await handler!({} as any, 'maxOutputLines', 25);
+
+			expect(mockWebServer.broadcastSettingsChanged).not.toHaveBeenCalled();
+		});
+
+		it('should not broadcast for keys outside the web-relevant set', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+
+			const handler = handlers.get('settings:set');
+			await handler!({} as any, 'someUnrelatedSetting', 'value');
+
+			expect(mockWebServer.broadcastSettingsChanged).not.toHaveBeenCalled();
 		});
 
 		it('should handle null webServer gracefully', async () => {

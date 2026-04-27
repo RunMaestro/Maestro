@@ -27,6 +27,7 @@ vi.mock('../../../../renderer/hooks/cue/usePipelineLayout', () => ({
 	usePipelineLayout: vi.fn(() => ({
 		persistLayout: mockPersistLayout,
 		pendingSavedViewportRef: mockPendingSavedViewportRef,
+		pipelinesLoaded: true,
 	})),
 }));
 

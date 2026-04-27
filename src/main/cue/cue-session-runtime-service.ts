@@ -187,6 +187,51 @@ export function createCueSessionRuntimeService(
 			}
 		}
 
+		// Even when the local cue.yaml is non-empty, the session may STILL be a
+		// participating target in a cross-root pipeline that lives at a higher
+		// ancestor. Without this merge, the ancestor's `agent_id`-targeted sub
+		// is unreachable: the sub's owner (this session) doesn't have it in its
+		// config, and the ancestor's own session won't fire it (its `agent_id`
+		// guard skips subs not addressed to itself). Net effect: the trigger
+		// silently never arms and the editor renders the pipeline without it.
+		// `no_ancestor_fallback` opts out of this just like the empty-local path.
+		const ancestorMergeRoots: string[] = [];
+		if (loadResult.ok && !ancestorRoot && !localOptsOutOfAncestor) {
+			const ancestors = findAncestorCueConfigRoots(session.projectRoot);
+			const localSubNames = new Set(loadResult.config.subscriptions.map((s) => s.name));
+			const merged = [...loadResult.config.subscriptions];
+			for (const ancestor of ancestors) {
+				const ancestorResult = loadCueConfigDetailed(ancestor);
+				if (!ancestorResult.ok) continue;
+				const targeted = ancestorResult.config.subscriptions.filter(
+					(sub) =>
+						sub.agent_id !== undefined &&
+						isSubscriptionParticipant(sub, session.id, session.name) &&
+						!localSubNames.has(sub.name)
+				);
+				if (targeted.length === 0) continue;
+				for (const sub of targeted) {
+					merged.push(sub);
+					localSubNames.add(sub.name);
+				}
+				ancestorMergeRoots.push(ancestor);
+				for (const w of ancestorResult.warnings) {
+					deps.onLog('warn', `[CUE] ${w}`);
+				}
+				deps.onLog(
+					'cue',
+					`[CUE] "${session.name}" merging ${targeted.length} ancestor-targeted subscription(s) from "${ancestor}"`
+				);
+			}
+			if (ancestorMergeRoots.length > 0) {
+				loadResult = {
+					ok: true,
+					config: { ...loadResult.config, subscriptions: merged },
+					warnings: loadResult.warnings,
+				};
+			}
+		}
+
 		if (!loadResult.ok) {
 			// Distinguish missing (silent) from parse / validation failures (loud).
 			if (loadResult.reason === 'parse-error') {
@@ -262,16 +307,25 @@ export function createCueSessionRuntimeService(
 			config,
 			configRoot: ancestorRoot,
 			triggerSources: [],
-			yamlWatcher: null,
+			yamlWatchers: [],
 			sleepPrevented: false,
 			ownershipWarning,
 		};
 
-		// Watch the cue.yaml at the config's actual location (ancestor or own root).
-		const watchRoot = ancestorRoot ?? session.projectRoot;
-		state.yamlWatcher = watchCueYaml(watchRoot, () => {
-			deps.onRefreshRequested(session.id, session.projectRoot);
-		});
+		// Watch the cue.yaml at the config's actual location (ancestor or own
+		// root) AND every higher ancestor whose targeted subs we merged in
+		// above. Any file in the merged set changing must reload this session
+		// so the merged view stays in sync.
+		const watchRoots = new Set<string>();
+		watchRoots.add(ancestorRoot ?? session.projectRoot);
+		for (const root of ancestorMergeRoots) watchRoots.add(root);
+		for (const root of watchRoots) {
+			state.yamlWatchers.push(
+				watchCueYaml(root, () => {
+					deps.onRefreshRequested(session.id, session.projectRoot);
+				})
+			);
+		}
 
 		// Register the session before starting any trigger sources or firing
 		// app.startup so that other components (e.g. CueRunManager via registry.get)
@@ -358,9 +412,10 @@ export function createCueSessionRuntimeService(
 		}
 		state.triggerSources = [];
 
-		if (state.yamlWatcher) {
-			state.yamlWatcher();
+		for (const cleanup of state.yamlWatchers) {
+			cleanup();
 		}
+		state.yamlWatchers = [];
 
 		deps.clearFanInState(sessionId);
 		deps.clearQueue(sessionId, true);

@@ -83,4 +83,36 @@ describe('PipelineEmptyState', () => {
 		);
 		expect(screen.getByText(/Drag a trigger/i)).toBeTruthy();
 	});
+
+	it('renders a loading spinner (and suppresses the CTA) while isLoading is true', () => {
+		render(
+			<PipelineEmptyState
+				nodeCount={0}
+				pipelineCount={0}
+				theme={theme}
+				createPipeline={vi.fn()}
+				setTriggerDrawerOpen={vi.fn()}
+				setAgentDrawerOpen={vi.fn()}
+				isLoading
+			/>
+		);
+		expect(screen.getByTestId('pipeline-empty-state-loading')).toBeTruthy();
+		expect(screen.getByTestId('loader2-icon')).toBeTruthy();
+		expect(screen.queryByText('Create your first pipeline')).toBeNull();
+	});
+
+	it('still renders nothing when nodeCount > 0 even if isLoading', () => {
+		const { container } = render(
+			<PipelineEmptyState
+				nodeCount={3}
+				pipelineCount={0}
+				theme={theme}
+				createPipeline={vi.fn()}
+				setTriggerDrawerOpen={vi.fn()}
+				setAgentDrawerOpen={vi.fn()}
+				isLoading
+			/>
+		);
+		expect(container.firstChild).toBeNull();
+	});
 });

@@ -363,6 +363,7 @@ export interface SettingsStoreState {
 	autoHideMenuBar: boolean;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
+	dotfilesToggleHidden: boolean;
 	autoRunInactivityTimeoutMin: number;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
@@ -456,6 +457,7 @@ export interface SettingsStoreActions {
 	setAutoHideMenuBar: (value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
+	setDotfilesToggleHidden: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
@@ -599,7 +601,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
-		documentGraphLayoutType: 'mindmap',
+		documentGraphLayoutType: 'hierarchical',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
@@ -629,6 +631,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoHideMenuBar: false,
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
+		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
 		lastSelectedPromptId: null,
 		spellCheck: false,
@@ -745,8 +748,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setRightPanelWidth: (value) => {
-			set({ rightPanelWidth: value });
-			window.maestro.settings.set('rightPanelWidth', value);
+			const clamped = Math.max(384, Math.min(800, value));
+			set({ rightPanelWidth: clamped });
+			window.maestro.settings.set('rightPanelWidth', clamped);
 		},
 
 		setMarkdownEditMode: (value) => {
@@ -1001,7 +1005,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'mindmap';
+			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
@@ -1161,6 +1165,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAutoRunDisabled: (value) => {
 			set({ autoRunDisabled: value });
 			window.maestro.settings.set('autoRunDisabled', value);
+		},
+
+		setDotfilesToggleHidden: (value) => {
+			set({ dotfilesToggleHidden: value });
+			window.maestro.settings.set('dotfilesToggleHidden', value);
 		},
 
 		setAutoRunInactivityTimeoutMin: (value) => {
@@ -1805,7 +1814,10 @@ export async function loadAllSettings(): Promise<void> {
 			);
 
 		if (allSettings['rightPanelWidth'] !== undefined)
-			patch.rightPanelWidth = allSettings['rightPanelWidth'] as number;
+			patch.rightPanelWidth = Math.max(
+				384,
+				Math.min(800, allSettings['rightPanelWidth'] as number)
+			);
 
 		if (allSettings['markdownEditMode'] !== undefined)
 			patch.markdownEditMode = allSettings['markdownEditMode'] as boolean;
@@ -2212,6 +2224,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoRunDisabled'] !== undefined)
 			patch.autoRunDisabled = allSettings['autoRunDisabled'] as boolean;
 
+		if (allSettings['dotfilesToggleHidden'] !== undefined)
+			patch.dotfilesToggleHidden = allSettings['dotfilesToggleHidden'] as boolean;
+
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
@@ -2341,6 +2356,7 @@ export function getSettingsActions() {
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,
+		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
 	};

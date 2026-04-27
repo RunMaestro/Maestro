@@ -54,16 +54,51 @@ import type {
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	NotifyToastKind,
+	NotifyToastColor,
+	NotifyCenterFlashColor,
 	NotifyCenterFlashVariant,
 } from '../types';
 
-const NOTIFY_TOAST_KINDS: readonly NotifyToastKind[] = ['success', 'info', 'warning', 'error'];
-const NOTIFY_FLASH_VARIANTS: readonly NotifyCenterFlashVariant[] = [
-	'success',
-	'info',
-	'warning',
-	'error',
+/** Canonical Toast / Center Flash color set (shared design language). */
+const NOTIFY_COLORS: readonly NotifyCenterFlashColor[] = [
+	'green',
+	'yellow',
+	'orange',
+	'red',
+	'theme',
 ];
+const NOTIFY_FLASH_COLORS = NOTIFY_COLORS;
+const NOTIFY_TOAST_COLORS = NOTIFY_COLORS;
+
+const NOTIFY_TOAST_KINDS: readonly NotifyToastKind[] = ['success', 'info', 'warning', 'error'];
+
+/**
+ * Legacy variant/type → color mapping. Lets older CLI scripts keep working
+ * while we transition external integrations to `--color`.
+ */
+const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor> = {
+	success: 'green',
+	info: 'theme',
+	warning: 'yellow',
+	error: 'red',
+};
+
+/**
+ * Hard upper bound on flash duration for **externally-triggered** flashes
+ * (CLI / web). The renderer-side `notifyCenterFlash` itself is uncapped so
+ * internal in-app callers can still use longer durations if ever needed —
+ * the cap lives at the IPC boundary so external scripts can't stick a
+ * permanent overlay on the user.
+ */
+const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
+
+/**
+ * Hard upper bound on toast duration (seconds) for externally-triggered
+ * toasts. Toasts are corner notifications so the cap is more generous than
+ * Center Flash, but `0` (never auto-dismiss) is rejected — external scripts
+ * that want a sticky toast must opt in explicitly via `dismissible: true`.
+ */
+const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
 import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
@@ -105,6 +140,9 @@ export interface SessionDetailForHandler {
 	inputMode: string;
 	agentSessionId?: string;
 	cwd?: string;
+	/** Currently active AI tab id; surfaced in send_command responses so callers
+	 *  (`maestro-cli dispatch`) can address the same tab on follow-up calls. */
+	activeTabId?: string;
 }
 
 /**
@@ -124,7 +162,9 @@ export interface MessageHandlerCallbacks {
 	executeCommand: (
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		force?: boolean
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -142,7 +182,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null }
 	) => Promise<boolean>;
-	newAITabWithPrompt: (sessionId: string, prompt: string) => Promise<boolean>;
+	newAITabWithPrompt: (
+		sessionId: string,
+		prompt: string
+	) => Promise<{ success: boolean; tabId?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -234,6 +277,11 @@ export interface MessageHandlerCallbacks {
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;
+	createGist: (
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
@@ -523,6 +571,10 @@ export class WebSocketMessageHandler {
 				this.handleSummarizeContext(client, message);
 				break;
 
+			case 'create_gist':
+				this.handleCreateGist(client, message);
+				break;
+
 			case 'get_cue_subscriptions':
 				this.handleGetCueSubscriptions(client, message);
 				break;
@@ -601,9 +653,13 @@ export class WebSocketMessageHandler {
 		const command = message.command as string;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		// Optional explicit tab target. When omitted, the renderer falls back to
+		// the active tab (legacy `send --live` behavior). Used by
+		// `maestro-cli dispatch --session <tabId>` to address a specific tab.
+		const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 		// force=true bypasses the busy-state guard below, allowing callers to
 		// dispatch concurrent writes to an already-running agent. Used by
-		// `maestro-cli send --live --force`.
+		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
 
 		logger.info(
@@ -656,17 +712,29 @@ export class WebSocketMessageHandler {
 			LOG_CONTEXT
 		);
 
+		// Only echo a tabId in command_result when the caller passed one
+		// explicitly. Returning the server's snapshot of `activeTabId` for the
+		// no-tabId path would lie when the user switches active tabs between
+		// the IPC send and IPC receive — callers chaining `dispatch --session
+		// <returnedTabId>` would think they are continuing a conversation that
+		// actually went to a different tab. For deterministic addressing,
+		// callers should use `dispatch --new-tab` (returns the new tabId from
+		// the renderer ack) and then `dispatch --session <tabId>` (echoes back
+		// the caller-supplied authoritative tabId).
+		const resolvedTabId = requestedTabId;
+
 		// Route ALL commands through the renderer for consistent handling
 		// The renderer handles both AI and terminal modes, updating UI and state
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode)
+				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
 						success,
 						sessionId,
+						...(resolvedTabId ? { tabId: resolvedTabId } : {}),
 						requestId: message.requestId,
 					});
 					if (!success) {
@@ -1796,11 +1864,12 @@ export class WebSocketMessageHandler {
 
 		this.callbacks
 			.newAITabWithPrompt(sessionId, prompt)
-			.then((success) => {
+			.then((result) => {
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
-					success,
+					success: result.success,
 					sessionId,
+					...(result.tabId ? { tabId: result.tabId } : {}),
 					requestId: message.requestId,
 				});
 			})
@@ -2440,6 +2509,7 @@ export class WebSocketMessageHandler {
 		'audioFeedbackEnabled',
 		'colorBlindMode',
 		'conductorProfile',
+		'maxOutputLines',
 	]);
 
 	/**
@@ -3136,6 +3206,55 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle create_gist message - publish a session's transcript to a GitHub gist.
+	 * Always replies with `create_gist_result` (even on failure) so waiting
+	 * clients don't hang until their request timeout.
+	 */
+	private handleCreateGist(client: WebClient, message: WebClientMessage): void {
+		const reply = (result: { success: boolean; gistUrl?: string; error?: string }) => {
+			this.send(client, {
+				type: 'create_gist_result',
+				...result,
+				requestId: message.requestId,
+			});
+		};
+
+		const sessionId = message.sessionId;
+		if (typeof sessionId !== 'string' || !sessionId) {
+			reply({ success: false, error: 'Missing sessionId' });
+			return;
+		}
+
+		// Strict validation — avoid truthy coercion so a string like "false"
+		// cannot flip a private gist to public.
+		if (message.description !== undefined && typeof message.description !== 'string') {
+			reply({ success: false, error: 'description must be a string when provided' });
+			return;
+		}
+		if (message.isPublic !== undefined && typeof message.isPublic !== 'boolean') {
+			reply({ success: false, error: 'isPublic must be a boolean when provided' });
+			return;
+		}
+		const description = message.description ?? '';
+		const isPublic = message.isPublic ?? false;
+
+		if (!this.callbacks.createGist) {
+			reply({ success: false, error: 'Gist creation not configured' });
+			return;
+		}
+
+		this.callbacks
+			.createGist(sessionId, description, isPublic)
+			.then((result) => {
+				reply(result);
+			})
+			.catch((error: unknown) => {
+				const msg = error instanceof Error ? error.message : String(error);
+				reply({ success: false, error: `Failed to create gist: ${msg}` });
+			});
+	}
+
+	/**
 	 * Handle get_cue_subscriptions message - fetch Cue subscriptions
 	 */
 	private handleGetCueSubscriptions(client: WebClient, message: WebClientMessage): void {
@@ -3441,8 +3560,11 @@ export class WebSocketMessageHandler {
 	private handleNotifyToast(client: WebClient, message: WebClientMessage): void {
 		const title = typeof message.title === 'string' ? message.title : '';
 		const body = typeof message.message === 'string' ? message.message : '';
-		const rawType = typeof message.toastType === 'string' ? message.toastType : 'info';
+		const rawColor = typeof message.color === 'string' ? message.color : undefined;
+		// Legacy field (kept for back-compat with older CLI scripts).
+		const rawType = typeof message.toastType === 'string' ? message.toastType : undefined;
 		const duration = typeof message.duration === 'number' ? message.duration : undefined;
+		const dismissible = message.dismissible === true;
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
 
 		const sendResult = (success: boolean, error?: string) => {
@@ -3458,13 +3580,45 @@ export class WebSocketMessageHandler {
 			sendResult(false, 'Missing title');
 			return;
 		}
-		if (!NOTIFY_TOAST_KINDS.includes(rawType as NotifyToastKind)) {
-			sendResult(false, `Invalid toast type: ${rawType}`);
-			return;
+
+		// Resolve color: explicit `color` wins over deprecated `toastType`. Default `theme`.
+		let color: NotifyToastColor;
+		if (rawColor !== undefined) {
+			if (!NOTIFY_TOAST_COLORS.includes(rawColor as NotifyToastColor)) {
+				sendResult(
+					false,
+					`Invalid toast color: ${rawColor}. Must be one of: ${NOTIFY_TOAST_COLORS.join(', ')}`
+				);
+				return;
+			}
+			color = rawColor as NotifyToastColor;
+		} else if (rawType !== undefined) {
+			if (!NOTIFY_TOAST_KINDS.includes(rawType as NotifyToastKind)) {
+				sendResult(false, `Invalid toast type: ${rawType}`);
+				return;
+			}
+			color = VARIANT_TO_COLOR[rawType as NotifyCenterFlashVariant];
+		} else {
+			color = 'theme';
 		}
-		if (duration !== undefined && (!Number.isFinite(duration) || duration < 0)) {
-			sendResult(false, 'duration must be a non-negative number of seconds');
-			return;
+
+		// Duration validation: reject 0 (use --dismissible instead) and cap at 60 s.
+		// Skipped entirely when `dismissible: true` (the toast is sticky).
+		if (!dismissible && duration !== undefined) {
+			if (!Number.isFinite(duration) || duration <= 0) {
+				sendResult(
+					false,
+					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)'
+				);
+				return;
+			}
+			if (duration > EXTERNAL_TOAST_MAX_DURATION_SECONDS) {
+				sendResult(
+					false,
+					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_SECONDS} seconds for externally-triggered toasts (use dismissible:true to make it sticky)`
+				);
+				return;
+			}
 		}
 
 		if (!this.callbacks.notifyToast) {
@@ -3476,7 +3630,8 @@ export class WebSocketMessageHandler {
 			.notifyToast({
 				title,
 				message: body,
-				toastType: rawType as NotifyToastKind,
+				color,
+				dismissible,
 				duration,
 				sessionId,
 			})
@@ -3490,7 +3645,8 @@ export class WebSocketMessageHandler {
 	private handleNotifyCenterFlash(client: WebClient, message: WebClientMessage): void {
 		const body = typeof message.message === 'string' ? message.message : '';
 		const detail = typeof message.detail === 'string' ? message.detail : undefined;
-		const rawVariant = typeof message.variant === 'string' ? message.variant : 'success';
+		const rawColor = typeof message.color === 'string' ? message.color : undefined;
+		const rawVariant = typeof message.variant === 'string' ? message.variant : undefined;
 		const duration = typeof message.duration === 'number' ? message.duration : undefined;
 
 		const sendResult = (success: boolean, error?: string) => {
@@ -3506,13 +3662,43 @@ export class WebSocketMessageHandler {
 			sendResult(false, 'Missing message');
 			return;
 		}
-		if (!NOTIFY_FLASH_VARIANTS.includes(rawVariant as NotifyCenterFlashVariant)) {
-			sendResult(false, `Invalid flash variant: ${rawVariant}`);
-			return;
+
+		// Resolve color: explicit `color` wins over deprecated `variant`. Default `theme`.
+		let color: NotifyCenterFlashColor;
+		if (rawColor !== undefined) {
+			if (!NOTIFY_FLASH_COLORS.includes(rawColor as NotifyCenterFlashColor)) {
+				sendResult(
+					false,
+					`Invalid flash color: ${rawColor}. Must be one of: ${NOTIFY_FLASH_COLORS.join(', ')}`
+				);
+				return;
+			}
+			color = rawColor as NotifyCenterFlashColor;
+		} else if (rawVariant !== undefined) {
+			if (!(rawVariant in VARIANT_TO_COLOR)) {
+				sendResult(false, `Invalid flash variant: ${rawVariant}`);
+				return;
+			}
+			color = VARIANT_TO_COLOR[rawVariant as NotifyCenterFlashVariant];
+		} else {
+			color = 'theme';
 		}
-		if (duration !== undefined && (!Number.isFinite(duration) || duration < 0)) {
-			sendResult(false, 'duration must be a non-negative number of milliseconds');
-			return;
+
+		// External flashes must be (0, 5000 ms] — `0` (never auto-dismiss) is rejected so
+		// external scripts can't stick a permanent overlay on the user. In-app callers
+		// using `notifyCenterFlash()` directly are not capped.
+		if (duration !== undefined) {
+			if (!Number.isFinite(duration) || duration <= 0) {
+				sendResult(false, 'duration must be a positive number of milliseconds');
+				return;
+			}
+			if (duration > EXTERNAL_FLASH_MAX_DURATION_MS) {
+				sendResult(
+					false,
+					`duration cannot exceed ${EXTERNAL_FLASH_MAX_DURATION_MS} ms for externally-triggered flashes`
+				);
+				return;
+			}
 		}
 
 		if (!this.callbacks.notifyCenterFlash) {
@@ -3521,12 +3707,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.notifyCenterFlash({
-				message: body,
-				detail,
-				variant: rawVariant as NotifyCenterFlashVariant,
-				duration,
-			})
+			.notifyCenterFlash({ message: body, detail, color, duration })
 			.then((success) => sendResult(success, success ? undefined : 'Failed to show flash'))
 			.catch((error) => sendResult(false, `Failed to show flash: ${error.message}`));
 	}

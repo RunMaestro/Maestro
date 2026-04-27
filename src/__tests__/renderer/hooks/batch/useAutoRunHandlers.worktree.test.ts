@@ -34,12 +34,20 @@ vi.mock('../../../../renderer/stores/notificationStore', async () => {
 	return { ...actual, notifyToast: vi.fn() };
 });
 
-// Mock worktreeDedup
-vi.mock('../../../../renderer/utils/worktreeDedup', () => ({
-	markWorktreePathAsRecentlyCreated: vi.fn(),
-	clearRecentlyCreatedWorktreePath: vi.fn(),
-	isRecentlyCreatedWorktreePath: vi.fn().mockReturnValue(false),
-}));
+// Mock worktreeDedup — stub the side-effecting Set helpers, but keep the
+// pure path-matching helpers (normalizePath, sessionMatchesWorktreeRoot) real
+// so the hook's lookup logic actually runs against the test fixtures.
+vi.mock('../../../../renderer/utils/worktreeDedup', async () => {
+	const actual = await vi.importActual<typeof import('../../../../renderer/utils/worktreeDedup')>(
+		'../../../../renderer/utils/worktreeDedup'
+	);
+	return {
+		...actual,
+		markWorktreePathAsRecentlyCreated: vi.fn(),
+		clearRecentlyCreatedWorktreePath: vi.fn(),
+		isRecentlyCreatedWorktreePath: vi.fn().mockReturnValue(false),
+	};
+});
 
 import { gitService } from '../../../../renderer/services/git';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
@@ -672,6 +680,274 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			const sessions = useSessionStore.getState().sessions;
 			const parent = sessions.find((s) => s.id === 'parent-session-1');
 			expect(parent?.worktreesExpanded).toBe(true);
+		});
+
+		it('uses existingPath and dispatches when branch is already attached to a worktree', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/projects/other/already-attached',
+				currentBranch: 'already-attached',
+				requestedBranch: 'already-attached',
+				branchMismatch: false,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'already-attached',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Session was added against the resolved existing path, not the requested one
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.worktreeBranch === 'already-attached');
+			expect(newSession).toBeDefined();
+			expect(newSession!.cwd).toBe('/projects/other/already-attached');
+
+			// Batch run was dispatched against the new session, not blocked
+			expect(deps.startBatchRun).toHaveBeenCalledOnce();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'info',
+					title: 'Worktree Already Existed',
+				})
+			);
+		});
+
+		it('reuses existing session when alreadyExisted path matches an open session', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			const existingChild = {
+				...session,
+				id: 'wt-existing',
+				cwd: '/projects/other/feat',
+				worktreeBranch: 'feat',
+				parentSessionId: session.id,
+			};
+			useSessionStore.setState({
+				sessions: [session, existingChild as any],
+				activeSessionId: session.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/projects/other/feat',
+				currentBranch: 'feat',
+				requestedBranch: 'feat',
+				branchMismatch: false,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'feat',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// No new session was added — count stays at 2
+			expect(useSessionStore.getState().sessions.length).toBe(2);
+			// Batch run dispatched against the existing session
+			expect(deps.startBatchRun).toHaveBeenCalledOnce();
+			expect(deps.startBatchRun.mock.calls[0][0]).toBe('wt-existing');
+		});
+
+		it('aborts dispatch when reused session is busy or connecting', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			// Existing worktree session is mid-run (state === 'busy').
+			const busyChild = {
+				...session,
+				id: 'wt-busy',
+				cwd: '/projects/other/feat',
+				projectRoot: '/projects/other/feat',
+				worktreeBranch: 'feat',
+				parentSessionId: session.id,
+				state: 'busy',
+			};
+			useSessionStore.setState({
+				sessions: [session, busyChild as any],
+				activeSessionId: session.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/projects/other/feat',
+				currentBranch: 'feat',
+				requestedBranch: 'feat',
+				branchMismatch: false,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'feat',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// No dispatch — busy guard fired.
+			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: 'Target Agent Busy',
+				})
+			);
+			// No new session built either.
+			expect(useSessionStore.getState().sessions.length).toBe(2);
+		});
+
+		it('reuses existing session via projectRoot match even when child cwd has drifted into a subdir', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			// Child session has cd'd into a subdirectory of the worktree, so its
+			// cwd no longer matches the worktree root. projectRoot still does.
+			const existingChild = {
+				...session,
+				id: 'wt-existing',
+				cwd: '/projects/other/feat/src/components',
+				projectRoot: '/projects/other/feat',
+				worktreeBranch: 'feat',
+				parentSessionId: session.id,
+			};
+			useSessionStore.setState({
+				sessions: [session, existingChild as any],
+				activeSessionId: session.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/projects/other/feat',
+				currentBranch: 'feat',
+				requestedBranch: 'feat',
+				branchMismatch: false,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'feat',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// projectRoot match should reuse the existing session — no duplicate.
+			expect(useSessionStore.getState().sessions.length).toBe(2);
+			expect(deps.startBatchRun).toHaveBeenCalledOnce();
+			expect(deps.startBatchRun.mock.calls[0][0]).toBe('wt-existing');
+		});
+
+		it('reuses existing session when paths differ only by trailing slash / duplicate separators', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			// Open child session has a trailing slash + duplicate separator that
+			// raw equality wouldn't match against the resolved existingPath.
+			const existingChild = {
+				...session,
+				id: 'wt-existing',
+				cwd: '/projects/other//feat/',
+				worktreeBranch: 'feat',
+				parentSessionId: session.id,
+			};
+			useSessionStore.setState({
+				sessions: [session, existingChild as any],
+				activeSessionId: session.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+				created: false,
+				alreadyExisted: true,
+				existingPath: '/projects/other/feat',
+				currentBranch: 'feat',
+				requestedBranch: 'feat',
+				branchMismatch: false,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'feat',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Normalized comparison should find the existing session — no duplicate.
+			expect(useSessionStore.getState().sessions.length).toBe(2);
+			expect(deps.startBatchRun).toHaveBeenCalledOnce();
+			expect(deps.startBatchRun.mock.calls[0][0]).toBe('wt-existing');
 		});
 	});
 

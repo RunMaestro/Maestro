@@ -90,7 +90,7 @@ describe('useSettings', () => {
 			documentGraphShowExternalLinks: false,
 			documentGraphMaxNodes: 50,
 			documentGraphPreviewCharLimit: 100,
-			documentGraphLayoutType: 'mindmap',
+			documentGraphLayoutType: 'hierarchical',
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,
