@@ -53,7 +53,7 @@ settings:
   timeout_minutes: number # Default: 30. Max run duration before timeout
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
-  queue_size: number # Default: 0 (no buffering). Max queued events (0-50)
+  queue_size: number # Default: 512. Max queued events (0-10000; 0 disables buffering)
   owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
 
@@ -265,15 +265,15 @@ settings:
 
 ### queue_size
 
-**Default:** `0` (no buffering) | **Type:** integer, 0–50
+**Default:** `512` | **Type:** integer, 0–10000
 
 Maximum number of events that can be queued when all concurrent slots are occupied. Events beyond this limit are dropped.
 
-Default is `0` — events that can't run immediately are discarded. Raise this if you'd rather buffer bursty events than drop them.
+Default is `512` — generous enough to absorb bursty triggers without surfacing overflow toasts. Lower it to backpressure faster; set to `0` to drop any event that can't run immediately.
 
 ```yaml
 settings:
-  queue_size: 20 # Buffer up to 20 events
+  queue_size: 1024 # Buffer up to 1024 events
 ```
 
 ## Validation
@@ -290,7 +290,7 @@ The engine validates your YAML on every load. Common validation errors:
 | `"watch" is required`                   | `file.changed` and `task.pending` events need a glob pattern |
 | `"source_session" is required`          | `agent.completed` events need the name of the source agent   |
 | `"max_concurrent" must be between 1-10` | Keep concurrent runs within the allowed range                |
-| `"queue_size" must be between 0-50`     | Keep queue size within the allowed range                     |
+| `"queue_size" must be between 0-10000`  | Keep queue size within the allowed range                     |
 | `filter key must be string/number/bool` | Filter values only accept primitive types                    |
 
 The inline YAML editor in the Cue Modal shows validation errors in real-time as you type. A green **Valid YAML** indicator at the bottom confirms your config parses correctly.

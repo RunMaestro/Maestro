@@ -458,9 +458,9 @@ function validateSettings(rawSettings: unknown): string[] {
 			typeof settings.queue_size !== 'number' ||
 			!Number.isInteger(settings.queue_size) ||
 			settings.queue_size < 0 ||
-			settings.queue_size > 50
+			settings.queue_size > 10000
 		) {
-			errors.push('"settings.queue_size" must be a non-negative integer between 0 and 50');
+			errors.push('"settings.queue_size" must be a non-negative integer between 0 and 10000');
 		}
 	}
 	if (settings.owner_agent_id !== undefined) {

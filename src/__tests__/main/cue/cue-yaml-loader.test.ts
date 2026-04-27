@@ -200,7 +200,7 @@ subscriptions:
 			expect(result!.settings.timeout_minutes).toBe(30);
 			expect(result!.settings.timeout_on_fail).toBe('break');
 			expect(result!.settings.max_concurrent).toBe(1);
-			expect(result!.settings.queue_size).toBe(0);
+			expect(result!.settings.queue_size).toBe(512);
 		});
 
 		it('defaults enabled to true when not specified', () => {
@@ -915,10 +915,10 @@ subscriptions:
 			);
 		});
 
-		it('rejects queue_size above 50', () => {
+		it('rejects queue_size above 10000', () => {
 			const result = validateCueConfig({
 				subscriptions: [],
-				settings: { queue_size: 51 },
+				settings: { queue_size: 10001 },
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(

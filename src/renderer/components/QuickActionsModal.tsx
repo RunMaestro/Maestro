@@ -1,6 +1,14 @@
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { Search } from 'lucide-react';
-import type { Session, Group, Theme, Shortcut, RightPanelTab, SettingsTab } from '../types';
+import type {
+	Session,
+	SessionState,
+	Group,
+	Theme,
+	Shortcut,
+	RightPanelTab,
+	SettingsTab,
+} from '../types';
 import type { GroupChat } from '../../shared/group-chat-types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
@@ -10,7 +18,9 @@ import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { findNextUnreadSession } from '../utils/tabHelpers';
+import { findNextUnreadSession, getTabDisplayName } from '../utils/tabHelpers';
+import { formatElapsedTime } from '../../shared/formatters';
+import { getStatusColor } from '../utils/theme';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { getOpenInLabel } from '../utils/platformUtils';
 import type { WizardStep } from './Wizard/WizardContext';
@@ -24,6 +34,51 @@ import { buildSessionDeepLink } from '../../shared/deep-link-urls';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 
+// Strip leading emojis (and the whitespace/zero-width joiners that follow them)
+// so a name like "🚀 Atlas" sorts under "A" rather than at the top of the list.
+// We only strip emojis — leading ASCII punctuation like "[wip] Bravo" is left
+// alone so it sorts where the user typed it.
+function alphabetizeKey(label: string): string {
+	const stripped = label.replace(
+		/^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|[\u{FE00}-\u{FE0F}\u{200D}\s])+/u,
+		''
+	);
+	return (stripped || label).toLocaleLowerCase();
+}
+
+interface RunningAgentSubtextProps {
+	info: NonNullable<QuickAction['runningInfo']>;
+	now: number;
+	theme: Theme;
+	isSelected: boolean;
+}
+
+const RunningAgentSubtext = memo(function RunningAgentSubtext({
+	info,
+	now,
+	theme,
+	isSelected,
+}: RunningAgentSubtextProps) {
+	const elapsedMs =
+		info.thinkingStartTime !== undefined ? Math.max(0, now - info.thinkingStartTime) : null;
+	const parts: string[] = [];
+	parts.push(elapsedMs !== null ? formatElapsedTime(elapsedMs) : info.state.toUpperCase());
+	if (info.busyTabName) parts.push(info.busyTabName);
+	if (info.queueCount > 0) {
+		parts.push(`${info.queueCount} queued`);
+	}
+	return (
+		<span
+			className="text-[10px] truncate"
+			style={{
+				color: isSelected ? theme.colors.accentForeground : getStatusColor(info.state, theme),
+			}}
+		>
+			{parts.join(' · ')}
+		</span>
+	);
+});
+
 interface QuickAction {
 	id: string;
 	label: string;
@@ -33,6 +88,15 @@ interface QuickAction {
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
 	// bucket "active" agents at the top with a divider beneath them.
 	isRunningAgent?: boolean;
+	// Agents-mode only: data needed to render rich live status for running agents.
+	// `thinkingStartTime` is recomputed against the modal's tick clock so the elapsed
+	// time updates while the modal stays open.
+	runningInfo?: {
+		state: SessionState;
+		thinkingStartTime?: number;
+		busyTabName?: string;
+		queueCount: number;
+	};
 }
 
 interface QuickActionsModalProps {
@@ -270,6 +334,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const [renamingSession, setRenamingSession] = useState(false);
 	const [renameValue, setRenameValue] = useState('');
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
+	// Re-render once a second while the agent jumper has running agents so the
+	// elapsed-time labels tick in place. We only run the interval when needed.
+	const [now, setNow] = useState(() => Date.now());
+	const hasRunningAgent = mode === 'agents' && sessions.some((s) => s.state !== 'idle');
+	useEffect(() => {
+		if (!hasRunningAgent) return;
+		setNow(Date.now());
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, [hasRunningAgent]);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1789,20 +1863,39 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	// Agent switcher mode: clean names only, no "Jump to:" prefix.
 	// Group chats are intentionally excluded — this modal is the agent jumper.
-	const agentActions: QuickAction[] = sessions.map((s) => ({
-		id: `jump-${s.id}`,
-		label: s.name,
-		action: () => {
-			setActiveSessionId(s.id);
-			if (s.groupId) {
-				setGroups((prev) =>
-					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-				);
-			}
-		},
-		subtext: s.state.toUpperCase(),
-		isRunningAgent: s.state !== 'idle',
-	}));
+	const agentActions: QuickAction[] = sessions.map((s) => {
+		const isRunning = s.state !== 'idle';
+		// Find the AI tab that's currently working. Falls back to the active tab so
+		// the row still has a tab label when the session-level state diverges from
+		// per-tab state (e.g. connecting/error states).
+		const busyTab = isRunning
+			? (s.aiTabs?.find((t) => t.state === 'busy') ?? s.aiTabs?.find((t) => t.id === s.activeTabId))
+			: undefined;
+		const runningInfo = isRunning
+			? {
+					state: s.state,
+					// Prefer the busy tab's start time; fall back to the session-level timer.
+					thinkingStartTime: busyTab?.thinkingStartTime ?? s.thinkingStartTime,
+					busyTabName: busyTab ? getTabDisplayName(busyTab) : undefined,
+					queueCount: s.executionQueue?.length ?? 0,
+				}
+			: undefined;
+		return {
+			id: `jump-${s.id}`,
+			label: s.name,
+			action: () => {
+				setActiveSessionId(s.id);
+				if (s.groupId) {
+					setGroups((prev) =>
+						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+					);
+				}
+			},
+			subtext: isRunning ? undefined : s.state.toUpperCase(),
+			isRunningAgent: isRunning,
+			runningInfo,
+		};
+	});
 
 	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
 
@@ -1820,11 +1913,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			return a.label.toLowerCase().includes(searchLower);
 		})
 		.sort((a, b) => {
-			// In agents mode, bucket running agents above idle ones; alphabetical within each bucket.
+			// In agents mode, bucket running agents above idle ones; alphabetize within
+			// each bucket while skipping any leading emoji or punctuation so that
+			// "🚀 Atlas" sorts next to "Atlas" rather than at the top of the list.
 			if (mode === 'agents') {
 				const aRunning = a.isRunningAgent ? 1 : 0;
 				const bRunning = b.isRunningAgent ? 1 : 0;
 				if (aRunning !== bRunning) return bRunning - aRunning;
+				return alphabetizeKey(a.label).localeCompare(alphabetizeKey(b.label));
 			}
 			return a.label.localeCompare(b.label);
 		});
@@ -2023,9 +2119,29 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 										) : (
 											<div className="flex-shrink-0 w-5 h-5" />
 										)}
-										<div className="flex flex-col flex-1">
-											<span className="font-medium">{a.label}</span>
-											{a.subtext && <span className="text-[10px] opacity-50">{a.subtext}</span>}
+										<div className="flex flex-col flex-1 min-w-0">
+											<div className="flex items-center gap-2 min-w-0">
+												{a.runningInfo && (
+													<span
+														className="flex-shrink-0 inline-block w-2 h-2 rounded-full animate-pulse"
+														style={{
+															backgroundColor: getStatusColor(a.runningInfo.state, theme),
+														}}
+														aria-hidden="true"
+													/>
+												)}
+												<span className="font-medium truncate">{a.label}</span>
+											</div>
+											{a.runningInfo ? (
+												<RunningAgentSubtext
+													info={a.runningInfo}
+													now={now}
+													theme={theme}
+													isSelected={i === selectedIndex}
+												/>
+											) : (
+												a.subtext && <span className="text-[10px] opacity-50">{a.subtext}</span>
+											)}
 										</div>
 										{a.shortcut && (
 											<span className="text-xs font-mono opacity-60">

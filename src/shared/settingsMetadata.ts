@@ -503,6 +503,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'advanced',
 	},
+	dotfilesToggleHidden: {
+		description:
+			'Hide the ".files" (show/hide dotfiles) button in the file explorer toolbar. Intended for corporate/managed installs where dotfiles should remain hidden.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	autoRunInactivityTimeoutMin: {
 		description:
 			'Minutes of no agent output before the Auto Run watchdog considers a task stalled and force-kills it. Set to 0 to disable the watchdog (unlimited).',

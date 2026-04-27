@@ -261,10 +261,13 @@ describe('ancestor cue.yaml fallback', () => {
 		engine.stop();
 	});
 
-	it('keeps the local config when it has its own subscriptions (no ancestor takeover)', () => {
-		// The ancestor fallback is an addition, not a replacement. A local
-		// file with real subs must win over the ancestor to avoid silently
-		// mixing two unrelated pipelines.
+	it('keeps an unowned local sub AND merges agent_id-targeted ancestor subs', () => {
+		// Local subs that don't address any specific agent (no agent_id) belong
+		// to the local file's own session; they must NOT be blown away by the
+		// ancestor walk. But agent_id-targeted ancestor subs aimed at this
+		// session must be merged in — without that, a session that has its own
+		// local pipeline cannot also participate in a cross-root pipeline that
+		// lives at a higher ancestor (the trigger silently never arms).
 		const localConfig: CueConfig = {
 			subscriptions: [
 				{
@@ -280,6 +283,98 @@ describe('ancestor cue.yaml fallback', () => {
 				max_concurrent: 1,
 				queue_size: 10,
 			},
+		};
+		loaderByPath.set(AGENT1_ROOT, { ok: true, config: localConfig, warnings: [] });
+		loaderByPath.set(ANCESTOR_ROOT, {
+			ok: true,
+			config: ancestorConfigWithSubsForBothAgents(),
+			warnings: [],
+		});
+		ancestorLookup.set(AGENT1_ROOT, ANCESTOR_ROOT);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		expect(agent1View?.subscriptions.map((s) => s.name).sort()).toEqual([
+			'Pipeline 1-cmd-a',
+			'local-only',
+		]);
+
+		engine.stop();
+	});
+
+	it('merges ancestor-targeted subs into a session that already has local subs', () => {
+		// Regression for the second-degree vanishing-trigger bug: a session
+		// (Cyber Stocks) had a non-empty LOCAL cue.yaml AND an ancestor cue.yaml
+		// at a higher root (e.g. /Users/pedram) where another pipeline targeted
+		// it via agent_id. Before the merge, the local file short-circuited the
+		// ancestor walk and the cross-root sub never armed — getGraphData
+		// reported only the local subs, so the editor reconstructed the parent
+		// pipeline without that trigger.
+		const localConfig: CueConfig = {
+			subscriptions: [
+				{
+					name: 'local-Tech',
+					event: 'time.scheduled',
+					enabled: true,
+					prompt: 'analyze',
+					agent_id: SESSION_AGENT_1.id,
+					schedule_times: ['06:00'],
+					pipeline_name: 'Local Pipeline',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+		loaderByPath.set(AGENT1_ROOT, { ok: true, config: localConfig, warnings: [] });
+		loaderByPath.set(ANCESTOR_ROOT, {
+			ok: true,
+			config: ancestorConfigWithSubsForBothAgents(),
+			warnings: [],
+		});
+		ancestorLookup.set(AGENT1_ROOT, ANCESTOR_ROOT);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		// Local sub is preserved; the ancestor's agent_id-targeted sub is merged in.
+		expect(agent1View?.subscriptions.map((s) => s.name).sort()).toEqual([
+			'Pipeline 1-cmd-a',
+			'local-Tech',
+		]);
+
+		engine.stop();
+	});
+
+	it('honors no_ancestor_fallback when local has its own subs', () => {
+		// Opt-out flag must suppress the merge so a user who deliberately
+		// isolates a local pipeline doesn't pick up cross-root subs.
+		const localConfig: CueConfig = {
+			subscriptions: [
+				{
+					name: 'local-only',
+					event: 'cli.trigger',
+					enabled: true,
+					prompt: 'local work',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+			no_ancestor_fallback: true,
 		};
 		loaderByPath.set(AGENT1_ROOT, { ok: true, config: localConfig, warnings: [] });
 		loaderByPath.set(ANCESTOR_ROOT, {

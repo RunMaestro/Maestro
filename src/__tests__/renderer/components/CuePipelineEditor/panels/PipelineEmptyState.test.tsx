@@ -97,7 +97,7 @@ describe('PipelineEmptyState', () => {
 			/>
 		);
 		expect(screen.getByTestId('pipeline-empty-state-loading')).toBeTruthy();
-		expect(screen.getByLabelText('Loading pipelines')).toBeTruthy();
+		expect(screen.getByTestId('loader2-icon')).toBeTruthy();
 		expect(screen.queryByText('Create your first pipeline')).toBeNull();
 	});
 

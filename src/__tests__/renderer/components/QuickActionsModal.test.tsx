@@ -1883,6 +1883,99 @@ describe('QuickActionsModal', () => {
 
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
+
+		it('shows elapsed time, busy tab name, and queue count for running agents', () => {
+			const startedAt = Date.now() - 65_000; // 1m 5s ago
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: startedAt,
+						aiTabs: [
+							{
+								id: 'tab-a',
+								agentSessionId: null,
+								name: 'fix login',
+								starred: false,
+								logs: [],
+								inputValue: '',
+								stagedImages: [],
+								createdAt: 0,
+								state: 'busy',
+								thinkingStartTime: startedAt,
+							},
+						],
+						activeTabId: 'tab-a',
+						executionQueue: [
+							{
+								id: 'q-1',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'next',
+							},
+							{
+								id: 'q-2',
+								timestamp: 0,
+								tabId: 'tab-a',
+								type: 'message',
+								text: 'and another',
+							},
+						],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.textContent).toMatch(/1m\s+5s/);
+			expect(dialog.textContent).toContain('fix login');
+			expect(dialog.textContent).toContain('2 queued');
+			// Idle-style "BUSY" subtext should not appear when we're showing rich info.
+			expect(dialog.textContent).not.toContain('BUSY');
+		});
+
+		it('omits queue count when there are no queued items', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({
+						id: 'session-1',
+						name: 'Bravo',
+						state: 'busy',
+						thinkingStartTime: Date.now() - 5_000,
+						executionQueue: [],
+					}),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByRole('dialog').textContent).not.toMatch(/queued/);
+		});
+
+		it('alphabetizes by skipping leading emojis', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 's1', name: 'Charlie' }),
+					createMockSession({ id: 's2', name: '🚀 Atlas' }),
+					createMockSession({ id: 's3', name: '🎯 Bravo' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent ?? '');
+			const atlasIdx = labels.findIndex((l) => l.includes('Atlas'));
+			const bravoIdx = labels.findIndex((l) => l.includes('Bravo'));
+			const charlieIdx = labels.findIndex((l) => l.includes('Charlie'));
+
+			expect(atlasIdx).toBeLessThan(bravoIdx);
+			expect(bravoIdx).toBeLessThan(charlieIdx);
+		});
 	});
 
 	describe('Move to First/Last Position with browser tabs', () => {

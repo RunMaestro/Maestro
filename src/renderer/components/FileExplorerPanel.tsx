@@ -47,6 +47,7 @@ import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 import { logger } from '../utils/logger';
+import { MAESTRO_DIR } from '../../shared/maestro-paths';
 
 /**
  * RetryCountdown component - shows time remaining until auto-retry.
@@ -505,6 +506,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const compact = rightPanelWidth < 340;
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
@@ -960,13 +962,17 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		}
 	}, [fileTreeFilterOpen, setFileTreeFilterOpen, setFileTreeFilter, updateLayerHandler]);
 
-	// Filter hidden files from the tree based on showHiddenFiles setting
+	// Filter hidden files from the tree based on showHiddenFiles setting.
+	// Invariant: `.maestro` is ALWAYS visible regardless of the dotfiles toggle —
+	// it's the project's Maestro workspace (playbooks, cue config, etc.) and
+	// hiding it strands users who don't realize their config is "hidden". This
+	// has regressed before; if you change the dotfile filter, keep the carve-out.
 	const filterHiddenFiles = useCallback(
 		(nodes: FileNode[]): FileNode[] => {
 			if (!nodes) return [];
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter((node) => !node.name.startsWith('.'))
+				.filter((node) => !node.name.startsWith('.') || node.name === MAESTRO_DIR)
 				.map((node) => ({
 					...node,
 					children: node.children ? filterHiddenFiles(node.children) : undefined,
@@ -1240,8 +1246,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						Find
 					</button>
-					{/* Open in file manager */}
-					{!session.sshRemote && (
+					{/* Open in file manager — local sessions only; SSH remote paths can't be opened locally. */}
+					{!sshRemoteId && (
 						<button
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
@@ -1258,23 +1264,25 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							Open
 						</button>
 					)}
-					{/* Show/hide dotfiles */}
-					<button
-						onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-						style={{
-							color: theme.colors.accent,
-							border: `1px solid ${theme.colors.accent}40`,
-							backgroundColor: showHiddenFiles
-								? `${theme.colors.accent}25`
-								: `${theme.colors.accent}15`,
-						}}
-						title={showHiddenFiles ? 'Hide dotfiles' : 'Show dotfiles'}
-					>
-						{!compact &&
-							(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
-						Dotfiles
-					</button>
+					{/* Show/hide dotfiles — can be force-hidden via the dotfilesToggleHidden setting (corporate installs). */}
+					{!dotfilesToggleHidden && (
+						<button
+							onClick={() => setShowHiddenFiles(!showHiddenFiles)}
+							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							style={{
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+								backgroundColor: showHiddenFiles
+									? `${theme.colors.accent}25`
+									: `${theme.colors.accent}15`,
+							}}
+							title={showHiddenFiles ? 'Hide dotfiles' : 'Show dotfiles'}
+						>
+							{!compact &&
+								(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
+							.files
+						</button>
+					)}
 					{/* Refresh */}
 					<button
 						ref={refreshButtonRef}

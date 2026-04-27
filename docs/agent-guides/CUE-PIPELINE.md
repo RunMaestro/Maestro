@@ -44,7 +44,7 @@ Canonical types now live in `src/shared/cue/contracts.ts` (re-exported via `src/
 
 - `CueEventType` - Union of all 8 trigger types (including `app.startup`)
 - `CueSubscription` - A trigger-prompt pairing with optional filter, fan-out, schedule, watch pattern, etc.
-- `CueSettings` - Global config: `timeout_minutes` (default 30), `timeout_on_fail` ("break"/"continue"), `max_concurrent` (default 1), `queue_size` (default 0)
+- `CueSettings` - Global config: `timeout_minutes` (default 30), `timeout_on_fail` ("break"/"continue"), `max_concurrent` (default 1), `queue_size` (default 512, max 10000)
 - `CueConfig` - Top-level parsed YAML: `{ subscriptions, settings }`
 - `CueEvent` - An event instance with id, type, timestamp, triggerName, payload
 - `CueRunResult` - Result of a completed/failed run (stdout, stderr, exitCode, durationMs, etc.)

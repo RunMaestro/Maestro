@@ -482,7 +482,10 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Dotfiles Toggle (#757)', () => {
-		it('hides .maestro when showHiddenFiles is false', () => {
+		it('keeps .maestro visible when showHiddenFiles is false (other dotfiles still hidden)', () => {
+			// Invariant: `.maestro` is the project's Maestro workspace and must
+			// never be hidden by the dotfiles toggle. Other dotfiles (e.g. `.git`)
+			// are still filtered out. See FileExplorerPanel.filterHiddenFiles.
 			const treeWithMaestro = [
 				{ name: '.maestro', type: 'folder' as const, children: [] },
 				{ name: '.git', type: 'folder' as const, children: [] },
@@ -495,7 +498,7 @@ describe('FileExplorerPanel', () => {
 					filteredFileTree={treeWithMaestro}
 				/>
 			);
-			expect(screen.queryByText('.maestro')).not.toBeInTheDocument();
+			expect(screen.getByText('.maestro')).toBeInTheDocument();
 			expect(screen.queryByText('.git')).not.toBeInTheDocument();
 			expect(screen.getByText('src')).toBeInTheDocument();
 		});
@@ -516,22 +519,35 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText('src')).toBeInTheDocument();
 		});
 
-		it('renders the toggle button labeled "Dotfiles"', () => {
+		it('renders the toggle button labeled ".files"', () => {
 			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
-			expect(screen.getByText('Dotfiles')).toBeInTheDocument();
+			expect(screen.getByText('.files')).toBeInTheDocument();
 			expect(screen.getByTitle('Show dotfiles')).toBeInTheDocument();
 		});
 
 		it('exposes a "Hide dotfiles" tooltip while dotfiles are shown', () => {
 			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={true} />);
-			expect(screen.getByText('Dotfiles')).toBeInTheDocument();
+			expect(screen.getByText('.files')).toBeInTheDocument();
 			expect(screen.getByTitle('Hide dotfiles')).toBeInTheDocument();
 		});
 
 		it('toggles showHiddenFiles when clicked', () => {
 			render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
-			fireEvent.click(screen.getByText('Dotfiles'));
+			fireEvent.click(screen.getByText('.files'));
 			expect(defaultProps.setShowHiddenFiles).toHaveBeenCalledWith(true);
+		});
+
+		it('hides the .files toggle when dotfilesToggleHidden setting is true', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			const prev = useSettingsStore.getState().dotfilesToggleHidden;
+			useSettingsStore.setState({ dotfilesToggleHidden: true });
+			try {
+				render(<FileExplorerPanel {...defaultProps} showHiddenFiles={false} />);
+				expect(screen.queryByText('.files')).not.toBeInTheDocument();
+				expect(screen.queryByTitle('Show dotfiles')).not.toBeInTheDocument();
+			} finally {
+				useSettingsStore.setState({ dotfilesToggleHidden: prev });
+			}
 		});
 	});
 
