@@ -484,6 +484,59 @@ describe('TabBar', () => {
 			// No name or agentSessionId yet — shows "New Session"
 			expect(screen.getByText('New Session')).toBeInTheDocument();
 		});
+
+		it('shows "New Session" until the tab has its own agentSessionId, even when sessionAgentSessionId is set', () => {
+			// Regression: previously every freshly-created OpenCode tab inherited the
+			// most recent sibling tab's session id (all tabs displayed "SES_2387").
+			// A tab without its own agentSessionId must show "New Session" regardless
+			// of session-level state or awaiting flags — the title is strictly per-tab.
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: undefined,
+					awaitingSessionId: true,
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					sessionAgentSessionId="ses_4d585107dffeO9bO3HvMdvLYyC"
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByText('New Session')).toBeInTheDocument();
+		});
+
+		it('prefers tab.agentSessionId over sessionAgentSessionId when both are set', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: 'tab1abc-1111-2222-3333-444444444444',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					sessionAgentSessionId="050bb5f5-aaaa-bbbb-cccc-dddddddddddd"
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(screen.getByText('TAB1ABC')).toBeInTheDocument();
+		});
 	});
 
 	describe('tab selection', () => {

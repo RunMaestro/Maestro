@@ -114,6 +114,12 @@ export const fuzzyMatchWithScore = (
 			score += 50;
 		}
 
+		// Strong bonus for prefix match — a direct match from the start
+		// should dominate any fuzzy match of comparable length.
+		if (lowerText.startsWith(lowerQuery)) {
+			score += 200;
+		}
+
 		// Bonus for exact match
 		if (lowerText === lowerQuery) {
 			score += 100;

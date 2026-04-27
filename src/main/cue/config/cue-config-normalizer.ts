@@ -73,6 +73,19 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	}
 }
 
+/**
+ * Pad single-digit hours to `HH:MM`. The validator accepts `H:MM` for user
+ * convenience, but the scheduled trigger source compares times as zero-padded
+ * strings, so unpadded values would silently never match the wall clock.
+ * Leaves anything that doesn't look like `H:MM` / `HH:MM` untouched (the
+ * validator handles those).
+ */
+function padScheduleTime(time: string): string {
+	const match = time.match(/^(\d{1,2}):(\d{2})$/);
+	if (!match) return time;
+	return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
 function normalizeFilter(
 	filterValue: unknown
 ): Record<string, string | number | boolean> | undefined {
@@ -204,7 +217,7 @@ function normalizeSubscription(
 		schedule_times:
 			Array.isArray(sub.schedule_times) &&
 			sub.schedule_times.every((value: unknown) => typeof value === 'string')
-				? (sub.schedule_times as string[])
+				? (sub.schedule_times as string[]).map(padScheduleTime)
 				: undefined,
 		schedule_days:
 			Array.isArray(sub.schedule_days) &&
@@ -235,6 +248,11 @@ function normalizeSubscription(
 			Array.isArray(sub.fan_out) && sub.fan_out.every((value: unknown) => typeof value === 'string')
 				? (sub.fan_out as string[])
 				: undefined,
+		fan_out_ids:
+			Array.isArray(sub.fan_out_ids) &&
+			sub.fan_out_ids.every((value: unknown) => typeof value === 'string')
+				? (sub.fan_out_ids as string[])
+				: undefined,
 		fan_out_prompts: resolvedFanOutPrompts,
 		fan_out_prompt_files: fanOutPromptFiles,
 		filter: normalizeFilter(sub.filter),
@@ -246,8 +264,16 @@ function normalizeSubscription(
 				: undefined,
 		agent_id: typeof sub.agent_id === 'string' ? sub.agent_id : undefined,
 		label: typeof sub.label === 'string' ? sub.label : undefined,
+		// Defensive bounds: `loadCueConfig` skips validation, and a `0` here
+		// expires every fan-in instantly. Non-positive / non-integer values
+		// fall back to undefined → tracker uses settings.timeout_minutes default.
 		fan_in_timeout_minutes:
-			typeof sub.fan_in_timeout_minutes === 'number' ? sub.fan_in_timeout_minutes : undefined,
+			typeof sub.fan_in_timeout_minutes === 'number' &&
+			Number.isFinite(sub.fan_in_timeout_minutes) &&
+			Number.isInteger(sub.fan_in_timeout_minutes) &&
+			sub.fan_in_timeout_minutes >= 1
+				? sub.fan_in_timeout_minutes
+				: undefined,
 		fan_in_timeout_on_fail:
 			sub.fan_in_timeout_on_fail === 'break' || sub.fan_in_timeout_on_fail === 'continue'
 				? sub.fan_in_timeout_on_fail
@@ -284,13 +310,36 @@ function normalizeSubscription(
 			typeof sub.pipeline_name === 'string' && sub.pipeline_name.length > 0
 				? sub.pipeline_name
 				: undefined,
+		// Passthrough the visual-node identifiers so the renderer can
+		// distinguish "two visual nodes pointing at the same agent" from
+		// "one shared node with multiple inputs" on round-trip. Without
+		// this passthrough the normalizer silently strips them and the
+		// loader falls back to dedup-by-sessionName, re-merging visually
+		// distinct nodes into one — the exact bug `target_node_key` was
+		// added to fix.
+		target_node_key:
+			typeof sub.target_node_key === 'string' && sub.target_node_key.length > 0
+				? sub.target_node_key
+				: undefined,
+		fan_out_node_keys:
+			Array.isArray(sub.fan_out_node_keys) &&
+			sub.fan_out_node_keys.every((value: unknown) => typeof value === 'string')
+				? (sub.fan_out_node_keys as string[])
+				: undefined,
 	};
 }
 
 function normalizeSettings(rawSettings: Record<string, unknown> | undefined): CueSettings {
 	return {
+		// Reject non-positive / non-finite / non-integer values defensively. The
+		// validator rejects them too, but `loadCueConfig` (the legacy entry point)
+		// skips validation, and a `0` here cascades into a `0 ms` run timeout
+		// that aborts every dispatch immediately.
 		timeout_minutes:
-			typeof rawSettings?.timeout_minutes === 'number'
+			typeof rawSettings?.timeout_minutes === 'number' &&
+			Number.isFinite(rawSettings.timeout_minutes) &&
+			Number.isInteger(rawSettings.timeout_minutes) &&
+			rawSettings.timeout_minutes >= 1
 				? rawSettings.timeout_minutes
 				: DEFAULT_CUE_SETTINGS.timeout_minutes,
 		timeout_on_fail:

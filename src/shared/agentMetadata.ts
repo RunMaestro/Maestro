@@ -14,7 +14,7 @@ import type { AgentId } from './agentIds';
  *
  * @internal Use getAgentDisplayName() instead of importing directly.
  */
-const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
+export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	terminal: 'Terminal',
 	'claude-code': 'Claude Code',
 	codex: 'Codex',
@@ -22,7 +22,7 @@ const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
-	aider: 'Aider',
+	'copilot-cli': 'Copilot-CLI',
 };
 
 /**
@@ -68,7 +68,11 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
  *
  * @internal Use isBetaAgent() instead of importing directly.
  */
-const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['opencode', 'factory-droid']);
+export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'opencode',
+	'factory-droid',
+	'copilot-cli',
+]);
 
 /**
  * Check whether an agent is in beta status.

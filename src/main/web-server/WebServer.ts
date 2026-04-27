@@ -97,6 +97,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	GetGitStatusCallback,
@@ -121,6 +122,8 @@ import type {
 	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -621,6 +624,14 @@ export class WebServer {
 		this.callbackRegistry.setGenerateDirectorNotesSynopsisCallback(callback);
 	}
 
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbackRegistry.setNotifyToastCallback(callback);
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -841,8 +852,13 @@ export class WebServer {
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
-			createSession: async (name: string, toolType: string, cwd: string, groupId?: string) =>
-				this.callbackRegistry.createSession(name, toolType, cwd, groupId),
+			createSession: async (
+				name: string,
+				toolType: string,
+				cwd: string,
+				groupId?: string,
+				config?: CreateSessionConfig
+			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			renameSession: async (sessionId: string, newName: string) =>
 				this.callbackRegistry.renameSession(sessionId, newName),
@@ -888,6 +904,8 @@ export class WebServer {
 				Promise.resolve({ success: false, pid: 0 }),
 			killTerminalForWeb: (sessionId: string) =>
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
+			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
+			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 		});
 	}
 

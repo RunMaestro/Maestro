@@ -33,7 +33,10 @@ export class MaestroClient {
 			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
-		const url = `ws://localhost:${info.port}/${info.token}/ws`;
+		// Use 127.0.0.1 instead of `localhost` — Node 18's default DNS resolution
+		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
+		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
+		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;

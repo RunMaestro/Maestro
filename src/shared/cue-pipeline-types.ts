@@ -17,6 +17,13 @@ export type { CueCommand, CueCommandMode, CueEventType } from './cue';
 /** Cue brand color — single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
 
+/**
+ * Accent color used for command nodes in the pipeline canvas. Distinct from
+ * the per-pipeline palette so commands read as "infrastructure" alongside
+ * agents, which carry their pipeline color.
+ */
+export const COMMAND_NODE_COLOR = '#64748b';
+
 /** 12 visually distinct colors suitable for dark backgrounds */
 export const PIPELINE_COLORS: string[] = [
 	'#06b6d4', // cyan
@@ -82,6 +89,13 @@ export interface AgentNodeData {
 	fanInTimeoutMinutes?: number;
 	/** Per-node fan-in timeout-on-fail override. 'break' waits for all, 'continue' fires with partial data. */
 	fanInTimeoutOnFail?: 'break' | 'continue';
+	/** Stable per-instance identifier (UUID), generated when the node is
+	 *  created in the editor. Persisted in YAML via `target_node_key` /
+	 *  `fan_out_node_keys` on the owning subscription so two visual nodes
+	 *  pointing at the same agent session round-trip as separate nodes
+	 *  instead of being merged by sessionName. Same key across multiple
+	 *  incoming edges = explicit fan-in (single visual node, multi-input). */
+	nodeKey?: string;
 }
 
 /**
@@ -106,6 +120,10 @@ export interface CommandNodeData {
 	owningSessionId: string;
 	/** Cached owning session name for display. */
 	owningSessionName: string;
+	/** Stable per-instance identifier (UUID). See `AgentNodeData.nodeKey`
+	 *  for the round-trip semantics — the same `target_node_key` field on
+	 *  the subscription carries this value to/from YAML. */
+	nodeKey?: string;
 }
 
 /**

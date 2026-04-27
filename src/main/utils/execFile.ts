@@ -11,8 +11,10 @@ export interface ExecOptions {
 	timeout?: number;
 }
 
-// Maximum buffer size for command output (10MB)
-const EXEC_MAX_BUFFER = 10 * 1024 * 1024;
+// Maximum buffer size for command output (100MB).
+// Sized to comfortably hold large remote-fs reads (e.g., multi-MB session
+// transcripts streamed back over SSH via `cat`) without truncating mid-file.
+const EXEC_MAX_BUFFER = 100 * 1024 * 1024;
 
 export interface ExecResult {
 	stdout: string;
@@ -33,7 +35,7 @@ export interface ExecResult {
  *   to prevent percent-sign escaping issues in arguments
  * - Executables (.exe, .com) can run directly
  */
-function needsWindowsShell(command: string): boolean {
+export function needsWindowsShell(command: string): boolean {
 	const lowerCommand = command.toLowerCase();
 
 	// Batch files always need shell

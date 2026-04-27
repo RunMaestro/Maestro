@@ -2053,8 +2053,15 @@ export function useBatchProcessor({
 
 			// 7. Clean up tracking
 			timeTracking.stopTracking(sessionId);
-			delete stopRequestedRefs.current[sessionId];
-
+			// Intentionally do NOT delete stopRequestedRefs[sessionId] here. The async
+			// processing loop is still mid-iteration (its in-flight processTask is about
+			// to reject because we just killed the process). It re-checks the stop flag
+			// at the next iteration boundary (lines ~880, ~891, ~997). Deleting the flag
+			// synchronously here turns it back into `undefined` (falsy) before the loop
+			// observes it, so the loop spawns a fresh agent for the next task and the
+			// "kill" effectively does nothing. The loop's natural-completion cleanup at
+			// the end of startBatchRun handles the delete once it has actually exited.
+			//
 			// 8. Allow system to sleep
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 		},

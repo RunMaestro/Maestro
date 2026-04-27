@@ -131,6 +131,7 @@ export function createCueTaskScanner(config: CueTaskScannerConfig): () => void {
 
 				// On first scan, seed the hash but don't fire events
 				if (prevHash === undefined) {
+					onLog('info', `[CUE] "${triggerName}" seeded task file: ${relPath}`);
 					continue;
 				}
 

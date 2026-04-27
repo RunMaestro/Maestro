@@ -5,7 +5,7 @@
  * node type, and provides header chrome (expand/collapse, delete).
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type {
@@ -62,7 +62,7 @@ interface NodeConfigPanelProps {
 	isRunning?: boolean;
 }
 
-export function NodeConfigPanel({
+function NodeConfigPanelInner({
 	selectedNode,
 	theme,
 	pipelines,
@@ -209,6 +209,26 @@ export function NodeConfigPanel({
 						<>
 							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
 								{agentData.sessionName}
+								{(() => {
+									// Mirror the canvas's "(N)" suffix that AgentNode shows
+									// when multiple visual instances share a sessionId
+									// within the owning pipeline (see pipelineGraph.ts:254-257).
+									// Without this, the panel header shows just "Pedsidian"
+									// while the canvas node shows "Pedsidian (5)" — making
+									// it ambiguous which instance the user is editing.
+									const owningPipeline = pipelines.find((p) =>
+										p.nodes.some((n) => n.id === selectedNode.id)
+									);
+									if (!owningPipeline) return '';
+									const sameSessionAgents = owningPipeline.nodes.filter(
+										(n) =>
+											n.type === 'agent' &&
+											(n.data as AgentNodeData).sessionId === agentData.sessionId
+									);
+									if (sameSessionAgents.length <= 1) return '';
+									const idx = sameSessionAgents.findIndex((n) => n.id === selectedNode.id);
+									return idx >= 0 ? ` (${idx + 1})` : '';
+								})()}
 							</span>
 							<span
 								style={{
@@ -339,3 +359,6 @@ export function NodeConfigPanel({
 		</div>
 	);
 }
+
+// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+export const NodeConfigPanel = React.memo(NodeConfigPanelInner);

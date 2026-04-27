@@ -115,7 +115,12 @@ describe('usePipelineLayout', () => {
 		);
 	});
 
-	it('cleanup clears timer on unmount', () => {
+	it('unmount flushes a pending debounced write and clears the timer', () => {
+		// Cancelling the timer outright on unmount used to drop writes that
+		// landed during the modal-close window — most painfully the post-save
+		// `writtenRoots` update, which left the next mount unable to clear
+		// orphaned cue.yaml files. Unmount now flushes the pending write
+		// synchronously and then clears the timer so it never fires again.
 		const params = createDefaultParams();
 		const { result, unmount } = renderHook(() => usePipelineLayout(params));
 
@@ -123,13 +128,20 @@ describe('usePipelineLayout', () => {
 			result.current.persistLayout();
 		});
 
+		// Not yet — still inside the 500ms debounce window.
+		expect((window as any).maestro.cue.savePipelineLayout).not.toHaveBeenCalled();
+
 		unmount();
+
+		// Unmount flushed the pending write synchronously.
+		expect((window as any).maestro.cue.savePipelineLayout).toHaveBeenCalledTimes(1);
 
 		act(() => {
 			vi.advanceTimersByTime(500);
 		});
 
-		expect((window as any).maestro.cue.savePipelineLayout).not.toHaveBeenCalled();
+		// Timer was cleared — no second call after the debounce window elapses.
+		expect((window as any).maestro.cue.savePipelineLayout).toHaveBeenCalledTimes(1);
 	});
 
 	it('restores layout from saved state using graphSessionsToPipelines and mergePipelinesWithSavedLayout', async () => {

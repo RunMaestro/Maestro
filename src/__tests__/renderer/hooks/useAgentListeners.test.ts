@@ -213,6 +213,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 // ============================================================================
@@ -383,6 +384,58 @@ describe('useAgentListeners', () => {
 				'sess-1',
 				expect.any(Number)
 			);
+		});
+
+		it('removes a recovered agent error log when successful data resumes', () => {
+			const deps = createMockDeps();
+			const recoveredError: AgentError = {
+				type: 'permission_denied',
+				message: 'Permission denied. Check file and directory permissions.',
+				recoverable: false,
+				agentId: 'copilot-cli',
+				timestamp: 1700000000000,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'error',
+				toolType: 'copilot-cli',
+				agentError: recoveredError,
+				agentErrorTabId: 'tab-1',
+				agentErrorPaused: true,
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						agentError: recoveredError,
+						logs: [
+							{
+								id: 'log-error',
+								timestamp: recoveredError.timestamp,
+								source: 'error',
+								text: recoveredError.message,
+								agentError: recoveredError,
+							},
+						],
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-1-ai-tab-1', 'Final answer');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.agentError).toBeUndefined();
+			expect(updated?.agentErrorTabId).toBeUndefined();
+			expect(updated?.agentErrorPaused).toBe(false);
+			expect(updated?.state).toBe('busy');
+			expect(updated?.aiTabs[0]?.agentError).toBeUndefined();
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+			expect(window.maestro.agentError.clearError).toHaveBeenCalledWith('sess-1');
 		});
 	});
 
@@ -962,6 +1015,237 @@ describe('useAgentListeners', () => {
 	});
 
 	// ========================================================================
+	// onThinkingChunk handler
+	// ========================================================================
+
+	describe('onThinkingChunk', () => {
+		it('removes hidden progress once visible output arrives', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						showThinking: 'off',
+						logs: [
+							{
+								id: 'hidden-progress:tab-1',
+								timestamp: 1700000000000,
+								source: 'system',
+								text: 'Thinking through the next step...',
+							},
+						],
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-1-ai-tab-1', 'Visible response');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+		});
+	});
+
+	// ========================================================================
+	// onToolExecution handler
+	// ========================================================================
+
+	describe('onToolExecution', () => {
+		it('does not emit tool logs when thinking is hidden', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'off' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'view',
+				state: { status: 'running', input: { path: 'src/renderer/App.tsx' } },
+				timestamp: 1700000000000,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+		});
+
+		// Copilot-CLI emits paired `tool.execution_start` and `tool.execution_complete`
+		// events. Without correlation, each appended a separate LogEntry — the second
+		// rendered as an empty bubble because the complete event omits `input`.
+		// With toolCallId, both events collapse into a single bubble that gains
+		// `output`/status while preserving `input`.
+		it('merges running and completed events for the same toolCallId into a single log entry', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls -la' } },
+				timestamp: 1700000000000,
+				toolCallId: 'call_abc',
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: 'total 0' },
+				timestamp: 1700000000500,
+				toolCallId: 'call_abc',
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0]).toMatchObject({
+				id: 'tool-call_abc',
+				source: 'tool',
+				text: 'bash',
+				metadata: {
+					toolState: {
+						status: 'completed',
+						input: { command: 'ls -la' },
+						output: 'total 0',
+					},
+				},
+			});
+		});
+
+		// Codex (and other agents that do not emit a per-call correlation id)
+		// rely on the toolName fallback: the completion event is merged into
+		// the most recent still-running entry of the same tool.
+		it('merges completion into the last running entry of the same toolName when no toolCallId is provided', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls' } },
+				timestamp: 1700000000000,
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: 'a b c' },
+				timestamp: 1700000000500,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0]?.metadata?.toolState).toEqual({
+				status: 'completed',
+				input: { command: 'ls' },
+				output: 'a b c',
+			});
+		});
+
+		it('only merges into running entries — does not retro-update an already-completed entry', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// First call completes cleanly via the fallback.
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'ls' } },
+				timestamp: 1700000000000,
+			});
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed', output: '...' },
+				timestamp: 1700000000500,
+			});
+
+			// A second isolated completion event with no running predecessor
+			// should still produce its own (admittedly empty) bubble rather
+			// than overwriting the prior, already-finalized one.
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'completed' },
+				timestamp: 1700000000900,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toHaveLength(2);
+		});
+
+		it('keeps two log entries for distinct toolCallIds', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'pwd' } },
+				timestamp: 1700000000000,
+				toolCallId: 'call_a',
+			});
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { status: 'running', input: { command: 'whoami' } },
+				timestamp: 1700000000100,
+				toolCallId: 'call_b',
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0]?.logs ?? [];
+			expect(logs.map((l) => l.id)).toEqual(['tool-call_a', 'tool-call_b']);
+		});
+	});
+
+	// ========================================================================
 	// onSshRemote handler
 	// ========================================================================
 
@@ -1027,6 +1311,255 @@ describe('useAgentListeners', () => {
 			// session_not_found is detected.
 			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
 			expect(updatedTab?.agentSessionId).toBe('old-session-id');
+		});
+
+		it('clears hidden progress logs on AI exit', async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'off',
+				logs: [
+					{
+						id: 'hidden-progress:tab-1',
+						timestamp: 1700000000000,
+						source: 'system',
+						text: 'Reading src/renderer/App.tsx',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+		});
+
+		// ThinkingMode contract — exit-time clearing.
+		// `'on'` is temporary: thinking/tool entries are scratch state for the
+		// active turn and must disappear when the agent process exits.
+		// `'sticky'` is pinned and opts out so users can review reasoning.
+		// See `ThinkingMode` in src/shared/types.ts and the matching inline
+		// clearing point in src/renderer/hooks/session/useBatchedSessionUpdates.ts.
+		it("clears thinking and tool logs on AI exit when showThinking is 'on'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning about the request...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'bash: ls -la',
+					},
+					{
+						id: 'log-stdout-1',
+						timestamp: 1700000000003,
+						source: 'stdout',
+						text: 'final answer',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const remaining = updated?.aiTabs[0]?.logs ?? [];
+			expect(remaining.map((l) => l.source)).toEqual(['stdout']);
+			expect(updated?.aiTabs[0]?.state).toBe('idle');
+			expect(updated?.aiTabs[0]?.thinkingStartTime).toBeUndefined();
+		});
+
+		it("preserves thinking and tool logs on AI exit when showThinking is 'sticky'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'sticky',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning about the request...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'bash: ls -la',
+					},
+					{
+						id: 'log-stdout-1',
+						timestamp: 1700000000003,
+						source: 'stdout',
+						text: 'final answer',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const remaining = updated?.aiTabs[0]?.logs ?? [];
+			expect(remaining.map((l) => l.source)).toEqual(['thinking', 'tool', 'stdout']);
+			expect(updated?.aiTabs[0]?.state).toBe('idle');
+		});
+
+		it("clears thinking/tool logs on AI exit in error path when showThinking is 'on'", async () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-1',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning...',
+					},
+					{
+						id: 'log-tool-1',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'tool call',
+					},
+				],
+			});
+			const agentError: AgentError = {
+				type: 'rate_limited',
+				message: 'rate limited',
+				timestamp: 1700000000004,
+				recoverable: true,
+				agentId: 'claude-code',
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'error',
+				agentError,
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-1');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.aiTabs[0]?.logs ?? []).toEqual([]);
+		});
+
+		it("clears thinking/tool logs on the just-exited tab in queue-waiting branch when showThinking is 'on'", async () => {
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = createMockDeps({
+				processQueuedItemRef: { current: processQueuedItem },
+			});
+			const tabA = createMockTab({
+				id: 'tab-a',
+				state: 'busy',
+				agentSessionId: 'sess-a',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'log-thinking-a',
+						timestamp: 1700000000001,
+						source: 'thinking',
+						text: 'reasoning A',
+					},
+					{
+						id: 'log-tool-a',
+						timestamp: 1700000000002,
+						source: 'tool',
+						text: 'tool A',
+					},
+				],
+			});
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy', agentSessionId: 'sess-b' });
+			const queueItem = {
+				id: 'q1',
+				tabId: 'tab-c',
+				type: 'message' as const,
+				text: 'queued write',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+				executionQueue: [queueItem],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await onExitHandler?.('sess-1-ai-tab-a');
+			await new Promise((r) => setTimeout(r, 50));
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTabA = updated?.aiTabs.find((t) => t.id === 'tab-a');
+			// Tab A exited and was marked idle; thinking/tool logs are gone.
+			expect(updatedTabA?.state).toBe('idle');
+			expect(updatedTabA?.logs ?? []).toEqual([]);
+			// Queue is NOT drained because tab-b is still busy.
+			expect(processQueuedItem).not.toHaveBeenCalled();
 		});
 
 		it('processes execution queue on exit', async () => {

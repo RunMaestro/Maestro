@@ -73,6 +73,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
+	spellCheck: false,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

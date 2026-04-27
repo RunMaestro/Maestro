@@ -146,6 +146,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
+import { CenterFlash } from './components/CenterFlash';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -644,7 +645,6 @@ function MaestroConsoleInner() {
 	} = useInputContext();
 
 	// File Explorer State (reads from fileExplorerStore)
-	const filePreviewLoading = useFileExplorerStore((s) => s.filePreviewLoading);
 	// isGraphViewOpen, graphFocusFilePath — now self-sourced in AppStandaloneModals
 	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
@@ -891,6 +891,7 @@ function MaestroConsoleInner() {
 		errorSession,
 		effectiveAgentError,
 		recoveryActions,
+		handleJumpToFailingAgent,
 		handleCloseGitDiff,
 		handleCloseGitLog,
 		handleCloseSettings,
@@ -988,6 +989,7 @@ function MaestroConsoleInner() {
 		handleFileClick,
 		updateSessionWorkingDirectory,
 		toggleFolder,
+		toggleFolderRecursive,
 		expandAllFolders,
 		collapseAllFolders,
 	} = useAppHandlers({
@@ -1467,7 +1469,10 @@ function MaestroConsoleInner() {
 			const item = session.executionQueue.find((i) => i.id === itemId);
 			if (!item) return;
 			const text = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
-			if (!text) return;
+			const images = item.images && item.images.length > 0 ? item.images : undefined;
+			// Image-only messages have empty text but should still dispatch.
+			// processInput's own emptiness check (line ~207) requires text OR images.
+			if (!text && !images) return;
 
 			// Remove the item from the queue first so processInput doesn't see a duplicate.
 			updateSessionWith(sessionId, (s) => ({
@@ -1475,16 +1480,13 @@ function MaestroConsoleInner() {
 				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
 			}));
 
-			// Preserve the item's attached images through the send path.
-			// stagedImages lives on the active tab; processInput reads it below.
-			if (item.images && item.images.length > 0) {
-				setStagedImages(item.images);
-			}
-
-			// Dispatch with forceParallel — same code path as Cmd+Shift+Enter.
-			processInput(text, { forceParallel: true });
+			// Pass the queued item's images directly through processInput options.
+			// Routing them via setStagedImages would race with processInput's stale
+			// closure of stagedImages (deps include it), causing images to drop on the
+			// floor in both the chat log entry and the agent spawn payload.
+			processInput(text, { forceParallel: true, images });
 		},
-		[processInput, setStagedImages]
+		[processInput]
 	);
 
 	// Build (tab→busy summary) lookup used by the Force Send button to decide
@@ -1793,20 +1795,23 @@ function MaestroConsoleInner() {
 
 	// --- FILE TREE MANAGEMENT ---
 	// Extracted hook for file tree operations (refresh, git state, filtering)
-	const { refreshFileTree, refreshGitFileState, filteredFileTree } = useFileTreeManagement({
-		sessions,
-		sessionsRef,
-		setSessions,
-		activeSessionId,
-		activeSession,
-		rightPanelRef,
-		sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
-		sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
-		localIgnorePatterns: settings.localIgnorePatterns,
-		localHonorGitignore: settings.localHonorGitignore,
-		fileExplorerMaxDepth: settings.fileExplorerMaxDepth,
-		fileExplorerMaxEntries: settings.fileExplorerMaxEntries,
-	});
+	const { refreshFileTree, refreshGitFileState, cancelFileTreeLoad, filteredFileTree } =
+		useFileTreeManagement({
+			sessions,
+			sessionsRef,
+			setSessions,
+			activeSessionId,
+			activeSession,
+			rightPanelRef,
+			sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
+			sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
+			localIgnorePatterns: settings.localIgnorePatterns,
+			localHonorGitignore: settings.localHonorGitignore,
+			fileExplorerMaxDepth: settings.fileExplorerMaxDepth,
+			fileExplorerMaxEntries: settings.fileExplorerMaxEntries,
+			sshReduceEntryCapEnabled: settings.sshReduceEntryCapEnabled,
+			sshReduceEntryCapFraction: settings.sshReduceEntryCapFraction,
+		});
 
 	// --- FILE EXPLORER EFFECTS ---
 	// Extracted hook for file explorer side effects and keyboard navigation (Phase 2.6)
@@ -2236,7 +2241,6 @@ function MaestroConsoleInner() {
 		slashCommandOpen,
 		slashCommands: allSlashCommands,
 		selectedSlashCommandIndex,
-		filePreviewLoading,
 
 		// Tab completion state
 		tabCompletionOpen,
@@ -2509,11 +2513,13 @@ function MaestroConsoleInner() {
 
 		// File explorer handlers
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,
 		updateSessionWorkingDirectory,
 		refreshFileTree,
+		cancelFileTreeLoad,
 		handleAutoRefreshChange,
 		showSuccessFlash,
 
@@ -2927,6 +2933,7 @@ function MaestroConsoleInner() {
 					effectiveAgentError={effectiveAgentError}
 					recoveryActions={recoveryActions}
 					onDismissAgentError={handleCloseAgentErrorModal}
+					onJumpToAgent={handleJumpToFailingAgent}
 					groupChatError={groupChatError}
 					groupChatRecoveryActions={groupChatRecoveryActions}
 					onClearGroupChatError={handleClearGroupChatError}
@@ -3129,10 +3136,12 @@ function MaestroConsoleInner() {
 									participantColors={groupChatParticipantColors}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
-									onPublishMessageGist={(text: string) => {
+									onPublishMessageGist={(text: string, messageId?: string) => {
 										if (!text.trim()) return;
 										const filename = `group_chat_response_${Date.now()}.md`;
-										useTabStore.getState().setTabGistContent({ filename, content: text });
+										useTabStore
+											.getState()
+											.setTabGistContent({ filename, content: text, messageId });
 										setGistPublishModalOpen(true);
 									}}
 								/>
@@ -3197,6 +3206,9 @@ function MaestroConsoleInner() {
 
 				{/* --- TOAST NOTIFICATIONS --- */}
 				<ToastContainer theme={theme} onSessionClick={handleToastSessionClick} />
+
+				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
+				<CenterFlash theme={theme} />
 			</div>
 		</GitStatusProvider>
 	);

@@ -20,7 +20,8 @@ Download the latest release for your platform from the [Releases](https://github
   - [Codex](https://github.com/openai/codex) — OpenAI's coding agent (fully integrated)
   - [OpenCode](https://github.com/sst/opencode) — Open-source AI coding assistant (fully integrated)
   - [Factory Droid](https://docs.factory.ai/cli) — Factory's AI coding assistant (fully integrated)
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen3 Coder](https://github.com/QwenLM/Qwen-Agent) — Planned support
+  - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — Planned support
 - Git (optional, for git-aware features)
 
 <Note>

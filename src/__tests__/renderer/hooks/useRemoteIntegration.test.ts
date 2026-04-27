@@ -200,6 +200,12 @@ describe('useRemoteIntegration', () => {
 		sendRemoteUpdatePlaybookResponse: vi.fn(),
 		onRemoteDeletePlaybook: vi.fn().mockImplementation(() => () => {}),
 		sendRemoteDeletePlaybookResponse: vi.fn(),
+		onRemoteNotifyToast: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteNotifyCenterFlash: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 	};
 
 	const mockLive = {

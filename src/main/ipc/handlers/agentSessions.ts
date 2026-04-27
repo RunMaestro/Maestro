@@ -43,6 +43,7 @@ import type {
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { getHistoryManager } from '../../history-manager';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -681,6 +682,48 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 							}
 						}
 					}
+				}
+
+				// Fallback: pull names from history entries for sessions whose names were
+				// auto-set at synopsis time but never persisted to an origins store. This
+				// covers historical entries written before the synopsis-time persist call
+				// landed. We attribute each entry to the storage that actually contains
+				// the underlying session file; if no storage owns it, the entry is stale
+				// and skipped.
+				try {
+					const historyManager = getHistoryManager();
+					const seenIdsAfterOrigins = new Set(
+						allNamedSessions.map((s) => `${s.projectPath}:${s.agentSessionId}`)
+					);
+					const seenAcrossAgents = new Set<string>();
+					const storages = getAllSessionStorages();
+					const historyEntries = historyManager.getAllEntriesPaginated().entries;
+					for (const entry of historyEntries) {
+						if (!entry.sessionName || !entry.agentSessionId || !entry.projectPath) continue;
+						const projectKey = `${entry.projectPath}:${entry.agentSessionId}`;
+						if (seenIdsAfterOrigins.has(projectKey) || seenAcrossAgents.has(projectKey)) continue;
+						for (const storage of storages) {
+							const sessionPath = storage.getSessionPath(entry.projectPath, entry.agentSessionId);
+							if (!sessionPath) continue;
+							try {
+								const stats = await fs.stat(sessionPath);
+								allNamedSessions.push({
+									agentId: storage.agentId,
+									agentSessionId: entry.agentSessionId,
+									projectPath: entry.projectPath,
+									sessionName: entry.sessionName,
+									lastActivityAt: stats.mtime.getTime(),
+								});
+								seenAcrossAgents.add(projectKey);
+								break;
+							} catch {
+								// Not in this storage, try next
+							}
+						}
+					}
+				} catch (error) {
+					void captureException(error);
+					logger.warn(`Failed to merge history-derived named sessions: ${error}`, LOG_CONTEXT);
 				}
 
 				logger.info(

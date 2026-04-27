@@ -168,6 +168,12 @@ if (isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
 	console.log(`[DEV MODE] Using production data directory: ${app.getPath('userData')}`);
 }
 
+// Publish the resolved userData path so shared/cli-server-discovery.ts (used by
+// both this main process and the maestro-cli) writes/reads the discovery file
+// in the same data directory the app actually uses. Without this, dev and prod
+// would clobber each other's cli-server.json at the hardcoded platform default.
+process.env.MAESTRO_USER_DATA = app.getPath('userData');
+
 // ============================================================================
 // Store Initialization (after userData path is configured)
 // ============================================================================

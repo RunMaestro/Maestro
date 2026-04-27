@@ -642,6 +642,33 @@ describe('ClaudeOutputParser', () => {
 			const error = parser.detectErrorFromLine(line);
 			expect(error?.parsedJson).toBeDefined();
 		});
+
+		it('should NOT treat system api_retry events as errors', () => {
+			// Claude Code emits these when retrying HTTP 429/529; the turn ultimately
+			// succeeds. The `error` field here is a retry-category tag, not a failure.
+			const line = JSON.stringify({
+				type: 'system',
+				subtype: 'api_retry',
+				attempt: 1,
+				max_retries: 10,
+				retry_delay_ms: 549.5,
+				error_status: 529,
+				error: 'rate_limit',
+				session_id: 'b63e648d-360f-44b7-a9b0-6dc63b609241',
+				uuid: '1b397bb3-2e6f-4821-8547-e026d8d11817',
+			});
+			expect(parser.detectErrorFromLine(line)).toBeNull();
+		});
+
+		it('should NOT treat system init events as errors even if they carry an error field', () => {
+			const line = JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				session_id: 'abc',
+				error: 'something',
+			});
+			expect(parser.detectErrorFromLine(line)).toBeNull();
+		});
 	});
 
 	describe('detectErrorFromExit', () => {

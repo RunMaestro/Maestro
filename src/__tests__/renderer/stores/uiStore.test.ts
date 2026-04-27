@@ -19,8 +19,6 @@ function resetStore() {
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
-		flashNotification: null,
-		successFlashNotification: null,
 		outputSearchOpen: false,
 		outputSearchQuery: '',
 		outputSearchRegex: false,
@@ -51,8 +49,6 @@ describe('uiStore', () => {
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
 			expect(state.selectedSidebarIndex).toBe(0);
-			expect(state.flashNotification).toBeNull();
-			expect(state.successFlashNotification).toBeNull();
 			expect(state.outputSearchOpen).toBe(false);
 			expect(state.outputSearchQuery).toBe('');
 			expect(state.outputSearchRegex).toBe(false);
@@ -212,21 +208,32 @@ describe('uiStore', () => {
 		});
 	});
 
-	describe('flash notification state', () => {
-		it('sets flash notification', () => {
-			useUIStore.getState().setFlashNotification('Commands disabled');
-			expect(useUIStore.getState().flashNotification).toBe('Commands disabled');
+	describe('flash notification setters (compatibility shims → centerFlashStore)', () => {
+		it('setFlashNotification fires a warning center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
 
+			useUIStore.getState().setFlashNotification('Commands disabled');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Commands disabled');
+			expect(active?.variant).toBe('warning');
+
+			// Passing null is a no-op (auto-dismiss handles clearing)
 			useUIStore.getState().setFlashNotification(null);
-			expect(useUIStore.getState().flashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Commands disabled');
 		});
 
-		it('sets success flash notification', () => {
+		it('setSuccessFlashNotification fires a success center flash', async () => {
+			const { useCenterFlashStore } = await import('../../../renderer/stores/centerFlashStore');
+			useCenterFlashStore.getState().setActive(null);
+
 			useUIStore.getState().setSuccessFlashNotification('Refresh complete');
-			expect(useUIStore.getState().successFlashNotification).toBe('Refresh complete');
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Refresh complete');
+			expect(active?.variant).toBe('success');
 
 			useUIStore.getState().setSuccessFlashNotification(null);
-			expect(useUIStore.getState().successFlashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active?.message).toBe('Refresh complete');
 		});
 	});
 

@@ -615,6 +615,74 @@ describe('RenameTabModal', () => {
 			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
 		});
 
+		it('triggers onAutoName on Cmd+Shift+Enter when Auto button is shown', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, metaKey: true });
+
+			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('triggers onAutoName on Ctrl+Shift+Enter when Auto button is shown', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, ctrlKey: true });
+
+			expect(mockOnAutoName).toHaveBeenCalledTimes(1);
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('does not trigger onAutoName via Cmd+Shift+Enter when Auto button is hidden', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={false}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, metaKey: true });
+
+			expect(mockOnAutoName).not.toHaveBeenCalled();
+		});
+
 		it('Auto button is styled with accent color', () => {
 			render(
 				<TestWrapper>

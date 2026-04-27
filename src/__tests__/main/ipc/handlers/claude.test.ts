@@ -2100,4 +2100,106 @@ not valid json at all
 			});
 		});
 	});
+
+	describe('claude:getSkills', () => {
+		it('finds skills via SKILL.md on case-sensitive filesystems (Linux/WSL)', async () => {
+			const fs = await import('fs/promises');
+
+			// Simulate a case-sensitive filesystem: SKILL.md exists, skill.md does not.
+			// Only the project-level skills directory has entries; user dir is empty.
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
+				}
+				const enoent: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), {
+					code: 'ENOENT',
+				});
+				throw enoent;
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result).toHaveLength(1);
+			expect(result[0]).toMatchObject({
+				name: 'Research',
+				description: 'Deep literature review',
+				source: 'project',
+			});
+		});
+
+		it('propagates non-ENOENT filesystem errors from scanSkillsDir', async () => {
+			const fs = await import('fs/promises');
+
+			// A permission error on the skills directory must NOT be silently
+			// swallowed — it should propagate so Sentry captures it.
+			vi.mocked(fs.default.readdir).mockImplementation(async () => {
+				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			await expect(handler!({} as any, '/test/project')).rejects.toMatchObject({
+				code: 'EACCES',
+			});
+		});
+
+		it('propagates non-ENOENT filesystem errors from parseSkillFile', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Locked', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			// The skill dir lists fine but SKILL.md is locked — this must
+			// surface, not be silently dropped as "skill not found".
+			vi.mocked(fs.default.readFile).mockImplementation(async () => {
+				throw Object.assign(new Error('IO error'), { code: 'EIO' });
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			await expect(handler!({} as any, '/test/project')).rejects.toMatchObject({
+				code: 'EIO',
+			});
+		});
+
+		it('falls back to lowercase skill.md for legacy layouts', async () => {
+			const fs = await import('fs/promises');
+
+			vi.mocked(fs.default.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Legacy', isDirectory: () => true }] as any;
+				}
+				return [] as any;
+			});
+			vi.mocked(fs.default.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Only lowercase skill.md exists
+				if (p === '/test/project/.claude/skills/Legacy/skill.md') {
+					return '---\ndescription: Legacy skill\n---\n\nBody';
+				}
+				const enoent: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), {
+					code: 'ENOENT',
+				});
+				throw enoent;
+			});
+
+			const handler = handlers.get('claude:getSkills');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result).toHaveLength(1);
+			expect(result[0]).toMatchObject({
+				name: 'Legacy',
+				description: 'Legacy skill',
+			});
+		});
+	});
 });

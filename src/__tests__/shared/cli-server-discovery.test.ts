@@ -62,8 +62,15 @@ describe('cli-server-discovery', () => {
 		startedAt: 1700000000000,
 	};
 
+	let savedUserDataEnv: string | undefined;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		// Ensure MAESTRO_USER_DATA from the test runner's environment doesn't
+		// leak into platform-default tests; individual tests opt in by setting it.
+		savedUserDataEnv = process.env.MAESTRO_USER_DATA;
+		delete process.env.MAESTRO_USER_DATA;
 
 		// Default mock implementations
 		mockOs.platform.mockReturnValue('darwin');
@@ -78,6 +85,11 @@ describe('cli-server-discovery', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		if (savedUserDataEnv === undefined) {
+			delete process.env.MAESTRO_USER_DATA;
+		} else {
+			process.env.MAESTRO_USER_DATA = savedUserDataEnv;
+		}
 	});
 
 	describe('getConfigDir (internal via path construction)', () => {
@@ -183,6 +195,50 @@ describe('cli-server-discovery', () => {
 					delete process.env.XDG_CONFIG_HOME;
 				} else {
 					process.env.XDG_CONFIG_HOME = originalXdg;
+				}
+			}
+		});
+
+		it('should honor MAESTRO_USER_DATA override over platform default', () => {
+			mockOs.platform.mockReturnValue('darwin');
+			mockOs.homedir.mockReturnValue('/Users/testuser');
+			const originalUserData = process.env.MAESTRO_USER_DATA;
+			process.env.MAESTRO_USER_DATA = '/Users/testuser/Library/Application Support/maestro-dev';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join('/Users/testuser/Library/Application Support/maestro-dev', 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalUserData === undefined) {
+					delete process.env.MAESTRO_USER_DATA;
+				} else {
+					process.env.MAESTRO_USER_DATA = originalUserData;
+				}
+			}
+		});
+
+		it('should resolve relative MAESTRO_USER_DATA to absolute path', () => {
+			mockOs.platform.mockReturnValue('darwin');
+			mockOs.homedir.mockReturnValue('/Users/testuser');
+			const originalUserData = process.env.MAESTRO_USER_DATA;
+			process.env.MAESTRO_USER_DATA = './relative-data-dir';
+
+			try {
+				readCliServerInfo();
+
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(path.resolve('./relative-data-dir'), 'cli-server.json'),
+					'utf-8'
+				);
+			} finally {
+				if (originalUserData === undefined) {
+					delete process.env.MAESTRO_USER_DATA;
+				} else {
+					process.env.MAESTRO_USER_DATA = originalUserData;
 				}
 			}
 		});

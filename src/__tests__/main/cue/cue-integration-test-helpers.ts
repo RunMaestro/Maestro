@@ -69,12 +69,29 @@ interface InMemoryCueEventRow {
 	payload: string | null;
 }
 
+/** Phase 12A queue persistence row. */
+export interface InMemoryCueQueueRow {
+	id: string;
+	sessionId: string;
+	subscriptionName: string;
+	eventJson: string;
+	prompt: string;
+	outputPrompt: string | null;
+	cliOutputJson: string | null;
+	action: string | null;
+	commandJson: string | null;
+	chainDepth: number;
+	queuedAt: number;
+}
+
 export interface InMemoryCueDbState {
 	events: Map<string, InMemoryCueEventRow>;
 	/** Insertion order of event IDs, for ORDER BY created_at DESC semantics. */
 	eventOrder: string[];
 	heartbeat: number | null;
 	githubSeen: Map<string, number>; // key = `${subscriptionId}\0${itemKey}`
+	/** Phase 12A persistent queue rows, keyed by row id. Insertion order preserved. */
+	queueRows: Map<string, InMemoryCueQueueRow>;
 	closed: boolean;
 	ready: boolean;
 }
@@ -111,6 +128,13 @@ export interface InMemoryCueDb {
 	hasAnyGitHubSeen(subscriptionId: string): boolean;
 	pruneGitHubSeen(olderThanMs: number): void;
 	clearGitHubSeenForSubscription(subscriptionId: string): void;
+	// Phase 12A queue persistence
+	persistQueuedEvent(record: InMemoryCueQueueRow): void;
+	removeQueuedEvent(id: string): void;
+	getQueuedEvents(sessionId?: string): InMemoryCueQueueRow[];
+	clearPersistedQueue(sessionId?: string): void;
+	safePersistQueuedEvent(record: InMemoryCueQueueRow): void;
+	safeRemoveQueuedEvent(id: string): void;
 	// Test-only controls
 	/** Force a specific current time for prune/heartbeat tests. Reset with clearNowOverride(). */
 	setNowOverride(ts: number): void;
@@ -130,6 +154,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 		eventOrder: [],
 		heartbeat: null,
 		githubSeen: new Map(),
+		queueRows: new Map(),
 		closed: true,
 		ready: false,
 	};
@@ -327,11 +352,58 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			pendingFailure = err ?? new Error('Simulated DB write failure');
 		},
 
+		// ── Phase 12A — queue persistence ──────────────────────────────────
+		persistQueuedEvent(record) {
+			requireReady();
+			consumePendingFailure();
+			state.queueRows.set(record.id, { ...record });
+		},
+
+		removeQueuedEvent(id) {
+			requireReady();
+			state.queueRows.delete(id);
+		},
+
+		getQueuedEvents(sessionId) {
+			requireReady();
+			const rows = Array.from(state.queueRows.values());
+			const filtered = sessionId ? rows.filter((r) => r.sessionId === sessionId) : rows;
+			return filtered.sort((a, b) => a.queuedAt - b.queuedAt);
+		},
+
+		clearPersistedQueue(sessionId) {
+			requireReady();
+			if (!sessionId) {
+				state.queueRows.clear();
+				return;
+			}
+			for (const [id, row] of state.queueRows) {
+				if (row.sessionId === sessionId) state.queueRows.delete(id);
+			}
+		},
+
+		safePersistQueuedEvent(record) {
+			try {
+				this.persistQueuedEvent(record);
+			} catch {
+				// non-throwing
+			}
+		},
+
+		safeRemoveQueuedEvent(id) {
+			try {
+				this.removeQueuedEvent(id);
+			} catch {
+				// non-throwing
+			}
+		},
+
 		resetAll() {
 			state.events.clear();
 			state.eventOrder.length = 0;
 			state.heartbeat = null;
 			state.githubSeen.clear();
+			state.queueRows.clear();
 			state.closed = true;
 			state.ready = false;
 			nowOverride = null;
@@ -377,6 +449,13 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		pruneGitHubSeen: (olderThanMs: number) => getDb().pruneGitHubSeen(olderThanMs),
 		clearGitHubSeenForSubscription: (subscriptionId: string) =>
 			getDb().clearGitHubSeenForSubscription(subscriptionId),
+		// Phase 12A queue persistence
+		persistQueuedEvent: (record: InMemoryCueQueueRow) => getDb().persistQueuedEvent(record),
+		removeQueuedEvent: (id: string) => getDb().removeQueuedEvent(id),
+		getQueuedEvents: (sessionId?: string) => getDb().getQueuedEvents(sessionId),
+		clearPersistedQueue: (sessionId?: string) => getDb().clearPersistedQueue(sessionId),
+		safePersistQueuedEvent: (record: InMemoryCueQueueRow) => getDb().safePersistQueuedEvent(record),
+		safeRemoveQueuedEvent: (id: string) => getDb().safeRemoveQueuedEvent(id),
 	};
 }
 

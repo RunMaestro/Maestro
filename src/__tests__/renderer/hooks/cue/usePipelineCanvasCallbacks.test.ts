@@ -320,6 +320,100 @@ describe('usePipelineCanvasCallbacks', () => {
 				} as Parameters<typeof h.result.current.isValidConnection>[0])
 			).toBe(true);
 		});
+
+		// Phase 14C — callback identity stability via ref pattern.
+		it('keeps callback identity stable across nodes/edges changes', () => {
+			let nodes: Node[] = [rfNode('p1:t1', 'trigger'), rfNode('p1:a1', 'agent')];
+			let edges: Edge[] = [];
+			const { result, rerender } = renderHook(
+				({ n, e }: { n: Node[]; e: Edge[] }) =>
+					usePipelineCanvasCallbacks({
+						state: {
+							pipelineState: { pipelines: [pipeline('p1', [])], selectedPipelineId: 'p1' },
+							isAllPipelinesView: false,
+						},
+						refs: { stableYOffsetsRef: { current: new Map() } },
+						display: { nodes: n, edges: e, setDisplayNodes: vi.fn() },
+						actions: { setPipelineState: vi.fn(), persistLayout: vi.fn() },
+						selection: { setSelectedNodeId: vi.fn(), setSelectedEdgeId: vi.fn() },
+						reactFlowInstance: { screenToFlowPosition: vi.fn() } as unknown as ReactFlowInstance,
+					}),
+				{ initialProps: { n: nodes, e: edges } }
+			);
+
+			const firstIdentity = result.current.isValidConnection;
+
+			// Swap in new nodes/edges arrays — simulating post-drag applyNodeChanges.
+			nodes = [rfNode('p1:t1', 'trigger'), rfNode('p1:a1', 'agent'), rfNode('p1:a2', 'agent')];
+			edges = [rfEdge('e1', 'p1:t1', 'p1:a1')];
+			rerender({ n: nodes, e: edges });
+
+			expect(result.current.isValidConnection).toBe(firstIdentity);
+		});
+
+		it('callback reads latest nodes/edges via refs (functional correctness preserved)', () => {
+			let nodes: Node[] = [rfNode('p1:t1', 'trigger'), rfNode('p1:a1', 'agent')];
+			let edges: Edge[] = [];
+			const { result, rerender } = renderHook(
+				({ n, e }: { n: Node[]; e: Edge[] }) =>
+					usePipelineCanvasCallbacks({
+						state: {
+							pipelineState: { pipelines: [pipeline('p1', [])], selectedPipelineId: 'p1' },
+							isAllPipelinesView: false,
+						},
+						refs: { stableYOffsetsRef: { current: new Map() } },
+						display: { nodes: n, edges: e, setDisplayNodes: vi.fn() },
+						actions: { setPipelineState: vi.fn(), persistLayout: vi.fn() },
+						selection: { setSelectedNodeId: vi.fn(), setSelectedEdgeId: vi.fn() },
+						reactFlowInstance: { screenToFlowPosition: vi.fn() } as unknown as ReactFlowInstance,
+					}),
+				{ initialProps: { n: nodes, e: edges } }
+			);
+
+			// First: no edge → valid.
+			expect(
+				result.current.isValidConnection({
+					source: 'p1:t1',
+					target: 'p1:a1',
+				} as Parameters<typeof result.current.isValidConnection>[0])
+			).toBe(true);
+
+			// Add the edge, rerender. Same callback identity, but now sees the edge.
+			edges = [rfEdge('e1', 'p1:t1', 'p1:a1')];
+			rerender({ n: nodes, e: edges });
+			expect(
+				result.current.isValidConnection({
+					source: 'p1:t1',
+					target: 'p1:a1',
+				} as Parameters<typeof result.current.isValidConnection>[0])
+			).toBe(false);
+		});
+
+		it('callback identity changes when isAllPipelinesView flips', () => {
+			const { result, rerender } = renderHook(
+				({ view }: { view: boolean }) =>
+					usePipelineCanvasCallbacks({
+						state: {
+							pipelineState: { pipelines: [pipeline('p1', [])], selectedPipelineId: 'p1' },
+							isAllPipelinesView: view,
+						},
+						refs: { stableYOffsetsRef: { current: new Map() } },
+						display: {
+							nodes: [rfNode('p1:t1', 'trigger')],
+							edges: [],
+							setDisplayNodes: vi.fn(),
+						},
+						actions: { setPipelineState: vi.fn(), persistLayout: vi.fn() },
+						selection: { setSelectedNodeId: vi.fn(), setSelectedEdgeId: vi.fn() },
+						reactFlowInstance: { screenToFlowPosition: vi.fn() } as unknown as ReactFlowInstance,
+					}),
+				{ initialProps: { view: false } }
+			);
+
+			const firstIdentity = result.current.isValidConnection;
+			rerender({ view: true });
+			expect(result.current.isValidConnection).not.toBe(firstIdentity);
+		});
 	});
 
 	describe('onDragOver', () => {

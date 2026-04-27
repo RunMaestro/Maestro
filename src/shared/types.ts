@@ -13,9 +13,24 @@ export type ToolType = import('./agentIds').AgentId;
 
 /**
  * ThinkingMode controls how AI reasoning/thinking content is displayed.
- * - 'off': Thinking is suppressed (not shown)
- * - 'on': Thinking is shown while streaming, cleared when final response arrives
- * - 'sticky': Thinking is shown and remains visible after the final response
+ *
+ * - 'off': Thinking is suppressed (parsers do not append `source: 'thinking'`
+ *   or `source: 'tool'` log entries in the first place).
+ * - 'on' (temporary): Thinking and tool-execution cells are visible while the
+ *   agent is busy. Two clearing points apply:
+ *     1. Inline: when a new assistant `stdout`/`stderr` chunk arrives, prior
+ *        `thinking`/`tool` log entries are dropped (see
+ *        `useBatchedSessionUpdates.ts`).
+ *     2. On exit: when the agent process exits, any remaining `thinking`/
+ *        `tool` log entries are dropped (see `useAgentListeners.ts`
+ *        → `cleanupExitedTabLogs`).
+ * - 'sticky' (pinned): Thinking and tool cells persist across BOTH of the
+ *   above clearing points so the user can review reasoning indefinitely.
+ *
+ * **Provider contract:** Any agent parser that surfaces reasoning or tool
+ * activity MUST tag its renderer log entries with `source: 'thinking'` or
+ * `source: 'tool'`. The clearing logic keys off `log.source` alone, so new
+ * agent integrations inherit consistent behavior automatically.
  */
 export type ThinkingMode = 'off' | 'on' | 'sticky';
 

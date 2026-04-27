@@ -79,6 +79,8 @@ export interface ModalProps {
 	contentClassName?: string;
 	/** Allow content to overflow the modal container (e.g., for dropdowns). Defaults to false */
 	allowOverflow?: boolean;
+	/** Ref to the inner modal card (used by callers that need to animate the card itself) */
+	cardRef?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -104,6 +106,7 @@ export function Modal({
 	testId,
 	contentClassName,
 	allowOverflow = false,
+	cardRef,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +146,7 @@ export function Modal({
 			data-testid={testId}
 		>
 			<div
+				ref={cardRef}
 				className={`border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
 					width: `${width}px`,

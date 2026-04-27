@@ -91,9 +91,6 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 	}
 };
 
-// Constants for history pagination
-export const MAX_HISTORY_IN_MEMORY = 500; // Maximum entries to keep in memory
-
 // Estimated row heights for virtualization
 // Entry breakdown: p-3 (24px padding) + header (~24px) + mb-2 (8px) + summary (~48px for 3 lines)
 // Footer adds: mt-2 pt-2 border-t (~20px)

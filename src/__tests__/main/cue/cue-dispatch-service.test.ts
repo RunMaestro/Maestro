@@ -166,5 +166,63 @@ describe('createCueDispatchService', () => {
 			expect(errorLog![1]).toMatch(/alpha \(empty prompt\)/);
 			expect(errorLog![1]).toMatch(/ghost \(not found\)/);
 		});
+
+		// `fan_out` carries the display name at save time; renaming an agent
+		// would otherwise silently drop it from dispatch (the YAML name no
+		// longer matches any live session). `fan_out_ids` is the stable-id
+		// mirror — the dispatcher must prefer it over the stale name.
+		it('resolves fan-out target by fan_out_ids when the agent has been renamed', () => {
+			const { deps, executeRun } = makeDeps([
+				// Renamed: id is still 's-1', name is now 'alpha-renamed'.
+				{ id: 's-1', name: 'alpha-renamed' },
+			]);
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				fan_out: ['alpha'], // stale display name from YAML
+				fan_out_ids: ['s-1'], // stable id
+				prompt: 'hello',
+			});
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			const dispatched = svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(dispatched).toBe(1);
+			expect(executeRun).toHaveBeenCalledWith(
+				's-1',
+				'hello',
+				expect.anything(),
+				'my-sub',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
+		});
+
+		it('falls back to name match when fan_out_ids is absent (legacy YAML)', () => {
+			const { deps, executeRun } = makeDeps([{ id: 's-1', name: 'alpha' }]);
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({
+				fan_out: ['alpha'],
+				prompt: 'hello',
+			});
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			const dispatched = svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(dispatched).toBe(1);
+			expect(executeRun).toHaveBeenCalledWith(
+				's-1',
+				'hello',
+				expect.anything(),
+				'my-sub',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
+		});
 	});
 });

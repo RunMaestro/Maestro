@@ -55,9 +55,13 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				const skippedTargets: string[] = [];
 				for (let i = 0; i < sub.fan_out.length; i++) {
 					const targetName = sub.fan_out[i];
-					const targetSession = allSessions.find(
-						(s) => s.name === targetName || s.id === targetName
-					);
+					// Prefer the stable id when present so a renamed agent still
+					// resolves. Falls back to name-or-id match for legacy YAML
+					// written before `fan_out_ids` existed.
+					const targetId = sub.fan_out_ids?.[i];
+					const targetSession =
+						(targetId ? allSessions.find((s) => s.id === targetId) : undefined) ??
+						allSessions.find((s) => s.name === targetName || s.id === targetName);
 
 					if (!targetSession) {
 						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" — skipping`);

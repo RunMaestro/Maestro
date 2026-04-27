@@ -144,6 +144,110 @@ describe('CueSelect', () => {
 		expect(onChange).toHaveBeenCalledWith('a');
 	});
 
+	describe('filterable', () => {
+		it('omits the search input when filterable is false', () => {
+			render(<CueSelect value="a" options={options} onChange={onChange} theme={theme} />);
+			fireEvent.click(screen.getByRole('button', { name: /alpha/i }));
+			expect(screen.queryByPlaceholderText('Filter…')).not.toBeInTheDocument();
+		});
+
+		it('renders the search input when filterable is true', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByRole('button', { name: /alpha/i }));
+			expect(screen.getByPlaceholderText('Filter…')).toBeInTheDocument();
+		});
+
+		it('honors a custom filterPlaceholder', () => {
+			render(
+				<CueSelect
+					value="a"
+					options={options}
+					onChange={onChange}
+					theme={theme}
+					filterable
+					filterPlaceholder="Filter agents…"
+				/>
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			expect(screen.getByPlaceholderText('Filter agents…')).toBeInTheDocument();
+		});
+
+		it('filters options by case-insensitive label match as the user types', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			const input = screen.getByPlaceholderText('Filter…');
+
+			fireEvent.change(input, { target: { value: 'be' } });
+			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'Alpha' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'Gamma' })).not.toBeInTheDocument();
+
+			// Case-insensitive
+			fireEvent.change(input, { target: { value: 'GAM' } });
+			expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
+		});
+
+		it('shows a "No matches" hint when the filter excludes everything', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'zzz' } });
+			expect(screen.getByText('No matches')).toBeInTheDocument();
+			expect(screen.queryByRole('option')).not.toBeInTheDocument();
+		});
+
+		it('preserves Space as a literal character inside the filter input', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			const input = screen.getByPlaceholderText('Filter…') as HTMLInputElement;
+
+			// Space must NOT submit the active option when typing in the search box;
+			// otherwise users can't search for multi-word labels.
+			fireEvent.keyDown(input, { key: ' ' });
+			expect(onChange).not.toHaveBeenCalled();
+		});
+
+		it('navigates the filtered list with arrow keys and selects with Enter', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			const input = screen.getByPlaceholderText('Filter…');
+
+			// Narrow to Beta + Gamma (labels containing "a" — Alpha, Beta, Gamma all contain 'a')
+			fireEvent.change(input, { target: { value: 'a' } });
+			// Active resets to first match. ArrowDown → next match. Enter selects it.
+			fireEvent.keyDown(input, { key: 'ArrowDown' });
+			fireEvent.keyDown(input, { key: 'Enter' });
+			// First match is Alpha (index 0), ArrowDown moves to Beta (index 1) → 'b'
+			expect(onChange).toHaveBeenCalledWith('b');
+		});
+
+		it('clears the query when the dropdown is closed and reopened', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			fireEvent.keyDown(screen.getByPlaceholderText('Filter…'), { key: 'Escape' });
+
+			fireEvent.click(screen.getByText('Alpha').closest('button')!);
+			const input = screen.getByPlaceholderText('Filter…') as HTMLInputElement;
+			expect(input.value).toBe('');
+			// All options visible again
+			expect(screen.getByRole('option', { name: 'Alpha' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
+		});
+	});
+
 	it('forwards id and aria-label to trigger button', () => {
 		render(
 			<CueSelect

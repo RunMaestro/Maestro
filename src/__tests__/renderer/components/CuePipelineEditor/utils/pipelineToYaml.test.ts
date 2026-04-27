@@ -321,6 +321,224 @@ describe('pipelineToYamlSubscriptions', () => {
 	});
 });
 
+describe('pipelineToYamlSubscriptions — target_node_key emission', () => {
+	it('emits target_node_key on a single-target trigger sub when the agent has a nodeKey', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 5 },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'Do work',
+						nodeKey: 'agent-key-1',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs).toHaveLength(1);
+		expect(subs[0].target_node_key).toBe('agent-key-1');
+	});
+
+	it('omits target_node_key when the agent has no nodeKey (legacy in-memory state)', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 5 },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'Do work',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[0].target_node_key).toBeUndefined();
+	});
+
+	it('emits fan_out_node_keys positionally when every fan-out target carries a key', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 5 },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'A',
+						nodeKey: 'k-A',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 300, y: 200 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'worker-2',
+						toolType: 'claude-code',
+						inputPrompt: 'A',
+						nodeKey: 'k-B',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 't1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[0].fan_out).toEqual(['worker', 'worker-2']);
+		expect(subs[0].fan_out_node_keys).toEqual(['k-A', 'k-B']);
+	});
+
+	it('omits fan_out_node_keys when any fan-out position lacks a key (mixed = legacy fallback)', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 5 },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'A',
+						nodeKey: 'k-A',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 300, y: 200 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'worker-2',
+						toolType: 'claude-code',
+						inputPrompt: 'A',
+						// No nodeKey on this one — partial population would
+						// produce ambiguous YAML, so the serializer skips the
+						// field entirely and the loader falls back to legacy
+						// dedup behavior.
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 't1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[0].fan_out_node_keys).toBeUndefined();
+	});
+
+	it('emits target_node_key on chain subs (downstream agent in an A → B chain)', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 5 },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'A',
+						toolType: 'claude-code',
+						inputPrompt: 'do A',
+						nodeKey: 'a-key',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 600, y: 0 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'B',
+						toolType: 'claude-code',
+						inputPrompt: 'do B',
+						nodeKey: 'b-key',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs).toHaveLength(2);
+		expect(subs[0].target_node_key).toBe('a-key');
+		expect(subs[1].target_node_key).toBe('b-key');
+	});
+});
+
 describe('pipelinesToYaml', () => {
 	it('produces valid YAML with prompt_file references', () => {
 		const pipeline = makePipeline({
@@ -715,6 +933,46 @@ describe('pipelinesToYaml', () => {
 		expect(subs[0].label).toBe('Morning Check');
 	});
 
+	// Asymmetric save/load was the "vanishing pipeline" failure mode: the UI
+	// accepts `6:30`, the YAML loader's validator rejects it as
+	// non-`HH:MM`, every subscription drops, and the pipeline editor reopens
+	// empty. Pad on the way out so the on-disk shape always matches the
+	// canonical format the loader and trigger source expect.
+	it('pads single-digit schedule_times hours to HH:MM on save', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						// `6:30` exercises the pad path; `17:00` confirms already-canonical
+						// values pass through untouched. Minutes must be `\d{2}` per the
+						// validator, so the function intentionally only pads hours.
+						config: { schedule_times: ['6:30', '17:00'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'Run',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' as const }],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[0].schedule_times).toEqual(['06:30', '17:00']);
+	});
+
 	it('creates separate subscriptions for multiple triggers targeting same agent with edge prompts', () => {
 		const pipeline = makePipeline({
 			nodes: [
@@ -1065,6 +1323,8 @@ describe('fan-out with per-edge prompts', () => {
 		expect(subs).toHaveLength(1);
 		expect(subs[0].fan_out).toEqual(['worker-1', 'worker-2']);
 		expect(subs[0].fan_out_prompts).toEqual(['edge prompt 1', 'edge prompt 2']);
+		// Stable-id mirror — dispatcher uses these to resolve renamed agents.
+		expect(subs[0].fan_out_ids).toEqual(['s1', 's2']);
 	});
 
 	it('falls back to agent inputPrompt when edges have no prompt', () => {
@@ -1822,6 +2082,81 @@ describe('source_sub emission on agent chain subs', () => {
 	// commands are involved. Prevents regression: if source_sub were only
 	// emitted for command branches, a pure Schedule → A → B chain would
 	// still self-loop on B's completion matching its own source_session.
+
+	it('multiple triggers pointing at the same agent all appear in downstream source_sub', () => {
+		// Regression: when N triggers share the same downstream agent, the
+		// previous Map<string, string> implementation overwrote subNameForNode
+		// on each iteration, leaving only the LAST trigger's sub name in
+		// source_sub. Completions from any earlier trigger then failed the
+		// source_sub filter and the pipeline stalled silently.
+		const pipeline = makePipeline({
+			name: 'Pipeline 1',
+			nodes: [
+				{
+					id: 'trigger-startup',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'app.startup', label: 'Startup', config: {} },
+				},
+				{
+					id: 'trigger-heartbeat',
+					type: 'trigger',
+					position: { x: 0, y: 100 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 30 },
+					},
+				},
+				{
+					id: 'agent-a',
+					type: 'agent',
+					position: { x: 300, y: 50 },
+					data: {
+						sessionId: 's-a',
+						sessionName: 'Agent A',
+						toolType: 'claude-code',
+						inputPrompt: 'do work',
+					},
+				},
+				{
+					id: 'agent-b',
+					type: 'agent',
+					position: { x: 600, y: 50 },
+					data: {
+						sessionId: 's-b',
+						sessionName: 'Agent B',
+						toolType: 'claude-code',
+						inputPrompt: 'follow-up',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 'trigger-startup', target: 'agent-a', mode: 'pass' },
+				{ id: 'e2', source: 'trigger-heartbeat', target: 'agent-a', mode: 'pass' },
+				{ id: 'e3', source: 'agent-a', target: 'agent-b', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		// 2 trigger subs (startup + heartbeat) + 1 chain sub for Agent B = 3
+		expect(subs).toHaveLength(3);
+
+		const triggerNames = subs.filter((s) => s.event !== 'agent.completed').map((s) => s.name);
+		expect(triggerNames).toHaveLength(2);
+
+		const chainSub = subs.find((s) => s.event === 'agent.completed');
+		expect(chainSub).toBeDefined();
+		expect(chainSub!.source_session).toBe('Agent A');
+
+		// source_sub must contain ALL upstream trigger sub names so Agent B fires
+		// regardless of which trigger kicked off Agent A.
+		const sourceSub = chainSub!.source_sub;
+		const sourceSubArray = Array.isArray(sourceSub) ? sourceSub : [sourceSub];
+		for (const triggerName of triggerNames) {
+			expect(sourceSubArray).toContain(triggerName);
+		}
+	});
 
 	it('single trigger -> agent -> agent chain emits source_sub on the downstream chain', () => {
 		const pipeline = makePipeline({

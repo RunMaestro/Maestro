@@ -19,7 +19,7 @@ import { useQuickActionsHandlers } from '../../../renderer/hooks/modal/useQuickA
 import type { UseQuickActionsHandlersDeps } from '../../../renderer/hooks/modal/useQuickActionsHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 // ============================================================================
 // Helpers
@@ -124,9 +124,7 @@ beforeEach(() => {
 		chatRawTextMode: false,
 	} as any);
 
-	useUIStore.setState({
-		successFlashNotification: null,
-	} as any);
+	useCenterFlashStore.getState().setActive(null);
 });
 
 afterEach(() => {
@@ -594,7 +592,7 @@ describe('useQuickActionsHandlers', () => {
 			expect(deps.mainPanelRef.current?.refreshGitInfo).toHaveBeenCalledTimes(1);
 		});
 
-		it('sets successFlashNotification to the expected message', async () => {
+		it('fires the expected center flash message', async () => {
 			const session = createSession({ id: 'sess-1' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
 
@@ -605,10 +603,11 @@ describe('useQuickActionsHandlers', () => {
 				await result.current.handleQuickActionsRefreshGitFileState();
 			});
 
-			expect(useUIStore.getState().successFlashNotification).toBe('Files, Git, History Refreshed');
+			expect(useCenterFlashStore.getState().active?.message).toBe('Files, Git, History Refreshed');
+			expect(useCenterFlashStore.getState().active?.variant).toBe('success');
 		});
 
-		it('clears successFlashNotification after 2000ms', async () => {
+		it('center flash auto-dismisses on its own timer', async () => {
 			vi.useFakeTimers();
 
 			const session = createSession({ id: 'sess-1' });
@@ -621,13 +620,14 @@ describe('useQuickActionsHandlers', () => {
 				await result.current.handleQuickActionsRefreshGitFileState();
 			});
 
-			expect(useUIStore.getState().successFlashNotification).toBe('Files, Git, History Refreshed');
+			expect(useCenterFlashStore.getState().active?.message).toBe('Files, Git, History Refreshed');
 
+			// Advance well past the default center-flash duration
 			act(() => {
-				vi.advanceTimersByTime(2000);
+				vi.advanceTimersByTime(5000);
 			});
 
-			expect(useUIStore.getState().successFlashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active).toBeNull();
 
 			vi.useRealTimers();
 		});
@@ -656,7 +656,7 @@ describe('useQuickActionsHandlers', () => {
 				await result.current.handleQuickActionsRefreshGitFileState();
 			});
 
-			expect(useUIStore.getState().successFlashNotification).toBeNull();
+			expect(useCenterFlashStore.getState().active).toBeNull();
 		});
 
 		it('handles a null mainPanelRef.current gracefully', async () => {

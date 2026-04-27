@@ -154,6 +154,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			prompt: '',
 		}),
 		deletePlaybook: vi.fn().mockResolvedValue(true),
+		notifyToast: vi.fn().mockResolvedValue(true),
+		notifyCenterFlash: vi.fn().mockResolvedValue(true),
 	};
 }
 
@@ -244,6 +246,30 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('busy');
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('should bypass busy guard and forward command when force=true', async () => {
+			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'concurrent write',
+				inputMode: 'ai',
+				force: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'concurrent write',
+					'ai'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
 		});
 
 		it('should reject command when session not found', () => {

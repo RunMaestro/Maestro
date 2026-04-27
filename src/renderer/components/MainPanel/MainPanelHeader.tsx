@@ -26,6 +26,9 @@ import { useUIStore } from '../../stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
+import { calculateDisplayInputTokens } from '../../utils/contextUsage';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { safeClipboardWrite } from '../../utils/clipboard';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -49,7 +52,6 @@ export interface MainPanelHeaderProps {
 	activeFileTabId: string | null | undefined;
 	refreshGitStatus: () => Promise<void>;
 	handleViewGitDiff: () => Promise<void>;
-	copyToClipboard: (text: string, message?: string) => Promise<void>;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setGitLogOpen?: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
@@ -77,7 +79,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	activeFileTabId,
 	refreshGitStatus,
 	handleViewGitDiff,
-	copyToClipboard,
 	getContextColor,
 	setGitLogOpen,
 	setAgentSessionsOpen,
@@ -226,12 +227,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														</span>
 													)}
 													<GhostIconButton
-														onClick={(e) => {
+														onClick={async (e) => {
 															e.stopPropagation();
-															copyToClipboard(
-																gitInfo.branch,
-																`"${gitInfo.branch}" copied to clipboard`
-															);
+															if (await safeClipboardWrite(gitInfo.branch)) {
+																flashCopiedToClipboard(gitInfo.branch, 'Branch Name Copied');
+															}
 														}}
 														title="Copy branch name"
 														ariaLabel="Copy branch name"
@@ -267,9 +267,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														{gitInfo.remote.replace(/^https?:\/\//, '').replace(/\.git$/, '')}
 													</button>
 													<button
-														onClick={(e) => {
+														onClick={async (e) => {
 															e.stopPropagation();
-															copyToClipboard(gitInfo.remote);
+															if (await safeClipboardWrite(gitInfo.remote)) {
+																flashCopiedToClipboard(gitInfo.remote);
+															}
 														}}
 														className="p-1 rounded hover:bg-white/10 transition-colors ml-auto shrink-0"
 														title="Copy remote URL"
@@ -416,9 +418,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									? `${activeTab.name}\nClick to copy: ${activeTab.agentSessionId}`
 									: `Click to copy: ${activeTab.agentSessionId}`
 							}
-							onClick={(e) => {
+							onClick={async (e) => {
 								e.stopPropagation();
-								copyToClipboard(activeTab.agentSessionId!, 'Session ID Copied to Clipboard');
+								if (await safeClipboardWrite(activeTab.agentSessionId!)) {
+									flashCopiedToClipboard(activeTab.agentSessionId!, 'Session ID Copied');
+								}
 							}}
 						>
 							{activeTab.agentSessionId.split('-')[0].toUpperCase()}
@@ -511,7 +515,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														className="text-xs font-mono"
 														style={{ color: theme.colors.textMain }}
 													>
-														{(activeTab?.usageStats?.inputTokens ?? 0).toLocaleString('en-US')}
+														{calculateDisplayInputTokens(
+															activeTab?.usageStats ?? {},
+															activeSession.toolType
+														).toLocaleString('en-US')}
 													</span>
 												</div>
 												<div className="flex justify-between items-center">

@@ -39,4 +39,4 @@ icon: sparkles
 - 🏆 **[Achievements](./achievements)** - Level up from Apprentice to Titan of the Baton based on cumulative Auto Run time. 11 conductor-themed ranks to unlock.
 - 💬 **[Conversational Feedback](./feedback)** - Submit bug reports and feature requests through an AI-guided conversation. The agent asks clarifying questions, checks for duplicate issues, and creates a well-structured GitHub issue — no forms to fill out.
 
-> **Note**: Maestro currently supports Claude Code, Codex (OpenAI), OpenCode, and Factory Droid as fully-integrated providers. Support for additional providers (Gemini CLI, Qwen3 Coder) is planned for future releases based on community demand.
+> **Note**: Maestro currently supports Claude Code, Codex (OpenAI), OpenCode, Factory Droid, and Copilot-CLI (beta) as fully-integrated providers. Support for additional providers (Gemini CLI) is planned for future releases based on community demand.

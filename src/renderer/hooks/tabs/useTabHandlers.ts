@@ -19,6 +19,7 @@ import {
 	getActiveTab,
 	getInitialRenameValue,
 	hasActiveWizard,
+	hasWizardInteraction,
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
@@ -70,6 +71,7 @@ export interface CloseCurrentTabResult {
 	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
 	tabId?: string;
 	isWizardTab?: boolean;
+	hasWizardUserInteraction?: boolean;
 	hasDraft?: boolean;
 }
 
@@ -79,6 +81,10 @@ interface FileTabOpenParams {
 	content: string;
 	sshRemoteId?: string;
 	lastModified?: number;
+	/** Open the tab in loading state (no content yet). Used for slow remote reads. */
+	isLoading?: boolean;
+	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
+	loadRequestId?: string;
 }
 
 export interface TabHandlersReturn {
@@ -259,14 +265,18 @@ export function useTabHandlers(): TabHandlersReturn {
 					// Check if a tab with this path already exists
 					const existingTab = s.filePreviewTabs.find((tab) => tab.path === file.path);
 					if (existingTab) {
-						// Tab exists - update content and lastModified if provided and select it
+						// Tab exists - update content and lastModified if provided and select it.
+						// If the caller is opening in a still-loading state (eager creation),
+						// preserve isLoading=true and the loadRequestId; otherwise the read
+						// has completed and we flip isLoading off.
 						const updatedTabs = s.filePreviewTabs.map((tab) =>
 							tab.id === existingTab.id
 								? {
 										...tab,
 										content: file.content,
 										lastModified: file.lastModified ?? tab.lastModified,
-										isLoading: false,
+										isLoading: file.isLoading ?? false,
+										loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 									}
 								: tab
 						);
@@ -345,7 +355,8 @@ export function useTabHandlers(): TabHandlersReturn {
 								editContent: undefined,
 								lastModified: file.lastModified ?? Date.now(),
 								sshRemoteId: file.sshRemoteId,
-								isLoading: false,
+								isLoading: file.isLoading ?? false,
+								loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
 							};
@@ -376,7 +387,8 @@ export function useTabHandlers(): TabHandlersReturn {
 						createdAt: Date.now(),
 						lastModified: file.lastModified ?? Date.now(),
 						sshRemoteId: file.sshRemoteId,
-						isLoading: false,
+						isLoading: file.isLoading ?? false,
+						loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
 					};
@@ -462,6 +474,19 @@ export function useTabHandlers(): TabHandlersReturn {
 	 */
 	const forceCloseFileTab = useCallback((tabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+
+		// If the tab is still mid-load (e.g. user mistakenly opened a huge
+		// remote file), cancel the underlying SSH read so we don't waste
+		// bandwidth fetching content nobody will see. We snapshot from state
+		// before the close mutation since the tab will be gone after.
+		const activeSession = useSessionStore
+			.getState()
+			.sessions.find((s: Session) => s.id === activeSessionId);
+		const closingTab = activeSession?.filePreviewTabs.find((t) => t.id === tabId);
+		if (closingTab?.isLoading && closingTab.loadRequestId) {
+			void window.maestro.fs.cancelReadFile(closingTab.loadRequestId);
+		}
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -893,11 +918,14 @@ export function useTabHandlers(): TabHandlersReturn {
 			const session = selectActiveSession(useSessionStore.getState());
 			const tab = session?.aiTabs.find((t) => t.id === tabId);
 
-			if (tab && hasActiveWizard(tab)) {
+			if (tab && hasWizardInteraction(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'Close this wizard? Your progress will be lost and cannot be restored.',
 					onConfirm: () => performTabClose(tabId),
 				});
+			} else if (tab && hasActiveWizard(tab)) {
+				// Wizard is active but no user interaction yet - close without confirmation
+				performTabClose(tabId);
 			} else if (tab && hasDraft(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'This tab has an unsent draft. Are you sure you want to close it?',
@@ -1254,9 +1282,10 @@ export function useTabHandlers(): TabHandlersReturn {
 			const tabId = session.activeTabId;
 			const tab = session.aiTabs.find((t) => t.id === tabId);
 			const isWizardTab = tab ? hasActiveWizard(tab) : false;
+			const hasWizardUserInteraction = tab ? hasWizardInteraction(tab) : false;
 			const tabHasDraft = tab ? hasDraft(tab) : false;
 
-			return { type: 'ai', tabId, isWizardTab, hasDraft: tabHasDraft };
+			return { type: 'ai', tabId, isWizardTab, hasWizardUserInteraction, hasDraft: tabHasDraft };
 		}
 
 		return { type: 'none' };
@@ -1523,6 +1552,10 @@ export function useTabHandlers(): TabHandlersReturn {
 		updateAiTab(session.id, currentActiveTab.id, (tab) => {
 			const newMode = cycleThinkingMode(tab.showThinking);
 			if (newMode === 'off') {
+				// ThinkingMode contract — manual toggle to 'off' wipes any
+				// transient thinking/tool entries currently visible. The
+				// inline ('on') and exit-time clear points live in
+				// useBatchedSessionUpdates and useAgentListeners respectively.
 				return {
 					...tab,
 					showThinking: 'off',

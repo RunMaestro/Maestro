@@ -384,3 +384,50 @@ When a `<webview>` has focus, keyboard events are trapped in its guest Chromium 
 **Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs — they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
 
 See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IPC-PATTERNS.md#browser-tab-shortcut-forwarding) for the full event flow.
+
+## 14. Search / Filter Input ESC Pill
+
+Any search or filter input that is dismissible via Escape **must** display an inline `ESC` pill flush-right inside the input bar. This gives users a consistent visual affordance that Escape will clear or close the input — no hidden affordances.
+
+**When this applies:**
+
+- The input is meant for searching, filtering, or fuzzy-matching (not free-form text entry like chat input).
+- Pressing Escape clears the query, collapses the search bar, or closes the surrounding modal/panel.
+
+**Reference implementation:** `src/renderer/components/LogViewer.tsx` (Search Bar section)
+
+```tsx
+<div className="px-4 py-2 border-b flex items-center gap-3" style={{ ... }}>
+	<Search className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+	<input
+		ref={searchInputRef}
+		type="text"
+		className="flex-1 bg-transparent outline-none text-sm"
+		placeholder="Search..."
+		style={{ color: theme.colors.textMain }}
+		value={query}
+		onChange={(e) => setQuery(e.target.value)}
+	/>
+	<button
+		onClick={() => {
+			setQuery('');
+			closeSearch(); // or whatever the Escape handler does
+		}}
+		className="text-xs font-bold opacity-50 hover:opacity-100"
+		style={{ color: theme.colors.textDim }}
+	>
+		ESC
+	</button>
+</div>
+```
+
+**Rules:**
+
+1. The pill must perform the **same action** as Escape — never have the pill diverge from the keyboard handler.
+2. Use `theme.colors.textDim` and `text-xs font-bold opacity-50 hover:opacity-100` so the pill stays muted but discoverable.
+3. The pill is a `<button>` (focusable, click-dismissible), not decorative text.
+4. For inputs inside modals registered with the LayerStack, the pill still belongs — Escape closes the layer, the pill mirrors that.
+
+**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `AgentSessionsModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
+
+When adding any new search/filter input, include the ESC pill from the start.

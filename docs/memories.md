@@ -18,8 +18,8 @@ The button appears only when the active agent supports per-project memory. **Tod
 
 Claude Code stores memory per project as a directory of small markdown files. The viewer mirrors that one-to-one:
 
-- **Left pane** — list of every `.md` file in the project's memory directory. `MEMORY.md` is always pinned to the top; everything else is alphabetical.
-- **Right pane** — a markdown editor for the selected file.
+- **Left pane** — list of every `.md` file in the project's memory directory, each row annotated with an estimated token count so you can see at a glance which entries are paying for themselves. `MEMORY.md` is always pinned to the top; everything else is alphabetical.
+- **Right pane** — a markdown editor for the selected file. A live token estimate sits next to the filename in the editor header and updates as you type.
 - **Stats bar** — file count, total bytes on disk, an estimated token cost (~4 bytes/token), first-created and last-edited timestamps.
 
 The **Open in Finder** button (bottom right) reveals the underlying directory on disk if you want to inspect or back it up manually.

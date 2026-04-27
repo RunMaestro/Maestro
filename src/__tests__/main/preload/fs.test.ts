@@ -63,7 +63,12 @@ describe('Filesystem Preload API', () => {
 
 			const result = await api.readFile('/home/user/file.txt');
 
-			expect(mockInvoke).toHaveBeenCalledWith('fs:readFile', '/home/user/file.txt', undefined);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:readFile',
+				'/home/user/file.txt',
+				undefined,
+				undefined
+			);
 			expect(result).toBe('file contents');
 		});
 
@@ -72,7 +77,35 @@ describe('Filesystem Preload API', () => {
 
 			await api.readFile('/home/user/file.txt', 'remote-1');
 
-			expect(mockInvoke).toHaveBeenCalledWith('fs:readFile', '/home/user/file.txt', 'remote-1');
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:readFile',
+				'/home/user/file.txt',
+				'remote-1',
+				undefined
+			);
+		});
+
+		it('should invoke fs:readFile with a requestId for cancellation', async () => {
+			mockInvoke.mockResolvedValue('remote file contents');
+
+			await api.readFile('/home/user/file.txt', 'remote-1', 'req-123');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:readFile',
+				'/home/user/file.txt',
+				'remote-1',
+				'req-123'
+			);
+		});
+	});
+
+	describe('cancelReadFile', () => {
+		it('should invoke fs:cancelReadFile with the requestId', async () => {
+			mockInvoke.mockResolvedValue(undefined);
+
+			await api.cancelReadFile('req-123');
+
+			expect(mockInvoke).toHaveBeenCalledWith('fs:cancelReadFile', 'req-123');
 		});
 	});
 

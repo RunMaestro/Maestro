@@ -6,7 +6,13 @@ export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
 export const NEW_SESSION_MESSAGE_MAX_LENGTH = 5000;
 
 // Supported agents that are fully implemented
-export const SUPPORTED_AGENTS = ['claude-code', 'opencode', 'codex', 'factory-droid'];
+export const SUPPORTED_AGENTS = [
+	'claude-code',
+	'opencode',
+	'codex',
+	'factory-droid',
+	'copilot-cli',
+];
 
 export interface AgentDebugInfo {
 	agentId: string;
