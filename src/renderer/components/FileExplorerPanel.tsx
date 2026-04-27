@@ -40,6 +40,7 @@ import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { getRevealLabel, getOpenInLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
@@ -98,6 +99,7 @@ function FileTreeLoadingProgress({
 	theme,
 	progress,
 	isRemote,
+	onCancel,
 }: {
 	theme: Theme;
 	progress?: {
@@ -106,6 +108,7 @@ function FileTreeLoadingProgress({
 		currentDirectory: string;
 	};
 	isRemote: boolean;
+	onCancel?: () => void;
 }) {
 	// Extract just the folder name from the full path for display
 	const currentFolder = progress?.currentDirectory
@@ -146,6 +149,18 @@ function FileTreeLoadingProgress({
 					>
 						scanning: {currentFolder}/
 					</div>
+				)}
+
+				{/* Cancel — useful over SSH when the scan is hogging connections. */}
+				{onCancel && (
+					<button
+						type="button"
+						onClick={onCancel}
+						className="text-[11px] mt-3 underline-offset-2 hover:underline transition-opacity"
+						style={{ color: theme.colors.textDim }}
+					>
+						Stop loading
+					</button>
 				)}
 			</div>
 		</div>
@@ -421,6 +436,11 @@ interface FileExplorerPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -439,6 +459,8 @@ interface FileExplorerPanelProps {
 		sessionId: string,
 		options?: { maxEntriesOverride?: number }
 	) => Promise<FileTreeChanges | undefined>;
+	/** Cancel the in-flight file tree load — useful when SSH scans monopolize connections. */
+	cancelFileTreeLoad?: (sessionId: string) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
@@ -465,11 +487,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setActiveFocus,
 		fileTreeFilterInputRef,
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,
 		updateSessionWorkingDirectory,
 		refreshFileTree,
+		cancelFileTreeLoad,
 		setSessions,
 		onAutoRefreshChange,
 		onShowFlash,
@@ -942,7 +966,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			if (!nodes) return [];
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter((node) => !node.name.startsWith('.') || node.name === '.maestro')
+				.filter((node) => !node.name.startsWith('.'))
 				.map((node) => ({
 					...node,
 					children: node.children ? filterHiddenFiles(node.children) : undefined,
@@ -1058,6 +1082,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			return (
 				<div
 					data-file-index={globalIndex}
+					title={isFolder ? 'Alt/Option+click to expand or collapse all subfolders' : undefined}
 					className={`absolute top-0 left-0 w-full flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-white/5 px-2 rounded transition-colors border-l-2 select-none min-w-0 ${isSelected ? 'bg-white/10' : ''}`}
 					style={{
 						height: `${virtualRow.size}px`,
@@ -1077,14 +1102,17 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							e.preventDefault();
 						}
 					}}
-					onClick={() => {
+					onClick={(e) => {
+						setSelectedFileIndex(globalIndex);
+						// Only change focus if not filtering
+						if (fileTreeFilter.length === 0) {
+							setActiveFocus('right');
+						}
 						if (isFolder) {
-							toggleFolder(fullPath, session.id, setSessions);
-						} else {
-							setSelectedFileIndex(globalIndex);
-							// Only change focus if not filtering
-							if (fileTreeFilter.length === 0) {
-								setActiveFocus('right');
+							if (e.altKey) {
+								toggleFolderRecursive(fullPath, session.id, setSessions);
+							} else {
+								toggleFolder(fullPath, session.id, setSessions);
 							}
 						}
 					}}
@@ -1149,6 +1177,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			selectedFileIndex,
 			theme,
 			toggleFolder,
+			toggleFolderRecursive,
 			setSessions,
 			setSelectedFileIndex,
 			setActiveFocus,
@@ -1188,7 +1217,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					<button
 						onClick={() => {
 							if (fileTreeFilterOpen) {
-								fileTreeFilterInputRef?.current?.focus();
+								if (fileTreeFilter.length === 0) {
+									setFileTreeFilterOpen(false);
+								} else {
+									fileTreeFilterInputRef?.current?.focus();
+								}
 							} else {
 								setFileTreeFilterOpen(true);
 								setTimeout(() => fileTreeFilterInputRef?.current?.focus(), 0);
@@ -1240,7 +1273,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					>
 						{!compact &&
 							(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
-						{showHiddenFiles ? 'Hide' : 'Show'}
+						Dotfiles
 					</button>
 					{/* Refresh */}
 					<button
@@ -1311,9 +1344,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					<span
 						className="flex-shrink-0 cursor-pointer opacity-30 hover:opacity-70 transition-opacity"
 						style={{ color: theme.colors.accent }}
-						onClick={() => {
-							safeClipboardWrite(session.projectRoot);
-							onShowFlash?.('Path copied to clipboard');
+						onClick={async () => {
+							if (await safeClipboardWrite(session.projectRoot)) {
+								flashCopiedToClipboard(session.projectRoot, 'Path Copied');
+							}
 						}}
 						title="Copy path to clipboard"
 					>
@@ -1331,9 +1365,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								? `${session.sshRemote.host}:${session.projectRoot}`
 								: session.projectRoot
 						}
-						onDoubleClick={() => {
-							safeClipboardWrite(session.projectRoot);
-							onShowFlash?.('Path copied to clipboard');
+						onDoubleClick={async () => {
+							if (await safeClipboardWrite(session.projectRoot)) {
+								flashCopiedToClipboard(session.projectRoot, 'Path Copied');
+							}
 						}}
 					>
 						<bdi>{session.projectRoot}</bdi>
@@ -1395,6 +1430,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							theme={theme}
 							progress={session.fileTreeLoadingProgress}
 							isRemote={!!(session.sshRemoteId || session.sessionSshRemoteConfig?.enabled)}
+							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
 						/>
 					)}
 					{/* Truncation banner - scan hit the entry cap and stopped early. */}

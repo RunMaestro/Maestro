@@ -339,10 +339,51 @@ interface ParsedEvent {
 	};
 	slashCommands?: string[];
 	isPartial?: boolean;
+	isReasoning?: boolean;
 	toolUseBlocks?: Array<{ name: string; id?; input? }>;
 	raw?: unknown;
 }
 ```
+
+### Thinking / Tool Log Contract (REQUIRED for new parsers)
+
+Maestro renders reasoning and tool-execution activity as ephemeral cells whose
+lifecycle is governed by the tab's `ThinkingMode` (`'off' | 'on' | 'sticky'`,
+defined in `src/shared/types.ts`). **Every parser that surfaces reasoning or
+tool activity MUST cooperate with this contract**, otherwise users will see
+stale thinking cells leak past the final answer or process exit.
+
+Concretely:
+
+1. **Reasoning chunks**: Emit `ParsedEvent`s with `isReasoning: true`
+   alongside `isPartial: true`. The dispatcher routes these to the
+   `process:thinking-chunk` IPC channel; the renderer appends them to the
+   target tab as `LogEntry { source: 'thinking' }`.
+2. **Tool execution**: Emit tool-use events normally. The renderer appends
+   them as `LogEntry { source: 'tool' }`.
+3. **Final answer text**: Emit non-reasoning text events. The renderer
+   appends them as `LogEntry { source: 'stdout' | 'stderr' }`.
+
+The renderer enforces the lifecycle in three coordinated places — parser
+authors do **not** need to implement clearing logic, only the correct
+`source` tagging:
+
+| Clear point | Where                                               | Trigger                             | Effect (when `showThinking !== 'sticky'`) |
+| ----------- | --------------------------------------------------- | ----------------------------------- | ----------------------------------------- |
+| Inline      | `useBatchedSessionUpdates.ts`                       | New `stdout`/`stderr` chunk arrives | Drops prior `thinking`/`tool` entries     |
+| On exit     | `useAgentListeners.ts` → `cleanupExitedTabLogs`     | Process `exit` event                | Drops remaining `thinking`/`tool` entries |
+| Manual      | `useTabHandlers.ts` → `handleToggleTabShowThinking` | User cycles mode to `'off'`         | Wipes `thinking`/`tool` entries           |
+
+Sticky mode (`'sticky'`) opts out of all three clear points. Off mode
+suppresses appending in the first place at the renderer's `onThinkingChunk`
+listener.
+
+**Adding a new agent:** make sure your parser tags reasoning deltas with
+`isReasoning: true` and emits tool-use events through the standard
+`tool_use` ParsedEvent type. Verify the tab transitions to `idle` cleanly
+on exit by spot-checking that thinking cells disappear when
+`showThinking === 'on'` and persist when `showThinking === 'sticky'` —
+covered by `src/__tests__/renderer/hooks/useAgentListeners.test.ts`.
 
 ### Parser Implementations
 

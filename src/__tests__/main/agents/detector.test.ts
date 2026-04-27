@@ -1621,6 +1621,28 @@ describe('agent-detector', () => {
 			// Hidden model's levels should not be excluded (they share the same platform levels)
 		});
 
+		it('should fall back to static options for select config options without dynamic discovery', async () => {
+			// Copilot-CLI's reasoningEffort is declared with a static `options` array
+			// and no dynamic discovery branch. Without the static fallback the
+			// effort dropdown in the UI would stay empty and hidden.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'copilot') {
+					return { stdout: '/usr/bin/copilot\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('copilot-cli', 'reasoningEffort');
+			expect(options).toEqual(['', 'low', 'medium', 'high', 'xhigh']);
+		});
+
 		it('should return empty array for unsupported option keys', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				const binaryName = args[0];

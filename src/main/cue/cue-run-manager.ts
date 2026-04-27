@@ -516,7 +516,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				activeRuns.delete(runId);
 				deps.onAllowSleep?.(`cue:run:${runId}`);
 
-				const count = activeRunCount.get(sessionId) ?? 1;
+				const count = activeRunCount.get(sessionId) ?? 0;
 				activeRunCount.set(sessionId, Math.max(0, count - 1));
 				drainQueue(sessionId);
 
@@ -559,7 +559,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
-			const queueSize = settings?.queue_size ?? 10;
+			const queueSize = settings?.queue_size ?? 0;
 			const currentCount = activeRunCount.get(sessionId) ?? 0;
 
 			if (currentCount >= maxConcurrent) {
@@ -692,7 +692,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			deps.onAllowSleep?.(`cue:run:${runId}`);
 
 			// Free the concurrency slot immediately so queued events can proceed
-			const count = activeRunCount.get(run.result.sessionId) ?? 1;
+			const count = activeRunCount.get(run.result.sessionId) ?? 0;
 			activeRunCount.set(run.result.sessionId, Math.max(0, count - 1));
 			drainQueue(run.result.sessionId);
 

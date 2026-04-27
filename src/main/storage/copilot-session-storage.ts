@@ -3,7 +3,13 @@ import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { readFileRemote, readDirRemote, directorySizeRemote } from '../utils/remote-fs';
+import {
+	readFileRemote,
+	readDirRemote,
+	directorySizeRemote,
+	bulkStatFileInSubdirsRemote,
+} from '../utils/remote-fs';
+import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
 	SessionMessagesResult,
@@ -15,6 +21,13 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[CopilotSessionStorage]';
+
+/**
+ * Skip remote sessions whose `events.jsonl` exceeds this size — they can't be
+ * read in a single `cat` without blowing past `EXEC_MAX_BUFFER`, and they're
+ * almost always corrupted/runaway logs in practice.
+ */
+const MAX_REMOTE_EVENTS_FILE_SIZE = 100 * 1024 * 1024;
 
 /** Resolve the local Copilot session state directory, respecting COPILOT_CONFIG_DIR. */
 function getLocalCopilotSessionStateDir(): string {
@@ -355,14 +368,95 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		projectPath: string,
 		sshConfig?: SshRemoteConfig
 	): Promise<AgentSessionInfo[]> {
-		const sessionIds = await this.listSessionIds(sshConfig);
+		if (sshConfig) {
+			return this.listSessionsRemote(projectPath, sshConfig);
+		}
+
+		const sessionIds = await this.listSessionIds();
 		const sessions = await Promise.all(
-			sessionIds.map((sessionId) => this.loadSessionInfo(projectPath, sessionId, sshConfig))
+			sessionIds.map((sessionId) => this.loadSessionInfo(projectPath, sessionId))
 		);
 
 		return sessions
 			.filter((session): session is AgentSessionInfo => session !== null)
 			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+	}
+
+	/**
+	 * List sessions on a remote host via SSH.
+	 *
+	 * Three changes from the local path that all come from sshd's `MaxStartups`
+	 * cap: (1) bulk-stat every session's `events.jsonl` in a single round-trip
+	 * so we can drop oversized logs before reading them; (2) cap the per-session
+	 * fan-out to {@link REMOTE_SESSION_READ_CONCURRENCY} so a project with many
+	 * sessions doesn't burst past the connection limit and silently lose
+	 * entries; (3) reuse the bulk-stat size for `sizeBytes` instead of issuing
+	 * an extra `du` call per session.
+	 */
+	private async listSessionsRemote(
+		projectPath: string,
+		sshConfig: SshRemoteConfig
+	): Promise<AgentSessionInfo[]> {
+		const sessionIds = await this.listSessionIds(sshConfig);
+		if (sessionIds.length === 0) return [];
+
+		const eventsStats = await this.bulkStatEventsRemote(sshConfig);
+
+		// Filter out sessions whose events.jsonl exceeds the read budget. Sessions
+		// without an entry (no events.jsonl yet) are kept and let `loadSessionInfo`
+		// classify them — bulk stat output is best-effort metadata, not gating.
+		const eligibleIds = sessionIds.filter((id) => {
+			const stat = eventsStats.get(id);
+			if (!stat) return true;
+			if (stat.size > MAX_REMOTE_EVENTS_FILE_SIZE) {
+				logger.info(
+					`Skipping oversized Copilot session ${id} (${stat.size} bytes > ${MAX_REMOTE_EVENTS_FILE_SIZE})`,
+					LOG_CONTEXT
+				);
+				return false;
+			}
+			return true;
+		});
+
+		const sessions = await mapWithConcurrency(
+			eligibleIds,
+			REMOTE_SESSION_READ_CONCURRENCY,
+			(sessionId) =>
+				this.loadSessionInfo(projectPath, sessionId, sshConfig, eventsStats.get(sessionId)?.size)
+		);
+
+		return sessions
+			.filter((session): session is AgentSessionInfo => session !== null)
+			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+	}
+
+	/**
+	 * Bulk-stat every session's `events.jsonl` in one SSH call. Returns a map
+	 * keyed by session id. Empty on failure — the caller falls back to per-
+	 * session reads, so a stat outage degrades gracefully.
+	 */
+	private async bulkStatEventsRemote(
+		sshConfig: SshRemoteConfig
+	): Promise<Map<string, { size: number; mtime: number }>> {
+		const result = await bulkStatFileInSubdirsRemote(
+			this.getRemoteSessionStateDir(),
+			'events.jsonl',
+			sshConfig
+		);
+		const stats = new Map<string, { size: number; mtime: number }>();
+		if (!result.success || !result.data) {
+			if (result.error && !this.isExpectedRemoteError(result.error)) {
+				logger.warn(
+					`Unexpected SSH failure bulk-stating Copilot events: ${result.error}`,
+					LOG_CONTEXT
+				);
+			}
+			return stats;
+		}
+		for (const entry of result.data) {
+			stats.set(entry.name, { size: entry.size, mtime: entry.mtime });
+		}
+		return stats;
 	}
 
 	/** Read messages from a Copilot session's events.jsonl file. */
@@ -500,11 +594,19 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		}
 	}
 
-	/** Load session metadata and event statistics for a single session. Returns null if the session doesn't match the project or lacks meaningful content. */
+	/**
+	 * Load session metadata and event statistics for a single session.
+	 *
+	 * `precomputedSizeBytes` lets the SSH path inject the size we already
+	 * gathered via {@link bulkStatEventsRemote}, avoiding a redundant per-
+	 * session `du` round-trip. Local callers leave it undefined and we fall
+	 * back to the existing local/remote size helpers.
+	 */
 	private async loadSessionInfo(
 		projectPath: string,
 		sessionId: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		precomputedSizeBytes?: number
 	): Promise<AgentSessionInfo | null> {
 		const sessionDir = this.getSessionDir(sessionId, sshConfig);
 		const workspacePath = this.getWorkspacePath(sessionId, sshConfig);
@@ -541,9 +643,14 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 				return null;
 			}
 
-			const sizeBytes = sshConfig
-				? await this.getRemoteDirectorySize(sessionDir, sshConfig)
-				: await getLocalDirectorySize(sessionDir);
+			let sizeBytes: number;
+			if (precomputedSizeBytes !== undefined) {
+				sizeBytes = precomputedSizeBytes;
+			} else if (sshConfig) {
+				sizeBytes = await this.getRemoteDirectorySize(sessionDir, sshConfig);
+			} else {
+				sizeBytes = await getLocalDirectorySize(sessionDir);
+			}
 			const projectRoot = metadata.git_root || metadata.cwd || projectPath;
 
 			// Prefer metadata timestamps; fall back to workspace file mtime (local only)

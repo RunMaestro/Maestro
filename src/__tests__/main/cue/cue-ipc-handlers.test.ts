@@ -45,6 +45,7 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	validateCueConfig: vi.fn(),
 	findAncestorCueConfigRoot: () => null,
+	findAncestorCueConfigRoots: () => [],
 }));
 
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
@@ -226,10 +227,10 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:enable', () => {
-		it('should call engine.start()', async () => {
+		it('should call engine.start() with system-boot reason', async () => {
 			const handler = registerAndGetHandler('cue:enable');
 			await handler(null);
-			expect(mockEngine.start).toHaveBeenCalledOnce();
+			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
 		});
 	});
 

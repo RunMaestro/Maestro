@@ -3,7 +3,6 @@ import {
 	FileText,
 	Radio,
 	Code,
-	GitBranch,
 	Clock,
 	Sparkles,
 	Layers,
@@ -315,6 +314,56 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							(default 1). Fires per file when content changes and pending tasks exist.
 						</p>
 					</div>
+					<div>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>CLI Trigger</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								cli.trigger
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when invoked externally via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								maestro-cli cue trigger &lt;name&gt;
+							</code>
+							. Useful for hooking Cue into shell scripts, Git hooks, or other automation. The
+							optional{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								--prompt
+							</code>{' '}
+							and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								--source-agent-id
+							</code>{' '}
+							flags are exposed as{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_CLI_PROMPT}}'}
+							</code>{' '}
+							and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_SOURCE_AGENT_ID}}'}
+							</code>
+							.
+						</p>
+					</div>
 					<div
 						className="font-mono text-xs p-3 rounded border space-y-3"
 						style={{
@@ -386,6 +435,15 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							{'  '}watch: "tasks/**/*.md"
 							<br />
 							{'  '}poll_minutes: 1
+						</div>
+						<div>
+							# CLI Trigger
+							<br />
+							- name: "Manual Run"
+							<br />
+							{'  '}event: cli.trigger
+							<br />
+							{'  '}prompt: prompts/manual.md
 						</div>
 					</div>
 				</div>
@@ -506,7 +564,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> — Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, task.pending)
+							github.pull_request, github.issue, task.pending, cli.trigger)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> —
@@ -564,8 +622,21 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							Subscription that triggered the source (agent.completed)
 						</div>
 						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_FROM_AGENT}}'}</code> —
+							Triggering upstream agent ID — sourceSessionId (agent.completed) or sourceAgentId
+							(cli.trigger)
+						</div>
+						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE}}'}</code> — File path
 							with pending tasks (task.pending)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_NAME}}'}</code> — File
+							name with pending tasks (task.pending)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE_DIR}}'}</code> —
+							Directory of file with pending tasks (task.pending)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_COUNT}}'}</code> — Number of
@@ -578,6 +649,10 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_CONTENT}}'}</code> — Full
 							file content, truncated (task.pending)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TYPE}}'}</code> — GitHub item
+							type: "pull_request" or "issue" (github.*)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_NUMBER}}'}</code> — PR/issue
@@ -596,8 +671,16 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							(github.*)
 						</div>
 						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BODY}}'}</code> — PR/issue
+							body, truncated (github.*)
+						</div>
+						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> — Labels,
 							comma-separated (github.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_STATE}}'}</code> — State:
+							"open" or "closed" (github.*)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_REPO}}'}</code> — Repo
@@ -606,6 +689,36 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BRANCH}}'}</code> — Head
 							branch (github.pull_request)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BASE_BRANCH}}'}</code> — Base
+							branch (github.pull_request)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_ASSIGNEES}}'}</code> —
+							Comma-separated assignees (github.issue)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_CLI_PROMPT}}'}</code> — Prompt
+							text passed via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								--prompt
+							</code>{' '}
+							flag (cli.trigger)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_AGENT_ID}}'}</code> —
+							Source agent ID passed via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								--source-agent-id
+							</code>{' '}
+							(cli.trigger)
 						</div>
 					</div>
 					<div
@@ -634,69 +747,6 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 			</section>
 
-			{/* Section 5: Multi-Agent Orchestration */}
-			<section>
-				<div className="flex items-center gap-2 mb-3">
-					<GitBranch className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Multi-Agent Orchestration</h3>
-				</div>
-				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
-					<div>
-						<p>
-							<strong style={{ color: theme.colors.textMain }}>Fan-Out:</strong> Trigger multiple
-							sessions from a single event. Add{' '}
-							<code
-								className="px-1 rounded text-xs"
-								style={{ backgroundColor: theme.colors.bgActivity }}
-							>
-								fan_out: ["session-1", "session-2"]
-							</code>{' '}
-							to your subscription.
-						</p>
-					</div>
-					<div>
-						<p>
-							<strong style={{ color: theme.colors.textMain }}>Fan-In:</strong> Wait for multiple
-							sessions to complete before triggering. Set{' '}
-							<code
-								className="px-1 rounded text-xs"
-								style={{ backgroundColor: theme.colors.bgActivity }}
-							>
-								source_session
-							</code>{' '}
-							to an array:{' '}
-							<code
-								className="px-1 rounded text-xs"
-								style={{ backgroundColor: theme.colors.bgActivity }}
-							>
-								["session-1", "session-2"]
-							</code>
-							.
-						</p>
-					</div>
-					<div
-						className="font-mono text-xs p-3 rounded border"
-						style={{
-							backgroundColor: theme.colors.bgActivity,
-							borderColor: theme.colors.border,
-						}}
-					>
-						{'  '}Event ──┬── Agent A (fan-out)
-						<br />
-						{'          '}├── Agent B
-						<br />
-						{'          '}└── Agent C
-						<br />
-						<br />
-						{'  '}Agent A ──┐
-						<br />
-						{'  '}Agent B ──┼── Event (fan-in)
-						<br />
-						{'  '}Agent C ──┘
-					</div>
-				</div>
-			</section>
-
 			{/* Section: Coordination Patterns */}
 			<section>
 				<div className="flex items-center gap-2 mb-3">
@@ -704,12 +754,29 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					<h3 className="font-bold">Coordination Patterns</h3>
 				</div>
 				<div className="text-sm space-y-4 pl-7" style={{ color: theme.colors.textDim }}>
-					<p>Maestro Cue supports several coordination patterns for multi-agent workflows.</p>
+					<p>
+						Multi-subscription patterns for orchestrating agents. Any trigger (heartbeat, file
+						watch, schedule, startup) can serve as the entry point.
+					</p>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Heartbeat</strong> &mdash; Single
-							agent running on a recurring timer (every N minutes).
+							<strong style={{ color: theme.colors.textMain }}>Sequential Pipeline</strong> &mdash;
+							Each agent triggers the next via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								agent.completed
+							</code>
+							. Use{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								source_sub
+							</code>{' '}
+							to ensure each step only fires on the intended upstream subscription.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -718,14 +785,21 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Heartbeat] &rarr; [Agent]
+							[Trigger] &rarr; [Agent A] &rarr; [Agent B] &rarr; [Agent C]
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Scheduled</strong> &mdash; Single
-							agent at specific times and days of the week.
+							<strong style={{ color: theme.colors.textMain }}>Fan-Out</strong> &mdash; Dispatch a
+							single event to multiple agents in parallel using{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								fan_out
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -734,14 +808,25 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Schedule] &rarr; [Agent]
+							{'          '}┌&rarr; [Agent A]
+							<br />
+							[Trigger] ──┼&rarr; [Agent B]
+							<br />
+							{'          '}└&rarr; [Agent C]
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>File Enrichment</strong> &mdash;
-							React to file system changes.
+							<strong style={{ color: theme.colors.textMain }}>Fan-In (Gather)</strong> &mdash; Wait
+							for multiple agents to complete before triggering a synthesizer. Set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								source_session
+							</code>{' '}
+							to an array of session names.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -750,14 +835,18 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[File Change] &rarr; [Agent]
+							[Agent A] ─┐
+							<br />
+							[Agent B] ─┼─&rarr; [Synthesizer]
+							<br />
+							[Agent C] ─┘
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Research Swarm</strong> &mdash;
-							Fan-out to multiple agents, fan-in to synthesize.
+							<strong style={{ color: theme.colors.textMain }}>Swarm (Fan-Out + Fan-In)</strong>{' '}
+							&mdash; Dispatch parallel workers then gather all results into a synthesizer.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -766,14 +855,25 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Timer] &rarr; [Agent 1, Agent 2, Agent 3] &rarr; [Synthesizer]
+							{'            '}┌&rarr; [Worker A] ─┐
+							<br />
+							[Trigger] ───┼&rarr; [Worker B] ─┼─&rarr; [Synthesizer]
+							<br />
+							{'            '}└&rarr; [Worker C] ─┘
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Sequential Chain</strong> &mdash;
-							Pipeline where each agent triggers the next.
+							<strong style={{ color: theme.colors.textMain }}>Command Action</strong> &mdash; Run a
+							shell command or relay output to another session via CLI instead of an AI prompt. Set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								action: command
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -782,30 +882,23 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Agent A] &rarr; [Agent B] &rarr; [Agent C]
-						</div>
-					</div>
-
-					<div>
-						<p>
-							<strong style={{ color: theme.colors.textMain }}>Debate</strong> &mdash; Multiple
-							perspectives, then moderator synthesizes.
-						</p>
-						<div
-							className="font-mono text-xs p-2 rounded border mt-1"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								borderColor: theme.colors.border,
-							}}
-						>
-							[Moderator] &rarr; [Pro, Con] &rarr; [Moderator]
+							[Trigger] &rarr; [action: command, mode: shell &rarr; "npm test"]
+							<br />
+							[Agent A] &rarr; [action: command, mode: cli &rarr; send to Agent B]
 						</div>
 					</div>
 
 					<div>
 						<p>
 							<strong style={{ color: theme.colors.textMain }}>Task Queue</strong> &mdash; Watch
-							markdown files for unchecked tasks and process them.
+							markdown files for unchecked tasks and process them automatically via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								task.pending
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -814,7 +907,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[tasks/*.md] &rarr; [Agent] (per file with pending tasks)
+							[tasks/*.md has ─[ ]] &rarr; [Agent] (fires per file)
 						</div>
 					</div>
 

@@ -21,6 +21,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
 import { useSessionStore } from '../stores/sessionStore';
 import { logger } from '../utils/logger';
+import { formatRelativeTime } from '../../shared/formatters';
 
 interface SystemLogEntry {
 	timestamp: number;
@@ -251,6 +252,15 @@ export function LogViewer({
 	// Auto-focus container on mount for keyboard navigation
 	useEffect(() => {
 		containerRef.current?.focus();
+	}, []);
+
+	// Tick every 5s so relative timestamps ("10s ago", "5m ago") stay fresh
+	// without recomputing every render. 5s is finer than the smallest displayed
+	// unit (seconds), so the label can't drift by more than that interval.
+	const [, setRelativeTick] = useState(0);
+	useEffect(() => {
+		const id = window.setInterval(() => setRelativeTick((t) => t + 1), 5000);
+		return () => window.clearInterval(id);
 	}, []);
 
 	// Focus search input when opened
@@ -681,10 +691,13 @@ export function LogViewer({
 								<div className="flex-1 min-w-0">
 									<div className="flex items-start gap-2 mb-1">
 										<span
-											className="text-xs opacity-50 font-mono flex-shrink-0"
-											style={{ color: theme.colors.textDim }}
+											className="text-xs font-mono flex-shrink-0"
+											style={{ color: theme.colors.textMain }}
 										>
-											{new Date(log.timestamp).toLocaleTimeString()}
+											{new Date(log.timestamp).toLocaleTimeString()}{' '}
+											<span style={{ color: theme.colors.textDim }}>
+												({formatRelativeTime(log.timestamp, { includeSeconds: true })})
+											</span>
 										</span>
 										{/* Context pill - show for non-toast/autorun entries */}
 										{log.level !== 'toast' &&

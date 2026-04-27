@@ -505,7 +505,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				key: 'reasoningEffort',
 				type: 'select',
 				label: 'Reasoning Effort',
-				description: 'Control how much deliberate reasoning Copilot uses before responding.',
+				description:
+					'Reasoning budget for models that support it (GPT-5 Codex, o-series). ' +
+					'Leave empty to use the model default. Non-reasoning models ignore this flag.',
 				options: ['', 'low', 'medium', 'high', 'xhigh'],
 				default: '',
 				argBuilder: (value: string) =>

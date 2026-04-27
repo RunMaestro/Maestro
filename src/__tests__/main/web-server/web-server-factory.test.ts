@@ -81,6 +81,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setResizeTerminalCallback = vi.fn();
 			setSpawnTerminalForWebCallback = vi.fn();
 			setKillTerminalForWebCallback = vi.fn();
+			setNotifyToastCallback = vi.fn();
+			setNotifyCenterFlashCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;

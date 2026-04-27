@@ -370,6 +370,19 @@ describe('Copilot-CLI definition invariants', () => {
 		expect(caps.supportsSessionId).toBe(true);
 	});
 
+	it('exposes Reasoning Effort with the Copilot-CLI levels (low/medium/high/xhigh + default)', () => {
+		const agent = getAgentDefinition('copilot-cli');
+		const opt = agent?.configOptions?.find((o) => o.key === 'reasoningEffort');
+		expect(opt, 'Reasoning Effort config option must be present').toBeDefined();
+		expect(opt?.type).toBe('select');
+		if (opt?.type === 'select') {
+			expect(opt.options).toEqual(['', 'low', 'medium', 'high', 'xhigh']);
+			expect(opt.argBuilder?.('high')).toEqual(['--reasoning-effort', 'high']);
+			expect(opt.argBuilder?.('')).toEqual([]);
+			expect(opt.argBuilder?.('  ')).toEqual([]);
+		}
+	});
+
 	it('buildAgentArgs produces the complete batch-mode argv', () => {
 		const agent = getAgentDefinition('copilot-cli')!;
 		const argv = buildAgentArgs(agent as unknown as AgentConfig, {

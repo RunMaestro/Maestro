@@ -130,6 +130,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		resizeTerminal: vi.fn().mockReturnValue(true),
 		spawnTerminalForWeb: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
+		notifyToast: vi.fn().mockResolvedValue(true),
+		notifyCenterFlash: vi.fn().mockResolvedValue(true),
 	};
 }
 
@@ -1744,6 +1746,21 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('create_gist_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('boom');
+		});
+
+		it('replies with create_gist_result when createGist callback is unconfigured', () => {
+			callbacks.createGist = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('not configured');
 		});
 	});
 });

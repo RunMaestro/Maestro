@@ -353,6 +353,27 @@ const dreSynthAnsi: AnsiPalette = {
 	selection: 'rgba(0, 255, 204, 0.3)',
 };
 
+/** Winamp (vibe) — retro media player ANSI palette */
+const winampAnsi: AnsiPalette = {
+	ansiBlack: '#1a1a1a',
+	ansiRed: '#ff5555',
+	ansiGreen: '#00e000',
+	ansiYellow: '#ffff00',
+	ansiBlue: '#4a4a4a',
+	ansiMagenta: '#ff8924',
+	ansiCyan: '#8a8a62',
+	ansiWhite: '#cccccc',
+	ansiBrightBlack: '#3a3a3a',
+	ansiBrightRed: '#ff6666',
+	ansiBrightGreen: '#33ff33',
+	ansiBrightYellow: '#ffff55',
+	ansiBrightBlue: '#666666',
+	ansiBrightMagenta: '#ffaa55',
+	ansiBrightCyan: '#aaaa77',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(255, 137, 36, 0.3)',
+};
+
 /** InQuest (vibe) — high-contrast red/black ANSI palette */
 const inquestAnsi: AnsiPalette = {
 	ansiBlack: '#0a0a0a',
@@ -732,6 +753,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 			warning: '#cc0033',
 			error: '#cc0033',
 			...inquestAnsi,
+		},
+	},
+	winamp: {
+		id: 'winamp',
+		name: 'Winamp',
+		mode: 'vibe',
+		colors: {
+			bgMain: '#232323',
+			bgSidebar: '#1a1a1a',
+			bgActivity: '#3a3a3a',
+			border: '#4a4a4a',
+			textMain: '#00e000',
+			textDim: '#8a8a62',
+			accent: '#ff8924',
+			accentDim: 'rgba(255, 137, 36, 0.2)',
+			accentText: '#ffff00',
+			accentForeground: '#1a1a1a',
+			success: '#00e000',
+			warning: '#ff8924',
+			error: '#ff5555',
+			...winampAnsi,
 		},
 	},
 	// Custom theme - user-configurable, defaults to Dracula

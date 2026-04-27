@@ -4,7 +4,7 @@
  * Configures: timeout, failure behavior, concurrency, queue size.
  */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import type { Theme } from '../../../types';
 import type { CueSettings } from '../../../../shared/cue';
 import { useClickOutside } from '../../../hooks/ui';
@@ -19,6 +19,13 @@ interface CueSettingsPanelProps {
 
 function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettingsPanelProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
+
+	// Local string state so the user can clear the field while typing without
+	// the controlled-input round-trip snapping the value back to a number.
+	const [queueSizeStr, setQueueSizeStr] = useState(String(settings.queue_size));
+	useEffect(() => {
+		setQueueSizeStr(String(settings.queue_size));
+	}, [settings.queue_size]);
 
 	useClickOutside(panelRef, onClose);
 
@@ -48,6 +55,14 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 		marginBottom: 2,
 	};
 
+	const descriptionStyle: React.CSSProperties = {
+		color: theme.colors.textDim,
+		fontSize: 10,
+		lineHeight: 1.4,
+		marginTop: 4,
+		opacity: 0.75,
+	};
+
 	return (
 		<div
 			ref={panelRef}
@@ -56,7 +71,7 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 				top: 44,
 				right: 8,
 				zIndex: 20,
-				width: 280,
+				width: 320,
 				backgroundColor: theme.colors.bgSidebar,
 				border: `1px solid ${theme.colors.border}`,
 				borderRadius: 8,
@@ -108,6 +123,10 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 						}
 						style={inputStyle}
 					/>
+					<div style={descriptionStyle}>
+						Maximum time a triggered run can execute before it's automatically stopped. Increase if
+						your tasks regularly need more time.
+					</div>
 				</div>
 
 				{/* Timeout on fail */}
@@ -127,6 +146,10 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 						}
 						theme={theme}
 					/>
+					<div style={descriptionStyle}>
+						What to do when a pipeline stage times out or errors. "Break" stops the entire chain;
+						"Continue" skips the failed stage and proceeds to the next.
+					</div>
 				</div>
 
 				{/* Max concurrent */}
@@ -145,6 +168,10 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 						}
 						style={inputStyle}
 					/>
+					<div style={descriptionStyle}>
+						How many Cue-triggered runs can execute in parallel. Higher values increase throughput
+						but agents may conflict on shared files. Default: 1.
+					</div>
 				</div>
 
 				{/* Queue size */}
@@ -154,15 +181,25 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 						type="number"
 						min={0}
 						max={50}
-						value={settings.queue_size}
-						onChange={(e) =>
-							onChange({
-								...settings,
-								queue_size: Math.min(50, Math.max(0, parseInt(e.target.value) || 10)),
-							})
-						}
+						value={queueSizeStr}
+						onChange={(e) => {
+							const raw = e.target.value;
+							setQueueSizeStr(raw);
+							const parsed = raw === '' ? 0 : parseInt(raw, 10);
+							if (!Number.isNaN(parsed)) {
+								onChange({
+									...settings,
+									queue_size: Math.min(50, Math.max(0, parsed)),
+								});
+							}
+						}}
+						onBlur={() => setQueueSizeStr(String(settings.queue_size))}
 						style={inputStyle}
 					/>
+					<div style={descriptionStyle}>
+						Events that arrive while the concurrent limit is reached are buffered here. When the
+						queue is full, the oldest event is dropped. Set to 0 to disable buffering. Default: 0.
+					</div>
 				</div>
 			</div>
 

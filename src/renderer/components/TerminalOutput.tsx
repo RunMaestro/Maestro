@@ -33,7 +33,9 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 
@@ -751,7 +753,7 @@ const LogItemComponent = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{filteredText}</div>
+											<div>{linkifyNode(filteredText, theme)}</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -828,7 +830,7 @@ const LogItemComponent = memo(
 											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
-											{filteredText}
+											{linkifyNode(filteredText, theme)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -1202,9 +1204,6 @@ export const TerminalOutput = memo(
 		// Counter to force re-render when delete confirmation changes
 		const [_deleteConfirmTrigger, _setDeleteConfirmTrigger] = useState(0);
 
-		// Copy to clipboard notification state
-		const [showCopiedNotification, setShowCopiedNotification] = useState(false);
-
 		// Save markdown modal state
 		const [saveModalContent, setSaveModalContent] = useState<string | null>(null);
 
@@ -1235,12 +1234,11 @@ export const TerminalOutput = memo(
 		// Get active tab ID for resetting state on tab switch
 		const activeTabId = session.activeTabId;
 
-		// Copy text to clipboard with notification
+		// Copy text to clipboard with center flash
 		const copyToClipboard = useCallback(async (text: string) => {
 			const ok = await safeClipboardWrite(text);
 			if (ok) {
-				setShowCopiedNotification(true);
-				setTimeout(() => setShowCopiedNotification(false), 1500);
+				flashCopiedToClipboard(text);
 			}
 		}, []);
 
@@ -2138,19 +2136,7 @@ export const TerminalOutput = memo(
 					</button>
 				)}
 
-				{/* Copied to Clipboard Notification */}
-				{showCopiedNotification && (
-					<div
-						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
-						}}
-					>
-						Copied to Clipboard
-					</div>
-				)}
+				{/* Copy flash now rendered globally by <CenterFlash /> */}
 
 				{/* Save Markdown Modal */}
 				{saveModalContent !== null && (

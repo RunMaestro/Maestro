@@ -34,6 +34,14 @@ export type WizardStep =
 export const WIZARD_TOTAL_STEPS = 5;
 
 /**
+ * How the wizard kicks off Auto Run after launching the new agent.
+ * - 'none': don't start any Auto Run; drop straight into the interface
+ * - 'first': start Auto Run with only the first generated document
+ * - 'all': start Auto Run with every generated document that has tasks
+ */
+export type WizardAutoRunMode = 'none' | 'first' | 'all';
+
+/**
  * Map step names to their numeric index (1-based for display)
  */
 export const STEP_INDEX: Record<WizardStep, number> = {
@@ -151,8 +159,8 @@ export interface WizardState {
 	editedPhase1Content: string | null;
 
 	// Launch Options
-	/** Whether to auto-run all documents in sequence (vs just the first) */
-	runAllDocuments: boolean;
+	/** How Auto Run should start once the agent is created */
+	autoRunMode: WizardAutoRunMode;
 
 	// Tour Preference
 	/** Whether user wants the walkthrough tour after setup */
@@ -205,7 +213,7 @@ const initialState: WizardState = {
 	editedPhase1Content: null,
 
 	// Launch Options
-	runAllDocuments: false, // Default to running first document only
+	autoRunMode: 'all', // Default to executing every generated phase
 
 	// Tour
 	wantsTour: true, // Default to wanting the tour
@@ -254,7 +262,7 @@ type WizardAction =
 	| { type: 'SET_GENERATING_DOCUMENTS'; generating: boolean }
 	| { type: 'SET_GENERATION_ERROR'; error: string | null }
 	| { type: 'SET_EDITED_PHASE1_CONTENT'; content: string | null }
-	| { type: 'SET_RUN_ALL_DOCUMENTS'; runAll: boolean }
+	| { type: 'SET_AUTO_RUN_MODE'; mode: WizardAutoRunMode }
 	| { type: 'SET_WANTS_TOUR'; wantsTour: boolean }
 	| { type: 'SET_COMPLETE'; sessionId: string | null }
 	| { type: 'RESTORE_STATE'; state: Partial<WizardState> };
@@ -383,8 +391,8 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 		case 'SET_EDITED_PHASE1_CONTENT':
 			return { ...state, editedPhase1Content: action.content };
 
-		case 'SET_RUN_ALL_DOCUMENTS':
-			return { ...state, runAllDocuments: action.runAll };
+		case 'SET_AUTO_RUN_MODE':
+			return { ...state, autoRunMode: action.mode };
 
 		case 'SET_WANTS_TOUR':
 			return { ...state, wantsTour: action.wantsTour };
@@ -419,7 +427,7 @@ export interface SerializableWizardState {
 	isReadyToProceed: boolean;
 	generatedDocuments: GeneratedDocument[];
 	editedPhase1Content: string | null;
-	runAllDocuments: boolean;
+	autoRunMode: WizardAutoRunMode;
 	wantsTour: boolean;
 	/** Per-session SSH remote configuration (for remote execution) */
 	sessionSshRemoteConfig?: {
@@ -517,8 +525,8 @@ export interface WizardContextAPI {
 	getPhase1Content: () => string;
 
 	// Launch Options
-	/** Set whether to run all documents or just the first */
-	setRunAllDocuments: (runAll: boolean) => void;
+	/** Set how Auto Run should start (none / first only / all phases) */
+	setAutoRunMode: (mode: WizardAutoRunMode) => void;
 
 	// Tour
 	/** Set whether user wants the tour */
@@ -752,8 +760,8 @@ export function WizardProvider({ children }: WizardProviderProps) {
 	}, [state.editedPhase1Content, state.generatedDocuments]);
 
 	// Launch Options
-	const setRunAllDocuments = useCallback((runAll: boolean) => {
-		dispatch({ type: 'SET_RUN_ALL_DOCUMENTS', runAll });
+	const setAutoRunMode = useCallback((mode: WizardAutoRunMode) => {
+		dispatch({ type: 'SET_AUTO_RUN_MODE', mode });
 	}, []);
 
 	// Tour
@@ -781,7 +789,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			isReadyToProceed: state.isReadyToProceed,
 			generatedDocuments: state.generatedDocuments,
 			editedPhase1Content: state.editedPhase1Content,
-			runAllDocuments: state.runAllDocuments,
+			autoRunMode: state.autoRunMode,
 			wantsTour: state.wantsTour,
 			sessionSshRemoteConfig: state.sessionSshRemoteConfig,
 		};
@@ -796,7 +804,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		state.isReadyToProceed,
 		state.generatedDocuments,
 		state.editedPhase1Content,
-		state.runAllDocuments,
+		state.autoRunMode,
 		state.wantsTour,
 		state.sessionSshRemoteConfig,
 	]);
@@ -865,7 +873,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 				isReadyToProceed: currentState.isReadyToProceed,
 				generatedDocuments: currentState.generatedDocuments,
 				editedPhase1Content: currentState.editedPhase1Content,
-				runAllDocuments: currentState.runAllDocuments,
+				autoRunMode: currentState.autoRunMode,
 				wantsTour: currentState.wantsTour,
 			};
 			window.maestro.settings.set('wizardResumeState', serializableState);
@@ -923,7 +931,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			getPhase1Content,
 
 			// Launch Options
-			setRunAllDocuments,
+			setAutoRunMode,
 
 			// Tour
 			setWantsTour,
@@ -974,7 +982,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setGenerationError,
 			setEditedPhase1Content,
 			getPhase1Content,
-			setRunAllDocuments,
+			setAutoRunMode,
 			setWantsTour,
 			completeWizard,
 			saveStateForResume,

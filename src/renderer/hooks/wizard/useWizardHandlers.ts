@@ -271,7 +271,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const agentCommandObjects = (agentSlashCommands ?? []).map((cmd) => ({
 					command: cmd.name.startsWith('/') ? cmd.name : `/${cmd.name}`,
-					description: getSlashCommandDescription(cmd.name, currentSession.toolType),
+					description:
+						cmd.description ?? getSlashCommandDescription(cmd.name, currentSession.toolType),
 					prompt: cmd.prompt,
 				}));
 
@@ -746,7 +747,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			let skillsMessage: string;
 			if (skills.length === 0) {
 				skillsMessage =
-					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/skill.md` files in your project.';
+					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
 			} else {
 				const formatTokenCount = (tokens: number): string => {
 					if (tokens >= 1000) {
@@ -1086,7 +1087,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
-				runAllDocuments,
+				autoRunMode,
 			} = wizardState;
 
 			if (!selectedAgent || !directoryPath) {
@@ -1224,7 +1225,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			clearResumeState();
 			completeWizard(newId);
-			setActiveRightTab('autorun');
+			if (autoRunMode !== 'none') {
+				setActiveRightTab('autorun');
+			}
 
 			if (wantsTour) {
 				setTimeout(() => {
@@ -1237,8 +1240,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			setTimeout(() => inputRef.current?.focus(), 100);
 
 			const docsWithTasks = generatedDocuments.filter((doc) => doc.taskCount > 0);
-			if (docsWithTasks.length > 0 && autoRunFolderPath) {
-				const docsToRun = runAllDocuments ? docsWithTasks : [docsWithTasks[0]];
+			if (autoRunMode !== 'none' && docsWithTasks.length > 0 && autoRunFolderPath) {
+				const docsToRun = autoRunMode === 'all' ? docsWithTasks : [docsWithTasks[0]];
 				const batchConfig: BatchRunConfig = {
 					documents: docsToRun.map((doc) => ({
 						id: generateId(),

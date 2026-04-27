@@ -147,6 +147,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 
 	// --- Editor / UI Behavior ---
+	spellCheck: {
+		description: 'Enable spell checking in input areas (prompt input, group chat, file editor).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	conductorProfile: {
 		description: 'Custom persona/instructions for the conductor (system prompt context).',
 		type: 'string',
@@ -391,7 +397,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 
 	// --- Updates & Crash Reporting ---
 	checkForUpdatesOnStartup: {
-		description: 'Automatically check for Maestro updates on launch.',
+		description:
+			'Automatically check for Maestro updates on launch and once per day while running.',
 		type: 'boolean',
 		default: true,
 		category: 'updates',
@@ -582,7 +589,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'document-graph',
 	},
 	documentGraphLayoutType: {
-		description: 'Layout algorithm for the document graph. Values: mindmap, radial, force.',
+		description:
+			'Layout algorithm for the document graph. Values: mindmap, radial, hierarchical, force.',
 		type: 'string',
 		default: 'mindmap',
 		category: 'document-graph',

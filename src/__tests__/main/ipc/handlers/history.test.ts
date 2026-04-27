@@ -257,29 +257,33 @@ describe('history IPC handlers', () => {
 
 	describe('history:getAllPaginated', () => {
 		it('should return paginated entries for a specific session', async () => {
-			const mockResult = {
-				entries: [createMockEntry()],
-				total: 50,
-				limit: 10,
-				offset: 0,
-				hasMore: true,
-			};
-			vi.mocked(mockHistoryManager.getEntriesPaginated).mockReturnValue(mockResult);
+			// Handler now reads entries directly via `getEntries` so it can
+			// merge shared history + apply lookback before paginating.
+			const entries = [
+				createMockEntry({ id: 'e1', timestamp: 1000 }),
+				createMockEntry({ id: 'e2', timestamp: 2000 }),
+				createMockEntry({ id: 'e3', timestamp: 3000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
 
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, {
 				sessionId: 'session-1',
-				pagination: { limit: 10, offset: 0 },
+				pagination: { limit: 2, offset: 0 },
 			});
 
-			expect(mockHistoryManager.getEntriesPaginated).toHaveBeenCalledWith('session-1', {
-				limit: 10,
-				offset: 0,
-			});
-			expect(result).toEqual(mockResult);
+			expect(mockHistoryManager.getEntries).toHaveBeenCalledWith('session-1');
+			// Sorted newest-first, then sliced to `limit: 2`.
+			expect(result.entries.map((e: { id: string }) => e.id)).toEqual(['e3', 'e2']);
+			expect(result.total).toBe(3);
+			expect(result.hasMore).toBe(true);
 		});
 
 		it('should return paginated entries filtered by project path', async () => {
+			// Handler delegates the per-project read through
+			// `getEntriesByProjectPathPaginated(undefined)`, then re-paginates
+			// after applying lookback. With no lookback, the slice matches
+			// the underlying call.
 			const mockResult = {
 				entries: [createMockEntry()],
 				total: 30,
@@ -297,9 +301,10 @@ describe('history IPC handlers', () => {
 
 			expect(mockHistoryManager.getEntriesByProjectPathPaginated).toHaveBeenCalledWith(
 				'/test/project',
-				{ limit: 20 }
+				undefined
 			);
-			expect(result).toEqual(mockResult);
+			expect(result.entries).toHaveLength(1);
+			expect(result.total).toBe(1);
 		});
 
 		it('should return all paginated entries when no filters provided', async () => {
@@ -315,8 +320,33 @@ describe('history IPC handlers', () => {
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, {});
 
+			// Handler asks the manager for the unbounded entries, then
+			// applies its own lookback filter + pagination on top.
 			expect(mockHistoryManager.getAllEntriesPaginated).toHaveBeenCalledWith(undefined);
-			expect(result).toEqual(mockResult);
+			expect(result.entries).toHaveLength(1);
+			expect(result.total).toBe(1);
+			expect(result.hasMore).toBe(false);
+		});
+
+		it('should apply lookbackHours filter before pagination', async () => {
+			const now = Date.now();
+			const entries = [
+				createMockEntry({ id: 'recent', timestamp: now - 60 * 1000 }),
+				createMockEntry({ id: 'old', timestamp: now - 100 * 60 * 60 * 1000 }),
+			];
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(entries);
+
+			const handler = handlers.get('history:getAllPaginated');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				pagination: { limit: 100, offset: 0 },
+				lookbackHours: 24,
+			});
+
+			// Old entry (100h ago) drops out; only the recent one survives
+			// the server-side lookback filter.
+			expect(result.entries.map((e: { id: string }) => e.id)).toEqual(['recent']);
+			expect(result.total).toBe(1);
 		});
 
 		it('should handle undefined options', async () => {

@@ -53,8 +53,21 @@ settings:
   timeout_minutes: number # Default: 30. Max run duration before timeout
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
-  queue_size: number # Default: 10. Max queued events (0-50)
+  queue_size: number # Default: 0 (no buffering). Max queued events (0-50)
+  owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
+
+## Sharing a workspace across agents
+
+When two or more agents are registered against the same project directory (for example, one agent using Opus and another using Sonnet, both pointing at the same vault), every _unowned_ subscription (one without an explicit `agent_id`) would otherwise fire once per agent. Maestro resolves this as follows:
+
+- **`settings.owner_agent_id` set and matched by some agent in the root** — that agent is the owner; other agents in the same root skip unowned subscriptions.
+- **`settings.owner_agent_id` set but matched by nobody** — the config is dead. Every agent in that project root skips unowned subscriptions, and each row in the Cue dashboard is flagged with a red warning linking to this setting.
+- **`settings.owner_agent_id` unset and multiple agents share the root** — the first agent in the session list wins. Non-winner rows in the Cue dashboard are flagged with a red warning naming the winner and pointing to `owner_agent_id` as the override.
+
+Accepted values for `owner_agent_id`: the agent's internal id (UUID) **or** its display name (e.g. `Obsidian`).
+
+Subscriptions with an explicit `agent_id` continue to fan out independently of ownership — useful when a single shared config intentionally targets multiple agents in the same workspace.
 
 ## Subscriptions
 
@@ -183,6 +196,8 @@ subscriptions:
 - Use the `label` field to give each line a descriptive name (e.g., "Daily Analysis", "Weekly Review")
 - The Pipeline Editor creates this structure automatically when you use the visual editor
 
+**Visual-node identity (`target_node_key`, `fan_out_node_keys`):** When you save from the Pipeline Editor, you may see UUID-valued `target_node_key` / `fan_out_node_keys` fields on subscriptions. These are renderer-only — the Cue engine ignores them. They let the editor distinguish "two visual nodes that happen to point at the same agent" (different keys → two nodes on the canvas) from "one shared node with multiple inputs" (same key → explicit fan-in onto a single node). If you hand-edit YAML and want two separate visual instances of the same agent for the same trigger, give each sub a different `target_node_key`; if you want them to merge into one fan-in target, give them the same key. Leave the keys alone when round-tripping through the editor — clearing them silently re-merges your visual nodes by `agent_id` on the next reload.
+
 ### Labels
 
 The `label` field provides a human-readable name displayed in the Cue dashboard and pipeline editor. When subscriptions are grouped into a pipeline, the label distinguishes each line within the pipeline.
@@ -250,11 +265,11 @@ settings:
 
 ### queue_size
 
-**Default:** `10` | **Type:** integer, 0–50
+**Default:** `0` (no buffering) | **Type:** integer, 0–50
 
 Maximum number of events that can be queued when all concurrent slots are occupied. Events beyond this limit are dropped.
 
-Set to `0` to disable queueing — events that can't run immediately are discarded.
+Default is `0` — events that can't run immediately are discarded. Raise this if you'd rather buffer bursty events than drop them.
 
 ```yaml
 settings:

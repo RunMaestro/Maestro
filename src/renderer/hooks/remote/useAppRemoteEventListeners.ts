@@ -21,6 +21,7 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 
 // ============================================================================
 // Dependencies interface
@@ -316,9 +317,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 							}
 						: undefined;
 
+				// CLI/web callers omit prompt → fall back to the default Auto Run prompt
+				// template (autorun-default.md), matching what BatchRunnerModal does for
+				// GUI launches. An empty string here propagates as undefined through
+				// useBatchProcessor → useDocumentProcessor → spawn, causing claude
+				// `--print` to exit 1 with "Input must be provided either through stdin
+				// or as a prompt argument".
 				const batchConfig: BatchRunConfig = {
 					documents,
-					prompt: config.prompt || '',
+					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
 					...(worktree ? { worktree } : {}),
@@ -554,6 +561,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.sessionSshRemoteConfig && {
 					sessionSshRemoteConfig:
 						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
+				}),
+				...(config?.autoRunFolderPath && {
+					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
 			};
 

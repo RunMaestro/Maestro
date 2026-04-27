@@ -24,6 +24,9 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteBlob } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
@@ -102,7 +105,6 @@ export const FilePreview = React.memo(
 		},
 		ref
 	) {
-		const [showCopyNotification, setShowCopyNotification] = useState(false);
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
 		const [showStatsBar, setShowStatsBar] = useState(true);
@@ -123,26 +125,10 @@ export const FilePreview = React.memo(
 		);
 		const [isSaving, setIsSaving] = useState(false);
 		const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
-		const [copyNotificationMessage, setCopyNotificationMessage] = useState('');
 		const [searchMode, setSearchMode] = useState<'text' | 'jq'>('text');
 		const [showJqHelp, setShowJqHelp] = useState(false);
 		const [jqError, setJqError] = useState<string | null>(null);
 		const jqHelpRef = useRef<HTMLDivElement>(null);
-		const notificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-		// Clear notification timeout on unmount
-		useEffect(() => {
-			return () => {
-				if (notificationTimeoutRef.current) clearTimeout(notificationTimeoutRef.current);
-			};
-		}, []);
-
-		const showNotification = useCallback((message: string) => {
-			setCopyNotificationMessage(message);
-			setShowCopyNotification(true);
-			if (notificationTimeoutRef.current) clearTimeout(notificationTimeoutRef.current);
-			notificationTimeoutRef.current = setTimeout(() => setShowCopyNotification(false), 2000);
-		}, []);
 
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
@@ -293,6 +279,7 @@ export const FilePreview = React.memo(
 		const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+		const spellCheckEnabled = useSettingsStore((s) => s.spellCheck);
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -598,14 +585,18 @@ export const FilePreview = React.memo(
 				} catch {
 					// Non-critical — worst case the banner appears briefly
 				}
-				showNotification('File Saved');
+				notifyCenterFlash({ message: 'File Saved', variant: 'success' });
 			} catch (err) {
 				logger.error('Failed to save file:', undefined, err);
-				showNotification('Save Failed');
+				notifyToast({
+					type: 'error',
+					title: 'Save Failed',
+					message: err instanceof Error ? err.message : 'Could not save file.',
+				});
 			} finally {
 				setIsSaving(false);
 			}
-		}, [file, onSave, hasChanges, isSaving, editContent, sshRemoteId, showNotification]);
+		}, [file, onSave, hasChanges, isSaving, editContent, sshRemoteId]);
 
 		// Track scroll position to show/hide stats bar and report changes
 		useEffect(() => {
@@ -748,14 +739,25 @@ export const FilePreview = React.memo(
 
 		// Code + markdown + edit search highlighting handled by useFilePreviewSearch hook
 
+		const failClipboardToast = (title: string) =>
+			notifyToast({
+				type: 'error',
+				title,
+				message: 'Clipboard write was rejected. Check browser permissions and try again.',
+			});
+
 		const copyPathToClipboard = async () => {
 			if (!file) return;
 			try {
 				const ok = await safeClipboardWrite(file.path);
-				showNotification(ok ? 'File Path Copied to Clipboard' : 'Failed to Copy Path');
+				if (ok) {
+					flashCopiedToClipboard(file.path, 'File Path Copied');
+				} else {
+					failClipboardToast('Failed to Copy Path');
+				}
 			} catch (err) {
 				captureException(err);
-				showNotification('Failed to Copy Path');
+				failClipboardToast('Failed to Copy Path');
 			}
 		};
 
@@ -767,19 +769,31 @@ export const FilePreview = React.memo(
 					const blob = await response.blob();
 					const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
 					if (ok) {
-						showNotification('Image Copied to Clipboard');
+						flashCopiedToClipboard(undefined, 'Image Copied');
 					} else {
 						const fallbackOk = await safeClipboardWrite(file.content);
-						showNotification(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
+						if (fallbackOk) {
+							flashCopiedToClipboard(file.content, 'Image URL Copied');
+						} else {
+							failClipboardToast('Failed to Copy Image');
+						}
 					}
 				} catch (err) {
 					captureException(err);
 					const fallbackOk = await safeClipboardWrite(file.content);
-					showNotification(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
+					if (fallbackOk) {
+						flashCopiedToClipboard(file.content, 'Image URL Copied');
+					} else {
+						failClipboardToast('Failed to Copy Image');
+					}
 				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
-				showNotification(ok ? 'Content Copied to Clipboard' : 'Failed to Copy Content');
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Content Copied');
+				} else {
+					failClipboardToast('Failed to Copy Content');
+				}
 			}
 		};
 
@@ -1285,7 +1299,7 @@ export const FilePreview = React.memo(
 							onChange={setEditContent}
 							language={language}
 							theme={theme}
-							spellCheck={false}
+							spellCheck={spellCheckEnabled}
 							onKeyDown={(e) => {
 								// Handle Cmd+S for save
 								if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
@@ -1545,19 +1559,7 @@ export const FilePreview = React.memo(
 					/>
 				</div>
 
-				{/* Copy Notification Toast */}
-				{showCopyNotification && (
-					<div
-						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-50"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
-						}}
-					>
-						{copyNotificationMessage}
-					</div>
-				)}
+				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
 
 				{/* Unsaved Changes Confirmation Modal */}
 				{showUnsavedChangesModal && (

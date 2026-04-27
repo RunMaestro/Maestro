@@ -328,6 +328,29 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		it('preserves skill description returned from discoverSlashCommands', async () => {
+			const session = createMockSession({ agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'Research', description: 'Deep literature review' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					{ command: '/Research', description: 'Deep literature review', prompt: undefined },
+				])
+			);
+		});
+
 		it('skips discovery if agentCommands already populated', async () => {
 			const session = createMockSession({
 				agentCommands: [{ command: '/existing', description: 'Existing' }],
@@ -1927,7 +1950,7 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
-		it('auto-starts batch run with all documents when runAllDocuments is true', async () => {
+		it("auto-starts batch run with all documents when autoRunMode is 'all'", async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 
 			const deps = createMockDeps({
@@ -1959,7 +1982,7 @@ describe('useWizardHandlers', () => {
 						isGeneratingDocuments: false,
 						generationError: null,
 						editedPhase1Content: null,
-						runAllDocuments: true,
+						autoRunMode: 'all',
 						wantsTour: false,
 						isComplete: false,
 						createdSessionId: null,
@@ -1995,6 +2018,63 @@ describe('useWizardHandlers', () => {
 			// Should have exactly 3 documents in the batch
 			const batchConfig = deps.startBatchRun.mock.calls[0][1];
 			expect(batchConfig.documents).toHaveLength(3);
+		});
+
+		it("does not start a batch run when autoRunMode is 'none'", async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [
+							{ filename: 'phase-1.md', content: '# Phase 1', taskCount: 3 },
+							{ filename: 'phase-2.md', content: '# Phase 2', taskCount: 5 },
+						],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						autoRunMode: 'none',
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn(),
+					clearResumeState: vi.fn(),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			// Wait long enough for the deferred batch run that should NOT happen
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 600));
+			});
+
+			expect(deps.startBatchRun).not.toHaveBeenCalled();
+			// Right panel should not be flipped to autorun when skipping
+			expect(useUIStore.getState().activeRightTab).toBe('files');
 		});
 
 		it('starts tour when wantsTour is true', async () => {

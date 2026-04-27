@@ -26,11 +26,17 @@ import {
 import { getAllInitialQuestions } from '../../../../../renderer/components/Wizard/services/fillerPhrases';
 
 // Load actual prompt files from disk so generateSystemPrompt tests work with real content.
-// Mirror the {{INCLUDE:name}} resolution that src/main/prompt-manager.ts performs in
-// production — without it, included partials like _file-access-wizard remain unresolved
-// and the assertions below would never see their content.
+// Mirror the {{INCLUDE:name}} and {{REF:name}} resolution that src/main/prompt-manager.ts
+// performs in production — without it, directives in wizard-system.md remain unresolved
+// and the assertions below would never see their resolved content.
 const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', '..', '..', 'src', 'prompts');
 const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
+const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
+function resolveRefs(content: string): string {
+	return content.replace(REF_PATTERN, (_match, name: string) =>
+		path.resolve(promptsDir, `${name}.md`)
+	);
+}
 function resolveIncludes(content: string, depth = 0): string {
 	if (depth >= 3) return content;
 	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
@@ -42,10 +48,13 @@ function resolveIncludes(content: string, depth = 0): string {
 		}
 	});
 }
-const wizardSystemContent = resolveIncludes(
+function resolveDirectives(content: string): string {
+	return resolveIncludes(resolveRefs(content));
+}
+const wizardSystemContent = resolveDirectives(
 	fs.readFileSync(path.join(promptsDir, 'wizard-system.md'), 'utf-8')
 );
-const wizardContinuationContent = resolveIncludes(
+const wizardContinuationContent = resolveDirectives(
 	fs.readFileSync(path.join(promptsDir, 'wizard-system-continuation.md'), 'utf-8')
 );
 
@@ -588,10 +597,10 @@ describe('wizardPrompts', () => {
 			};
 			const prompt = generateSystemPrompt(config);
 
-			// Check for the new file access restriction format
-			expect(prompt).toContain('WRITE ACCESS (Limited)');
-			expect(prompt).toContain('READ ACCESS (Unrestricted)');
-			expect(prompt).toContain('ONLY create or modify files in the Auto Run folder');
+			// Inline summary names the wizard write boundary; the full rules live in
+			// _file-access-wizard.md and are referenced by absolute path (REF directive).
+			expect(prompt).toContain('writes are limited to the Auto Run folder');
+			expect(prompt).toContain('_file-access-wizard.md');
 			expect(prompt).toContain('/specific/path');
 		});
 

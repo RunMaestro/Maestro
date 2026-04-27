@@ -294,6 +294,48 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 				</div>
 			}
 		>
+			{/* Electron processes */}
+			{snapshot && snapshot.electronProcesses.length > 0 && (
+				<details className="mb-4" open>
+					<summary className="cursor-pointer text-xs py-1" style={{ color: theme.colors.textDim }}>
+						Electron processes ({snapshot.electronProcesses.length})
+					</summary>
+					<div
+						className="border rounded-md overflow-hidden mt-2"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<table className="w-full text-xs" style={{ color: theme.colors.textMain }}>
+							<thead style={{ backgroundColor: theme.colors.bgMain }}>
+								<tr className="text-left" style={{ color: theme.colors.textDim }}>
+									<th className="px-2 py-1">PID</th>
+									<th className="px-2 py-1">Type</th>
+									<th className="px-2 py-1">Name</th>
+									<th className="px-2 py-1 text-right">Working Set</th>
+									<th className="px-2 py-1 text-right">CPU</th>
+								</tr>
+							</thead>
+							<tbody>
+								{snapshot.electronProcesses.map((p) => (
+									<tr key={p.pid} className="border-t" style={{ borderColor: theme.colors.border }}>
+										<td className="px-2 py-1 font-mono">{p.pid}</td>
+										<td className="px-2 py-1">{p.type}</td>
+										<td className="px-2 py-1 truncate max-w-[200px]">
+											{p.name || p.serviceName || '—'}
+										</td>
+										<td className="px-2 py-1 text-right font-mono">
+											{p.workingSetBytes !== undefined ? formatSize(p.workingSetBytes) : '—'}
+										</td>
+										<td className="px-2 py-1 text-right font-mono">
+											{p.cpuPercent !== undefined ? `${p.cpuPercent.toFixed(1)}%` : '—'}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</details>
+			)}
+
 			{/* Summary */}
 			<div className="grid grid-cols-4 gap-3 mb-4">
 				<SummaryCard
@@ -443,48 +485,6 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 					</tbody>
 				</table>
 			</div>
-
-			{/* Electron processes */}
-			{snapshot && snapshot.electronProcesses.length > 0 && (
-				<details className="mt-4">
-					<summary className="cursor-pointer text-xs py-1" style={{ color: theme.colors.textDim }}>
-						Electron processes ({snapshot.electronProcesses.length})
-					</summary>
-					<div
-						className="border rounded-md overflow-hidden mt-2"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<table className="w-full text-xs" style={{ color: theme.colors.textMain }}>
-							<thead style={{ backgroundColor: theme.colors.bgMain }}>
-								<tr className="text-left" style={{ color: theme.colors.textDim }}>
-									<th className="px-2 py-1">PID</th>
-									<th className="px-2 py-1">Type</th>
-									<th className="px-2 py-1">Name</th>
-									<th className="px-2 py-1 text-right">Working Set</th>
-									<th className="px-2 py-1 text-right">CPU</th>
-								</tr>
-							</thead>
-							<tbody>
-								{snapshot.electronProcesses.map((p) => (
-									<tr key={p.pid} className="border-t" style={{ borderColor: theme.colors.border }}>
-										<td className="px-2 py-1 font-mono">{p.pid}</td>
-										<td className="px-2 py-1">{p.type}</td>
-										<td className="px-2 py-1 truncate max-w-[200px]">
-											{p.name || p.serviceName || '—'}
-										</td>
-										<td className="px-2 py-1 text-right font-mono">
-											{p.workingSetBytes !== undefined ? formatSize(p.workingSetBytes) : '—'}
-										</td>
-										<td className="px-2 py-1 text-right font-mono">
-											{p.cpuPercent !== undefined ? `${p.cpuPercent.toFixed(1)}%` : '—'}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				</details>
-			)}
 		</Modal>
 	);
 }

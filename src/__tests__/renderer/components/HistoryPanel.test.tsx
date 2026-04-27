@@ -159,14 +159,49 @@ describe('HistoryPanel', () => {
 		mockHistoryDelete = vi.fn().mockResolvedValue(true);
 		mockHistoryUpdate = vi.fn().mockResolvedValue(true);
 
-		// Add history, settings, and directorNotes mocks to window.maestro
+		// Add history, settings, and directorNotes mocks to window.maestro.
+		// `getAll` is no longer called by HistoryPanel (replaced by paginated
+		// loading), but tests still drive the entry set through
+		// `mockHistoryGetAll.mockResolvedValue([...])`. We bridge that via an
+		// adapter on `getAllPaginated` that slices the mocked array per the
+		// page request — keeps the existing test surface intact.
+		const getAllPaginatedAdapter = vi.fn(
+			async (options?: {
+				pagination?: { offset?: number; limit?: number };
+				lookbackHours?: number | null;
+			}) => {
+				const all = await mockHistoryGetAll();
+				const arr = Array.isArray(all) ? all : [];
+				// Mirror the server: apply lookback filter before paging.
+				const lookback = options?.lookbackHours ?? null;
+				const cutoff =
+					lookback !== null && lookback > 0 ? Date.now() - lookback * 60 * 60 * 1000 : 0;
+				const filtered =
+					cutoff > 0
+						? arr.filter((e: { timestamp?: number }) => (e.timestamp ?? 0) >= cutoff)
+						: arr;
+				const offset = options?.pagination?.offset ?? 0;
+				const limit = options?.pagination?.limit ?? 100;
+				const slice = filtered.slice(offset, offset + limit);
+				return {
+					entries: slice,
+					total: filtered.length,
+					limit,
+					offset,
+					hasMore: offset + limit < filtered.length,
+				};
+			}
+		);
 		(
 			window as unknown as {
 				maestro: {
 					history: {
 						getAll: typeof mockHistoryGetAll;
+						getAllPaginated: typeof getAllPaginatedAdapter;
 						delete: typeof mockHistoryDelete;
 						update: typeof mockHistoryUpdate;
+						getGraphData: ReturnType<typeof vi.fn>;
+						getOffsetForTimestamp: ReturnType<typeof vi.fn>;
 					};
 					settings: {
 						get: ReturnType<typeof vi.fn>;
@@ -180,8 +215,23 @@ describe('HistoryPanel', () => {
 		).maestro = {
 			history: {
 				getAll: mockHistoryGetAll,
+				getAllPaginated: getAllPaginatedAdapter,
 				delete: mockHistoryDelete,
 				update: mockHistoryUpdate,
+				// Accepts (sessionId, bucketCount, lookbackHours, sharedContext)
+				// — the lookback is keyed into the cache server-side.
+				getGraphData: vi.fn().mockResolvedValue({
+					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+					bucketCount: 24,
+					earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+					latestTimestamp: Date.now(),
+					totalCount: 0,
+					autoCount: 0,
+					userCount: 0,
+					cueCount: 0,
+					cached: false,
+				}),
+				getOffsetForTimestamp: vi.fn().mockResolvedValue(0),
 			},
 			settings: {
 				get: vi.fn().mockResolvedValue(undefined),
@@ -396,8 +446,12 @@ describe('HistoryPanel', () => {
 			const autoFilter = screen.getByRole('button', { name: /AUTO/i });
 			fireEvent.click(autoFilter);
 
+			// Empty-state copy now references the loaded window since the
+			// list is paginated.
 			await waitFor(() => {
-				expect(screen.getByText('No entries match the selected filters.')).toBeInTheDocument();
+				expect(
+					screen.getByText('No entries match the selected filters in the loaded window.')
+				).toBeInTheDocument();
 			});
 		});
 
@@ -427,6 +481,8 @@ describe('HistoryPanel', () => {
 			const searchInput = screen.getByPlaceholderText('Filter history...');
 			fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
 
+			// Empty-state copy references the loaded window since search
+			// only filters loaded pages client-side.
 			await waitFor(() => {
 				expect(screen.getByText(/No entries match "nonexistent"/)).toBeInTheDocument();
 			});
@@ -437,10 +493,12 @@ describe('HistoryPanel', () => {
 
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
 
+			// Error originates inside the shared pagination hook now —
+			// `Initial page load failed` is its standard log.
 			await waitFor(() => {
 				expect(consoleErrorSpy).toHaveBeenCalledWith(
-					'Failed to load history:',
-					undefined,
+					'Initial page load failed',
+					'useHistoryPagination',
 					expect.any(Error)
 				);
 				expect(screen.getByText(/No history yet/)).toBeInTheDocument();
@@ -1389,17 +1447,19 @@ describe('HistoryPanel', () => {
 
 			const { rerender } = render(<HistoryPanel session={session1} theme={mockTheme} />);
 
+			// Pagination is keyed on sessionId via the hook's loader-identity
+			// reset; the rendered entry confirms the load fired correctly.
 			await waitFor(() => {
-				expect(mockHistoryGetAll).toHaveBeenCalledWith('/project1', 'session-1', undefined);
+				expect(screen.getByText('Entry from session 1')).toBeInTheDocument();
 			});
 
-			// Change session
+			// Change session — new loadPage identity triggers a fresh fetch.
 			mockHistoryGetAll.mockResolvedValue([createMockEntry({ summary: 'Entry from session 2' })]);
 
 			rerender(<HistoryPanel session={session2} theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(mockHistoryGetAll).toHaveBeenCalledWith('/project2', 'session-2', undefined);
+				expect(screen.getByText('Entry from session 2')).toBeInTheDocument();
 			});
 		});
 	});
@@ -1486,8 +1546,11 @@ describe('HistoryPanel', () => {
 			});
 		});
 
-		it('should limit entries to MAX_HISTORY_IN_MEMORY', async () => {
-			// Create 600 entries (more than 500 limit)
+		it('should render all entries returned by getAll without an in-memory cap', async () => {
+			// The renderer no longer caps entries — the per-session disk file
+			// already bounds the dataset (MAX_ENTRIES_PER_SESSION=5000), and
+			// the activity graph data is fetched separately from a cached
+			// server endpoint that covers the full history.
 			const entries = Array.from({ length: 600 }, (_, i) =>
 				createMockEntry({ id: `entry-${i}`, summary: `Entry ${i}` })
 			);
@@ -1495,8 +1558,6 @@ describe('HistoryPanel', () => {
 
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
 
-			// Should display entries (virtualized) with the first one visible
-			// The MAX_HISTORY_IN_MEMORY limit (500) is applied when storing entries
 			await waitFor(() => {
 				expect(screen.getByText('Entry 0')).toBeInTheDocument();
 			});

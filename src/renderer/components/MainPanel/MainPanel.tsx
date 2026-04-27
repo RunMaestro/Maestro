@@ -26,11 +26,9 @@ import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { useGitInfo } from '../../hooks/mainPanel/useGitInfo';
-import { useCopyToClipboard } from '../../hooks/mainPanel/useCopyToClipboard';
 import { MainPanelHeader } from './MainPanelHeader';
 import { MainPanelContent } from './MainPanelContent';
 import { AgentErrorBanner } from './AgentErrorBanner';
-import { CopyNotificationToast } from './CopyNotificationToast';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
@@ -69,7 +67,6 @@ export const MainPanel = React.memo(
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
-			filePreviewLoading,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -230,9 +227,6 @@ export const MainPanel = React.memo(
 		// Git info (branch, status, ahead/behind)
 		const { gitInfo, refreshGitStatus } = useGitInfo(activeSession);
 
-		// Copy to clipboard with flash notification
-		const { copyNotification, copyToClipboard } = useCopyToClipboard();
-
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
 
@@ -284,12 +278,19 @@ export const MainPanel = React.memo(
 				.catch(() => {
 					if (!stale) setPillModels([]);
 				});
-			// Fetch effort options — use the effort-related config key for this agent
-			const effortKey = agentId === 'codex' ? 'reasoningEffort' : 'effort';
-			window.maestro.agents
-				.getConfigOptions(agentId, effortKey)
-				.then((efforts) => {
-					if (!stale) setPillEfforts(efforts);
+			// Fetch effort options. Agents use either `effort` (Claude Code) or
+			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) — probe both
+			// and use whichever the agent defines, so this stays correct as new
+			// agents are added without touching this file.
+			Promise.all([
+				window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
+				window.maestro.agents
+					.getConfigOptions(agentId, 'reasoningEffort')
+					.catch(() => [] as string[]),
+			])
+				.then(([effortOpts, reasoningOpts]) => {
+					if (stale) return;
+					setPillEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
 				})
 				.catch(() => {
 					if (!stale) setPillEfforts([]);
@@ -688,7 +689,6 @@ export const MainPanel = React.memo(
 								activeFileTabId={activeFileTabId}
 								refreshGitStatus={refreshGitStatus}
 								handleViewGitDiff={handleViewGitDiff}
-								copyToClipboard={copyToClipboard}
 								getContextColor={getContextColor}
 								setGitLogOpen={setGitLogOpen}
 								setAgentSessionsOpen={setAgentSessionsOpen}
@@ -712,6 +712,7 @@ export const MainPanel = React.memo(
 									activeTabId={activeSession.activeTabId}
 									theme={theme}
 									sessionId={activeSession.id}
+									sessionAgentSessionId={activeSession.agentSessionId}
 									onTabSelect={onTabSelect}
 									onTabClose={onTabClose}
 									onNewTab={onNewTab}
@@ -785,7 +786,6 @@ export const MainPanel = React.memo(
 							activeSession={activeSession}
 							activeTab={activeTab}
 							theme={theme}
-							filePreviewLoading={filePreviewLoading}
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
 							activeBrowserTabId={activeBrowserTabId}
@@ -934,9 +934,6 @@ export const MainPanel = React.memo(
 						/>
 					</div>
 				</ErrorBoundary>
-
-				{/* Copy Notification Toast */}
-				<CopyNotificationToast message={copyNotification} theme={theme} />
 			</>
 		);
 	})

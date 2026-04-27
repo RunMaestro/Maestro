@@ -72,7 +72,6 @@ export interface MainPanelProps {
 		fullPath: string;
 	}>;
 	selectedAtMentionIndex?: number;
-	filePreviewLoading?: { name: string; path: string } | null;
 
 	// Setters
 	setGitDiffPreview: (preview: string | null) => void;

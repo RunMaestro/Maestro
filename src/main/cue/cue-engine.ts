@@ -57,7 +57,8 @@ import { createCueRecoveryService, type CueRecoveryService } from './cue-recover
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
-import { loadCueConfig } from './cue-yaml-loader';
+import { loadCueConfigDetailed } from './cue-yaml-loader';
+import { cueDebugLog } from '../../shared/cueDebug';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -123,6 +124,10 @@ export interface CueEngineDeps {
 
 export class CueEngine {
 	private enabled = false;
+	/** Set to 'system-boot' while the engine is running after a system-boot or
+	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
+	 * sessions that arrive after start() (the common case at boot). */
+	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
@@ -286,11 +291,14 @@ export class CueEngine {
 			getSessions: () =>
 				deps.getSessions().map((session) => ({ id: session.id, name: session.name })),
 			getSessionConfigs: () => {
-				const configs = new Map<string, CueConfig>();
+				const views = new Map<string, { config: CueConfig; ownershipWarning?: string }>();
 				for (const [sessionId, state] of this.registry.snapshot()) {
-					configs.set(sessionId, state.config);
+					views.set(sessionId, {
+						config: state.config,
+						ownershipWarning: state.ownershipWarning,
+					});
 				}
-				return configs;
+				return views;
 			},
 			fanInTracker: this.fanInTracker,
 			onDispatch: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
@@ -306,7 +314,6 @@ export class CueEngine {
 			maxChainDepth: MAX_CHAIN_DEPTH,
 		});
 		this.queryService = createCueQueryService({
-			enabled: () => this.enabled,
 			getAllSessions: () =>
 				deps.getSessions().map((session) => ({
 					id: session.id,
@@ -316,7 +323,17 @@ export class CueEngine {
 				})),
 			getSessionStates: () => this.registry.snapshot(),
 			getActiveRunCount: (sessionId) => this.runManager.getActiveRunCount(sessionId),
-			loadConfigForProjectRoot: loadCueConfig,
+			// Use the partitioned/detailed loader so an inactive session's
+			// dashboard view matches what the runtime will see when the engine
+			// initializes that session. The legacy `loadCueConfig` skips
+			// validation entirely, so the editor would render subscriptions
+			// that the runtime later silently drops via `loadCueConfigDetailed`
+			// — the user sees the sub in the editor, then activates Cue, and
+			// it vanishes. Same loader on both paths keeps the views in sync.
+			loadConfigForProjectRoot: (projectRoot) => {
+				const result = loadCueConfigDetailed(projectRoot);
+				return result.ok ? result.config : null;
+			},
 		});
 		this.cleanupService = createCueCleanupService({
 			fanInTracker: this.fanInTracker,
@@ -366,9 +383,13 @@ export class CueEngine {
 	 *
 	 * @param reason Why the engine is starting. Determines whether `app.startup`
 	 *   subscriptions fire:
-	 *   - `'system-boot'`: pass at Electron launch (index.ts). app.startup fires.
-	 *   - `'user-toggle'` (default): user flipped the Cue toggle. app.startup
-	 *     does NOT re-fire — toggling is idempotent.
+	 *   - `'system-boot'`: used at Electron launch (index.ts) AND when the user
+	 *     enables Cue via the IPC handler (`cue:enable` calls
+	 *     `requireEngine().start('system-boot')`). app.startup subscriptions fire
+	 *     and are deduped per engine cycle (keys are cleared by stop()).
+	 *   - `'user-toggle'` (default): direct engine.start() call without an explicit
+	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire —
+	 *     only IPC-driven enables and Electron launch use 'system-boot'.
 	 */
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
@@ -378,6 +399,7 @@ export class CueEngine {
 			return;
 		}
 
+		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
 		// Reset metrics so startedAt reflects THIS start, not the collector's
 		// construction. Without this, startedAt is fixed at engine-instance
@@ -438,12 +460,12 @@ export class CueEngine {
 		if (!this.enabled) return;
 
 		this.enabled = false;
+		this.startReason = null;
 		this.sessionRuntimeService.clearAll();
+		// Clear startup dedup keys so that re-enabling Cue fires app.startup
+		// subscriptions again for the new engine cycle.
+		this.sessionRuntimeService.clearAllStartupKeys();
 
-		// Clear concurrency and fan-in state. The session registry's clear()
-		// preserves app.startup dedup keys across stop/start cycles, so toggling
-		// Cue off/on does not re-fire startup subscriptions. Startup keys only
-		// reset when the Electron process restarts (new CueEngine instance).
 		this.runManager.reset();
 		this.fanInTracker.reset();
 
@@ -462,7 +484,21 @@ export class CueEngine {
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
 	refreshSession(sessionId: string, projectRoot: string): void {
-		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot);
+		// When the engine started with 'system-boot', sessions that arrive via
+		// refreshSession (the typical path at boot, since getSessions() is empty
+		// when start() fires) should still get their app.startup triggers.
+		const reason = this.startReason ?? 'refresh';
+		cueDebugLog('engine:refreshSession:start', { sessionId, projectRoot, reason });
+		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		cueDebugLog('engine:refreshSession:result', {
+			sessionId,
+			projectRoot,
+			sessionName: result.sessionName,
+			reloaded: result.reloaded,
+			configRemoved: result.configRemoved,
+			activeCount: result.activeCount,
+			kind: 'kind' in result ? (result as { kind?: string }).kind : undefined,
+		});
 		if (result.reloaded && result.sessionName) {
 			this.meteredOnLog(
 				'cue',

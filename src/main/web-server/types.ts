@@ -307,6 +307,35 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+
+/**
+ * Notification kinds supported by the desktop app.
+ * Toast = persistent dismissable notification (queued).
+ * CenterFlash = momentary single-slot center-screen confirmation.
+ */
+export type NotifyToastKind = 'success' | 'info' | 'warning' | 'error';
+export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
+
+export interface NotifyToastParams {
+	title: string;
+	message: string;
+	toastType: NotifyToastKind;
+	/** Auto-dismiss seconds; 0 = never. Omitted = use app default. */
+	duration?: number;
+	/** Optional agent/session ID — clicking the toast jumps to it. */
+	sessionId?: string;
+}
+
+export interface NotifyCenterFlashParams {
+	message: string;
+	detail?: string;
+	variant: NotifyCenterFlashVariant;
+	/** Auto-dismiss ms; 0 = never. Omitted = renderer default (1500ms). */
+	duration?: number;
+}
+
+export type NotifyToastCallback = (params: NotifyToastParams) => Promise<boolean>;
+export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
 	config: {
@@ -511,6 +540,7 @@ export interface CreateSessionConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	autoRunFolderPath?: string;
 }
 
 export type CreateSessionCallback = (

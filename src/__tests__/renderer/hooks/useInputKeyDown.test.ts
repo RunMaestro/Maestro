@@ -509,7 +509,7 @@ describe('Slash command autocomplete', () => {
 		expect(mockInputContext.setSelectedSlashCommandIndex).toHaveBeenCalled();
 	});
 
-	it('fills command text on Enter', () => {
+	it('fills command text with trailing space on Enter', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const deps = createMockDeps({ inputValue: '/h', allSlashCommands: commands });
 		const { result } = renderHook(() => useInputKeyDown(deps));
@@ -519,11 +519,11 @@ describe('Slash command autocomplete', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		expect(deps.setInputValue).toHaveBeenCalledWith('/help');
+		expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
 		expect(mockInputContext.setSlashCommandOpen).toHaveBeenCalledWith(false);
 	});
 
-	it('fills command text on Tab', () => {
+	it('fills command text with trailing space on Tab', () => {
 		setActiveSession({ inputMode: 'ai' });
 		const deps = createMockDeps({ inputValue: '/h', allSlashCommands: commands });
 		const { result } = renderHook(() => useInputKeyDown(deps));
@@ -533,7 +533,7 @@ describe('Slash command autocomplete', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		expect(deps.setInputValue).toHaveBeenCalledWith('/help');
+		expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
 		expect(deps.inputRef.current!.focus).toHaveBeenCalled();
 	});
 
@@ -880,7 +880,8 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		const deps = createMockDeps();
+		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter', { metaKey: true, shiftKey: true });
 
@@ -905,7 +906,8 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		const deps = createMockDeps();
+		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter', { ctrlKey: true, shiftKey: true });
 
@@ -980,7 +982,8 @@ describe('Forced parallel send shortcut', () => {
 				},
 			},
 		} as any);
-		const deps = createMockDeps();
+		// Non-empty input — empty input takes the `triggerForceSendQueued` event branch instead.
+		const deps = createMockDeps({ inputValue: 'hello' });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 
 		// Default shortcut (Meta+Shift+Enter) should NOT trigger
@@ -1245,7 +1248,7 @@ describe('Slash command autocomplete — additional', () => {
 		});
 
 		// '/HEL'.toLowerCase() starts with '/hel' which matches '/help'
-		expect(deps.setInputValue).toHaveBeenCalledWith('/help');
+		expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
 	});
 
 	it('regular key during slashCommandOpen returns early without reaching enter-to-send', () => {

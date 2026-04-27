@@ -1,9 +1,11 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
-import { findAncestorCueConfigRoot, loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
+import { findAncestorCueConfigRoots, loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
+import { resolveCueConfigPath } from './config/cue-config-repository';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
 import { clearGitHubSeenForSubscription } from './cue-db';
 import {
+	computeOwnershipWarning,
 	countActiveSubscriptions,
 	hasTimeBasedSubscriptions,
 	isSubscriptionParticipant,
@@ -77,7 +79,8 @@ export interface CueSessionRuntimeService {
 	initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome;
 	refreshSession(
 		sessionId: string,
-		projectRoot: string
+		projectRoot: string,
+		reason?: SessionInitReason
 	): {
 		reloaded: boolean;
 		configRemoved: boolean;
@@ -87,6 +90,8 @@ export interface CueSessionRuntimeService {
 	removeSession(sessionId: string): void;
 	teardownSession(sessionId: string): void;
 	clearAll(): void;
+	/** Drop ALL app.startup dedup keys. Delegated from engine.stop(). */
+	clearAllStartupKeys(): void;
 }
 
 export function createCueSessionRuntimeService(
@@ -142,34 +147,43 @@ export function createCueSessionRuntimeService(
 			((!loadResult.ok && loadResult.reason === 'missing') || localFileExistsButEmpty) &&
 			!localOptsOutOfAncestor;
 		if (localHasNoPipelines) {
-			const ancestor = findAncestorCueConfigRoot(session.projectRoot);
-			if (ancestor) {
+			// Walk every ancestor that has a cue.yaml in closest-first order, not
+			// just the closest one. A session can legitimately have a closer
+			// ancestor that hosts an UNRELATED pipeline (e.g. /Users/pedram/Projects
+			// owns a Maestro pipeline) while its own subs live at a HIGHER
+			// ancestor (/Users/pedram owns the cross-root pipeline). Stopping at
+			// the first cue.yaml — even when it has zero subs targeting this
+			// session — strands those higher-ancestor subs and the trigger
+			// silently disappears from the editor on reload because getGraphData
+			// has no session reporting it.
+			const ancestors = findAncestorCueConfigRoots(session.projectRoot);
+			for (const ancestor of ancestors) {
 				const ancestorResult = loadCueConfigDetailed(ancestor);
-				if (ancestorResult.ok) {
-					// Only include subscriptions that explicitly target this
-					// session (via agent_id or fan_out). Unowned (shared)
-					// subscriptions belong to the ancestor's own session —
-					// including them here would duplicate trigger sources.
-					const targeted = ancestorResult.config.subscriptions.filter(
-						(sub) =>
-							sub.agent_id !== undefined && isSubscriptionParticipant(sub, session.id, session.name)
-					);
+				if (!ancestorResult.ok) continue;
+				// Only include subscriptions that explicitly target this
+				// session (via agent_id or fan_out). Unowned (shared)
+				// subscriptions belong to the ancestor's own session —
+				// including them here would duplicate trigger sources.
+				const targeted = ancestorResult.config.subscriptions.filter(
+					(sub) =>
+						sub.agent_id !== undefined && isSubscriptionParticipant(sub, session.id, session.name)
+				);
 
-					if (targeted.length > 0) {
-						loadResult = {
-							ok: true,
-							config: { ...ancestorResult.config, subscriptions: targeted },
-							warnings: ancestorResult.warnings,
-						};
-						ancestorRoot = ancestor;
-						deps.onLog(
-							'cue',
-							localFileExistsButEmpty
-								? `[CUE] "${session.name}" local cue.yaml is empty — overriding with ancestor "${ancestor}" (${targeted.length} targeted subscription(s)). Set no_ancestor_fallback: true on the local file to opt out.`
-								: `[CUE] "${session.name}" using ancestor config from "${ancestor}" (${targeted.length} targeted subscription(s))`
-						);
-					}
-				}
+				if (targeted.length === 0) continue;
+
+				loadResult = {
+					ok: true,
+					config: { ...ancestorResult.config, subscriptions: targeted },
+					warnings: ancestorResult.warnings,
+				};
+				ancestorRoot = ancestor;
+				deps.onLog(
+					'cue',
+					localFileExistsButEmpty
+						? `[CUE] "${session.name}" local cue.yaml is empty — overriding with ancestor "${ancestor}" (${targeted.length} targeted subscription(s)). Set no_ancestor_fallback: true on the local file to opt out.`
+						: `[CUE] "${session.name}" using ancestor config from "${ancestor}" (${targeted.length} targeted subscription(s))`
+				);
+				break;
 			}
 		}
 
@@ -203,12 +217,54 @@ export function createCueSessionRuntimeService(
 			deps.onLog('warn', `[CUE] ${warning}`);
 		}
 
+		// Ownership gate for UNOWNED subscriptions (no agent_id). When multiple
+		// agents share a projectRoot, each would otherwise fire every unowned
+		// subscription once. See {@link computeOwnershipWarning} for the full
+		// resolution matrix. A non-empty warning string is the single source
+		// of truth: this session is NOT the config owner and the dashboard
+		// will surface the string as a red-triangle tooltip. Subscriptions
+		// with an explicit `agent_id` continue to fan out regardless.
+		// Filter candidates to sessions that could actually own a Cue config —
+		// a cue.yaml at their projectRoot AND a tool type that participates
+		// in Cue. A terminal (or any non-AI-agent) session could otherwise
+		// win the implicit first-in-list race at a shared projectRoot,
+		// become the "owner", have nothing to dispatch, and silently suppress
+		// automation on the real Cue-configured agent.
+		const candidates = deps
+			.getSessions()
+			.filter((s) => s.toolType !== 'terminal' && resolveCueConfigPath(s.projectRoot) !== null);
+		const ownershipWarning = computeOwnershipWarning({
+			session,
+			candidates,
+			config,
+			configFromAncestor: Boolean(ancestorRoot),
+		});
+		const isConfigOwner = !ownershipWarning;
+		if (ownershipWarning && config.subscriptions.some((s) => !s.agent_id)) {
+			deps.onLog(
+				'cue',
+				`[CUE] "${session.name}" will not fire unowned subscriptions from cue.yaml at "${session.projectRoot}" — ${ownershipWarning}`
+			);
+		}
+
+		// Subscriptions this session will actually instantiate / run. For non-
+		// owners, drop unowned subs (no agent_id) up front so every downstream
+		// consumer — trigger wiring, app.startup, sleep prevention, the
+		// initialized-with-N-subs log, refresh activeCount — sees a single
+		// consistent view. Without this filter, a non-owner with only unowned
+		// time-based subs would still hit `onPreventSleep` and report active
+		// counts for work it never executes.
+		const runnableSubscriptions = isConfigOwner
+			? config.subscriptions
+			: config.subscriptions.filter((sub) => Boolean(sub.agent_id));
+
 		const state: SessionState = {
 			config,
 			configRoot: ancestorRoot,
 			triggerSources: [],
 			yamlWatcher: null,
 			sleepPrevented: false,
+			ownershipWarning,
 		};
 
 		// Watch the cue.yaml at the config's actual location (ancestor or own root).
@@ -226,7 +282,7 @@ export function createCueSessionRuntimeService(
 		// own timer/watcher/poller and emits events through the `emit` callback,
 		// which centralizes the dispatch path: passesFilter → state.lastTriggered
 		// → dispatchSubscription. Sources never touch session state directly.
-		for (const sub of config.subscriptions) {
+		for (const sub of runnableSubscriptions) {
 			if (sub.enabled === false) continue;
 			if (sub.agent_id && sub.agent_id !== session.id) continue;
 
@@ -252,7 +308,7 @@ export function createCueSessionRuntimeService(
 		// only when the engine is starting because of a real system boot. Toggling
 		// Cue off/on or hot-reloading a YAML must NOT re-fire startup events.
 		if (opts.reason === 'system-boot') {
-			for (const sub of config.subscriptions) {
+			for (const sub of runnableSubscriptions) {
 				if (sub.enabled === false) continue;
 				if (sub.agent_id && sub.agent_id !== session.id) continue;
 				if (sub.event !== 'app.startup') continue;
@@ -271,14 +327,17 @@ export function createCueSessionRuntimeService(
 			}
 		}
 
-		state.sleepPrevented = hasTimeBasedSubscriptions(config, session.id);
+		state.sleepPrevented = hasTimeBasedSubscriptions(
+			{ ...config, subscriptions: runnableSubscriptions },
+			session.id
+		);
 		if (state.sleepPrevented) {
 			deps.onPreventSleep?.(`cue:schedule:${session.id}`);
 		}
 
 		deps.onLog(
 			'cue',
-			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(config.subscriptions, session.id, session.name)} active subscription(s)`
+			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(runnableSubscriptions, session.id, session.name)} active subscription(s)`
 		);
 		return { kind: 'loaded' };
 	}
@@ -333,7 +392,8 @@ export function createCueSessionRuntimeService(
 
 	function refreshSession(
 		sessionId: string,
-		projectRoot: string
+		projectRoot: string,
+		reason: SessionInitReason = 'refresh'
 	): { reloaded: boolean; configRemoved: boolean; sessionName?: string; activeCount?: number } {
 		const hadSession = registry.has(sessionId);
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
@@ -353,7 +413,7 @@ export function createCueSessionRuntimeService(
 			return { reloaded: false, configRemoved: false };
 		}
 
-		const outcome = initSession({ ...session, projectRoot }, { reason: 'refresh' });
+		const outcome = initSession({ ...session, projectRoot }, { reason });
 		const newState = registry.get(sessionId);
 		if (newState) {
 			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
@@ -367,11 +427,12 @@ export function createCueSessionRuntimeService(
 					clearGitHubSeenForSubscription(id);
 				}
 			}
-			const activeCount = countActiveSubscriptions(
-				newState.config.subscriptions,
-				sessionId,
-				session.name
-			);
+			// Mirror init's ownership-filtered view so the dashboard count
+			// doesn't include unowned subscriptions a non-owner won't run.
+			const visibleSubscriptions = newState.ownershipWarning
+				? newState.config.subscriptions.filter((sub) => Boolean(sub.agent_id))
+				: newState.config.subscriptions;
+			const activeCount = countActiveSubscriptions(visibleSubscriptions, sessionId, session.name);
 			return {
 				reloaded: true,
 				configRemoved: false,
@@ -455,14 +516,16 @@ export function createCueSessionRuntimeService(
 			for (const [sessionId] of registry.snapshot()) {
 				teardownSession(sessionId);
 			}
-			// Drop session state and time.scheduled keys; preserve startup keys
-			// so toggling Cue off/on does not re-fire app.startup subscriptions.
 			registry.clear();
 
 			for (const [, cleanup] of pendingYamlWatchers) {
 				cleanup();
 			}
 			pendingYamlWatchers.clear();
+		},
+
+		clearAllStartupKeys(): void {
+			registry.clearAllStartupKeys();
 		},
 	};
 }

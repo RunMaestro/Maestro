@@ -322,25 +322,18 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		}
 	}, [projectPath, createName, entries, agentId, reloadList, closeCreateModal]);
 
-	// Token count is a rough size-based estimate (~4 bytes/token) for unselected rows;
-	// for the selected row while editing, use the live buffer so it tracks edits.
 	const items = useMemo<DualPaneFileEditorItem[]>(
 		() =>
 			entries.map((e) => {
 				const isCurrent = e.name === selectedName;
-				const tokenCount =
-					isCurrent && hasUnsavedChanges
-						? estimateTokenCount(editedContent)
-						: Math.ceil(e.size / 4);
 				return {
 					id: e.name,
 					label: e.name,
 					description: `${formatSize(e.size)} • modified ${formatRelativeTime(e.modifiedAt)}`,
 					isModified: isCurrent && hasUnsavedChanges,
-					tokenCount,
 				};
 			}),
-		[entries, selectedName, hasUnsavedChanges, editedContent]
+		[entries, selectedName, hasUnsavedChanges]
 	);
 
 	const editorTokenCount = useMemo(

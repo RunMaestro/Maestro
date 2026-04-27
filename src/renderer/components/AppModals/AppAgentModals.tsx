@@ -62,6 +62,13 @@ export interface AppAgentModalsProps {
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	onDismissAgentError: () => void;
+	/**
+	 * When provided, the modal renders a "Jump to failing tab" button that
+	 * switches the Left Bar selection to the failing agent and activates the
+	 * failing tab. Should be undefined when not applicable (e.g. user is
+	 * already on the failing tab, or the error is historical).
+	 */
+	onJumpToAgent?: () => void;
 
 	// AgentErrorModal (for group chats)
 	groupChatError: GroupChatErrorInfo | null;
@@ -120,6 +127,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 	effectiveAgentError,
 	recoveryActions,
 	onDismissAgentError,
+	onJumpToAgent,
 	// AgentErrorModal (for group chats)
 	groupChatError,
 	groupChatRecoveryActions,
@@ -172,6 +180,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 					recoveryActions={recoveryActions}
 					onDismiss={onDismissAgentError}
 					dismissible={effectiveAgentError.recoverable !== false}
+					onJumpToAgent={onJumpToAgent}
 				/>
 			)}
 

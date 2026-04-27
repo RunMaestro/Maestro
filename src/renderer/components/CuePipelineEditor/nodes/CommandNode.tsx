@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
 import { Terminal, GripVertical, Settings, Send } from 'lucide-react';
 import type { Theme } from '../../../types';
-import type { CueCommandMode } from '../../../../shared/cue-pipeline-types';
+import { COMMAND_NODE_COLOR, type CueCommandMode } from '../../../../shared/cue-pipeline-types';
 
 export interface CommandNodeDataProps {
 	compositeId: string;
@@ -23,7 +23,7 @@ export const CommandNode = memo(function CommandNode({
 	selected,
 }: NodeProps<CommandNodeDataProps>) {
 	const theme = data.theme;
-	const accentColor = data.pipelineColor;
+	const accentColor = COMMAND_NODE_COLOR;
 	const ModeIcon = data.mode === 'cli' ? Send : Terminal;
 	const modeLabel = data.mode === 'cli' ? 'CLI' : 'Shell';
 

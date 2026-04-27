@@ -40,7 +40,6 @@ export interface MainPanelContentProps {
 	theme: Theme;
 
 	// File preview props (from useFilePreviewHandlers)
-	filePreviewLoading?: { name: string; path: string } | null;
 	activeFileTabId?: string | null;
 	activeFileTab?: FilePreviewTab | null;
 	activeBrowserTabId?: string | null;
@@ -242,7 +241,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession,
 		activeTab,
 		theme,
-		filePreviewLoading,
 		activeFileTabId,
 		activeFileTab,
 		activeBrowserTabId,
@@ -421,8 +419,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						handleBrowserTabUpdate?.(activeSession.id, tabId, updates)
 					}
 				/>
-			) : activeSession.inputMode === 'ai' &&
-			  ((filePreviewLoading && !activeFileTabId) || activeFileTab?.isLoading) ? (
+			) : activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
 				<div
 					className="flex-1 flex items-center justify-center"
 					style={{ backgroundColor: theme.colors.bgMain }}
@@ -431,10 +428,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						<Spinner size={32} color={theme.colors.accent} />
 						<div className="text-center">
 							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-								Loading{' '}
-								{activeFileTab
-									? `${activeFileTab.name}${activeFileTab.extension}`
-									: filePreviewLoading?.name}
+								Loading {activeFileTab.name}
+								{activeFileTab.extension}
 							</div>
 							<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 								Fetching from remote server...

@@ -418,6 +418,20 @@ export class YourAgentOutputParser implements AgentOutputParser {
 						raw: event,
 					};
 
+				// IMPORTANT: tag reasoning deltas with isReasoning: true so the
+				// renderer routes them to source: 'thinking' logs and the
+				// ThinkingMode lifecycle (inline + on-exit clearing) applies.
+				// See docs/agent-guides/AGENT-INFRA.md → "Thinking / Tool Log Contract".
+				case 'your_reasoning_event':
+					return {
+						type: 'text',
+						sessionId: event.sessionId,
+						text: event.content,
+						isPartial: true,
+						isReasoning: true,
+						raw: event,
+					};
+
 				case 'your_finish_event':
 					return {
 						type: 'result',

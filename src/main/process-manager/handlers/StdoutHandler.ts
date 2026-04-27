@@ -552,6 +552,7 @@ export class StdoutHandler {
 				toolName: event.toolName,
 				state: event.toolState,
 				timestamp: Date.now(),
+				toolCallId: event.toolCallId,
 			});
 		}
 
@@ -570,6 +571,7 @@ export class StdoutHandler {
 					toolName: tool.name,
 					state: { status: 'running', input: tool.input },
 					timestamp: Date.now(),
+					toolCallId: tool.id,
 				});
 			}
 		}
@@ -603,16 +605,69 @@ export class StdoutHandler {
 			}
 		}
 
+		// Copilot CLI subagent delegation: an `assistant.message` with content but
+		// no explicit phase is structurally identified as a final answer by the
+		// parser, but in practice it may be an intermediate narration emitted
+		// before the agent delegates to a subagent (e.g. "I'll delegate this to
+		// the coding agent...") or before another agentic loop. Treating that as
+		// the turn's result prematurely flushes and suppresses the real final
+		// answer that follows. Capture the latest content-bearing no-phase
+		// message as streamedText and defer flushing to session.shutdown — the
+		// only signal that fires exactly once per batch run. assistant.turn_end
+		// fires after every LLM turn (including narration turns), so it can't
+		// be trusted as a session-end marker. Legacy `phase: 'final_answer'`
+		// messages are an explicit signal and still flush immediately via the
+		// path below.
+		if (
+			managedProcess.toolType === 'copilot-cli' &&
+			outputParser.isResultMessage(event) &&
+			event.text
+		) {
+			const raw = event.raw as { type?: string; data?: { phase?: string } } | undefined;
+			if (raw?.type === 'assistant.message' && raw.data?.phase === undefined) {
+				managedProcess.streamedText = event.text;
+			}
+		}
+
+		// Flush captured Copilot result on session.shutdown. This is the only
+		// event that fires exactly once per batch run, so it's the trustworthy
+		// session-end marker. The parser maps session.shutdown to either a
+		// `usage` event (when modelMetrics are present) or a `system` event;
+		// match by raw.type to cover both cases.
+		if (managedProcess.toolType === 'copilot-cli' && !managedProcess.resultEmitted) {
+			const raw = event.raw as { type?: string } | undefined;
+			if (raw?.type === 'session.shutdown' && managedProcess.streamedText) {
+				managedProcess.resultEmitted = true;
+				logger.debug(
+					'[ProcessManager] Emitting final Copilot result at session.shutdown',
+					'ProcessManager',
+					{
+						sessionId,
+						resultLength: managedProcess.streamedText.length,
+					}
+				);
+				this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			}
+		}
+
 		// Skip processing error events further - they're handled by agent-error emission
 		if (event.type === 'error') {
 			return;
 		}
 
 		// Handle result
+		const copilotIntermediate =
+			managedProcess.toolType === 'copilot-cli' &&
+			(() => {
+				const raw = event.raw as { type?: string; data?: { phase?: string } } | undefined;
+				return raw?.type === 'assistant.message' && raw.data?.phase === undefined;
+			})();
+
 		if (
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
-			!managedProcess.resultEmitted
+			!managedProcess.resultEmitted &&
+			!copilotIntermediate
 		) {
 			managedProcess.resultEmitted = true;
 			// For most agents, prefer the result event's text. Fall back to

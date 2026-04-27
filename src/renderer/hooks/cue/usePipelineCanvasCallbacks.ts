@@ -39,6 +39,7 @@ import type {
 import { getNextPipelineColor } from '../../components/CuePipelineEditor/pipelineColors';
 import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 import { DEFAULT_TRIGGER_LABELS } from '../../components/CuePipelineEditor/utils/pipelineValidation';
+import { generateUUID } from '../../../shared/uuid';
 
 /** Delay before selecting a dropped node — lets ReactFlow mount the new node
  *  before selection fires, otherwise `selectedNode` resolves to null on the
@@ -356,10 +357,17 @@ export function usePipelineCanvasCallbacks({
 						data: triggerData,
 					};
 				} else if (dropData.type === 'agent' && dropData.sessionId) {
+					// Each drop creates a fresh visual instance — even when the
+					// user drags the same agent onto the canvas twice. The
+					// `nodeKey` is what lets the YAML round-trip preserve those
+					// distinct instances instead of merging them by sessionName
+					// (the prior behavior, which silently fan-in'd two trigger
+					// edges into one shared node on reload).
 					const agentData: AgentNodeData = {
 						sessionId: dropData.sessionId,
 						sessionName: dropData.sessionName ?? 'Agent',
 						toolType: dropData.toolType ?? 'unknown',
+						nodeKey: generateUUID(),
 					};
 					newNode = {
 						id: `agent-${dropData.sessionId}-${Date.now()}`,
@@ -375,11 +383,12 @@ export function usePipelineCanvasCallbacks({
 					const suffix = Date.now().toString(36).slice(-5);
 					const ownerId = dropData.owningSessionId ?? '';
 					const commandData: CommandNodeData = {
-						name: `${targetPipeline.name}-cmd-${suffix}`,
+						name: `cmd-${suffix}`,
 						mode: 'shell',
 						shell: '',
 						owningSessionId: ownerId,
 						owningSessionName: dropData.owningSessionName ?? '',
+						nodeKey: generateUUID(),
 					};
 					newNode = {
 						id: `command-${ownerId || 'unbound'}-${Date.now()}`,

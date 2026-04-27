@@ -28,6 +28,10 @@ type DetailedResult =
 // exercised deterministically.
 const loaderByPath = new Map<string, DetailedResult>();
 const ancestorLookup = new Map<string, string | null>();
+// Closest-first chain of ancestor cue.yaml roots, keyed by descendant project
+// root. Used by the plural `findAncestorCueConfigRoots` mock so tests can
+// model the real "closer ancestor has unrelated cue.yaml, walk further" case.
+const ancestorChainLookup = new Map<string, string[]>();
 
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 
@@ -40,6 +44,14 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 		loaderByPath.get(projectRoot) ?? { ok: false as const, reason: 'missing' as const },
 	watchCueYaml: (...args: unknown[]) => mockWatchCueYaml(args[0] as string, args[1] as () => void),
 	findAncestorCueConfigRoot: (projectRoot: string) => ancestorLookup.get(projectRoot) ?? null,
+	findAncestorCueConfigRoots: (projectRoot: string) => {
+		const chain = ancestorChainLookup.get(projectRoot);
+		if (chain) return chain;
+		// Fall back to the singular lookup so existing tests (which only set
+		// the closest ancestor) keep working without churn.
+		const root = ancestorLookup.get(projectRoot);
+		return root ? [root] : [];
+	},
 }));
 
 vi.mock('../../../main/cue/cue-file-watcher', () => ({
@@ -173,6 +185,7 @@ describe('ancestor cue.yaml fallback', () => {
 		vi.useFakeTimers();
 		loaderByPath.clear();
 		ancestorLookup.clear();
+		ancestorChainLookup.clear();
 		mockWatchCueYaml.mockReturnValue(vi.fn());
 	});
 
@@ -283,6 +296,70 @@ describe('ancestor cue.yaml fallback', () => {
 		const graph = engine.getGraphData();
 		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
 		expect(agent1View?.subscriptions.map((s) => s.name)).toEqual(['local-only']);
+
+		engine.stop();
+	});
+
+	it('walks past a closer ancestor whose cue.yaml has no subs targeting this session', () => {
+		// Regression for the cross-root vanishing-trigger bug: a sub-agent at
+		// /home/user/project/agent1 had its targeted sub in the FAR ancestor
+		// (/home/user) while a CLOSER ancestor (/home/user/project) hosted an
+		// unrelated pipeline. The walk used to stop at the closer ancestor and
+		// silently report `configRemoved`, so getGraphData never saw the sub
+		// and the trigger disappeared from the editor on the next reload.
+		const FAR_ANCESTOR = '/home/user';
+		// /home/user/project hosts an unrelated pipeline (no subs for agent1).
+		const CLOSER_UNRELATED = ANCESTOR_ROOT;
+
+		const closerUnrelated: CueConfig = {
+			subscriptions: [
+				{
+					name: 'unrelated',
+					event: 'cli.trigger',
+					enabled: true,
+					prompt: 'x',
+					agent_id: 'someone-else',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+		const farAncestorTargets: CueConfig = {
+			subscriptions: [
+				{
+					name: 'cross-root-trigger',
+					event: 'time.scheduled',
+					enabled: true,
+					prompt: 'morning briefing',
+					schedule_times: ['07:00'],
+					agent_id: SESSION_AGENT_1.id,
+					pipeline_name: 'CrossRoot',
+				},
+			],
+			settings: {
+				timeout_minutes: 30,
+				timeout_on_fail: 'break',
+				max_concurrent: 1,
+				queue_size: 10,
+			},
+		};
+
+		loaderByPath.set(CLOSER_UNRELATED, { ok: true, config: closerUnrelated, warnings: [] });
+		loaderByPath.set(FAR_ANCESTOR, { ok: true, config: farAncestorTargets, warnings: [] });
+		// agent1's ancestor chain: closer-unrelated first, then far-ancestor.
+		ancestorChainLookup.set(AGENT1_ROOT, [CLOSER_UNRELATED, FAR_ANCESTOR]);
+
+		const deps = makeDeps([SESSION_AGENT_1]);
+		const engine = new CueEngine(deps);
+		engine.start();
+
+		const graph = engine.getGraphData();
+		const agent1View = graph.find((g) => g.sessionId === SESSION_AGENT_1.id);
+		expect(agent1View?.subscriptions.map((s) => s.name)).toEqual(['cross-root-trigger']);
 
 		engine.stop();
 	});

@@ -559,6 +559,15 @@ export class AgentDetector {
 			});
 		}
 
+		// Fallback: return the static options declared on the agent's select config option.
+		// This handles agents whose options are hardcoded in the definition (e.g. Copilot-CLI,
+		// Factory Droid reasoning effort) rather than discovered at runtime.
+		const definition = AGENT_DEFINITIONS.find((d) => d.id === agentId);
+		const option = definition?.configOptions?.find((o) => o.key === optionKey);
+		if (option && option.type === 'select' && option.options && option.options.length > 0) {
+			return option.options;
+		}
+
 		return [];
 	}
 }

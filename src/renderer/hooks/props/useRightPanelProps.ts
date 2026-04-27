@@ -40,6 +40,11 @@ export interface UseRightPanelPropsDeps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -55,6 +60,7 @@ export interface UseRightPanelPropsDeps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => Promise<void>;
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
+	cancelFileTreeLoad: (sessionId: string) => void;
 	handleAutoRefreshChange: (interval: number) => void;
 	showSuccessFlash: (message: string) => void;
 
@@ -121,11 +127,13 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 
 			// File explorer handlers
 			toggleFolder: deps.toggleFolder,
+			toggleFolderRecursive: deps.toggleFolderRecursive,
 			handleFileClick: deps.handleFileClick,
 			expandAllFolders: deps.expandAllFolders,
 			collapseAllFolders: deps.collapseAllFolders,
 			updateSessionWorkingDirectory: deps.updateSessionWorkingDirectory,
 			refreshFileTree: deps.refreshFileTree,
+			cancelFileTreeLoad: deps.cancelFileTreeLoad,
 			onAutoRefreshChange: deps.handleAutoRefreshChange,
 			onShowFlash: deps.showSuccessFlash,
 
@@ -175,11 +183,13 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			// Stable callbacks
 			deps.handleSetActiveRightTab,
 			deps.toggleFolder,
+			deps.toggleFolderRecursive,
 			deps.handleFileClick,
 			deps.expandAllFolders,
 			deps.collapseAllFolders,
 			deps.updateSessionWorkingDirectory,
 			deps.refreshFileTree,
+			deps.cancelFileTreeLoad,
 			deps.handleAutoRefreshChange,
 			deps.showSuccessFlash,
 			deps.handleAutoRunContentChange,

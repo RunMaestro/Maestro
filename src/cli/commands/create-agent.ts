@@ -22,6 +22,7 @@ interface CreateAgentOptions {
 	providerPath?: string;
 	sshRemote?: string;
 	sshCwd?: string;
+	autoRunFolder?: string;
 	json?: boolean;
 }
 
@@ -104,6 +105,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (customContextWindow !== undefined) payload.customContextWindow = customContextWindow;
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
+	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
 
 	try {
 		const result = await withMaestroClient(async (client) => {

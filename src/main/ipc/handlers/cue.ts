@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { validateCueConfig } from '../../cue/cue-yaml-loader';
+import { cueDebugLog } from '../../../shared/cueDebug';
 import {
 	deleteCueConfigFile,
 	readCueConfigFile,
@@ -110,7 +111,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	ipcMain.handle(
 		'cue:enable',
 		withIpcErrorLogging(handlerOpts('enable'), async (): Promise<void> => {
-			requireEngine().start();
+			requireEngine().start('system-boot');
 		})
 	);
 
@@ -245,6 +246,11 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				content: string;
 				promptFiles?: Record<string, string>;
 			}): Promise<void> => {
+				cueDebugLog('main:writeYaml:received', {
+					projectRoot: options.projectRoot,
+					yamlBytes: options.content.length,
+					promptFileCount: Object.keys(options.promptFiles ?? {}).length,
+				});
 				const keepPaths = new Set<string>();
 				if (options.promptFiles) {
 					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
@@ -346,6 +352,39 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				}
 
 				writeCueConfigFile(options.projectRoot, options.content);
+
+				try {
+					const validation = validateCueConfig(yaml.load(options.content));
+					const parsed = yaml.load(options.content) as
+						| { subscriptions?: Array<Record<string, unknown>>; settings?: Record<string, unknown> }
+						| null
+						| undefined;
+					const subs = Array.isArray(parsed?.subscriptions) ? parsed!.subscriptions! : [];
+					cueDebugLog('main:writeYaml:parsed', {
+						projectRoot: options.projectRoot,
+						parseSucceeded,
+						validation,
+						subscriptionCount: subs.length,
+						subscriptions: subs.map((s) => {
+							const r = s as Record<string, unknown>;
+							return {
+								name: r.name,
+								event: r.event,
+								enabled: r.enabled,
+								agent_id: r.agent_id,
+								source_session: r.source_session,
+								fan_out: r.fan_out,
+								forward_output_from: r.forward_output_from,
+							};
+						}),
+						settings: parsed?.settings ?? null,
+					});
+				} catch (err) {
+					cueDebugLog('main:writeYaml:parsed:error', {
+						projectRoot: options.projectRoot,
+						message: err instanceof Error ? err.message : String(err),
+					});
+				}
 
 				// Only prune when we have an authoritative keep-set. If the YAML
 				// failed to parse, the keep-set may be missing prompt files the

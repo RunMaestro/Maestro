@@ -140,7 +140,8 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 				// Append the queuedAt timestamp suffix so back-to-back drops
 				// produce distinct toast titles rather than collapsing into
 				// one — the user needs to see every drop.
-				const stamp = new Date(payload.queuedAt).toLocaleTimeString();
+				const queuedDate = new Date(payload.queuedAt);
+				const stamp = `${queuedDate.toLocaleTimeString()}.${queuedDate.getMilliseconds()}ms`;
 				notifyToast({
 					type: 'warning',
 					title: `Cue queue overflow: ${payload.sessionName} (${stamp})`,

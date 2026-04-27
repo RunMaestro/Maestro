@@ -3,7 +3,6 @@ import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
-import { useUIStore } from '../stores/uiStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
@@ -217,10 +216,6 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
-	// Self-source flash notifications from UI store
-	const flashNotification = useUIStore((s) => s.flashNotification);
-	const successFlashNotification = useUIStore((s) => s.successFlashNotification);
-
 	// Self-source modal open states from stores
 	const {
 		debugPackageModalOpen,
@@ -613,33 +608,7 @@ function AppStandaloneModalsInner({
 				/>
 			)}
 
-			{/* --- FLASH NOTIFICATION (centered, auto-dismiss) --- */}
-			{flashNotification && (
-				<div
-					className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
-					style={{
-						backgroundColor: theme.colors.warning,
-						color: '#000000',
-						textShadow: '0 1px 2px rgba(255, 255, 255, 0.3)',
-					}}
-				>
-					{flashNotification}
-				</div>
-			)}
-
-			{/* --- SUCCESS FLASH NOTIFICATION (centered, auto-dismiss) --- */}
-			{successFlashNotification && (
-				<div
-					className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
-					style={{
-						backgroundColor: theme.colors.accent,
-						color: theme.colors.accentForeground,
-						textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
-					}}
-				>
-					{successFlashNotification}
-				</div>
-			)}
+			{/* Flash notifications now rendered globally via <CenterFlash /> in App.tsx */}
 		</>
 	);
 }

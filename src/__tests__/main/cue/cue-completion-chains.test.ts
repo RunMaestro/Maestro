@@ -28,12 +28,22 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	},
 	watchCueYaml: (...args: unknown[]) => mockWatchCueYaml(args[0] as string, args[1] as () => void),
 	findAncestorCueConfigRoot: () => null,
+	findAncestorCueConfigRoots: () => [],
 }));
 
 // Mock the file watcher
 const mockCreateCueFileWatcher = vi.fn<(config: unknown) => () => void>();
 vi.mock('../../../main/cue/cue-file-watcher', () => ({
 	createCueFileWatcher: (...args: unknown[]) => mockCreateCueFileWatcher(args[0]),
+}));
+
+// Mock the config repository so the runtime's "is this session a Cue
+// candidate?" probe (resolveCueConfigPath) participates in the same fake
+// filesystem the yaml loader does — without it, ownership candidate filtering
+// would always see zero candidates in tests and the gate would silently no-op.
+vi.mock('../../../main/cue/config/cue-config-repository', () => ({
+	resolveCueConfigPath: (projectRoot: string) =>
+		mockLoadCueConfig(projectRoot) ? `${projectRoot}/.maestro/cue.yaml` : null,
 }));
 
 // Mock cue-db to prevent real SQLite (better-sqlite3 native addon) operations
@@ -909,9 +919,22 @@ describe('CueEngine completion chains', () => {
 					queue_size: 10,
 				},
 			});
-			mockLoadCueConfig.mockImplementation((root: string) =>
-				root === '/projects/orch' ? config : null
-			);
+			// Target agent needs its own cue config so getSessionSettings() finds
+			// max_concurrent: 2 for agent-a — otherwise the queue_size=0 default
+			// drops the second dispatch instead of running it concurrently.
+			const targetConfig = createMockConfig({
+				settings: {
+					timeout_minutes: 30,
+					timeout_on_fail: 'break',
+					max_concurrent: 2,
+					queue_size: 10,
+				},
+			});
+			mockLoadCueConfig.mockImplementation((root: string) => {
+				if (root === '/projects/orch') return config;
+				if (root === '/projects/a') return targetConfig;
+				return null;
+			});
 			const deps = createMockDeps({ getSessions: vi.fn(() => sessions) });
 			const engine = new CueEngine(deps);
 			engine.start();
@@ -1537,6 +1560,111 @@ describe('CueEngine completion chains', () => {
 			});
 
 			expect(deps.onCueRun).not.toHaveBeenCalled();
+			engine.stop();
+		});
+	});
+
+	describe('shared-workspace ownership gating', () => {
+		it('skips unowned agent.completed subs for non-owner sessions', async () => {
+			// Two agents share /vault. Both load the same cue.yaml with an
+			// unowned agent.completed subscription. Without the gate, both
+			// would dispatch when Source completes — exactly the duplication
+			// the ownership feature is designed to prevent.
+			const sessions = [
+				createMockSession({ id: 'owner', name: 'Owner', projectRoot: '/vault' }),
+				createMockSession({ id: 'non-owner', name: 'NonOwner', projectRoot: '/vault' }),
+				createMockSession({ id: 'src', name: 'Source', projectRoot: '/projects/src' }),
+			];
+			const sharedConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'on-source-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'react',
+						source_session: 'Source',
+					},
+				],
+			});
+			const srcConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'tick',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'work',
+						interval_minutes: 60,
+					},
+				],
+			});
+
+			mockLoadCueConfig.mockImplementation((projectRoot) => {
+				if (projectRoot === '/vault') return sharedConfig;
+				if (projectRoot === '/projects/src') return srcConfig;
+				return null;
+			});
+
+			const deps = createMockDeps({ getSessions: vi.fn(() => sessions) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('src', {
+				sessionName: 'Source',
+				status: 'completed',
+				exitCode: 0,
+				durationMs: 10,
+				stdout: 'done',
+			});
+
+			const calls = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls;
+			const completionCalls = calls.filter((c) => c[0].event?.type === 'agent.completed');
+			expect(completionCalls).toHaveLength(1);
+			expect(completionCalls[0][0].sessionId).toBe('owner');
+
+			engine.stop();
+		});
+
+		it('hasCompletionSubscribers returns false when only the non-owner has the unowned sub', () => {
+			const sessions = [
+				createMockSession({ id: 'owner', name: 'Owner', projectRoot: '/vault' }),
+				createMockSession({ id: 'non-owner', name: 'NonOwner', projectRoot: '/vault' }),
+				createMockSession({ id: 'src', name: 'Source', projectRoot: '/projects/src' }),
+			];
+			const sharedConfig = createMockConfig({
+				// Pin owner explicitly so the test doesn't depend on first-wins.
+				settings: {
+					timeout_minutes: 30,
+					timeout_on_fail: 'break',
+					max_concurrent: 1,
+					queue_size: 10,
+					owner_agent_id: 'owner',
+				},
+				subscriptions: [
+					{
+						name: 'on-source-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'react',
+						source_session: 'Source',
+					},
+				],
+			});
+
+			mockLoadCueConfig.mockImplementation((projectRoot) => {
+				if (projectRoot === '/vault') return sharedConfig;
+				return null;
+			});
+
+			const deps = createMockDeps({ getSessions: vi.fn(() => sessions) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// Owner has the sub wired; reporting hasCompletionSubscribers from
+			// the perspective of the source should remain true overall, but the
+			// non-owner alone must not satisfy the predicate.
+			expect(engine.hasCompletionSubscribers('src')).toBe(true);
+
 			engine.stop();
 		});
 	});

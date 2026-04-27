@@ -65,9 +65,16 @@ export async function* runPlaybook(
 		writeHistory?: boolean;
 		debug?: boolean;
 		verbose?: boolean;
+		skipSynopsis?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
-	const { dryRun = false, writeHistory = true, debug = false, verbose = false } = options;
+	const {
+		dryRun = false,
+		writeHistory = true,
+		debug = false,
+		verbose = false,
+		skipSynopsis = false,
+	} = options;
 	const batchStartTime = Date.now();
 
 	// Get git branch and group name for template variable substitution
@@ -441,6 +448,10 @@ export async function* runPlaybook(
 					// Spawn agent with combined prompt + document
 					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 						customModel: session.customModel,
+						customEffort: session.customEffort,
+						customArgs: session.customArgs,
+						customEnvVars: session.customEnvVars,
+						sshRemoteConfig: session.sessionSshRemoteConfig,
 					});
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -472,14 +483,20 @@ export async function* runPlaybook(
 					let shortSummary = `[${docEntry.filename}] Task completed`;
 					let fullSynopsis = shortSummary;
 
-					if (result.success && result.agentSessionId) {
+					if (result.success && result.agentSessionId && !skipSynopsis) {
 						// Request synopsis from the agent
 						const synopsisResult = await spawnAgent(
 							session.toolType,
 							session.cwd,
 							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 							result.agentSessionId,
-							{ customModel: session.customModel }
+							{
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								customEnvVars: session.customEnvVars,
+								sshRemoteConfig: session.sessionSshRemoteConfig,
+							}
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {

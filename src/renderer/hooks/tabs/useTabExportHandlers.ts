@@ -14,6 +14,7 @@ import type { Session, Theme, AITab } from '../../types';
 import { useTabStore } from '../../stores/tabStore';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { logger } from '../../utils/logger';
 import { getModalActions } from '../../stores/modalStore';
 
@@ -87,11 +88,7 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		navigator.clipboard
 			.writeText(text)
 			.then(() => {
-				notifyToast({
-					type: 'success',
-					title: 'Context Copied',
-					message: 'Conversation copied to clipboard.',
-				});
+				flashCopiedToClipboard(undefined, 'Conversation Copied');
 			})
 			.catch((err) => {
 				logger.error('Failed to copy context:', undefined, err);
@@ -173,11 +170,7 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		navigator.clipboard
 			.writeText(text)
 			.then(() => {
-				notifyToast({
-					type: 'success',
-					title: `${subject} Copied`,
-					message: `${subject} copied to clipboard.`,
-				});
+				flashCopiedToClipboard(undefined, `${subject} Copied`);
 			})
 			.catch((err) => {
 				console.error('Failed to copy text:', err);

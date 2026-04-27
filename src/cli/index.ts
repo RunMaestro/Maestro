@@ -41,6 +41,8 @@ import {
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
+import { notifyToast } from './commands/notify-toast';
+import { notifyFlash } from './commands/notify-flash';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -120,6 +122,7 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
@@ -290,6 +293,10 @@ program
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
 	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--auto-run-folder <path>',
+		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 
@@ -426,6 +433,32 @@ gist
 	.option('-d, --description <text>', 'Gist description')
 	.option('-p, --public', 'Create a public gist (default: private)')
 	.action(gistCreate);
+
+// Notify commands — surface notifications in the Maestro desktop app
+const notify = program
+	.command('notify')
+	.description('Show notifications in the Maestro desktop app');
+
+notify
+	.command('toast <title> <message>')
+	.description('Show a toast notification (queued, persistent until dismissed)')
+	.option('-t, --type <type>', 'success | info | warning | error (default: info)')
+	.option(
+		'-d, --duration <seconds>',
+		'Auto-dismiss after N seconds (0 = never dismiss; omitted = use app default)'
+	)
+	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyToast);
+
+notify
+	.command('flash <message>')
+	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.option('-v, --variant <variant>', 'success | info | warning | error (default: success)')
+	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
+	.option('-d, --duration <ms>', 'Auto-dismiss after N ms (default: 1500; 0 = never)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyFlash);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

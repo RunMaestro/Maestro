@@ -384,10 +384,19 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	// Initial poll after 2-second delay, then enter the rescheduling loop.
 	initialTimeout = setTimeout(() => {
 		if (stopped) return;
-		doPoll().then(() => {
-			if (stopped) return;
-			scheduleNextPoll();
-		});
+		doPoll()
+			.then(() => {
+				if (stopped) return;
+				scheduleNextPoll();
+			})
+			.catch((err) => {
+				onLog(
+					'error',
+					`[CUE] Unexpected error in initial poll for "${triggerName}": ${err instanceof Error ? err.message : String(err)}`
+				);
+				void captureException(err, { operation: 'cue:github:initialPoll', triggerName });
+				if (!stopped) scheduleNextPoll();
+			});
 	}, 2000);
 
 	// Periodic prune every 24 hours (30-day retention)

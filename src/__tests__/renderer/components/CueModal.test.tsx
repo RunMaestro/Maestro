@@ -267,16 +267,24 @@ describe('CueModal', () => {
 			expect(screen.getByTitle('Stop run')).toBeInTheDocument();
 		});
 
-		it('should call stopRun when stop button is clicked', () => {
+		it('should call stopRun when stop button is clicked and confirmed', () => {
 			mockUseCueReturn = {
 				...defaultUseCueReturn,
 				activeRuns: [mockActiveRun],
 			};
+			// Simulate user confirming the stop-run dialog
+			mockShowConfirmation.mockImplementationOnce((_msg: string, onConfirm: () => void) => {
+				onConfirm();
+			});
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 			fireEvent.click(screen.getByText('Dashboard'));
 
 			fireEvent.click(screen.getByTitle('Stop run'));
+			expect(mockShowConfirmation).toHaveBeenCalledWith(
+				expect.stringContaining('on-save'),
+				expect.any(Function)
+			);
 			expect(mockStopRun).toHaveBeenCalledWith('run-1');
 		});
 

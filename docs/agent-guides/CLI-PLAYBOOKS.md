@@ -397,13 +397,23 @@ Codex, OpenCode, and Factory Droid use the shared `AgentOutputParser` interface 
 
 ### CLI vs Desktop Spawning
 
-The CLI spawner is simpler than the desktop process manager:
+The CLI spawner is simpler than the desktop process manager but honors the same
+per-agent/per-session overrides that users configure in the desktop app:
 
-- No SSH wrapping (remote execution not supported)
-- No custom model, args, or env var overrides
-- No PTY (uses plain child_process spawn)
-- No real-time output streaming to UI
-- Designed for headless batch execution
+- **Honored**: custom binary path, custom CLI args, custom env vars, custom model,
+  custom effort/reasoning — all merged via `applyAgentConfigOverrides()` just
+  like the desktop (`session` wins over `agent config` wins over defaults).
+- **Honored**: SSH remote execution — when `sessionSshRemoteConfig.enabled` is
+  true, the spawn is wrapped via `wrapSpawnWithSsh()` (dynamic import so the
+  SSH chain stays out of the local hot path). If the configured remote can't
+  be resolved, the CLI returns a clear error instead of silently falling back
+  to local — users who opt into SSH don't want their prompt leaking locally.
+- **Not applicable**: PTY (CLI uses plain `child_process.spawn`), real-time
+  output streaming to UI.
+
+See `src/cli/services/agent-spawner.ts` — the `resolveAgentOverrides()` helper
+and `maybeWrapSpawnWithSsh()` are the CLI-side equivalents of the desktop
+`process:spawn` IPC handler's override + SSH wrapping logic.
 
 ---
 

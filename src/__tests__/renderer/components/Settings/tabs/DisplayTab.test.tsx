@@ -45,6 +45,8 @@ const mockSetLocalIgnorePatterns = vi.fn();
 const mockSetLocalHonorGitignore = vi.fn();
 const mockSetFileExplorerMaxDepth = vi.fn();
 const mockSetFileExplorerMaxEntries = vi.fn();
+const mockSetSshReduceEntryCapEnabled = vi.fn();
+const mockSetSshReduceEntryCapFraction = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
 const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
 
@@ -98,6 +100,10 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setFileExplorerMaxDepth: mockSetFileExplorerMaxDepth,
 		fileExplorerMaxEntries: 100_000,
 		setFileExplorerMaxEntries: mockSetFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled: false,
+		setSshReduceEntryCapEnabled: mockSetSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction: 0.1,
+		setSshReduceEntryCapFraction: mockSetSshReduceEntryCapFraction,
 		showStarredInUnreadFilter: false,
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter: false,

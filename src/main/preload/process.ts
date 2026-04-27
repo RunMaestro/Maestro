@@ -128,6 +128,10 @@ export interface ToolExecutionEvent {
 	toolName: string;
 	state?: unknown;
 	timestamp: number;
+	/** Stable correlation id from the agent. When present, the renderer
+	 *  merges `running` and `completed`/`failed` events into a single log
+	 *  entry instead of appending two bubbles. */
+	toolCallId?: string;
 }
 
 /**
@@ -466,6 +470,39 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string) => callback(sessionId);
 			ipcRenderer.on('remote:refreshFileTree', handler);
 			return () => ipcRenderer.removeListener('remote:refreshFileTree', handler);
+		},
+
+		/**
+		 * Subscribe to remote toast notifications from CLI/web interface
+		 */
+		onRemoteNotifyToast: (
+			callback: (params: {
+				title: string;
+				message: string;
+				toastType: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+				sessionId?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyToast', handler);
+			return () => ipcRenderer.removeListener('remote:notifyToast', handler);
+		},
+
+		/**
+		 * Subscribe to remote center-flash notifications from CLI/web interface
+		 */
+		onRemoteNotifyCenterFlash: (
+			callback: (params: {
+				message: string;
+				detail?: string;
+				variant: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyCenterFlash', handler);
+			return () => ipcRenderer.removeListener('remote:notifyCenterFlash', handler);
 		},
 
 		/**
@@ -1107,8 +1144,10 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to remote create-gist requests from the web/CLI interface
-		 * Uses request-response pattern with a unique responseChannel
+		 * Subscribe to remote create-gist requests from the web/CLI interface.
+		 * Uses request-response pattern with a unique responseChannel. Ack a
+		 * structured failure before rethrowing synchronous callback errors so
+		 * the CLI doesn't wait for the 60s response timeout.
 		 */
 		onRemoteCreateGist: (
 			callback: (
@@ -1124,7 +1163,17 @@ export function createProcessApi() {
 				description: string,
 				isPublic: boolean,
 				responseChannel: string
-			) => callback(sessionId, description, isPublic, responseChannel);
+			) => {
+				try {
+					callback(sessionId, description, isPublic, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					throw error;
+				}
+			};
 			ipcRenderer.on('remote:createGist', handler);
 			return () => ipcRenderer.removeListener('remote:createGist', handler);
 		},

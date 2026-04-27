@@ -69,11 +69,20 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 		typeof hooksOrOnTick === 'function' ? { onTick: hooksOrOnTick } : (hooksOrOnTick ?? {});
 	let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 	let consecutiveFailures = 0;
+	// Per-streak dedup for unknown errors: track every signature reported so far
+	// in the streak (Set), so alternating novel errors each get one Sentry event
+	// rather than re-firing on each switch. onFailureEmitted ensures hooks.onFailure
+	// fires at most once per streak regardless of how many distinct signatures appear.
+	let reportedUnknownSignatures = new Set<string>();
+	let onFailureEmitted = false;
 
 	function attempt(): void {
 		try {
 			updateHeartbeat();
 			consecutiveFailures = 0;
+			// Reset dedup state so the next distinct error streak gets reported fresh.
+			reportedUnknownSignatures = new Set<string>();
+			onFailureEmitted = false;
 		} catch (err) {
 			consecutiveFailures++;
 			if (isRecoverableHeartbeatError(err)) {
@@ -89,15 +98,23 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 					hooks.onFailure?.({ type: 'heartbeatFailure', consecutiveFailures });
 				}
 			} else {
-				// Unexpected shape — don't let it hide behind the threshold
-				// that exists for recognized recoverable errors. Surface it to
-				// Sentry on the first occurrence so we notice novel failure
-				// modes instead of waiting for three ticks of silence.
-				void captureException(err, {
-					operation: 'cue:heartbeat',
-					consecutiveFailures,
-				});
-				hooks.onFailure?.({ type: 'heartbeatFailure', consecutiveFailures });
+				// Unexpected shape — surface immediately, but deduplicate by error
+				// signature within a single failure streak to avoid a Sentry storm.
+				// Each distinct signature gets one Sentry event (Set tracks reported ones).
+				// hooks.onFailure fires at most once per streak (onFailureEmitted gate).
+				const signature =
+					(err instanceof Error ? err.message || err.name || err.stack : String(err)) ?? '';
+				if (!reportedUnknownSignatures.has(signature)) {
+					reportedUnknownSignatures.add(signature);
+					void captureException(err, {
+						operation: 'cue:heartbeat',
+						consecutiveFailures,
+					});
+				}
+				if (!onFailureEmitted) {
+					onFailureEmitted = true;
+					hooks.onFailure?.({ type: 'heartbeatFailure', consecutiveFailures });
+				}
 			}
 		}
 	}
@@ -119,6 +136,8 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 		// Counter resets on stop so a subsequent start() gets a fresh window —
 		// matches the engine re-enable semantics elsewhere in the codebase.
 		consecutiveFailures = 0;
+		reportedUnknownSignatures = new Set<string>();
+		onFailureEmitted = false;
 	}
 
 	return {

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
-import { useTemplateAutocomplete } from '../hooks';
+import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 
 interface AICommandsPanelProps {
@@ -153,6 +153,15 @@ export function AICommandsPanel({
 		setNewCommand({ id: '', command: '/', description: '', prompt: '' });
 		setIsCreating(false);
 	};
+
+	const isCreateValid = Boolean(newCommand.command && newCommand.description && newCommand.prompt);
+	useSaveShortcut(
+		() => {
+			if (editingCommand) handleSaveEdit();
+			else if (isCreating && isCreateValid) handleCreate();
+		},
+		Boolean(editingCommand) || (isCreating && isCreateValid)
+	);
 
 	return (
 		<div className="space-y-4">

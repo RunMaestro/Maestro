@@ -4,6 +4,7 @@ import type { Session, Group, Theme, Shortcut, RightPanelTab, SettingsTab } from
 import type { GroupChat } from '../../shared/group-chat-types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useModalStore } from '../stores/modalStore';
 import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -17,6 +18,7 @@ import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { buildSessionDeepLink } from '../../shared/deep-link-urls';
 import { openUrl } from '../utils/openUrl';
@@ -454,6 +456,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						label: activeSession.bookmarked
 							? `Unbookmark: ${activeSession.name}`
 							: `Bookmark: ${activeSession.name}`,
+						shortcut: shortcuts.toggleBookmark,
 						action: () => {
 							setSessions((prev) =>
 								prev.map((s) =>
@@ -488,6 +491,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					{
 						id: 'moveToGroup',
 						label: 'Move to Group...',
+						shortcut: shortcuts.moveToGroup,
 						action: () => {
 							setMode('move-to-group');
 							setSelectedIndex(0);
@@ -773,13 +777,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							id: 'copySessionId',
 							label: 'Copy Session ID',
 							subtext: activeTab.agentSessionId,
-							action: () => {
-								safeClipboardWrite(activeTab.agentSessionId!);
-								notifyToast({
-									type: 'success',
-									title: 'Copied',
-									message: 'Session ID copied to clipboard.',
-								});
+							action: async () => {
+								if (await safeClipboardWrite(activeTab.agentSessionId!)) {
+									flashCopiedToClipboard(activeTab.agentSessionId!, 'Session ID Copied');
+								}
 								setQuickActionOpen(false);
 							},
 						},
@@ -795,13 +796,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						{
 							id: 'copyDeepLink',
 							label: 'Copy Deep Link',
-							action: () => {
-								safeClipboardWrite(buildSessionDeepLink(activeSession.id, activeTab.id));
-								notifyToast({
-									type: 'success',
-									title: 'Copied',
-									message: 'Deep link copied to clipboard.',
-								});
+							action: async () => {
+								const deepLink = buildSessionDeepLink(activeSession.id, activeTab.id);
+								if (await safeClipboardWrite(deepLink)) {
+									flashCopiedToClipboard(deepLink, 'Deep Link Copied');
+								}
 								setQuickActionOpen(false);
 							},
 						},
@@ -817,6 +816,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						{
 							id: 'toggleStarTab',
 							label: activeTab.starred ? 'Unstar Session' : 'Star Session',
+							shortcut: shortcuts.toggleTabStar,
 							action: () => {
 								setSessions((prev) =>
 									prev.map((s) => {
@@ -844,6 +844,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						{
 							id: 'markTabUnread',
 							label: 'Mark as Unread',
+							shortcut: tabShortcuts?.toggleTabUnread,
 							action: () => {
 								setSessions((prev) =>
 									prev.map((s) => {
@@ -1253,7 +1254,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Send Feedback',
 			subtext: 'Report a bug or suggest a feature via GitHub',
 			action: () => {
-				setFeedbackModalOpen(true);
+				const draft = useFeedbackDraftStore.getState();
+				if (draft.isMinimized) {
+					draft.setMinimized(false);
+				} else {
+					setFeedbackModalOpen(true);
+				}
 				setQuickActionOpen(false);
 			},
 		},
@@ -1556,6 +1562,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					{
 						id: 'newGroupChat',
 						label: 'New Group Chat',
+						shortcut: shortcuts.newGroupChat,
 						action: () => {
 							onNewGroupChat();
 							setQuickActionOpen(false);
@@ -1732,7 +1739,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					const installationId = await window.maestro.leaderboard.getInstallationId();
 					if (installationId) {
 						await safeClipboardWrite(installationId);
-						notifyToast({ type: 'success', title: 'Install GUID Copied', message: installationId });
+						flashCopiedToClipboard(installationId, 'Install GUID Copied');
 						logger.info(
 							'[Debug] Installation GUID copied to clipboard:',
 							undefined,

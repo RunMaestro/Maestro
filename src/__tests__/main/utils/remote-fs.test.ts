@@ -8,6 +8,8 @@ import {
 	existsRemote,
 	mkdirRemote,
 	listDirWithStatsRemote,
+	listTreeRemote,
+	__resetHostLimitersForTest,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -216,6 +218,111 @@ describe('remote-fs', () => {
 			const call = (deps.execSsh as any).mock.calls[0][1];
 			const remoteCommand = call[call.length - 1];
 			expect(remoteCommand).toContain('"$HOME/.copilot/session-state"');
+		});
+	});
+
+	describe('listTreeRemote', () => {
+		// Two find invocations are bundled into one SSH command; output is
+		// `dirs\n__MAESTRO_FIND_SEP__\nfiles`.
+		const SEP = '__MAESTRO_FIND_SEP__';
+
+		it('parses combined dir/file find output and strips ./ prefixes', async () => {
+			const stdout = `./src\n./src/components\n./docs\n${SEP}\n./README.md\n./src/index.ts\n./src/components/Button.tsx\n`;
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote('/project', { maxDepth: 5 }, baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.directories).toEqual(['src', 'src/components', 'docs']);
+			expect(result.data?.files).toEqual([
+				'README.md',
+				'src/index.ts',
+				'src/components/Button.tsx',
+			]);
+			expect(result.data?.truncated).toBe(false);
+		});
+
+		it('detects truncation when file count exceeds maxFiles', async () => {
+			// head returned cap+1 entries — the helper should slice off the marker
+			// entry and flag truncated=true.
+			const files = ['a', 'b', 'c', 'd'].map((n) => `./${n}.txt`).join('\n');
+			const stdout = `./src\n${SEP}\n${files}\n`;
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote(
+				'/project',
+				{ maxDepth: 5, maxFiles: 3 },
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.truncated).toBe(true);
+			expect(result.data?.files).toEqual(['a.txt', 'b.txt', 'c.txt']);
+		});
+
+		it('reports CD failure as a missing directory error', async () => {
+			const deps = createMockDeps({ stdout: '__CD_ERROR__\n', stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote('/missing', { maxDepth: 5 }, baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found or not accessible');
+		});
+
+		it('builds a single SSH command containing both find invocations and a head cap', async () => {
+			const deps = createMockDeps({ stdout: `${SEP}\n`, stderr: '', exitCode: 0 });
+
+			await listTreeRemote(
+				'/project',
+				{
+					maxDepth: 4,
+					ignorePatterns: ['node_modules', '.git'],
+					excludePaths: ['.maestro'],
+					maxFiles: 1000,
+				},
+				baseConfig,
+				deps
+			);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1] as string;
+			// Two find calls split by the marker echo.
+			expect(remoteCommand).toContain('-type d -print');
+			expect(remoteCommand).toContain('-type f -print');
+			expect(remoteCommand).toContain(`echo "${SEP}"`);
+			// Depth is plumbed through.
+			expect(remoteCommand).toMatch(/-maxdepth 4/);
+			// Ignore patterns turn into -name prunes.
+			expect(remoteCommand).toContain("-name 'node_modules'");
+			expect(remoteCommand).toContain("-name '.git'");
+			// excludePaths turn into -path prunes (relative to the cd'd root).
+			expect(remoteCommand).toContain("-path './.maestro'");
+			// File cap goes to head with cap+1 to detect overflow.
+			expect(remoteCommand).toContain('| head -n 1001');
+			// Symlinks followed so symlinks-to-dirs appear as their target.
+			expect(remoteCommand).toContain('find -L');
+		});
+
+		it('skips ignore patterns containing slashes (find -name matches base names only)', async () => {
+			const deps = createMockDeps({ stdout: `${SEP}\n`, stderr: '', exitCode: 0 });
+
+			await listTreeRemote(
+				'/project',
+				{
+					maxDepth: 5,
+					ignorePatterns: ['node_modules', 'dist/cache', 'build/**'],
+				},
+				baseConfig,
+				deps
+			);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1] as string;
+			expect(remoteCommand).toContain("-name 'node_modules'");
+			// Path-bearing patterns are dropped — they cannot work with -name.
+			expect(remoteCommand).not.toContain('dist/cache');
+			expect(remoteCommand).not.toContain('build/**');
 		});
 	});
 
@@ -921,6 +1028,113 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBeDefined();
+		});
+	});
+
+	// Verifies that the per-host concurrency cap actually serializes excess
+	// SSH calls. Without this, a recursive file scan can fan out hundreds of
+	// concurrent SSH+cloudflared processes and starve unrelated callers
+	// (agent spawn, terminal, git) until cloudflared rate-limits.
+	describe('per-host SSH concurrency limit', () => {
+		beforeEach(() => {
+			__resetHostLimitersForTest();
+		});
+
+		/** execSsh stub whose resolution is deferred until release() is called. */
+		function deferredDeps(): {
+			deps: RemoteFsDeps;
+			pending: () => number;
+			release: () => void;
+		} {
+			let inFlight = 0;
+			const releasers: Array<() => void> = [];
+			const deps: RemoteFsDeps = {
+				execSsh: vi.fn().mockImplementation(async () => {
+					inFlight++;
+					await new Promise<void>((resolve) => releasers.push(resolve));
+					inFlight--;
+					return { stdout: '', stderr: '', exitCode: 0 } satisfies ExecResult;
+				}),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+			return {
+				deps,
+				pending: () => inFlight,
+				release: () => {
+					const next = releasers.shift();
+					if (next) next();
+				},
+			};
+		}
+
+		/** Poll until pending count stabilizes at the expected value (or fail on timeout). */
+		async function waitForPending(
+			pending: () => number,
+			expected: number,
+			timeoutMs = 500
+		): Promise<void> {
+			const deadline = Date.now() + timeoutMs;
+			while (Date.now() < deadline) {
+				if (pending() === expected) return;
+				await new Promise((r) => setTimeout(r, 5));
+			}
+			throw new Error(`pending() never reached ${expected}, last value ${pending()}`);
+		}
+
+		it('caps concurrent SSH calls per host at 4', async () => {
+			const { deps, pending, release } = deferredDeps();
+
+			// Fire 8 calls — cap is 4, so only 4 should reach execSsh.
+			const calls = Array.from({ length: 8 }, (_, i) =>
+				readFileRemote(`/file-${i}`, baseConfig, deps)
+			);
+
+			await waitForPending(pending, 4);
+
+			// pending should never exceed the cap while calls are queued.
+			await new Promise((r) => setTimeout(r, 30));
+			expect(pending()).toBe(4);
+
+			// Drain everything — release one slot at a time, waiting between
+			// each so the next queued call has time to start (and push its
+			// releaser onto the deferred queue) before the next release fires.
+			for (let i = 0; i < 8; i++) {
+				release();
+				await new Promise((r) => setTimeout(r, 5));
+			}
+			await Promise.all(calls);
+			expect(pending()).toBe(0);
+		});
+
+		it('uses separate limiters per distinct host', async () => {
+			const { deps, pending, release } = deferredDeps();
+			const otherConfig: SshRemoteConfig = { ...baseConfig, host: 'other.example.com' };
+
+			// 4 to each host — both should saturate independently (8 in flight).
+			const calls = [
+				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/a-${i}`, baseConfig, deps)),
+				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/b-${i}`, otherConfig, deps)),
+			];
+
+			await waitForPending(pending, 8);
+
+			for (let i = 0; i < 8; i++) release();
+			await Promise.all(calls);
+		});
+
+		it('releases the slot even when the SSH call rejects', async () => {
+			const failingDeps: RemoteFsDeps = {
+				execSsh: vi.fn().mockRejectedValue(new Error('boom')),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+
+			// Fire 5 calls — if the slot weren't released on rejection, the 5th
+			// would hang forever waiting on an acquire() that never resolves.
+			const results = await Promise.allSettled(
+				Array.from({ length: 5 }, (_, i) => readFileRemote(`/x-${i}`, baseConfig, failingDeps))
+			);
+
+			expect(results.every((r) => r.status === 'rejected')).toBe(true);
 		});
 	});
 });

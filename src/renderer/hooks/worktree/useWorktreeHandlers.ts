@@ -506,7 +506,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					parentSession.worktreeConfig!.basePath,
 					sshRemoteId
 				);
-				const { gitSubdirs } = scanResult;
+				const { gitSubdirs, scanFailed } = scanResult;
 
 				// Detect additions
 				for (const subdir of gitSubdirs) {
@@ -542,13 +542,36 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					);
 				}
 
-				// Detect removals: child sessions whose cwd is no longer in scan results
-				const diskPaths = new Set(gitSubdirs.map((d) => normalizePath(d.path)));
-				const latestSessions = useSessionStore.getState().sessions;
-				const childSessions = latestSessions.filter((s) => s.parentSessionId === parentSession.id);
-				for (const child of childSessions) {
-					if (!diskPaths.has(normalizePath(child.cwd))) {
-						staleSessionIds.push(child.id);
+				// Detect removals: child sessions whose cwd is no longer in scan results.
+				//
+				// Guards against false-positive bulk removals (the bug that produced a
+				// stack of "Worktree Removed" toasts on Linux/Windows when a transient
+				// scan failure or symlinked basePath caused gitSubdirs to come back empty):
+				//   1. If the scan flagged itself as failed, trust nothing — skip.
+				//   2. If the scan returned zero subdirs while child sessions exist, treat
+				//      that as suspicious and skip. A real "user removed every worktree"
+				//      case is rare and will be surfaced one at a time via chokidar
+				//      unlinkDir events instead.
+				if (scanFailed) {
+					logger.warn(
+						`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan failed`
+					);
+				} else {
+					const diskPaths = new Set(gitSubdirs.map((d) => normalizePath(d.path)));
+					const latestSessions = useSessionStore.getState().sessions;
+					const childSessions = latestSessions.filter(
+						(s) => s.parentSessionId === parentSession.id
+					);
+					if (gitSubdirs.length === 0 && childSessions.length > 0) {
+						logger.warn(
+							`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan returned zero subdirs but ${childSessions.length} child sessions exist (suspicious)`
+						);
+					} else {
+						for (const child of childSessions) {
+							if (!diskPaths.has(normalizePath(child.cwd))) {
+								staleSessionIds.push(child.id);
+							}
+						}
 					}
 				}
 			} catch (err) {

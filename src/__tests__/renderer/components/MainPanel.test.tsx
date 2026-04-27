@@ -11,6 +11,7 @@ import type {
 } from '../../../renderer/types';
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
@@ -1987,9 +1988,10 @@ describe('MainPanel', () => {
 	});
 
 	describe('Copy notification', () => {
-		it('should show copy notification when text is copied', async () => {
+		it('fires a Session ID center flash when the UUID pill is clicked', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -2010,13 +2012,17 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				const active = useCenterFlashStore.getState().active;
+				expect(active?.message).toBe('Session ID Copied');
+				expect(active?.detail).toBe('abc12345-def6-7890');
+				expect(active?.variant).toBe('success');
 			});
 		});
 
-		it('should hide copy notification after 2 seconds', async () => {
+		it('center flash auto-dismisses after its duration elapses', async () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
+			useCenterFlashStore.getState().setActive(null);
 
 			const session = createSession({
 				inputMode: 'ai',
@@ -2037,17 +2043,15 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByText('ABC12345'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				expect(useCenterFlashStore.getState().active?.message).toBe('Session ID Copied');
 			});
 
-			// Advance timers by 2 seconds
+			// Advance well past the default center-flash duration
 			await act(async () => {
-				vi.advanceTimersByTime(2000);
+				vi.advanceTimersByTime(5000);
 			});
 
-			await waitFor(() => {
-				expect(screen.queryByText('Session ID Copied to Clipboard')).not.toBeInTheDocument();
-			});
+			expect(useCenterFlashStore.getState().active).toBeNull();
 		});
 	});
 

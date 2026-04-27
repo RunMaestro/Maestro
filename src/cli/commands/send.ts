@@ -222,6 +222,10 @@ export async function send(
 	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 		readOnlyMode: options.readOnly,
 		customModel: agent.customModel,
+		customEffort: agent.customEffort,
+		customArgs: agent.customArgs,
+		customEnvVars: agent.customEnvVars,
+		sshRemoteConfig: agent.sessionSshRemoteConfig,
 	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 

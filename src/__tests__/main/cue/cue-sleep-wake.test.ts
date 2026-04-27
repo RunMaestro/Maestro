@@ -56,6 +56,7 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	},
 	watchCueYaml: (...args: unknown[]) => mockWatchCueYaml(args[0] as string, args[1] as () => void),
 	findAncestorCueConfigRoot: () => null,
+	findAncestorCueConfigRoots: () => [],
 }));
 
 // Mock the file watcher

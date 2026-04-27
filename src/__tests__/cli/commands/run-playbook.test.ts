@@ -185,6 +185,7 @@ describe('run-playbook command', () => {
 				writeHistory: true,
 				debug: undefined,
 				verbose: undefined,
+				skipSynopsis: false,
 			});
 			expect(formatInfo).toHaveBeenCalledWith('Running playbook: Test Playbook');
 			expect(formatInfo).toHaveBeenCalledWith('Agent: Test Agent');
@@ -239,6 +240,7 @@ describe('run-playbook command', () => {
 				writeHistory: true,
 				debug: undefined,
 				verbose: undefined,
+				skipSynopsis: false,
 			});
 			expect(formatInfo).toHaveBeenCalledWith('Dry run mode - no changes will be made');
 		});

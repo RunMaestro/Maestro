@@ -223,7 +223,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 						0,
 						Math.min(selectedSlashCommandIndex, filteredCommands.length - 1)
 					);
-					setInputValue(filteredCommands[clampedIndex].command);
+					setInputValue(filteredCommands[clampedIndex].command + ' ');
 					setSlashCommandOpen(false);
 					inputRef.current?.focus();
 				} else if (e.key === 'Escape') {
@@ -276,6 +276,16 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							e.key.toLowerCase() === fpMainKey
 						) {
 							e.preventDefault();
+							// Empty input + shortcut: open the Force Send confirmation modal for
+							// the most recent eligible queued item (keyboard equivalent of
+							// clicking the per-item Force Send button).
+							if (inputValue.trim().length === 0) {
+								logger.info(
+									'[ForcedParallel] Shortcut matched on empty input, dispatching triggerForceSendQueued'
+								);
+								window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+								return;
+							}
 							logger.info('[ForcedParallel] Shortcut matched, calling processInput');
 							processInput(undefined, { forceParallel: true });
 							return;
