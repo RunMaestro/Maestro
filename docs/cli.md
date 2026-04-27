@@ -83,13 +83,50 @@ On failure, `success` is `false` and an `error` field is included:
 | `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                            |
 | `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                              |
 | `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                                                                                       |
-| `-l, --live`         | Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                                      |
+| `-l, --live`         | **Deprecated — use `dispatch` instead.** Route the message through the Maestro desktop so it appears in the agent's tab                                                                             |
 | `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                      |
 | `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Requires `allowConcurrentSend=true`; otherwise exits with code `FORCE_NOT_ALLOWED` |
 
 Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`, `INVALID_OPTIONS`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`.
 
 Supported agent types: `claude-code`, `codex`.
+
+### Dispatching to a Desktop Tab
+
+`dispatch` hands a prompt to an agent in the running Maestro desktop app and returns the tab/session id, so callers can address the same tab on follow-up calls without holding a persistent channel. It replaces `send --live` for orchestration use cases (Cue pipelines, external bots, multi-step automations).
+
+```bash
+# Dispatch to the active tab of an agent
+maestro-cli dispatch <agent-id> "review the PR description"
+
+# Open a fresh tab and dispatch the prompt into it
+maestro-cli dispatch <agent-id> "start a new review pass" --new-tab
+
+# Continue a previous dispatch by targeting its tab
+maestro-cli dispatch <agent-id> "and now run the tests" -s <tab-id>
+
+# Force a write to a busy tab (requires allowConcurrentSend=true)
+maestro-cli dispatch <agent-id> "interrupt with this" -f
+```
+
+Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so polling consumers can use either name:
+
+```json
+{
+	"success": true,
+	"agentId": "a1b2c3d4-...",
+	"sessionId": "tab-xyz",
+	"tabId": "tab-xyz"
+}
+```
+
+| Flag                 | Description                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `--new-tab`          | Create a fresh AI tab in the target agent. Mutually exclusive with `-s`                           |
+| `-s, --session <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`    |
+| `-f, --force`        | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED` |
+
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`. Requires the Maestro desktop app to be running.
 
 ### Listing Sessions
 
@@ -517,6 +554,47 @@ Open a file as a preview tab in the Maestro desktop app:
 maestro-cli open-file <file-path> [--session <id>]
 ```
 
+#### Open a Browser Tab
+
+Open a URL as a browser tab in the Maestro desktop app. Only `http(s)` URLs are accepted; scheme-less inputs like `localhost:3000` or `example.com:8080` are auto-prefixed with `https://`.
+
+```bash
+# Open in the active agent
+maestro-cli open-browser https://docs.runmaestro.ai
+
+# Scheme-less — gets https:// prepended
+maestro-cli open-browser localhost:3000
+
+# Target a specific agent
+maestro-cli open-browser https://github.com/RunMaestro/Maestro -a <agent-id>
+```
+
+| Flag               | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to the active agent) |
+
+#### Open a Terminal Tab
+
+Open a fresh terminal tab in the Maestro desktop app. The working directory must resolve inside the target agent's `cwd`; paths outside it are rejected.
+
+```bash
+# Open a terminal in the active agent's cwd with the default shell
+maestro-cli open-terminal
+
+# Custom cwd, shell, and tab label
+maestro-cli open-terminal --cwd ./packages/api --shell bash --name "API tests"
+
+# Target a specific agent
+maestro-cli open-terminal -a <agent-id> --name "Build watch"
+```
+
+| Flag               | Description                                                         | Default     |
+| ------------------ | ------------------------------------------------------------------- | ----------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to the active agent)                   | —           |
+| `--cwd <path>`     | Working directory for the terminal (must be inside the agent's cwd) | agent's cwd |
+| `--shell <bin>`    | Shell binary to use                                                 | `zsh`       |
+| `--name <label>`   | Display name for the tab                                            | —           |
+
 #### Refresh the File Tree
 
 Refresh the file tree sidebar after creating multiple files or making significant filesystem changes:
@@ -738,6 +816,63 @@ maestro-cli cue trigger "deploy" --prompt "Deploy commit abc123 to production" -
 # Re-run a failed automation
 maestro-cli cue trigger "lint-on-save"
 ```
+
+## Director's Notes
+
+Director's Notes is an Encore feature (`encoreFeatures.directorNotes`) that builds a unified history view across every agent in your fleet, plus an AI-generated synopsis of recent activity.
+
+```bash
+# Show recent unified history (last N days, default 7)
+maestro-cli director-notes history -d 3
+
+# Limit to user-initiated entries only
+maestro-cli director-notes history --filter user -l 50
+
+# Markdown output for piping into a doc
+maestro-cli director-notes history -f markdown -d 1
+
+# AI synopsis of the past day (requires the desktop app running)
+maestro-cli director-notes synopsis -d 1
+maestro-cli director-notes synopsis --json
+```
+
+| Subcommand | Flag                  | Description                                                              |
+| ---------- | --------------------- | ------------------------------------------------------------------------ |
+| both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting) |
+| both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)               |
+| both       | `--json`              | Shorthand for `--format json`                                            |
+| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`                              |
+| `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                    |
+
+`synopsis` requires the desktop app to be running; `history` reads from disk and works offline. If `encoreFeatures.directorNotes` is disabled, enable it first with `maestro-cli settings set encoreFeatures.directorNotes true`.
+
+## Publishing Session Transcripts to Gists
+
+Publish an agent's session transcript to a GitHub gist so you can share it with collaborators or attach it to a bug report. Routes through the running Maestro desktop app (which holds the live transcript) and uses the user's authenticated `gh` CLI under the hood.
+
+```bash
+# Create a private gist (default)
+maestro-cli gist create <agent-id>
+
+# Add a description
+maestro-cli gist create <agent-id> -d "Auth refactor pairing session"
+
+# Make it public
+maestro-cli gist create <agent-id> --public -d "Repro for issue #1234"
+```
+
+| Flag                       | Description                            | Default |
+| -------------------------- | -------------------------------------- | ------- |
+| `-d, --description <text>` | Gist description                       | —       |
+| `-p, --public`             | Create a public gist (default private) | private |
+
+Output is JSON with the gist URL on success:
+
+```json
+{ "success": true, "agentId": "a1b2c3d4-...", "gistUrl": "https://gist.github.com/..." }
+```
+
+Requires the Maestro desktop app to be running and `gh` to be authenticated (`gh auth login`). Error codes: `AGENT_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
 
 ## Scheduling with Cron
 
