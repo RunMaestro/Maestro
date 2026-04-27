@@ -3,8 +3,6 @@
 // Command-line interface for Maestro
 
 import { Command } from 'commander';
-import * as fs from 'fs';
-import * as path from 'path';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -44,21 +42,16 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 
-// Read version from package.json at runtime
-function getVersion(): string {
-	try {
-		// When bundled, __dirname points to dist/cli, so go up to project root
-		const packagePath = path.resolve(__dirname, '../../package.json');
-		const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-		return packageJson.version;
-	} catch {
-		return '0.0.0';
-	}
-}
+// Injected at build time by scripts/build-cli.mjs via esbuild `define`.
+// The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
+// throwing a ReferenceError; in those paths the constant is never substituted.
+declare const __MAESTRO_CLI_VERSION__: string;
+const cliVersion: string =
+	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
 
 const program = new Command();
 
-program.name('maestro-cli').description('Command-line interface for Maestro').version(getVersion());
+program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
 
 // List commands
 const list = program.command('list').description('List resources');
