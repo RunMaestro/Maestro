@@ -544,5 +544,52 @@ describe('send command', () => {
 			expect(detectAgent).not.toHaveBeenCalled();
 			expect(spawnAgent).not.toHaveBeenCalled();
 		});
+
+		it('emits a stderr deprecation notice on every --live invocation', async () => {
+			// `send --live` is retained as a hidden alias for `dispatch` during
+			// the deprecation window. The notice goes to stderr so JSON-parsing
+			// callers reading stdout aren't broken by the new line.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: vi.fn().mockResolvedValue({ type: 'command_result' }) };
+				return action(mockClient as never);
+			});
+			const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			const stderrText = stderrSpy.mock.calls.map((call) => String(call[0])).join('');
+			expect(stderrText).toMatch(/deprecated/i);
+			expect(stderrText).toMatch(/dispatch/);
+
+			stderrSpy.mockRestore();
+		});
+
+		it('preserves the legacy SendResponse shape (agentName="live", null fields) so existing scripts keep parsing', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi
+						.fn()
+						.mockResolvedValue({ type: 'command_result', success: true, tabId: 'tab-99' }),
+				};
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			// PR1 surfaces tabId in `dispatch` output but `send --live` keeps
+			// the historic shape — sessionId stays null and agentName stays
+			// "live" so downstream parsers don't break mid-deprecation window.
+			expect(output).toEqual({
+				agentId: 'agent-abc-123',
+				agentName: 'live',
+				sessionId: null,
+				response: null,
+				success: true,
+				usage: null,
+			});
+		});
 	});
 });

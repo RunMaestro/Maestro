@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -10,6 +10,7 @@ import { showPlaybook } from './commands/show-playbook';
 import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
+import { dispatch } from './commands/dispatch';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { openBrowser } from './commands/open-browser';
@@ -132,20 +133,55 @@ clean
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cleanPlaybooks);
 
-// Send command - send a message to an agent and get a JSON response
+// Send command - run an agent locally and return its response synchronously.
+// `--live`, `--new-tab`, and `--force` are retained as hidden aliases for
+// `dispatch` during the deprecation window; new callers should use
+// `maestro-cli dispatch` instead. Hiding them from `--help` keeps new users
+// off the deprecated path while still parsing the flags from existing scripts.
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
-	.option('-l, --live', 'Send message through Maestro desktop (appears in tab)')
-	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
-	.option(
-		'-f, --force',
-		'Bypass the busy-state guard when writing to the active tab (requires --live); enables concurrent writes to a single agent'
+	.addOption(
+		new Option(
+			'-l, --live',
+			'Send message through Maestro desktop (deprecated: use `dispatch`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'--new-tab',
+			'Create a new AI tab instead of writing to the active one (deprecated: use `dispatch --new-tab`)'
+		).hideHelp()
+	)
+	.addOption(
+		new Option(
+			'-f, --force',
+			'Bypass the busy-state guard when writing to the active tab (deprecated: use `dispatch --force`)'
+		).hideHelp()
 	)
 	.action(send);
+
+// Dispatch command - hand a prompt to the desktop and return tab/session ID.
+// Splits the desktop-handoff half of `send --live` into a dedicated verb so
+// callers can address the same tab again without owning a persistent channel.
+program
+	.command('dispatch <agent-id> <message>')
+	.description(
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+	)
+	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
+	.option(
+		'-s, --session <id>',
+		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
+	)
+	.option(
+		'-f, --force',
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
+	)
+	.action(dispatch);
 
 // Open file command - open a file in the Maestro desktop app
 program

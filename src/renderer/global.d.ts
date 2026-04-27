@@ -275,7 +275,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
@@ -331,7 +337,11 @@ interface MaestroAPI {
 		onRemoteNewAITabWithPrompt: (
 			callback: (sessionId: string, prompt: string, responseChannel: string) => void
 		) => () => void;
-		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean) => void;
+		sendRemoteNewAITabWithPromptResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (

@@ -241,11 +241,17 @@ export type WriteToSessionCallback = (sessionId: string, data: string) => boolea
  * This forwards the command to the renderer which handles spawn, state, and broadcasts.
  * Returns true if command was accepted (session not busy).
  * inputMode is optional - if provided, the renderer will use it instead of querying session state.
+ * tabId is optional - if provided, the renderer targets that specific tab instead of the active tab.
+ * force is optional - if true, bypasses the renderer's own busy-state guard so
+ *   `dispatch --force` lands on a busy tab. The server-side guard is a separate
+ *   check that is gated by the `allowConcurrentSend` setting.
  */
 export type ExecuteCommandCallback = (
 	sessionId: string,
 	command: string,
-	inputMode?: 'ai' | 'terminal'
+	inputMode?: 'ai' | 'terminal',
+	tabId?: string,
+	force?: boolean
 ) => Promise<boolean>;
 
 /**
@@ -295,7 +301,17 @@ export type ReorderTabCallback = (
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
-export type NewAITabWithPromptCallback = (sessionId: string, prompt: string) => Promise<boolean>;
+/**
+ * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
+ * Returns the new tab id alongside success so callers (e.g. `maestro-cli dispatch
+ * --new-tab`) can address the same tab on later calls without owning a persistent
+ * channel.
+ */
+export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
+export type NewAITabWithPromptCallback = (
+	sessionId: string,
+	prompt: string
+) => Promise<NewAITabWithPromptResult>;
 export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;

@@ -80,7 +80,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
-		newAITabWithPrompt: vi.fn().mockResolvedValue(true),
+		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -188,7 +188,13 @@ describe('WebSocketMessageHandler', () => {
 
 			// Wait for async callback
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'Hello Claude!', 'ai');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello Claude!',
+					'ai',
+					undefined,
+					false
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -205,7 +211,13 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'ls -la', 'terminal');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'ls -la',
+					'terminal',
+					undefined,
+					false
+				);
 			});
 		});
 
@@ -224,6 +236,59 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 		});
 
+		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
+			// The server's `activeTabId` snapshot can diverge from the renderer's
+			// actual write target if the user switches tabs between IPC send and
+			// receive. Echoing it would mislead `dispatch --session <returnedTabId>`
+			// callers chaining a follow-up. We only echo when the caller passed an
+			// explicit, authoritative tabId.
+			(callbacks.getSessionDetail as any).mockReturnValue({
+				state: 'idle',
+				inputMode: 'ai',
+				activeTabId: 'tab-active-77',
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBeUndefined();
+		});
+
+		it('forwards an explicit tabId to the executeCommand callback and echoes it in command_result', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+				tabId: 'tab-explicit',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello',
+					'ai',
+					'tab-explicit',
+					false
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.tabId).toBe('tab-explicit');
+		});
+
 		it('should bypass busy guard and forward command when force=true', async () => {
 			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
 
@@ -239,7 +304,9 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.executeCommand).toHaveBeenCalledWith(
 					'session-1',
 					'concurrent write',
-					'ai'
+					'ai',
+					undefined,
+					true
 				);
 			});
 
@@ -1009,6 +1076,9 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('new_ai_tab_with_prompt_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// PR1: surface the freshly-created tabId so `dispatch --new-tab`
+			// can return an addressable id without owning a persistent channel.
+			expect(response.tabId).toBe('tab-mock-123');
 		});
 
 		it('should reject missing sessionId', () => {

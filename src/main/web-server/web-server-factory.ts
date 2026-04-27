@@ -365,7 +365,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// This forwards AI commands to the renderer, ensuring single source of truth
 		// The renderer handles all spawn logic, state management, and broadcasts
 		server.setExecuteCommandCallback(
-			async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for executeCommand', 'WebServer');
@@ -377,18 +383,30 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				const session = sessions.find((s) => s.id === sessionId);
 				const agentSessionId = session?.agentSessionId || 'none';
 
-				// Forward to renderer - it will handle spawn, state, and everything else
-				// This ensures web commands go through exact same code path as desktop commands
-				// Pass inputMode so renderer uses the web's intended mode (avoids sync issues)
+				// Forward to renderer - it will handle spawn, state, and everything else.
+				// Log metadata only at info level — remote commands can carry secrets,
+				// proprietary code, or PII; the full prompt goes to debug, which is
+				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Command: ${command.substring(0, 100)}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | CommandLength: ${command.length}`,
+					'WebServer'
+				);
+				logger.debug(
+					`[Web → Renderer] Command preview (truncated): ${command.substring(0, 100)}`,
 					'WebServer'
 				);
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for executeCommand', 'WebServer');
 					return false;
 				}
-				mainWindow.webContents.send('remote:executeCommand', sessionId, command, inputMode);
+				mainWindow.webContents.send(
+					'remote:executeCommand',
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					force
+				);
 				return true;
 			}
 		);
@@ -750,10 +768,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return false;
+				return { success: false };
 			}
 
-			return new Promise<boolean>((resolve) => {
+			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
 				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
 				let resolved = false;
 
@@ -761,14 +779,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
-					resolve(result === true);
+					// Renderer was updated to ack with `{ success, tabId? }`. Older
+					// renderers that still send a bare boolean stay supported via
+					// the `result === true` fallback.
+					if (typeof result === 'object' && result !== null) {
+						const r = result as { success?: unknown; tabId?: unknown };
+						resolve({
+							success: r.success === true,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+						});
+					} else {
+						resolve({ success: result === true });
+					}
 				};
 
 				ipcMain.once(responseChannel, handleResponse);
 				if (!isWebContentsAvailable(mainWindow)) {
 					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
+					resolve({ success: false });
 					return;
 				}
 				mainWindow.webContents.send(
@@ -786,7 +815,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						`newAITabWithPrompt callback timed out for session ${sessionId}`,
 						'WebServer'
 					);
-					resolve(false);
+					resolve({ success: false });
 				}, 5000);
 			});
 		});

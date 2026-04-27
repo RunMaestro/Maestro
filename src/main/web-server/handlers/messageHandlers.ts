@@ -138,6 +138,9 @@ export interface SessionDetailForHandler {
 	inputMode: string;
 	agentSessionId?: string;
 	cwd?: string;
+	/** Currently active AI tab id; surfaced in send_command responses so callers
+	 *  (`maestro-cli dispatch`) can address the same tab on follow-up calls. */
+	activeTabId?: string;
 }
 
 /**
@@ -157,7 +160,9 @@ export interface MessageHandlerCallbacks {
 	executeCommand: (
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		force?: boolean
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -175,7 +180,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null }
 	) => Promise<boolean>;
-	newAITabWithPrompt: (sessionId: string, prompt: string) => Promise<boolean>;
+	newAITabWithPrompt: (
+		sessionId: string,
+		prompt: string
+	) => Promise<{ success: boolean; tabId?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -576,9 +584,13 @@ export class WebSocketMessageHandler {
 		const command = message.command as string;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		// Optional explicit tab target. When omitted, the renderer falls back to
+		// the active tab (legacy `send --live` behavior). Used by
+		// `maestro-cli dispatch --session <tabId>` to address a specific tab.
+		const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 		// force=true bypasses the busy-state guard below, allowing callers to
 		// dispatch concurrent writes to an already-running agent. Used by
-		// `maestro-cli send --live --force`.
+		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
 
 		logger.info(
@@ -631,17 +643,29 @@ export class WebSocketMessageHandler {
 			LOG_CONTEXT
 		);
 
+		// Only echo a tabId in command_result when the caller passed one
+		// explicitly. Returning the server's snapshot of `activeTabId` for the
+		// no-tabId path would lie when the user switches active tabs between
+		// the IPC send and IPC receive — callers chaining `dispatch --session
+		// <returnedTabId>` would think they are continuing a conversation that
+		// actually went to a different tab. For deterministic addressing,
+		// callers should use `dispatch --new-tab` (returns the new tabId from
+		// the renderer ack) and then `dispatch --session <tabId>` (echoes back
+		// the caller-supplied authoritative tabId).
+		const resolvedTabId = requestedTabId;
+
 		// Route ALL commands through the renderer for consistent handling
 		// The renderer handles both AI and terminal modes, updating UI and state
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode)
+				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
 						success,
 						sessionId,
+						...(resolvedTabId ? { tabId: resolvedTabId } : {}),
 						requestId: message.requestId,
 					});
 					if (!success) {
@@ -1725,11 +1749,12 @@ export class WebSocketMessageHandler {
 
 		this.callbacks
 			.newAITabWithPrompt(sessionId, prompt)
-			.then((success) => {
+			.then((result) => {
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
-					success,
+					success: result.success,
 					sessionId,
+					...(result.tabId ? { tabId: result.tabId } : {}),
 					requestId: message.requestId,
 				});
 			})

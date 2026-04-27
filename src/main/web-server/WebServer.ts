@@ -741,8 +741,13 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
-			executeCommand: async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
+			executeCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean
+			) => this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
