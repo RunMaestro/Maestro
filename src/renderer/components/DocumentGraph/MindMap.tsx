@@ -577,7 +577,7 @@ export function MindMap({
 	onOpenFile,
 	searchQuery,
 	previewCharLimit = 100,
-	layoutType = 'mindmap',
+	layoutType = 'hierarchical',
 	spacingScale = 1,
 	nodePositions,
 	onNodePositionChange,

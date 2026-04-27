@@ -120,7 +120,7 @@ function resetStore() {
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
-		documentGraphLayoutType: 'mindmap',
+		documentGraphLayoutType: 'hierarchical',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
@@ -221,7 +221,7 @@ describe('settingsStore', () => {
 			expect(state.documentGraphShowExternalLinks).toBe(false);
 			expect(state.documentGraphMaxNodes).toBe(50);
 			expect(state.documentGraphPreviewCharLimit).toBe(100);
-			expect(state.documentGraphLayoutType).toBe('mindmap');
+			expect(state.documentGraphLayoutType).toBe('hierarchical');
 			expect(state.statsCollectionEnabled).toBe(true);
 			expect(state.defaultStatsTimeRange).toBe('week');
 			expect(state.preventSleepEnabled).toBe(false);
@@ -559,10 +559,10 @@ describe('settingsStore', () => {
 
 			it('setDocumentGraphLayoutType rejects invalid values and persists fallback', () => {
 				useSettingsStore.getState().setDocumentGraphLayoutType('invalid' as any);
-				expect(useSettingsStore.getState().documentGraphLayoutType).toBe('mindmap');
+				expect(useSettingsStore.getState().documentGraphLayoutType).toBe('hierarchical');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith(
 					'documentGraphLayoutType',
-					'mindmap'
+					'hierarchical'
 				);
 			});
 		});
@@ -1737,7 +1737,7 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			// Invalid value rejected, keeps default
-			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('mindmap');
+			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('hierarchical');
 		});
 
 		it('loads valid documentGraphLayoutType from settings', async () => {

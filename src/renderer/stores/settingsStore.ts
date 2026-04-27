@@ -601,7 +601,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
-		documentGraphLayoutType: 'mindmap',
+		documentGraphLayoutType: 'hierarchical',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
@@ -1005,7 +1005,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'mindmap';
+			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
