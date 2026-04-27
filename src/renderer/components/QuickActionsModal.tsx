@@ -79,6 +79,22 @@ const RunningAgentSubtext = memo(function RunningAgentSubtext({
 	);
 });
 
+interface SectionHeaderProps {
+	label: string;
+	color: string;
+}
+
+const SectionHeader = memo(function SectionHeader({ label, color }: SectionHeaderProps) {
+	return (
+		<div className="px-4 pt-3 pb-1 flex items-center gap-2 select-none" aria-hidden="true">
+			<span className="text-[10px] font-bold tracking-[0.15em]" style={{ color }}>
+				{label}
+			</span>
+			<div className="flex-1 border-t-2" style={{ borderColor: color, opacity: 0.4 }} />
+		</div>
+	);
+});
+
 interface QuickAction {
 	id: string;
 	label: string;
@@ -1891,7 +1907,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					);
 				}
 			},
-			subtext: isRunning ? undefined : s.state.toUpperCase(),
+			// State (IDLE / running) is conveyed by the LIVE/IDLE section headers in
+			// the agents-mode list, so we leave the per-row subtext empty here. Running
+			// agents render rich live status via `runningInfo` instead.
+			subtext: undefined,
 			isRunningAgent: isRunning,
 			runningInfo,
 		};
@@ -2077,20 +2096,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							// 1-9 for positions 1-9, 0 for position 10
 							const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
 
-							// In agents mode, show a divider on the first idle agent that follows a running one.
+							// In agents mode, show LIVE / IDLE section headers above the first running
+							// and first idle rows so the two buckets are easy to tell apart at a glance.
 							const prev = i > 0 ? filtered[i - 1] : null;
-							const showRunningIdleDivider =
-								mode === 'agents' && prev?.isRunningAgent === true && a.isRunningAgent === false;
+							const isFirstRunning =
+								mode === 'agents' && a.isRunningAgent === true && prev?.isRunningAgent !== true;
+							const isFirstIdle =
+								mode === 'agents' && a.isRunningAgent === false && prev?.isRunningAgent !== false;
 
 							return (
 								<React.Fragment key={a.id}>
-									{showRunningIdleDivider && (
-										<div
-											className="my-1 mx-4 border-t"
-											style={{ borderColor: theme.colors.border }}
-											aria-hidden="true"
-										/>
+									{isFirstRunning && (
+										<SectionHeader label="LIVE" color={getStatusColor('busy', theme)} />
 									)}
+									{isFirstIdle && <SectionHeader label="IDLE" color={theme.colors.textDim} />}
 									<button
 										ref={i === selectedIndex ? selectedItemRef : null}
 										onClick={() => {

@@ -1872,6 +1872,73 @@ describe('QuickActionsModal', () => {
 			expect(alphaIdx).toBeLessThan(zuluIdx);
 		});
 
+		it('renders LIVE and IDLE section headers in agents mode when both buckets exist', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			const liveIdx = dialog.textContent?.indexOf('LIVE') ?? -1;
+			const idleIdx = dialog.textContent?.indexOf('IDLE') ?? -1;
+			expect(liveIdx).toBeGreaterThanOrEqual(0);
+			expect(idleIdx).toBeGreaterThan(liveIdx);
+		});
+
+		it('renders only IDLE header when no agents are running', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'idle' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.textContent).toContain('IDLE');
+			expect(dialog.textContent).not.toContain('LIVE');
+		});
+
+		it('renders only LIVE header when all agents are running', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'busy' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.textContent).toContain('LIVE');
+			expect(dialog.textContent).not.toContain('IDLE');
+		});
+
+		it('does not render LIVE/IDLE headers in main mode', () => {
+			const props = createDefaultProps({
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
+					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			// Main mode keeps the per-row state subtext and does not show section headers.
+			expect(dialog.textContent).not.toContain('LIVE');
+			// 'IDLE' may legitimately appear as the per-row state subtext in main mode,
+			// but never as a standalone section header — we assert via class lookup.
+			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
+			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
+			expect(headerTexts.some((t) => t.trim() === 'LIVE')).toBe(false);
+			expect(headerTexts.some((t) => t.trim() === 'IDLE')).toBe(false);
+		});
+
 		it('dismisses modal when clicking the backdrop', () => {
 			const props = createDefaultProps({ initialMode: 'agents' });
 			render(<QuickActionsModal {...props} />);
