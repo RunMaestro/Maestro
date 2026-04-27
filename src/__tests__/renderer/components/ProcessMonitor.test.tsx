@@ -557,7 +557,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/Session: abcdef12/)).toBeInTheDocument();
+				expect(screen.getByText('abcdef12')).toBeInTheDocument();
 			});
 		});
 	});
@@ -697,8 +697,8 @@ describe('ProcessMonitor', () => {
 				expect(screen.getByText('WIZARD PROCESSES')).toBeInTheDocument();
 				expect(screen.getByText('Wizard Conversation')).toBeInTheDocument();
 				expect(screen.getByText('Playbook Generation')).toBeInTheDocument();
-				expect(screen.getByText('PID: 11111')).toBeInTheDocument();
-				expect(screen.getByText('PID: 22222')).toBeInTheDocument();
+				expect(screen.getByText('PID 11111')).toBeInTheDocument();
+				expect(screen.getByText('PID 22222')).toBeInTheDocument();
 			});
 		});
 
@@ -710,21 +710,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('PID: 99999')).toBeInTheDocument();
-			});
-		});
-
-		it('should display "Running" status badge', async () => {
-			const process = createActiveProcess();
-			getActiveProcessesMock().mockResolvedValue([process]);
-
-			const session = createSession();
-			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
-
-			await waitFor(() => {
-				// Footer also has "Running" text, so find the badge
-				const runningBadges = screen.getAllByText('Running');
-				expect(runningBadges.length).toBeGreaterThanOrEqual(1);
+				expect(screen.getByText('PID 99999')).toBeInTheDocument();
 			});
 		});
 	});
@@ -850,7 +836,7 @@ describe('ProcessMonitor', () => {
 	});
 
 	describe('SSH/Local indicator', () => {
-		it('should show "Local" badge on session row for local sessions', async () => {
+		it('should not render any locality badge on session row for local sessions', async () => {
 			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
 			getActiveProcessesMock().mockResolvedValue([process]);
 
@@ -858,9 +844,13 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByTitle('Running locally')).toBeInTheDocument();
-				expect(screen.getByText('Local')).toBeInTheDocument();
+				expect(
+					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
+				).toBeInTheDocument();
 			});
+
+			expect(screen.queryByText('Local')).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Running locally')).not.toBeInTheDocument();
 		});
 
 		it('should show SSH badge on session row for SSH sessions', async () => {
@@ -1703,12 +1693,11 @@ describe('ProcessMonitor', () => {
 			expect(screen.getByText('↑↓ navigate • Enter view details • R refresh')).toBeInTheDocument();
 		});
 
-		it('should display running indicator', () => {
+		it('should not render the legacy "Running" footer legend', () => {
 			render(<ProcessMonitor theme={theme} sessions={[]} groups={[]} onClose={onClose} />);
 
-			// Should have a "Running" label in footer
-			const footerRunning = screen.getAllByText('Running');
-			expect(footerRunning.length).toBeGreaterThan(0);
+			// The footer Running legend was redundant with the per-row green dot and was removed.
+			expect(screen.queryByText('Running')).not.toBeInTheDocument();
 		});
 	});
 
