@@ -69,7 +69,11 @@ const handlerOpts = (operation: string, logSuccess = false): CreateHandlerOption
  * already checked out" error: instead of bubbling up an opaque error, we
  * return the existing worktree path so callers can open it as a session.
  *
- * @returns Absolute worktree path, or null if not found
+ * Stale registrations (where the directory was deleted manually without
+ * `git worktree prune`) are filtered out by an `fs.access` check so callers
+ * never get a path that points at nothing.
+ *
+ * @returns Absolute worktree path, or null if not found / stale
  */
 async function findLocalWorktreeForBranch(
 	mainRepoCwd: string,
@@ -77,7 +81,14 @@ async function findLocalWorktreeForBranch(
 ): Promise<string | null> {
 	const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], mainRepoCwd);
 	if (result.exitCode !== 0) return null;
-	return parseWorktreePathForBranch(result.stdout, branchName);
+	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
+	if (!existingPath) return null;
+	try {
+		await fs.access(existingPath);
+		return existingPath;
+	} catch {
+		return null;
+	}
 }
 
 const isAlreadyUsedError = isWorktreeAlreadyUsedError;

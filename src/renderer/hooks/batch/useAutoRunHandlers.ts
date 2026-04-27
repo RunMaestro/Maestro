@@ -13,6 +13,11 @@ import { captureException } from '../../utils/sentry';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 
+/** Normalize file path for comparison: convert backslashes to forward slashes, collapse duplicate slashes, and remove trailing slash. */
+function normalizePath(p: string): string {
+	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
 /**
  * Tree node structure for Auto Run document tree
  */
@@ -161,7 +166,10 @@ async function spawnWorktreeAgentAndDispatch(
 	// existing worktree is already open in Maestro), reuse it instead of
 	// building a duplicate. We still fall through to populate config.worktree
 	// below so PR creation continues to work.
-	const existingSession = useSessionStore.getState().sessions.find((s) => s.cwd === worktreePath);
+	const normalizedWorktreePath = normalizePath(worktreePath);
+	const existingSession = useSessionStore
+		.getState()
+		.sessions.find((s) => normalizePath(s.cwd) === normalizedWorktreePath);
 
 	// Step 3: Fetch git info for the worktree
 	let gitBranches: string[] | undefined;

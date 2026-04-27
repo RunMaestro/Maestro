@@ -335,11 +335,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
 				}
 
-				// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
-				const gitInfo = await fetchGitInfo(actualPath, sshRemoteId);
-
 				// If a session for the existing worktree path already exists, focus it
-				// and skip the duplicate creation.
+				// and skip the duplicate creation. Done before fetchGitInfo so we don't
+				// pay for an unnecessary git round-trip when there's nothing to build.
 				if (reusedExisting) {
 					const normalizedActual = normalizePath(actualPath);
 					const existingSession = useSessionStore
@@ -355,6 +353,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						return;
 					}
 				}
+
+				// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
+				const gitInfo = await fetchGitInfo(actualPath, sshRemoteId);
 
 				const worktreeSession = buildWorktreeSession({
 					parentSession: activeSession,

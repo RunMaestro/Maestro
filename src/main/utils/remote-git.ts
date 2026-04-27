@@ -279,7 +279,11 @@ export interface RemoteWorktreeSetupResult extends Record<string, unknown> {
  * Look up the worktree path currently checked out on the given branch by
  * running `git worktree list --porcelain` against the remote main repo.
  *
- * @returns Absolute worktree path on the remote, or null if not found
+ * Stale registrations (where the directory was removed manually without
+ * `git worktree prune`) are filtered out by a `test -d` check on the remote
+ * so callers never get a path that points at nothing.
+ *
+ * @returns Absolute worktree path on the remote, or null if not found / stale
  */
 async function findRemoteWorktreeForBranch(
 	mainRepoCwd: string,
@@ -291,7 +295,16 @@ async function findRemoteWorktreeForBranch(
 		remoteCwd: mainRepoCwd,
 	});
 	if (result.exitCode !== 0) return null;
-	return parseWorktreePathForBranch(result.stdout, branchName);
+	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
+	if (!existingPath) return null;
+	const existsResult = await execRemoteShellCommand(
+		`test -d '${existingPath}' && echo EXISTS || echo MISSING`,
+		sshRemote
+	);
+	if (existsResult.exitCode !== 0 || !existsResult.stdout.includes('EXISTS')) {
+		return null;
+	}
+	return existingPath;
 }
 
 /**
@@ -458,6 +471,10 @@ export async function worktreeSetupRemote(
 		const errMsg = createResult.stderr || '';
 		if (isWorktreeAlreadyUsedError(errMsg)) {
 			const existingPath = await findRemoteWorktreeForBranch(mainRepoCwd, branchName, sshRemote);
+			logger.debug(
+				`Worktree-already-used recovery: branch=${branchName} host=${sshRemote.host} existingPath=${existingPath ?? '<none>'}`,
+				LOG_CONTEXT
+			);
 			if (existingPath) {
 				return {
 					success: true,

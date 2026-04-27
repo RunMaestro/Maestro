@@ -2360,9 +2360,14 @@ export function Component() {
 		});
 
 		it('should recover when branch is already checked out at another worktree', async () => {
-			// Mock fs.access to throw (path doesn't exist)
+			// fs.access is called twice:
+			//  1) for the requested /worktrees/feature path (must reject — doesn't exist)
+			//  2) for the recovered /existing/wt/feature-branch path (must resolve — does exist)
 			const fsPromises = await import('fs/promises');
-			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
+				if (String(p) === '/existing/wt/feature-branch') return undefined;
+				throw new Error('ENOENT');
+			});
 
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
@@ -2415,6 +2420,53 @@ export function Component() {
 				['worktree', 'list', '--porcelain'],
 				'/main/repo'
 			);
+		});
+
+		it('should fall through to error when porcelain returns a stale worktree path that no longer exists on disk', async () => {
+			// fs.access rejects → recovered path is stale, treat as no match
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					// porcelain returns the stale path
+					stdout: [
+						'worktree /main/repo',
+						'HEAD aaa',
+						'branch refs/heads/main',
+						'',
+						'worktree /stale/path',
+						'HEAD bbb',
+						'branch refs/heads/feature-branch',
+						'',
+					].join('\n'),
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already checked out at '/stale/path'",
+			});
+			expect(fsPromises.default.access).toHaveBeenCalledWith('/stale/path');
 		});
 
 		it('should still surface error when branch is "already used" but porcelain lookup yields no match', async () => {
