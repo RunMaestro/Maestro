@@ -51,6 +51,12 @@
 	--z-modal-backdrop: 300;
 	--z-modal: 400;
 	--z-toast: 500;
+
+	/* Responsive breakpoints — mirrors BREAKPOINTS in src/web/mobile/constants.ts.
+	   phone covers [0, --bp-tablet), tablet covers [--bp-tablet, --bp-desktop),
+	   desktop covers [--bp-desktop, ∞). */
+	--bp-tablet: 600px;
+	--bp-desktop: 960px;
 }
 
 /* Base styles */
@@ -143,21 +149,29 @@ textarea::placeholder {
 	font-style: italic;
 }
 
-/* Mobile-specific styles */
-@media (max-width: 767px) {
-	/* Prevent text size adjustment */
-	html {
-		-webkit-text-size-adjust: none;
-		text-size-adjust: none;
-	}
-
-	/* Larger tap targets for accessibility (44px minimum per Apple HIG) */
+/* Larger tap targets for accessibility (44px minimum per Apple HIG).
+   The HIG figure applies to TOUCH targets, not pointer targets — applying
+   it universally on desktop forces every form control to 44px and overrides
+   intentionally compact variants (Input `sm` size, header `compact` mode,
+   etc.). Scope to coarse-pointer devices and narrow viewports so phones,
+   tablets, and stylus/touch laptops still clear the floor while desktop
+   pointers keep their compact spacing. */
+@media (pointer: coarse), (max-width: 599px) {
 	button,
 	a,
 	input,
 	select,
 	textarea {
 		min-height: 44px;
+	}
+}
+
+/* Mobile-specific styles */
+@media (max-width: 767px) {
+	/* Prevent text size adjustment */
+	html {
+		-webkit-text-size-adjust: none;
+		text-size-adjust: none;
 	}
 
 	/* Disable pull-to-refresh on body (we'll handle it ourselves) */
@@ -307,6 +321,17 @@ section {
 	}
 }
 
+@keyframes modalIn {
+	from {
+		transform: scale(0.96);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
 /* Utility classes */
 .animate-spin {
 	animation: spin 1s linear infinite;
@@ -326,6 +351,10 @@ section {
 
 .animate-slideDown {
 	animation: slideDown var(--transition-normal);
+}
+
+.animate-modalIn {
+	animation: modalIn var(--transition-normal);
 }
 
 /* Hide scrollbar but keep functionality */

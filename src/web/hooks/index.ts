@@ -165,6 +165,10 @@ export type {
 	UseMobileSessionManagementReturn,
 } from './useMobileSessionManagement';
 
+export { useBreakpoint, default as useBreakpointDefault } from './useBreakpoint';
+
+export type { BreakpointState } from './useBreakpoint';
+
 export { useMobileViewState, default as useMobileViewStateDefault } from './useMobileViewState';
 
 export type {

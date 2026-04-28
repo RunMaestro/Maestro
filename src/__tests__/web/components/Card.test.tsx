@@ -1,6 +1,11 @@
 /**
  * Tests for Card, CardHeader, CardBody, CardFooter, and SessionCard components
  * @vitest-environment jsdom
+ *
+ * After the Tailwind migration, color/border/radius tokens are CSS classes
+ * resolved via `--maestro-*` variables at runtime — jsdom does not load the
+ * Tailwind stylesheet, so inline-style assertions don't work here. Instead we
+ * assert on className containment + behaviour (events, aria-*, DOM shape).
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -15,44 +20,9 @@ import {
 	type CardVariant,
 	type CardPadding,
 	type CardRadius,
-	type CardProps,
-	type CardHeaderProps,
-	type CardBodyProps,
-	type CardFooterProps,
-	type SessionCardProps,
 	type SessionStatus,
 	type InputMode,
 } from '../../../web/components/Card';
-
-// Mock the ThemeProvider
-vi.mock('../../../web/components/ThemeProvider', () => ({
-	useTheme: () => ({
-		theme: {
-			id: 'dracula',
-			name: 'Dracula',
-			mode: 'dark',
-			colors: {
-				bgMain: '#0b0b0d',
-				bgSidebar: '#111113',
-				bgActivity: '#1c1c1f',
-				border: '#27272a',
-				textMain: '#e4e4e7',
-				textDim: '#a1a1aa',
-				accent: '#6366f1',
-				accentDim: 'rgba(99, 102, 241, 0.2)',
-				accentText: '#a5b4fc',
-				success: '#22c55e',
-				warning: '#eab308',
-				error: '#ef4444',
-			},
-		},
-		isLight: false,
-		isDark: true,
-		isVibe: false,
-		isDevicePreference: false,
-	}),
-	ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
 
 describe('Card Component', () => {
 	afterEach(() => {
@@ -74,8 +44,14 @@ describe('Card Component', () => {
 			const { container } = render(<Card>Default Card</Card>);
 			const card = container.firstChild as HTMLElement;
 			expect(card).toBeInTheDocument();
-			// Default padding is 'md' which is 'p-3'
 			expect(card.className).toContain('p-3');
+		});
+
+		it('includes the shared base classes', () => {
+			const { container } = render(<Card>Base</Card>);
+			const card = container.firstChild as HTMLElement;
+			expect(card.className).toContain('transition-all');
+			expect(card.className).toContain('duration-150');
 		});
 
 		it('passes through HTML div attributes', () => {
@@ -119,68 +95,62 @@ describe('Card Component', () => {
 			});
 		});
 
-		it('applies default variant styles with activity background', () => {
+		it('applies default variant classes', () => {
 			const { container } = render(<Card variant="default">Default</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ backgroundColor: '#1c1c1f' });
-			expect(card).toHaveStyle({ color: '#e4e4e7' });
-			// Default variant has no border - verify by checking no border color
+			expect(card.className).toContain('bg-bg-activity');
+			expect(card.className).toContain('text-text-main');
 		});
 
-		it('applies elevated variant styles with box shadow', () => {
+		it('applies elevated variant classes with card-elevated shadow', () => {
 			const { container } = render(<Card variant="elevated">Elevated</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ backgroundColor: '#1c1c1f' });
-			expect(card).toHaveStyle({ color: '#e4e4e7' });
-			// Elevated variant has no border (border: 'none')
-			// Check box shadow is applied
-			expect(card.style.boxShadow).toContain('rgba(0, 0, 0');
+			expect(card.className).toContain('bg-bg-activity');
+			expect(card.className).toContain('text-text-main');
+			expect(card.className).toContain('shadow-card-elevated');
 		});
 
-		it('applies outlined variant styles with border', () => {
+		it('applies outlined variant classes with border', () => {
 			const { container } = render(<Card variant="outlined">Outlined</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.style.backgroundColor).toBe('transparent');
-			expect(card).toHaveStyle({ color: '#e4e4e7' });
-			// Border color #27272a is rendered as rgb(39, 39, 42) in jsdom
-			expect(card.style.border).toContain('rgb(39, 39, 42)');
+			expect(card.className).toContain('bg-transparent');
+			expect(card.className).toContain('text-text-main');
+			expect(card.className).toContain('border');
+			expect(card.className).toContain('border-border');
 		});
 
-		it('applies filled variant styles with sidebar background', () => {
+		it('applies filled variant classes with sidebar background', () => {
 			const { container } = render(<Card variant="filled">Filled</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ backgroundColor: '#111113' });
-			expect(card).toHaveStyle({ color: '#e4e4e7' });
-			// Variant sets border: 'none' which may be rendered differently - check no visible border
-			// The style object has border shorthand properties that may parse differently
+			expect(card.className).toContain('bg-bg-sidebar');
+			expect(card.className).toContain('text-text-main');
 		});
 
-		it('applies ghost variant styles with transparent background', () => {
+		it('applies ghost variant classes with transparent border', () => {
 			const { container } = render(<Card variant="ghost">Ghost</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.style.backgroundColor).toBe('transparent');
-			expect(card).toHaveStyle({ color: '#e4e4e7' });
-			expect(card.style.border).toContain('transparent');
+			expect(card.className).toContain('bg-transparent');
+			expect(card.className).toContain('text-text-main');
+			expect(card.className).toContain('border-transparent');
 		});
 
 		it('uses default variant when variant is not specified', () => {
 			const { container } = render(<Card>Default Variant</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ backgroundColor: '#1c1c1f' });
+			expect(card.className).toContain('bg-bg-activity');
 		});
 
 		it('handles unknown variant gracefully (default case)', () => {
-			// Cast to any to test the default fallback case in the switch statement
 			const { container } = render(<Card variant={'unknown' as CardVariant}>Unknown</Card>);
 			const card = container.firstChild as HTMLElement;
 			expect(card).toBeInTheDocument();
-			// Unknown variant returns empty styles, so only base styles apply
+			// Unknown variant falls back to empty string — no variant classes, but
+			// base classes still present.
+			expect(card.className).toContain('transition-all');
 		});
 	});
 
 	describe('Padding Options', () => {
-		const paddings: CardPadding[] = ['none', 'sm', 'md', 'lg'];
-
 		it('applies no padding class for none', () => {
 			const { container } = render(<Card padding="none">No Padding</Card>);
 			const card = container.firstChild as HTMLElement;
@@ -209,41 +179,40 @@ describe('Card Component', () => {
 	});
 
 	describe('Border Radius Options', () => {
-		const radii: CardRadius[] = ['none', 'sm', 'md', 'lg', 'full'];
-		const expectedRadii: Record<CardRadius, string> = {
-			none: '0',
-			sm: '4px',
-			md: '8px',
-			lg: '12px',
-			full: '9999px',
+		const radiusClassMap: Record<CardRadius, string> = {
+			none: 'rounded-none',
+			sm: 'rounded',
+			md: 'rounded-lg',
+			lg: 'rounded-xl',
+			full: 'rounded-full',
 		};
 
-		radii.forEach((radius) => {
-			it(`applies ${radius} border radius (${expectedRadii[radius]})`, () => {
+		(Object.keys(radiusClassMap) as CardRadius[]).forEach((radius) => {
+			it(`applies ${radius} → ${radiusClassMap[radius]}`, () => {
 				const { container } = render(<Card radius={radius}>{radius} Radius</Card>);
 				const card = container.firstChild as HTMLElement;
-				expect(card).toHaveStyle({ borderRadius: expectedRadii[radius] });
+				expect(card.className).toContain(radiusClassMap[radius]);
 			});
 		});
 
-		it('uses medium radius as default', () => {
+		it('uses medium radius (rounded-lg) as default', () => {
 			const { container } = render(<Card>Default Radius</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ borderRadius: '8px' });
+			expect(card.className).toContain('rounded-lg');
 		});
 	});
 
 	describe('Interactive State', () => {
-		it('sets cursor pointer when interactive', () => {
+		it('applies cursor-pointer class when interactive', () => {
 			const { container } = render(<Card interactive>Interactive Card</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ cursor: 'pointer' });
+			expect(card.className).toContain('cursor-pointer');
 		});
 
-		it('does not set cursor when not interactive', () => {
+		it('does not apply cursor-pointer when not interactive', () => {
 			const { container } = render(<Card>Non-interactive Card</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.style.cursor).toBe('');
+			expect(card.className).not.toContain('cursor-pointer');
 		});
 
 		it('adds role="button" when interactive', () => {
@@ -341,21 +310,22 @@ describe('Card Component', () => {
 	});
 
 	describe('Selected State', () => {
-		it('applies selected styles when selected', () => {
+		it('adds accent ring classes when selected', () => {
 			const { container } = render(<Card selected>Selected Card</Card>);
 			const card = container.firstChild as HTMLElement;
-			// Selected styles apply accent color to border and box-shadow
-			// Color may be rendered as rgb(99, 102, 241) or #6366f1
-			expect(card.style.borderColor).toMatch(/6366f1|rgb\(99,\s*102,\s*241\)/);
-			expect(card.style.boxShadow).toMatch(/6366f1|rgb\(99,\s*102,\s*241\)/);
+			expect(card.className).toContain('ring-1');
+			expect(card.className).toContain('ring-accent');
 		});
 
-		it('does not apply selected styles when not selected', () => {
+		it('does not add accent ring classes when not selected', () => {
 			const { container } = render(<Card>Not Selected</Card>);
 			const card = container.firstChild as HTMLElement;
-			// When not selected, borderColor comes from variant styles or defaults
-			// Default variant has border: 'none', so borderColor is not accent color
-			expect(card.style.borderColor).not.toMatch(/6366f1|rgb\(99,\s*102,\s*241\)/);
+			// `ring-1` is the selected-state width; the focus-visible ring uses
+			// `focus-visible:ring-2 focus-visible:ring-accent`, so check for the
+			// selected token specifically rather than a bare 'ring-accent'
+			// substring (which the focus-visible class would also satisfy).
+			expect(card.className).not.toContain('ring-1');
+			expect(card.className).not.toMatch(/(^|\s)ring-accent(\s|$)/);
 		});
 
 		it('sets aria-selected when interactive and selected', () => {
@@ -374,42 +344,85 @@ describe('Card Component', () => {
 			expect(card).toHaveAttribute('aria-selected', 'false');
 		});
 
-		it('uses accentDim background for outlined variant when selected', () => {
+		it('uses accent-dim background and accent border for outlined + selected', () => {
 			const { container } = render(
 				<Card variant="outlined" selected>
 					Outlined Selected
 				</Card>
 			);
 			const card = container.firstChild as HTMLElement;
-			// accentDim is rgba(99, 102, 241, 0.2)
-			expect(card.style.backgroundColor).toContain('99, 102, 241');
+			expect(card.className).toContain('!bg-accent-dim');
+			expect(card.className).toContain('!border-accent');
+			expect(card.className).toContain('ring-1');
+			expect(card.className).toContain('ring-accent');
 		});
 
-		it('uses activity background for other variants when selected', () => {
+		it('uses bg-activity and accent border for ghost + selected', () => {
+			const { container } = render(
+				<Card variant="ghost" selected>
+					Ghost Selected
+				</Card>
+			);
+			const card = container.firstChild as HTMLElement;
+			expect(card.className).toContain('!bg-bg-activity');
+			expect(card.className).toContain('!border-accent');
+			expect(card.className).toContain('ring-1');
+			expect(card.className).toContain('ring-accent');
+		});
+
+		it('uses bg-activity (no border swap) for default + selected', () => {
 			const { container } = render(
 				<Card variant="default" selected>
 					Default Selected
 				</Card>
 			);
 			const card = container.firstChild as HTMLElement;
-			// bgActivity is #1c1c1f which becomes rgb(28, 28, 31)
-			expect(card.style.backgroundColor).toBe('rgb(28, 28, 31)');
+			expect(card.className).toContain('!bg-bg-activity');
+			expect(card.className).toContain('ring-1');
+			expect(card.className).toContain('ring-accent');
+			// Default variant has no border, so no border-accent override.
+			expect(card.className).not.toContain('!border-accent');
+		});
+
+		it('uses bg-activity (no border swap) for elevated + selected', () => {
+			const { container } = render(
+				<Card variant="elevated" selected>
+					Elevated Selected
+				</Card>
+			);
+			const card = container.firstChild as HTMLElement;
+			expect(card.className).toContain('!bg-bg-activity');
+			expect(card.className).toContain('ring-accent');
+			expect(card.className).not.toContain('!border-accent');
+		});
+
+		it('uses bg-activity (no border swap) for filled + selected', () => {
+			const { container } = render(
+				<Card variant="filled" selected>
+					Filled Selected
+				</Card>
+			);
+			const card = container.firstChild as HTMLElement;
+			expect(card.className).toContain('!bg-bg-activity');
+			expect(card.className).toContain('ring-accent');
+			expect(card.className).not.toContain('!border-accent');
 		});
 	});
 
 	describe('Disabled State', () => {
-		it('applies disabled styles when disabled', () => {
+		it('applies disabled classes when disabled', () => {
 			const { container } = render(<Card disabled>Disabled Card</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ opacity: '0.5' });
-			expect(card).toHaveStyle({ cursor: 'not-allowed' });
-			expect(card).toHaveStyle({ pointerEvents: 'none' });
+			expect(card.className).toContain('opacity-50');
+			expect(card.className).toContain('cursor-not-allowed');
+			expect(card.className).toContain('pointer-events-none');
 		});
 
-		it('does not apply disabled styles when not disabled', () => {
+		it('does not apply disabled classes when not disabled', () => {
 			const { container } = render(<Card>Not Disabled</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.style.opacity).not.toBe('0.5');
+			expect(card.className).not.toContain('opacity-50');
+			expect(card.className).not.toContain('pointer-events-none');
 		});
 
 		it('sets aria-disabled when disabled', () => {
@@ -418,15 +431,15 @@ describe('Card Component', () => {
 			expect(card).toHaveAttribute('aria-disabled', 'true');
 		});
 
-		it('does not set cursor pointer when interactive but disabled', () => {
+		it('disabled overrides interactive cursor (no cursor-pointer)', () => {
 			const { container } = render(
 				<Card interactive disabled>
 					Interactive Disabled
 				</Card>
 			);
 			const card = container.firstChild as HTMLElement;
-			// Disabled styles override interactive cursor
-			expect(card).toHaveStyle({ cursor: 'not-allowed' });
+			expect(card.className).toContain('cursor-not-allowed');
+			expect(card.className).not.toContain('cursor-pointer');
 		});
 
 		it('does not add tabIndex when interactive but disabled', () => {
@@ -449,7 +462,7 @@ describe('Card Component', () => {
 			expect(card.className).not.toContain('hover:brightness-110');
 		});
 
-		it('does not trigger click when disabled', () => {
+		it('strips onClick from DOM when disabled', () => {
 			const handleClick = vi.fn();
 			const { container } = render(
 				<Card disabled onClick={handleClick}>
@@ -457,7 +470,6 @@ describe('Card Component', () => {
 				</Card>
 			);
 			const card = container.firstChild as HTMLElement;
-			// pointerEvents: none prevents clicks, but testing the onClick prop removal
 			expect(card.onclick).toBeNull();
 		});
 
@@ -475,17 +487,15 @@ describe('Card Component', () => {
 	});
 
 	describe('Full Width', () => {
-		it('applies full width styles when fullWidth is true', () => {
+		it('applies w-full when fullWidth is true', () => {
 			const { container } = render(<Card fullWidth>Full Width</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card).toHaveStyle({ width: '100%' });
 			expect(card.className).toContain('w-full');
 		});
 
-		it('does not apply full width styles when fullWidth is false', () => {
+		it('does not apply w-full when fullWidth is false', () => {
 			const { container } = render(<Card>Not Full Width</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.style.width).not.toBe('100%');
 			expect(card.className).not.toContain('w-full');
 		});
 	});
@@ -520,14 +530,14 @@ describe('Card Component', () => {
 			);
 			const card = container.firstChild as HTMLElement;
 
-			// Check all props are applied
-			expect(card.className).toContain('p-4'); // lg padding
+			expect(card.className).toContain('p-4');
 			expect(card.className).toContain('extra-class');
 			expect(card.className).toContain('w-full');
 			expect(card.className).toContain('hover:brightness-110');
-			expect(card).toHaveStyle({ borderRadius: '12px' });
+			expect(card.className).toContain('rounded-xl');
+			expect(card.className).toContain('shadow-card-elevated');
+			expect(card.className).toContain('ring-accent');
 			expect(card).toHaveStyle({ marginBottom: '10px' });
-			expect(card).toHaveStyle({ width: '100%' });
 			expect(card).toHaveAttribute('role', 'button');
 			expect(card).toHaveAttribute('tabIndex', '0');
 
@@ -617,10 +627,10 @@ describe('CardHeader Component', () => {
 	});
 
 	describe('Title Styling', () => {
-		it('applies correct color to title', () => {
+		it('applies text-text-main color class to title', () => {
 			render(<CardHeader title="Colored Title" />);
 			const title = screen.getByText('Colored Title');
-			expect(title).toHaveStyle({ color: '#e4e4e7' }); // textMain
+			expect(title.className).toContain('text-text-main');
 		});
 
 		it('applies truncate class to title', () => {
@@ -637,10 +647,10 @@ describe('CardHeader Component', () => {
 	});
 
 	describe('Subtitle Styling', () => {
-		it('applies correct color to subtitle', () => {
+		it('applies text-text-dim color class to subtitle', () => {
 			render(<CardHeader subtitle="Colored Subtitle" />);
 			const subtitle = screen.getByText('Colored Subtitle');
-			expect(subtitle).toHaveStyle({ color: '#a1a1aa' }); // textDim
+			expect(subtitle.className).toContain('text-text-dim');
 		});
 
 		it('applies text-xs to subtitle', () => {
@@ -812,17 +822,18 @@ describe('CardFooter Component', () => {
 	});
 
 	describe('Border Option', () => {
-		it('adds top border when bordered is true', () => {
+		it('adds border-t + border-border classes when bordered is true', () => {
 			const { container } = render(<CardFooter bordered>Bordered Footer</CardFooter>);
 			const footer = container.firstChild as HTMLElement;
-			// border color #27272a is rendered as rgb(39, 39, 42) in jsdom
-			expect(footer.style.borderTop).toContain('rgb(39, 39, 42)');
+			expect(footer.className).toContain('border-t');
+			expect(footer.className).toContain('border-border');
 		});
 
-		it('does not add top border when bordered is false (default)', () => {
+		it('does not add border classes when bordered is false (default)', () => {
 			const { container } = render(<CardFooter>No Border</CardFooter>);
 			const footer = container.firstChild as HTMLElement;
-			expect(footer.style.borderTop).toBe('');
+			expect(footer.className).not.toContain('border-t');
+			expect(footer.className).not.toContain('border-border');
 		});
 	});
 });
@@ -838,10 +849,10 @@ describe('SessionCard Component', () => {
 			expect(screen.getByText('my-session')).toBeInTheDocument();
 		});
 
-		it('renders session name with correct styling', () => {
+		it('renders session name with correct classes', () => {
 			render(<SessionCard name="test-session" status="idle" mode="ai" />);
 			const name = screen.getByText('test-session');
-			expect(name).toHaveStyle({ color: '#e4e4e7' }); // textMain
+			expect(name.className).toContain('text-text-main');
 			expect(name.className).toContain('font-medium');
 			expect(name.className).toContain('truncate');
 		});
@@ -855,9 +866,8 @@ describe('SessionCard Component', () => {
 		it('uses outlined variant by default', () => {
 			const { container } = render(<SessionCard name="session" status="idle" mode="ai" />);
 			const card = container.firstChild as HTMLElement;
-			// Outlined variant has transparent background
-			expect(card.style.backgroundColor).toBe('transparent');
-			expect(card.style.border).toContain('rgb(39, 39, 42)'); // #27272a as rgb
+			expect(card.className).toContain('bg-transparent');
+			expect(card.className).toContain('border-border');
 		});
 
 		it('is interactive by default', () => {
@@ -868,31 +878,31 @@ describe('SessionCard Component', () => {
 	});
 
 	describe('Status Indicator', () => {
-		it('renders default status indicator for idle', () => {
+		it('renders default status indicator for idle (bg-success)', () => {
 			render(<SessionCard name="session" status="idle" mode="ai" />);
 			const indicator = screen.getByRole('status');
-			expect(indicator).toHaveStyle({ backgroundColor: '#22c55e' }); // success color
+			expect(indicator.className).toContain('bg-success');
 			expect(indicator).toHaveAttribute('aria-label', 'idle');
 		});
 
-		it('renders default status indicator for busy', () => {
+		it('renders default status indicator for busy (bg-warning)', () => {
 			render(<SessionCard name="session" status="busy" mode="ai" />);
 			const indicator = screen.getByRole('status');
-			expect(indicator).toHaveStyle({ backgroundColor: '#eab308' }); // warning color
+			expect(indicator.className).toContain('bg-warning');
 			expect(indicator).toHaveAttribute('aria-label', 'busy');
 		});
 
-		it('renders default status indicator for error', () => {
+		it('renders default status indicator for error (bg-error)', () => {
 			render(<SessionCard name="session" status="error" mode="ai" />);
 			const indicator = screen.getByRole('status');
-			expect(indicator).toHaveStyle({ backgroundColor: '#ef4444' }); // error color
+			expect(indicator.className).toContain('bg-error');
 			expect(indicator).toHaveAttribute('aria-label', 'error');
 		});
 
-		it('renders default status indicator for connecting with animation', () => {
+		it('renders default status indicator for connecting (bg-connecting + animate-pulse)', () => {
 			render(<SessionCard name="session" status="connecting" mode="ai" />);
 			const indicator = screen.getByRole('status');
-			expect(indicator).toHaveStyle({ backgroundColor: '#f97316' }); // orange
+			expect(indicator.className).toContain('bg-connecting');
 			expect(indicator).toHaveAttribute('aria-label', 'connecting');
 			expect(indicator.className).toContain('animate-pulse');
 		});
@@ -910,26 +920,28 @@ describe('SessionCard Component', () => {
 			expect(screen.queryByRole('status')).not.toBeInTheDocument();
 		});
 
-		it('handles unknown status with success color (default)', () => {
+		it('handles unknown status with bg-success fallback', () => {
 			render(<SessionCard name="session" status={'unknown' as SessionStatus} mode="ai" />);
 			const indicator = screen.getByRole('status');
-			expect(indicator).toHaveStyle({ backgroundColor: '#22c55e' }); // success (default)
+			expect(indicator.className).toContain('bg-success');
 		});
 	});
 
 	describe('Input Mode Display', () => {
-		it('displays AI mode badge with accent colors', () => {
+		it('displays AI mode badge with accent-dim background + accent text', () => {
 			render(<SessionCard name="session" status="idle" mode="ai" />);
 			const badge = screen.getByText('AI');
-			expect(badge).toHaveStyle({ backgroundColor: 'rgba(99, 102, 241, 0.2)' });
-			expect(badge).toHaveStyle({ color: '#6366f1' });
+			expect(badge.className).toContain('bg-accent-dim');
+			expect(badge.className).toContain('text-accent');
 		});
 
-		it('displays Terminal mode badge with dim colors', () => {
+		it('displays Terminal mode badge with dim tint background + dim text', () => {
 			render(<SessionCard name="session" status="idle" mode="terminal" />);
 			const badge = screen.getByText('Terminal');
-			// Check for textDim-based color
-			expect(badge).toHaveStyle({ color: '#a1a1aa' });
+			expect(badge.className).toContain('text-text-dim');
+			// color-mix expression is emitted as an arbitrary utility
+			expect(badge.className).toContain('color-mix');
+			expect(badge.className).toContain('var(--maestro-text-dim)');
 		});
 	});
 
@@ -942,27 +954,25 @@ describe('SessionCard Component', () => {
 		it('truncates long cwd with ellipsis prefix', () => {
 			const longPath = '/home/user/very/long/path/to/project/folder';
 			render(<SessionCard name="session" status="idle" mode="ai" cwd={longPath} />);
-			// Path > 30 chars should be truncated to ...last 27 chars
 			const displayText = screen.getByText(/^\.\.\./);
 			expect(displayText).toBeInTheDocument();
 		});
 
 		it('does not render cwd area when cwd is undefined', () => {
 			const { container } = render(<SessionCard name="session" status="idle" mode="ai" />);
-			const cwdElements = container.querySelectorAll('.text-xs.truncate');
-			// Should be 0 because no cwd or info provided
-			expect(cwdElements.length).toBe(0);
+			// The description text line has `text-xs truncate text-text-dim`.
+			// If no cwd + no info provided, that wrapper isn't rendered.
+			const descElements = container.querySelectorAll('.text-xs.truncate.text-text-dim');
+			expect(descElements.length).toBe(0);
 		});
 
-		it('handles exactly 30 character cwd without truncation', () => {
-			// Exactly 30 chars: not truncated (> 30 is the condition)
+		it('handles exactly 29 character cwd without truncation', () => {
 			const exactPath = '/home/user/project/folder/abc'; // 29 chars
 			render(<SessionCard name="session" status="idle" mode="ai" cwd={exactPath} />);
 			expect(screen.getByText(exactPath)).toBeInTheDocument();
 		});
 
 		it('handles 31 character cwd with truncation', () => {
-			// 31 chars triggers truncation (> 30)
 			const longPath = '/home/user/project/folder/abcde'; // 31 chars
 			render(<SessionCard name="session" status="idle" mode="ai" cwd={longPath} />);
 			const displayText = screen.getByText(/^\.\.\./);
@@ -1051,9 +1061,7 @@ describe('SessionCard Component', () => {
 					onClick={handleClick}
 				/>
 			);
-			// Check that Card props are applied
 			const card = screen.getByRole('button').parentElement?.parentElement;
-			// The card wrapper should exist
 			expect(card).toBeInTheDocument();
 		});
 
@@ -1062,15 +1070,13 @@ describe('SessionCard Component', () => {
 				<SessionCard name="session" status="idle" mode="ai" variant="elevated" />
 			);
 			const card = container.firstChild as HTMLElement;
-			// Elevated variant has box-shadow
-			expect(card.style.boxShadow).toContain('rgba(0, 0, 0');
+			expect(card.className).toContain('shadow-card-elevated');
 		});
 	});
 });
 
 describe('Type Exports', () => {
 	it('exports CardVariant type with correct values', () => {
-		// Type checking - these should compile without error
 		const variants: CardVariant[] = ['default', 'elevated', 'outlined', 'filled', 'ghost'];
 		expect(variants).toHaveLength(5);
 	});
@@ -1136,13 +1142,10 @@ describe('Composition Patterns', () => {
 			</Card>
 		);
 		const card = container.firstChild as HTMLElement;
-		// Card with padding=none should not have padding classes
 		expect(card.className).not.toContain('p-2');
 		expect(card.className).not.toContain('p-3');
 		expect(card.className).not.toContain('p-4');
 
-		// CardBody with padding=md has its own p-3 class
-		// getByText returns the element containing the text (CardBody div itself)
 		const bodyElement = screen.getByText('Padded Body');
 		expect(bodyElement.className).toContain('p-3');
 	});
@@ -1157,7 +1160,6 @@ describe('Edge Cases', () => {
 		const { container } = render(<Card className="">Empty Class</Card>);
 		const card = container.firstChild as HTMLElement;
 		expect(card).toBeInTheDocument();
-		// Should not have double spaces or trailing spaces
 		expect(card.className).not.toMatch(/\s\s/);
 	});
 
@@ -1173,7 +1175,6 @@ describe('Edge Cases', () => {
 
 	it('handles special characters in session name', () => {
 		render(<SessionCard name="<script>alert('xss')</script>" status="idle" mode="ai" />);
-		// React escapes the content, so it should be displayed as text
 		expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
 	});
 
@@ -1182,7 +1183,7 @@ describe('Edge Cases', () => {
 		expect(screen.getByText('🚀 Project ñ 中文')).toBeInTheDocument();
 	});
 
-	it('handles very long session name with truncation', () => {
+	it('handles very long session name with truncation class', () => {
 		const longName = 'a'.repeat(100);
 		render(<SessionCard name={longName} status="idle" mode="ai" />);
 		const nameElement = screen.getByText(longName);
@@ -1190,10 +1191,7 @@ describe('Edge Cases', () => {
 	});
 
 	it('handles empty cwd string', () => {
-		render(<SessionCard name="session" status="idle" mode="ai" cwd="" />);
-		// Empty cwd should not render the cwd display
 		const { container } = render(<SessionCard name="session" status="idle" mode="ai" cwd="" />);
-		// Empty string is falsy, so displayCwd will be undefined
 		expect(container.textContent).not.toContain('...');
 	});
 

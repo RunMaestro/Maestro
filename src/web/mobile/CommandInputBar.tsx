@@ -140,6 +140,11 @@ export interface CommandInputBarProps {
 	onToggleThinking?: () => void;
 	/** Whether the active agent supports thinking display */
 	supportsThinking?: boolean;
+	/**
+	 * Compact mode: reduces vertical padding and hides secondary rows (swipe
+	 * handle, recent command chips) so the bar consumes less vertical space.
+	 */
+	compact?: boolean;
 	/** Reports the rendered outer height of the input bar whenever it changes. */
 	onHeightChange?: (height: number) => void;
 }
@@ -173,6 +178,7 @@ export function CommandInputBar({
 	thinkingMode = 'off',
 	onToggleThinking,
 	supportsThinking = false,
+	compact = false,
 	onHeightChange,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
@@ -513,17 +519,21 @@ export function CommandInputBar({
 		<div
 			ref={containerRef}
 			{...swipeUpHandlers}
+			className={`pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] ${
+				compact || onHistoryOpen ? 'pt-1' : 'pt-3'
+			} ${
+				isKeyboardVisible
+					? 'pb-0'
+					: compact
+						? 'pb-[max(4px,env(safe-area-inset-bottom))]'
+						: 'pb-[max(12px,env(safe-area-inset-bottom))]'
+			}`}
 			style={{
 				position: 'fixed',
 				left: 0,
 				right: 0,
 				bottom: keyboardOffset,
 				zIndex: 100,
-				// Safe area padding for notched devices
-				paddingBottom: isKeyboardVisible ? '0' : 'max(12px, env(safe-area-inset-bottom))',
-				paddingLeft: 'env(safe-area-inset-left)',
-				paddingRight: 'env(safe-area-inset-right)',
-				paddingTop: onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown
 				backgroundColor: colors.bgSidebar,
 				borderTop: `1px solid ${colors.border}`,
 				// Smooth transition when keyboard appears/disappears
@@ -537,32 +547,22 @@ export function CommandInputBar({
 			}}
 		>
 			{/* Swipe up handle indicator - visual hint for opening history */}
-			{onHistoryOpen && (
+			{/* Hidden in compact mode to reclaim vertical space on short viewports */}
+			{onHistoryOpen && !compact && (
 				<div
-					style={{
-						display: 'flex',
-						justifyContent: 'center',
-						paddingBottom: '8px',
-						cursor: 'pointer',
-					}}
+					className="flex justify-center pb-2 cursor-pointer"
 					onClick={onHistoryOpen}
 					aria-label="Open command history"
 				>
-					<div
-						style={{
-							width: '36px',
-							height: '4px',
-							backgroundColor: colors.border,
-							borderRadius: '2px',
-							opacity: 0.6,
-						}}
-					/>
+					<div className="w-9 h-1 bg-border rounded-sm opacity-60" />
 				</div>
 			)}
 
 			{/* Recent command chips - quick-tap to reuse commands */}
 			{/* On mobile, can be hidden when input is not focused to save space */}
+			{/* Hidden in compact mode to reclaim vertical space on short viewports */}
 			{showRecentCommands &&
+				!compact &&
 				recentCommands &&
 				recentCommands.length > 0 &&
 				onSelectRecentCommand && (

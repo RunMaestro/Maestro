@@ -15,6 +15,7 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { truncatePath } from '../../shared/formatters';
 import type { Session } from '../hooks/useSessions';
 import type { GroupData } from '../hooks/useWebSocket';
+import type { PanelMode } from './panelModes';
 
 export interface LeftPanelProps {
 	sessions: Session[];
@@ -24,9 +25,13 @@ export interface LeftPanelProps {
 	onNewAgent?: () => void;
 	panelRef?: React.RefObject<HTMLDivElement>;
 	width?: number;
-	onResizeStart?: (e: React.MouseEvent) => void;
-	/** When true, renders as a full-screen overlay (mobile) instead of an inline side panel */
-	isFullScreen?: boolean;
+	onResizeStart?: (e: React.PointerEvent<HTMLElement>) => void;
+	/**
+	 * Rendering mode. `'overlay'` renders as a full-screen, swipe-to-close sheet
+	 * (phone + demoted tablet/desktop cases). `'inline'` renders as a resizable
+	 * column inside the layout flex row.
+	 */
+	mode?: PanelMode;
 	/** Lifted group collapse state — persists across panel open/close */
 	collapsedGroups: Set<string>;
 	setCollapsedGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -111,6 +116,12 @@ interface GroupedResult {
 	groupEmoji?: string | null;
 	sessions: Session[];
 }
+
+// Shared shape for the 24×24 icon buttons in the panel header (bell / new-group
+// / new-agent / close). Border, background, and text color are applied per-
+// button because the bell toggles an active state that swaps all three.
+const HEADER_ICON_BUTTON_BASE =
+	'relative w-6 h-6 flex items-center justify-center rounded p-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent';
 
 /**
  * Session is "unread" if any AI tab has unread, or the session is busy.
@@ -556,27 +567,7 @@ function SessionContextMenu({
 					onMoveToGroup(session);
 					onClose();
 				}}
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '8px',
-					width: '100%',
-					padding: '10px 14px',
-					fontSize: '13px',
-					color: colors.textMain,
-					backgroundColor: 'transparent',
-					border: 'none',
-					cursor: 'pointer',
-					textAlign: 'left',
-					touchAction: 'manipulation',
-					WebkitTapHighlightColor: 'transparent',
-				}}
-				onMouseEnter={(e) => {
-					(e.currentTarget as HTMLElement).style.backgroundColor = `${colors.textDim}15`;
-				}}
-				onMouseLeave={(e) => {
-					(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-				}}
+				className="flex items-center gap-2 w-full px-[14px] py-[10px] text-[13px] text-text-main border-0 bg-transparent cursor-pointer text-left [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] hover:bg-white/[0.05]"
 			>
 				<svg
 					width="14"
@@ -605,7 +596,7 @@ export function LeftPanel({
 	panelRef,
 	width,
 	onResizeStart,
-	isFullScreen,
+	mode = 'inline',
 	collapsedGroups,
 	setCollapsedGroups,
 	showUnreadOnly,
@@ -615,16 +606,17 @@ export function LeftPanel({
 	onMoveToGroup,
 }: LeftPanelProps) {
 	const colors = useThemeColors();
+	const isOverlay = mode === 'overlay';
 
-	// Slide-in animation state (full-screen overlay mode only)
+	// Slide-in animation state (overlay mode only)
 	const [isOpen, setIsOpen] = useState(false);
 	useEffect(() => {
-		if (isFullScreen) {
+		if (isOverlay) {
 			requestAnimationFrame(() => setIsOpen(true));
 		}
-	}, [isFullScreen]);
+	}, [isOverlay]);
 
-	// Swipe left to close (full-screen overlay mode only)
+	// Swipe left to close (overlay mode only)
 	const {
 		handlers: swipeHandlers,
 		offsetX,
@@ -635,7 +627,7 @@ export function LeftPanel({
 		maxOffset: 200,
 		threshold: 50,
 		lockDirection: true,
-		enabled: !!isFullScreen,
+		enabled: isOverlay,
 	});
 
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -719,8 +711,14 @@ export function LeftPanel({
 		(sessionId: string) => {
 			triggerHaptic(HAPTIC_PATTERNS.tap);
 			onSelectSession(sessionId);
+			// In overlay mode the panel sits on top of the main column, so the
+			// newly-selected agent would otherwise stay hidden behind the sheet
+			// until the user dismisses it manually.
+			if (isOverlay) {
+				handleClose();
+			}
 		},
-		[onSelectSession]
+		[onSelectSession, isOverlay, handleClose]
 	);
 
 	// --- Group management state ---
@@ -788,7 +786,7 @@ export function LeftPanel({
 	const swipeOffset = isSwiping && offsetX < 0 ? offsetX : 0;
 	const drawerTransform = isOpen ? `translateX(${swipeOffset}px)` : 'translateX(-100%)';
 
-	const panelStyle: React.CSSProperties = isFullScreen
+	const panelStyle: React.CSSProperties = isOverlay
 		? {
 				position: 'fixed',
 				top: 0,
@@ -819,7 +817,7 @@ export function LeftPanel({
 
 	return (
 		<>
-			{isFullScreen && (
+			{isOverlay && (
 				<div
 					onClick={handleClose}
 					style={{
@@ -835,7 +833,7 @@ export function LeftPanel({
 					aria-label="Close panel"
 				/>
 			)}
-			<div ref={panelRef} {...(isFullScreen ? swipeHandlers : {})} style={panelStyle}>
+			<div ref={panelRef} {...(isOverlay ? swipeHandlers : {})} style={panelStyle}>
 				{/* Header */}
 				<div
 					style={{
@@ -864,20 +862,11 @@ export function LeftPanel({
 								triggerHaptic(HAPTIC_PATTERNS.tap);
 								setShowUnreadOnly((prev) => !prev);
 							}}
-							style={{
-								position: 'relative',
-								width: '24px',
-								height: '24px',
-								display: 'flex',
-								alignItems: 'center',
-								justifyContent: 'center',
-								border: `1px solid ${showUnreadOnly ? colors.accent : colors.border}`,
-								borderRadius: '4px',
-								backgroundColor: showUnreadOnly ? colors.accent : 'transparent',
-								color: showUnreadOnly ? colors.accentForeground : colors.textDim,
-								cursor: 'pointer',
-								padding: 0,
-							}}
+							className={`${HEADER_ICON_BUTTON_BASE} border ${
+								showUnreadOnly
+									? 'border-accent bg-accent text-accent-foreground'
+									: 'border-border bg-transparent text-text-dim'
+							}`}
 							aria-pressed={showUnreadOnly}
 							aria-label={showUnreadOnly ? 'Showing unread agents only' : 'Filter unread agents'}
 							title={showUnreadOnly ? 'Showing unread agents only' : 'Filter unread agents'}
@@ -915,19 +904,7 @@ export function LeftPanel({
 									triggerHaptic(HAPTIC_PATTERNS.tap);
 									setShowCreateGroup(true);
 								}}
-								style={{
-									width: '24px',
-									height: '24px',
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									border: `1px solid ${colors.border}`,
-									borderRadius: '4px',
-									backgroundColor: 'transparent',
-									color: colors.textDim,
-									cursor: 'pointer',
-									padding: 0,
-								}}
+								className={`${HEADER_ICON_BUTTON_BASE} border border-border bg-transparent text-text-dim`}
 								aria-label="New group"
 								title="New group"
 							>
@@ -951,19 +928,7 @@ export function LeftPanel({
 									triggerHaptic(HAPTIC_PATTERNS.tap);
 									onNewAgent();
 								}}
-								style={{
-									width: '24px',
-									height: '24px',
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									border: `1px solid ${colors.border}`,
-									borderRadius: '4px',
-									backgroundColor: 'transparent',
-									color: colors.textDim,
-									cursor: 'pointer',
-									padding: 0,
-								}}
+								className={`${HEADER_ICON_BUTTON_BASE} border border-border bg-transparent text-text-dim`}
 								aria-label="New agent"
 								title="New agent"
 							>
@@ -983,20 +948,8 @@ export function LeftPanel({
 							</button>
 						)}
 						<button
-							onClick={isFullScreen ? handleClose : onClose}
-							style={{
-								width: '24px',
-								height: '24px',
-								display: 'flex',
-								alignItems: 'center',
-								justifyContent: 'center',
-								border: 'none',
-								borderRadius: '4px',
-								backgroundColor: 'transparent',
-								color: colors.textDim,
-								cursor: 'pointer',
-								padding: 0,
-							}}
+							onClick={isOverlay ? handleClose : onClose}
+							className={`${HEADER_ICON_BUTTON_BASE} border-0 bg-transparent text-text-dim`}
 							aria-label="Close panel"
 							title="Close panel"
 						>
@@ -1069,19 +1022,7 @@ export function LeftPanel({
 											toggleGroup(group.groupName);
 										}
 									}}
-									style={{
-										padding: '8px 8px 4px',
-										fontSize: '10px',
-										fontWeight: 600,
-										textTransform: 'uppercase',
-										letterSpacing: '0.5px',
-										color: colors.textDim,
-										display: 'flex',
-										alignItems: 'center',
-										gap: '4px',
-										cursor: 'pointer',
-										userSelect: 'none',
-									}}
+									className="pt-2 px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.5px] text-text-dim flex items-center gap-1 cursor-pointer select-none rounded outline-none focus-visible:ring-2 focus-visible:ring-accent"
 								>
 									{/* Chevron */}
 									<svg
@@ -1152,28 +1093,11 @@ export function LeftPanel({
 									return (
 										<div key={session.id}>
 											<div
+												className={`flex items-center gap-2 w-full px-[10px] py-2 rounded-md text-text-main mb-px transition-colors duration-100${
+													isActive ? '' : ' hover:bg-white/[0.06]'
+												}`}
 												style={{
-													display: 'flex',
-													alignItems: 'center',
-													gap: '8px',
-													width: '100%',
-													padding: '8px 10px',
-													borderRadius: '6px',
-													backgroundColor: isActive ? `${colors.accent}15` : 'transparent',
-													color: colors.textMain,
-													marginBottom: '1px',
-													transition: 'background-color 0.1s ease',
-												}}
-												onMouseEnter={(e) => {
-													if (!isActive) {
-														(e.currentTarget as HTMLElement).style.backgroundColor =
-															`${colors.textDim}10`;
-													}
-												}}
-												onMouseLeave={(e) => {
-													(e.currentTarget as HTMLElement).style.backgroundColor = isActive
-														? `${colors.accent}15`
-														: 'transparent';
+													backgroundColor: isActive ? `${colors.accent}15` : undefined,
 												}}
 												onContextMenu={(e) => {
 													if (onMoveToGroup) {
@@ -1198,21 +1122,7 @@ export function LeftPanel({
 														}
 														handleSelect(session.id);
 													}}
-													style={{
-														display: 'flex',
-														alignItems: 'center',
-														gap: '8px',
-														flex: 1,
-														minWidth: 0,
-														padding: 0,
-														border: 'none',
-														backgroundColor: 'transparent',
-														color: 'inherit',
-														cursor: 'pointer',
-														textAlign: 'left',
-														touchAction: 'manipulation',
-														WebkitTapHighlightColor: 'transparent',
-													}}
+													className="flex items-center gap-2 flex-1 min-w-0 p-0 border-0 bg-transparent text-inherit cursor-pointer text-left [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent"
 													aria-pressed={isActive}
 													title={`${session.name} — ${session.cwd ? truncatePath(session.cwd, 40) : ''}`}
 												>
@@ -1289,18 +1199,9 @@ export function LeftPanel({
 													<button
 														type="button"
 														onClick={() => toggleWorktrees(session.id)}
+														className="inline-flex items-center gap-[3px] text-[10px] text-accent cursor-pointer px-[5px] py-[2px] rounded-[3px] border-0 flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 														style={{
-															display: 'inline-flex',
-															alignItems: 'center',
-															gap: '3px',
-															fontSize: '10px',
-															color: colors.accent,
-															cursor: 'pointer',
-															padding: '2px 5px',
-															borderRadius: '3px',
 															backgroundColor: `${colors.accent}15`,
-															border: 'none',
-															flexShrink: 0,
 														}}
 														aria-expanded={isWorktreeExpanded}
 														aria-label={`${isWorktreeExpanded ? 'Collapse' : 'Expand'} ${children.length} worktree${children.length > 1 ? 's' : ''}`}
@@ -1335,36 +1236,11 @@ export function LeftPanel({
 														<button
 															key={child.id}
 															onClick={() => handleSelect(child.id)}
+															className={`flex items-center gap-2 w-[calc(100%-16px)] ml-4 px-[10px] py-[6px] rounded-r-md border-0 border-l-[3px] border-l-accent text-text-main cursor-pointer text-left [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] mb-px transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-accent${
+																isChildActive ? '' : ' hover:bg-white/[0.06]'
+															}`}
 															style={{
-																display: 'flex',
-																alignItems: 'center',
-																gap: '8px',
-																width: 'calc(100% - 16px)',
-																marginLeft: '16px',
-																padding: '6px 10px',
-																borderRadius: '0 6px 6px 0',
-																border: 'none',
-																borderLeft: `3px solid ${colors.accent}`,
-																backgroundColor: isChildActive
-																	? `${colors.accent}15`
-																	: 'transparent',
-																color: colors.textMain,
-																cursor: 'pointer',
-																textAlign: 'left',
-																touchAction: 'manipulation',
-																WebkitTapHighlightColor: 'transparent',
-																marginBottom: '1px',
-																transition: 'background-color 0.1s ease',
-															}}
-															onMouseEnter={(e) => {
-																if (!isChildActive) {
-																	(e.currentTarget as HTMLElement).style.backgroundColor =
-																		`${colors.textDim}10`;
-																}
-															}}
-															onMouseLeave={(e) => {
-																(e.currentTarget as HTMLElement).style.backgroundColor =
-																	isChildActive ? `${colors.accent}15` : 'transparent';
+																backgroundColor: isChildActive ? `${colors.accent}15` : undefined,
 															}}
 															aria-pressed={isChildActive}
 															title={`Worktree: ${child.worktreeBranch || child.name}`}
@@ -1415,24 +1291,10 @@ export function LeftPanel({
 						</div>
 					))}
 				</div>
-				{!isFullScreen && onResizeStart && (
+				{!isOverlay && onResizeStart && (
 					<div
-						onMouseDown={onResizeStart}
-						style={{
-							position: 'absolute',
-							top: 0,
-							right: 0,
-							width: '4px',
-							height: '100%',
-							cursor: 'col-resize',
-							zIndex: 10,
-						}}
-						onMouseEnter={(e) => {
-							(e.currentTarget as HTMLElement).style.backgroundColor = colors.accent;
-						}}
-						onMouseLeave={(e) => {
-							(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-						}}
+						onPointerDown={onResizeStart}
+						className="absolute top-0 right-0 w-1 h-full cursor-col-resize z-10 touch-none hover:bg-accent"
 					/>
 				)}
 			</div>

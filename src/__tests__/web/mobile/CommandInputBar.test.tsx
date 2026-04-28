@@ -569,6 +569,47 @@ describe('CommandInputBar', () => {
 
 			expect(onHistoryOpen).toHaveBeenCalled();
 		});
+
+		it('hides swipe handle in compact mode even when onHistoryOpen is provided', () => {
+			renderComponent({ onHistoryOpen: vi.fn(), compact: true });
+			expect(screen.queryByLabelText('Open command history')).not.toBeInTheDocument();
+		});
+	});
+
+	// Task 5.8 — lock in the container-padding reduction that Phase 5 relies on
+	// for the ≤56px compact bar at landscape phone (height < 500px). Phase 1
+	// already hides the swipe handle + recent-command chips in compact mode
+	// (covered above); these tests cover the remaining observable change: the
+	// outer container's top/bottom padding shrinks from pt-3 → pt-1 and from
+	// pb-[max(12px,...)] → pb-[max(4px,...)].
+	describe('Compact-mode padding (Task 5.8)', () => {
+		it('applies reduced top padding (pt-1) in compact mode', () => {
+			renderComponent({ compact: true });
+			const container = screen.getByRole('textbox').closest('form')?.parentElement;
+			expect(container?.className).toContain('pt-1');
+			expect(container?.className).not.toContain('pt-3');
+		});
+
+		it('applies reduced bottom padding (pb-[max(4px,...)]) in compact mode', () => {
+			renderComponent({ compact: true });
+			const container = screen.getByRole('textbox').closest('form')?.parentElement;
+			expect(container?.className).toContain('pb-[max(4px,env(safe-area-inset-bottom))]');
+			expect(container?.className).not.toContain('pb-[max(12px,env(safe-area-inset-bottom))]');
+		});
+
+		it('applies default top padding (pt-3) when not compact and no history handle', () => {
+			renderComponent({ compact: false });
+			const container = screen.getByRole('textbox').closest('form')?.parentElement;
+			expect(container?.className).toContain('pt-3');
+			expect(container?.className).not.toContain('pt-1');
+		});
+
+		it('applies default bottom padding (pb-[max(12px,...)]) when not compact', () => {
+			renderComponent({ compact: false });
+			const container = screen.getByRole('textbox').closest('form')?.parentElement;
+			expect(container?.className).toContain('pb-[max(12px,env(safe-area-inset-bottom))]');
+			expect(container?.className).not.toContain('pb-[max(4px,env(safe-area-inset-bottom))]');
+		});
 	});
 
 	describe('Recent Command Chips', () => {
@@ -613,6 +654,16 @@ describe('CommandInputBar', () => {
 			fireEvent.click(chip);
 
 			expect(onSelectRecentCommand).toHaveBeenCalledWith('ls -la');
+		});
+
+		it('does not render chips in compact mode even when commands are provided', () => {
+			renderComponent({
+				recentCommands,
+				onSelectRecentCommand: vi.fn(),
+				compact: true,
+			});
+
+			expect(screen.queryByTestId('recent-command-chips')).not.toBeInTheDocument();
 		});
 	});
 

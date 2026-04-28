@@ -2,11 +2,13 @@
  * Button component for Maestro web interface
  *
  * A reusable button component that supports multiple variants, sizes, and states.
- * Uses theme colors via CSS custom properties for consistent styling.
+ * Color, border, and radius tokens come from Tailwind utilities backed by the
+ * `--maestro-*` CSS custom properties (see `tailwind.config.mjs` and
+ * `src/web/utils/cssCustomProperties.ts`), so live theme swaps update visuals
+ * without re-rendering.
  */
 
 import React, { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { useTheme } from './ThemeProvider';
 
 /**
  * Button variant types
@@ -41,21 +43,27 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 /**
- * Size-based style configurations
+ * Variant → Tailwind class string. Color tokens resolve to live `--maestro-*`
+ * CSS custom properties via `tailwind.config.mjs`. White text on filled
+ * variants matches the legacy hardcoded `#ffffff` foreground.
  */
-const sizeStyles: Record<ButtonSize, React.CSSProperties & { className: string }> = {
-	sm: {
-		className: 'px-2 py-1 text-xs gap-1',
-		borderRadius: '4px',
-	},
-	md: {
-		className: 'px-3 py-1.5 text-sm gap-1.5',
-		borderRadius: '6px',
-	},
-	lg: {
-		className: 'px-4 py-2 text-base gap-2',
-		borderRadius: '8px',
-	},
+const variantClasses: Record<ButtonVariant, string> = {
+	primary: 'bg-accent text-white',
+	secondary: 'bg-bg-activity text-text-main border border-border',
+	ghost: 'bg-transparent text-text-main border border-transparent',
+	danger: 'bg-error text-white',
+	success: 'bg-success text-white',
+};
+
+/**
+ * Size → padding, type-scale, gap, and corner-radius tuple.
+ * Tailwind's default `rounded`/`rounded-md`/`rounded-lg` are 4/6/8px and match
+ * the legacy values 1:1.
+ */
+const sizeClasses: Record<ButtonSize, string> = {
+	sm: 'px-2 py-1 text-xs gap-1 rounded',
+	md: 'px-3 py-1.5 text-sm gap-1.5 rounded-md',
+	lg: 'px-4 py-2 text-base gap-2 rounded-lg',
 };
 
 /**
@@ -81,6 +89,9 @@ function LoadingSpinner({ size }: { size: ButtonSize }) {
 		</svg>
 	);
 }
+
+const baseClasses =
+	'inline-flex items-center justify-center font-medium whitespace-nowrap select-none outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus:ring-2 focus:ring-offset-1 transition-colors';
 
 /**
  * Button component for the Maestro web interface
@@ -124,95 +135,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 	},
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-
 	const isDisabled = disabled || loading;
 
-	/**
-	 * Get variant-specific styles
-	 */
-	const getVariantStyles = (): React.CSSProperties => {
-		const baseTransition =
-			'background-color 150ms ease, border-color 150ms ease, opacity 150ms ease';
-
-		switch (variant) {
-			case 'primary':
-				return {
-					backgroundColor: colors.accent,
-					color: '#ffffff',
-					border: 'none',
-					transition: baseTransition,
-				};
-			case 'secondary':
-				return {
-					backgroundColor: colors.bgActivity,
-					color: colors.textMain,
-					border: `1px solid ${colors.border}`,
-					transition: baseTransition,
-				};
-			case 'ghost':
-				return {
-					backgroundColor: 'transparent',
-					color: colors.textMain,
-					border: '1px solid transparent',
-					transition: baseTransition,
-				};
-			case 'danger':
-				return {
-					backgroundColor: colors.error,
-					color: '#ffffff',
-					border: 'none',
-					transition: baseTransition,
-				};
-			case 'success':
-				return {
-					backgroundColor: colors.success,
-					color: '#ffffff',
-					border: 'none',
-					transition: baseTransition,
-				};
-			default:
-				return {};
-		}
-	};
-
-	/**
-	 * Get disabled styles
-	 */
-	const getDisabledStyles = (): React.CSSProperties => {
-		if (!isDisabled) return {};
-		return {
-			opacity: 0.5,
-			cursor: 'not-allowed',
-		};
-	};
-
-	const sizeConfig = sizeStyles[size];
-	const variantStyles = getVariantStyles();
-	const disabledStyles = getDisabledStyles();
-
-	const combinedStyles: React.CSSProperties = {
-		...variantStyles,
-		...disabledStyles,
-		borderRadius: sizeConfig.borderRadius,
-		display: 'inline-flex',
-		alignItems: 'center',
-		justifyContent: 'center',
-		fontWeight: 500,
-		cursor: isDisabled ? 'not-allowed' : 'pointer',
-		outline: 'none',
-		userSelect: 'none',
-		width: fullWidth ? '100%' : undefined,
-		...style,
-	};
-
-	// Construct class names
 	const classNames = [
-		sizeConfig.className,
-		'font-medium whitespace-nowrap',
-		'focus:ring-2 focus:ring-offset-1',
-		'transition-colors',
+		baseClasses,
+		sizeClasses[size],
+		variantClasses[variant] ?? '',
 		fullWidth ? 'w-full' : '',
 		className,
 	]
@@ -223,7 +151,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 		<button
 			ref={ref}
 			className={classNames}
-			style={combinedStyles}
+			style={style}
 			disabled={isDisabled}
 			aria-busy={loading}
 			{...props}
@@ -256,32 +184,28 @@ export interface IconButtonProps extends Omit<ButtonProps, 'leftIcon' | 'rightIc
 	'aria-label': string;
 }
 
+/**
+ * Per-size padding + minimum hit-area for square icon buttons.
+ * `!p-*` overrides the parent Button's `px-*`/`py-*`. `min-w-[…] min-h-[…]`
+ * are class-level (specificity 0,1,0), so they win over the global
+ * `button { min-height: 44px }` floor in `src/web/index.css` — preserving the
+ * 24/32/40px legacy IconButton sizes called out in the Task 0.10 audit.
+ */
+const iconButtonSizeClasses: Record<ButtonSize, string> = {
+	sm: '!p-1 min-w-[24px] min-h-[24px]',
+	md: '!p-1.5 min-w-[32px] min-h-[32px]',
+	lg: '!p-2 min-w-[40px] min-h-[40px]',
+};
+
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
 	{ size = 'md', className = '', style, children, ...props },
 	ref
 ) {
-	// Square padding for icon buttons
-	const iconSizeStyles: Record<ButtonSize, { padding: string; minSize: string }> = {
-		sm: { padding: '4px', minSize: '24px' },
-		md: { padding: '6px', minSize: '32px' },
-		lg: { padding: '8px', minSize: '40px' },
-	};
-
-	const sizeConfig = iconSizeStyles[size];
+	const sizeOverride = iconButtonSizeClasses[size];
+	const composedClassName = [sizeOverride, className].filter(Boolean).join(' ');
 
 	return (
-		<Button
-			ref={ref}
-			size={size}
-			className={`!p-0 ${className}`}
-			style={{
-				padding: sizeConfig.padding,
-				minWidth: sizeConfig.minSize,
-				minHeight: sizeConfig.minSize,
-				...style,
-			}}
-			{...props}
-		>
+		<Button ref={ref} size={size} className={composedClassName} style={style} {...props}>
 			{children}
 		</Button>
 	);

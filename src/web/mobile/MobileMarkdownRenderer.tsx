@@ -82,6 +82,7 @@ const CodeBlockWithCopy = memo(
 					overflow: 'hidden',
 					border: `1px solid ${borderColor}`,
 					margin: '8px 0',
+					maxWidth: '100%',
 				}}
 			>
 				{/* Code block header */}
@@ -171,6 +172,8 @@ const CodeBlockWithCopy = memo(
 						lineHeight: 1.5,
 						backgroundColor: bgColor,
 						borderRadius: 0,
+						maxWidth: '100%',
+						overflowX: 'auto',
 					}}
 					wrapLongLines={true}
 					showLineNumbers={false}
@@ -361,7 +364,17 @@ export const MobileMarkdownRenderer = memo(
 								);
 							}
 
-							return <pre>{children}</pre>;
+							return (
+								<pre
+									style={{
+										maxWidth: '100%',
+										overflowX: 'auto',
+										margin: '8px 0',
+									}}
+								>
+									{children}
+								</pre>
+							);
 						},
 
 						// Inline code only — block code is handled by pre above
@@ -381,7 +394,7 @@ export const MobileMarkdownRenderer = memo(
 
 						// Paragraphs
 						p: ({ children }) => (
-							<p style={{ margin: '8px 0' }}>
+							<p style={{ margin: '8px 0', wordBreak: 'break-word' }}>
 								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</p>
 						),

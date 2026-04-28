@@ -245,14 +245,8 @@ export function AchievementsPanel({ onClose, sendRequest }: AchievementsPanelPro
 							</div>
 						</div>
 
-						{/* Achievement Grid */}
-						<div
-							style={{
-								display: 'grid',
-								gridTemplateColumns: 'repeat(2, 1fr)',
-								gap: '10px',
-							}}
-						>
+						{/* Achievement Grid — tiered: 1 col phone, 2 col tablet (≥600px), 3 col desktop (≥960px) */}
+						<div className="grid grid-cols-1 min-[600px]:grid-cols-2 min-[960px]:grid-cols-3 gap-[10px]">
 							{sortedAchievements.map((achievement) => (
 								<AchievementCard key={achievement.id} achievement={achievement} colors={colors} />
 							))}

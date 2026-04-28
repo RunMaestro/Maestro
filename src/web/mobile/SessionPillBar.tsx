@@ -28,6 +28,12 @@ const LONG_PRESS_DURATION = 500;
 /** Minimum touch movement (in pixels) to cancel tap and consider it a scroll */
 const SCROLL_THRESHOLD = 10;
 
+// Shared class tokens for the three pinned header circles (Search / History /
+// Drawer). 36 × 36 (`w-9 h-9`) with a `rounded-full` hit area — theme tokens
+// resolve via `var(--maestro-*)` custom properties written by ThemeProvider.
+const PINNED_BUTTON_CLASSES =
+	'flex items-center justify-center w-9 h-9 rounded-full border border-border bg-bg-main text-text-main cursor-pointer flex-shrink-0 p-0 outline-none [touch-action:manipulation] [-webkit-tap-highlight-color:transparent]';
+
 /**
  * Props for individual session pill
  */
@@ -188,28 +194,19 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 					onLongPress(session, rect);
 				}
 			}}
+			// Tier-aware sizing via Tailwind responsive variants (Task 2.5).
+			// phone (<600): 6×10 padding, 12px text, 20px radius — trims the pill
+			// for narrow viewports without sacrificing touch legality.
+			// tablet (≥600): 8×12 padding, 13px text, 20px radius — reference.
+			// desktop (≥960): 4×10 padding, 12px text, 14px radius — pointer-first
+			// density for wide bars. Layout / static style migrated to Tailwind
+			// in Task 2.6; only the alpha-blended accent border + active tint
+			// stay inline because theme-var Tailwind tokens don't support opacity
+			// modifiers (see tailwind.config.mjs note on `connecting`).
+			className={`flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all duration-150 flex-shrink-0 min-w-fit outline-none select-none text-text-main [touch-action:pan-x_pan-y] [-webkit-tap-highlight-color:transparent] px-[10px] py-[6px] text-[12px] rounded-[20px] min-[600px]:px-[12px] min-[600px]:py-[8px] min-[600px]:text-[13px] min-[960px]:px-[10px] min-[960px]:py-[4px] min-[960px]:text-[12px] min-[960px]:rounded-[14px] ${isActive ? 'font-semibold' : 'font-normal bg-bg-sidebar'}`}
 			style={{
-				display: 'flex',
-				alignItems: 'center',
-				gap: '6px',
-				padding: '8px 12px',
-				borderRadius: '20px',
 				border: isActive ? `2px solid ${colors.accent}` : `1px solid ${colors.border}`,
-				backgroundColor: isActive ? `${colors.accent}15` : colors.bgSidebar,
-				color: colors.textMain,
-				fontSize: '13px',
-				fontWeight: isActive ? 600 : 400,
-				whiteSpace: 'nowrap',
-				cursor: 'pointer',
-				transition: 'all 0.15s ease',
-				flexShrink: 0,
-				minWidth: 'fit-content',
-				// Allow native touch scrolling - don't use 'manipulation' which can interfere
-				touchAction: 'pan-x pan-y',
-				WebkitTapHighlightColor: 'transparent',
-				outline: 'none',
-				userSelect: 'none',
-				WebkitUserSelect: 'none',
+				backgroundColor: isActive ? `${colors.accent}15` : undefined,
 			}}
 			aria-pressed={isActive}
 			aria-label={`${session.name} session, ${getStatus()}, ${session.inputMode} mode${isActive ? ', active' : ''}. Long press for details.`}
@@ -217,14 +214,9 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 			{/* Status dot */}
 			<StatusDot status={getStatus()} size="sm" />
 
-			{/* Session name */}
-			<span
-				style={{
-					maxWidth: '120px',
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-				}}
-			>
+			{/* Session name — max-width narrows at phone so two-pill density is
+			    reachable on 320px without scrolling. */}
+			<span className="max-w-[100px] min-[600px]:max-w-[120px] overflow-hidden text-ellipsis">
 				{session.name}
 			</span>
 
@@ -692,27 +684,17 @@ function GroupHeader({
 					onToggleCollapse(groupId);
 				}
 			}}
+			// Tier-aware sizing (Task 2.5). phone/tablet keep 6×12 padding and
+			// 12px text — the header is already compact enough for narrow widths.
+			// desktop (≥960): 4×10 padding, 11px text so the group header matches
+			// the tightened pills alongside it. Layout/static style migrated to
+			// Tailwind in Task 2.6; only the alpha-blended accent tint and the
+			// theme-aware border stay inline (theme-var tokens don't support
+			// Tailwind opacity modifiers).
+			className="flex items-center gap-1.5 rounded-2xl text-text-main font-semibold cursor-pointer whitespace-nowrap flex-shrink-0 outline-none select-none transition-all duration-150 [touch-action:pan-x_pan-y] [-webkit-tap-highlight-color:transparent] px-[12px] py-[6px] text-[12px] min-[960px]:px-[10px] min-[960px]:py-[4px] min-[960px]:text-[11px]"
 			style={{
-				display: 'flex',
-				alignItems: 'center',
-				gap: '6px',
-				padding: '6px 12px',
 				backgroundColor: `${colors.accent}10`,
 				border: `1px solid ${colors.border}`,
-				borderRadius: '16px',
-				color: colors.textMain,
-				fontSize: '12px',
-				fontWeight: 600,
-				cursor: 'pointer',
-				whiteSpace: 'nowrap',
-				flexShrink: 0,
-				// Allow native touch scrolling
-				touchAction: 'pan-x pan-y',
-				WebkitTapHighlightColor: 'transparent',
-				outline: 'none',
-				userSelect: 'none',
-				WebkitUserSelect: 'none',
-				transition: 'all 0.15s ease',
 			}}
 			aria-expanded={!isCollapsed}
 			aria-label={`${name} group with ${sessionCount} sessions. ${isCollapsed ? 'Tap to expand' : 'Tap to collapse'}`}
@@ -818,7 +800,6 @@ export function SessionPillBar({
 	className = '',
 	style,
 }: SessionPillBarProps) {
-	const colors = useThemeColors();
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const [popoverState, setPopoverState] = useState<PopoverState | null>(null);
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string> | null>(null);
@@ -980,24 +961,10 @@ export function SessionPillBar({
 	if (sessions.length === 0) {
 		return (
 			<div
-				style={{
-					padding: '12px 16px',
-					borderBottom: `1px solid ${colors.border}`,
-					backgroundColor: colors.bgSidebar,
-					...style,
-				}}
-				className={className}
+				style={style}
+				className={`py-3 px-4 border-b border-border bg-bg-sidebar${className ? ` ${className}` : ''}`}
 			>
-				<p
-					style={{
-						fontSize: '13px',
-						color: colors.textDim,
-						textAlign: 'center',
-						margin: 0,
-					}}
-				>
-					No sessions available
-				</p>
+				<p className="text-[13px] text-text-dim text-center m-0">No sessions available</p>
 			</div>
 		);
 	}
@@ -1005,50 +972,18 @@ export function SessionPillBar({
 	return (
 		<>
 			<div
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					borderBottom: `1px solid ${colors.border}`,
-					backgroundColor: colors.bgSidebar,
-					...style,
-				}}
-				className={className}
+				style={style}
+				className={`flex items-center border-b border-border bg-bg-sidebar${className ? ` ${className}` : ''}`}
 			>
 				{/* Pinned hamburger menu button - always visible */}
 				{onOpenAllSessions && (
-					<div
-						style={{
-							flexShrink: 0,
-							paddingLeft: '12px',
-							paddingRight: '4px',
-							paddingTop: '10px',
-							paddingBottom: '10px',
-							display: 'flex',
-							gap: '6px',
-						}}
-					>
+					<div className="flex-shrink-0 pl-3 pr-1 py-2.5 flex gap-1.5">
 						<button
 							onClick={() => {
 								triggerHaptic(HAPTIC_PATTERNS.tap);
 								onOpenAllSessions();
 							}}
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								justifyContent: 'center',
-								width: '36px',
-								height: '36px',
-								borderRadius: '18px',
-								border: `1px solid ${colors.border}`,
-								backgroundColor: colors.bgMain,
-								color: colors.textMain,
-								cursor: 'pointer',
-								flexShrink: 0,
-								padding: 0,
-								touchAction: 'manipulation',
-								WebkitTapHighlightColor: 'transparent',
-								outline: 'none',
-							}}
+							className={PINNED_BUTTON_CLASSES}
 							aria-label={`Search ${sessions.length} sessions`}
 							title="Search Sessions"
 						>
@@ -1074,23 +1009,7 @@ export function SessionPillBar({
 									triggerHaptic(HAPTIC_PATTERNS.tap);
 									onOpenHistory();
 								}}
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									width: '36px',
-									height: '36px',
-									borderRadius: '18px',
-									border: `1px solid ${colors.border}`,
-									backgroundColor: colors.bgMain,
-									color: colors.textMain,
-									cursor: 'pointer',
-									flexShrink: 0,
-									padding: 0,
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
-									outline: 'none',
-								}}
+								className={PINNED_BUTTON_CLASSES}
 								aria-label="View history"
 								title="History"
 							>
@@ -1117,23 +1036,7 @@ export function SessionPillBar({
 									triggerHaptic(HAPTIC_PATTERNS.tap);
 									onOpenRightDrawer();
 								}}
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									width: '36px',
-									height: '36px',
-									borderRadius: '18px',
-									border: `1px solid ${colors.border}`,
-									backgroundColor: colors.bgMain,
-									color: colors.textMain,
-									cursor: 'pointer',
-									flexShrink: 0,
-									padding: 0,
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
-									outline: 'none',
-								}}
+								className={PINNED_BUTTON_CLASSES}
 								aria-label="Open panel drawer"
 								title="Panel"
 							>
@@ -1156,24 +1059,11 @@ export function SessionPillBar({
 					</div>
 				)}
 
-				{/* Scrollable container */}
+				{/* Scrollable container. Left padding shrinks to 8px when the pinned
+				    cluster is rendered so the first pill sits snug against it. */}
 				<div
 					ref={scrollContainerRef}
-					style={{
-						display: 'flex',
-						flex: 1,
-						gap: '8px',
-						padding: '10px 16px',
-						paddingLeft: onOpenAllSessions ? '8px' : '16px',
-						overflowX: 'auto',
-						overflowY: 'hidden',
-						WebkitOverflowScrolling: 'touch',
-						scrollbarWidth: 'none',
-						msOverflowStyle: 'none',
-						scrollSnapType: 'x proximity',
-					}}
-					// Hide scrollbar using inline style (for webkit browsers)
-					className="hide-scrollbar"
+					className={`flex flex-1 gap-2 py-2.5 pr-4 ${onOpenAllSessions ? 'pl-2' : 'pl-4'} overflow-x-auto overflow-y-hidden snap-x snap-proximity hide-scrollbar [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [-ms-overflow-style:none]`}
 					role="tablist"
 					aria-label="Session selector organized by groups. Long press a session for details."
 				>
@@ -1186,13 +1076,7 @@ export function SessionPillBar({
 							<React.Fragment key={groupKey}>
 								{/* Group header (only show if multiple groups exist) */}
 								{showGroupHeader && (
-									<div
-										data-group-id={groupKey}
-										style={{
-											scrollSnapAlign: 'start',
-										}}
-										role="presentation"
-									>
+									<div data-group-id={groupKey} className="snap-start" role="presentation">
 										<GroupHeader
 											groupId={groupKey}
 											name={group.name}
@@ -1207,13 +1091,7 @@ export function SessionPillBar({
 								{/* Session pills (hidden when collapsed) */}
 								{!isCollapsed &&
 									group.sessions.map((session) => (
-										<div
-											key={session.id}
-											style={{
-												scrollSnapAlign: 'start',
-											}}
-											role="presentation"
-										>
+										<div key={session.id} className="snap-start" role="presentation">
 											<SessionPill
 												session={session}
 												isActive={session.id === activeSessionId}
@@ -1228,34 +1106,18 @@ export function SessionPillBar({
 
 					{/* "+" pill for creating a new agent */}
 					{onOpenCreateAgent && (
-						<div style={{ scrollSnapAlign: 'start' }} role="presentation">
+						<div className="snap-start" role="presentation">
 							<button
 								onClick={() => {
 									triggerHaptic(HAPTIC_PATTERNS.tap);
 									onOpenCreateAgent();
 								}}
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									padding: '8px 14px',
-									borderRadius: '20px',
-									border: `1px dashed ${colors.border}`,
-									backgroundColor: 'transparent',
-									color: colors.accent,
-									fontSize: '16px',
-									fontWeight: 500,
-									whiteSpace: 'nowrap',
-									cursor: 'pointer',
-									flexShrink: 0,
-									minWidth: 'fit-content',
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
-									outline: 'none',
-									userSelect: 'none',
-									WebkitUserSelect: 'none',
-									transition: 'all 0.15s ease',
-								}}
+								// Tier-aware sizing (Task 2.5). phone/tablet keep the
+								// touch-friendly 8×14/20 radius baseline. desktop
+								// (≥960): 4×10 padding, 14px text, 14px radius so the
+								// create-agent affordance matches the tightened pills.
+								// Layout / static style migrated to Tailwind in Task 2.6.
+								className="flex items-center justify-center border border-dashed border-border bg-transparent text-accent font-medium whitespace-nowrap cursor-pointer flex-shrink-0 min-w-fit outline-none select-none transition-all duration-150 [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] px-[14px] py-[8px] text-[16px] rounded-[20px] min-[960px]:px-[10px] min-[960px]:py-[4px] min-[960px]:text-[14px] min-[960px]:rounded-[14px]"
 								aria-label="Create new agent"
 							>
 								+

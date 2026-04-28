@@ -309,22 +309,27 @@ describe('SlashCommandAutocomplete', () => {
 			expect(onClose).toHaveBeenCalled();
 		});
 
-		it('applies hover styles on mouse enter', () => {
+		// Phase 6 Task 6.2 migrated the close-button hover from JS-driven inline
+		// style swaps to CSS via Tailwind `hover:` utilities. JSDom doesn't apply
+		// stylesheet rules, so we can't assert on computed styles after
+		// `fireEvent.mouseEnter` — assert the hover affordance is wired via class
+		// instead (the visible DOM contract that replaced the handler wiring).
+		it('wires hover affordance via CSS hover classes', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} />);
 			const closeButton = screen.getByLabelText('Close commands');
 
-			fireEvent.mouseEnter(closeButton);
-			// Should apply background color
-			expect(closeButton.style.backgroundColor).toContain('rgba');
+			expect(closeButton.className).toMatch(/hover:bg-/);
+			expect(closeButton.className).toMatch(/hover:text-/);
 		});
 
-		it('removes hover styles on mouse leave', () => {
+		it('does not apply inline background on mouse enter/leave', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} />);
 			const closeButton = screen.getByLabelText('Close commands');
 
 			fireEvent.mouseEnter(closeButton);
 			fireEvent.mouseLeave(closeButton);
-			expect(closeButton.style.backgroundColor).toBe('transparent');
+			// Hover is now CSS-only; no JS handler should mutate inline style.
+			expect(closeButton.style.backgroundColor).toBe('');
 		});
 	});
 
@@ -512,7 +517,10 @@ describe('SlashCommandAutocomplete', () => {
 		it('header is sticky', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} />);
 			const header = screen.getByText('Commands').closest('div');
-			expect(header).toHaveStyle({ position: 'sticky' });
+			// Phase 6 Task 6.7 migrated inline `position: sticky` to Tailwind's
+			// `sticky` utility. JSDom doesn't apply stylesheet CSS, so assert on
+			// the class instead of the computed style.
+			expect(header).toHaveClass('sticky');
 		});
 	});
 

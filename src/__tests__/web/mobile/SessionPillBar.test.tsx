@@ -1462,7 +1462,7 @@ describe('SessionPillBar', () => {
 			expect(container.firstChild).toHaveStyle({ marginBottom: '10px' });
 		});
 
-		it('uses theme colors for styling', () => {
+		it('uses theme tokens for the outer container', () => {
 			render(
 				<SessionPillBar
 					sessions={[createMockSession({ id: 's1' })]}
@@ -1471,10 +1471,129 @@ describe('SessionPillBar', () => {
 				/>
 			);
 
-			// Component renders with theme colors (verified by visual output)
-			expect(screen.getByRole('tablist').parentElement).toHaveStyle({
-				borderBottom: `1px solid ${mockColors.border}`,
-			});
+			// After the Task 2.6 Tailwind migration the bottom border + sidebar
+			// tint ride on class tokens resolved against `var(--maestro-*)` at
+			// runtime — asserting on classes keeps the test stable across
+			// theme swaps.
+			expect(screen.getByRole('tablist').parentElement).toHaveClass(
+				'border-b',
+				'border-border',
+				'bg-bg-sidebar'
+			);
+		});
+	});
+
+	describe('tier-aware sizing', () => {
+		// Task 2.5 shipped responsive sizing on the three pill primitives
+		// keyed off `min-[600px]:` (tablet) and `min-[960px]:` (desktop) to
+		// match BREAKPOINTS in `web/mobile/constants.ts`. jsdom can't evaluate
+		// media queries, so these tests assert the utility strings are
+		// present on the rendered elements — the browser applies them per
+		// viewport. A later phase swap to a different tier system would
+		// surface here.
+
+		it('session pill carries phone baseline + tablet + desktop responsive sizing utilities', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
+
+			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
+
+			const pill = screen.getByRole('button', { pressed: true });
+			expect(pill).toHaveClass(
+				'px-[10px]',
+				'py-[6px]',
+				'text-[12px]',
+				'rounded-[20px]',
+				'min-[600px]:px-[12px]',
+				'min-[600px]:py-[8px]',
+				'min-[600px]:text-[13px]',
+				'min-[960px]:px-[10px]',
+				'min-[960px]:py-[4px]',
+				'min-[960px]:text-[12px]',
+				'min-[960px]:rounded-[14px]'
+			);
+		});
+
+		it('session name span narrows at phone tier and widens at tablet+', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
+
+			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
+
+			const nameSpan = screen.getByText('Session 1');
+			expect(nameSpan).toHaveClass('max-w-[100px]', 'min-[600px]:max-w-[120px]');
+		});
+
+		it('group header tightens at desktop tier only', () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Session 1',
+					groupId: 'group-1',
+					groupName: 'Frontend',
+				}),
+				createMockSession({
+					id: 's2',
+					name: 'Session 2',
+					groupId: 'group-2',
+					groupName: 'Backend',
+				}),
+			];
+
+			render(
+				<SessionPillBar sessions={sessions} activeSessionId={null} onSelectSession={vi.fn()} />
+			);
+
+			const header = screen.getByRole('button', { name: /Frontend group/ });
+			expect(header).toHaveClass(
+				'px-[12px]',
+				'py-[6px]',
+				'text-[12px]',
+				'min-[960px]:px-[10px]',
+				'min-[960px]:py-[4px]',
+				'min-[960px]:text-[11px]'
+			);
+		});
+
+		it('+ create-agent pill tightens at desktop tier only', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
+
+			render(
+				<SessionPillBar
+					sessions={sessions}
+					activeSessionId="s1"
+					onSelectSession={vi.fn()}
+					onOpenCreateAgent={vi.fn()}
+				/>
+			);
+
+			const createButton = screen.getByRole('button', { name: 'Create new agent' });
+			expect(createButton).toHaveClass(
+				'px-[14px]',
+				'py-[8px]',
+				'text-[16px]',
+				'rounded-[20px]',
+				'min-[960px]:px-[10px]',
+				'min-[960px]:py-[4px]',
+				'min-[960px]:text-[14px]',
+				'min-[960px]:rounded-[14px]'
+			);
+		});
+
+		it('snap behaviour preserved: scroll container uses snap-x snap-proximity', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
+
+			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
+
+			expect(screen.getByRole('tablist')).toHaveClass('snap-x', 'snap-proximity');
+		});
+
+		it('each pill wrapper carries snap-start for horizontal scroll snap', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Session 1' })];
+
+			render(<SessionPillBar sessions={sessions} activeSessionId="s1" onSelectSession={vi.fn()} />);
+
+			const pill = screen.getByRole('button', { pressed: true });
+			// The `snap-start` wrapper is the immediate parent of the pill button.
+			expect(pill.parentElement).toHaveClass('snap-start');
 		});
 	});
 
@@ -1492,7 +1611,9 @@ describe('SessionPillBar', () => {
 			const nameElement = screen.getByText(
 				'This is a very long session name that should be truncated'
 			);
-			expect(nameElement).toHaveStyle({ textOverflow: 'ellipsis' });
+			// Task 2.6 migrated the truncation primitives to Tailwind; the
+			// behaviour is now expressed via `overflow-hidden text-ellipsis`.
+			expect(nameElement).toHaveClass('overflow-hidden', 'text-ellipsis');
 		});
 
 		it('handles special characters in session name', () => {

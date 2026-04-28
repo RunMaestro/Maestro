@@ -37,7 +37,7 @@ export function useResizableWebPanel({
 	const widthRef = useRef(width);
 	widthRef.current = width;
 
-	// Clean up listeners and overlay on unmount
+	// Clean up any in-flight drag on unmount
 	useEffect(() => {
 		return () => {
 			cleanupRef.current?.();
@@ -59,19 +59,33 @@ export function useResizableWebPanel({
 	);
 
 	const onResizeStart = useCallback(
-		(e: React.MouseEvent) => {
+		(e: React.PointerEvent<HTMLElement>) => {
+			// Only react to primary-button drags (left mouse / touch / pen contact)
+			if (e.button !== 0 && e.pointerType === 'mouse') return;
 			e.preventDefault();
+
+			const handle = e.currentTarget;
+			const pointerId = e.pointerId;
+			try {
+				handle.setPointerCapture(pointerId);
+			} catch {
+				/* some browsers throw if capture is already active; ignore */
+			}
+
 			isResizing.current = true;
 			startX.current = e.clientX;
 			startWidth.current = widthRef.current;
 
-			// Add a full-screen overlay to capture mouse events during drag
-			const overlay = document.createElement('div');
-			overlay.id = 'resize-overlay';
-			overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;';
-			document.body.appendChild(overlay);
+			// Preserve cursor + prevent text selection for the duration of the drag.
+			// setPointerCapture routes pointer events to the handle, so we no longer
+			// need a full-screen overlay to catch events outside the handle.
+			const prevBodyCursor = document.body.style.cursor;
+			const prevBodyUserSelect = document.body.style.userSelect;
+			document.body.style.cursor = 'col-resize';
+			document.body.style.userSelect = 'none';
 
-			const onMouseMove = (ev: MouseEvent) => {
+			const onPointerMove = (ev: PointerEvent) => {
+				if (ev.pointerId !== pointerId) return;
 				if (!isResizing.current || !panelRef.current) return;
 				const delta = side === 'left' ? ev.clientX - startX.current : startX.current - ev.clientX;
 				const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth.current + delta));
@@ -81,22 +95,30 @@ export function useResizableWebPanel({
 
 			const cleanup = () => {
 				isResizing.current = false;
-				document.removeEventListener('mousemove', onMouseMove);
-				document.removeEventListener('mouseup', onMouseUp);
+				handle.removeEventListener('pointermove', onPointerMove);
+				handle.removeEventListener('pointerup', onPointerEnd);
+				handle.removeEventListener('pointercancel', onPointerEnd);
+				try {
+					handle.releasePointerCapture(pointerId);
+				} catch {
+					/* already released */
+				}
+				document.body.style.cursor = prevBodyCursor;
+				document.body.style.userSelect = prevBodyUserSelect;
 				cleanupRef.current = null;
-				const el = document.getElementById('resize-overlay');
-				if (el) el.remove();
 			};
 
-			const onMouseUp = (ev: MouseEvent) => {
+			const onPointerEnd = (ev: PointerEvent) => {
+				if (ev.pointerId !== pointerId) return;
 				cleanup();
 				// Commit final width to React state + localStorage
 				const delta = side === 'left' ? ev.clientX - startX.current : startX.current - ev.clientX;
 				commitWidth(startWidth.current + delta);
 			};
 
-			document.addEventListener('mousemove', onMouseMove);
-			document.addEventListener('mouseup', onMouseUp);
+			handle.addEventListener('pointermove', onPointerMove);
+			handle.addEventListener('pointerup', onPointerEnd);
+			handle.addEventListener('pointercancel', onPointerEnd);
 			cleanupRef.current = cleanup;
 		},
 		[side, minWidth, maxWidth, commitWidth]

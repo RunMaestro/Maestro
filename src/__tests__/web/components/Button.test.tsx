@@ -3,7 +3,7 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import React from 'react';
 import {
@@ -14,36 +14,6 @@ import {
 	type ButtonProps,
 	type IconButtonProps,
 } from '../../../web/components/Button';
-
-// Mock the ThemeProvider
-vi.mock('../../../web/components/ThemeProvider', () => ({
-	useTheme: () => ({
-		theme: {
-			id: 'dracula',
-			name: 'Dracula',
-			mode: 'dark',
-			colors: {
-				bgMain: '#0b0b0d',
-				bgSidebar: '#111113',
-				bgActivity: '#1c1c1f',
-				border: '#27272a',
-				textMain: '#e4e4e7',
-				textDim: '#a1a1aa',
-				accent: '#6366f1',
-				accentDim: 'rgba(99, 102, 241, 0.2)',
-				accentText: '#a5b4fc',
-				success: '#22c55e',
-				warning: '#eab308',
-				error: '#ef4444',
-			},
-		},
-		isLight: false,
-		isDark: true,
-		isVibe: false,
-		isDevicePreference: false,
-	}),
-	ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
 
 describe('Button Component', () => {
 	afterEach(() => {
@@ -110,53 +80,59 @@ describe('Button Component', () => {
 			});
 		});
 
-		it('applies primary variant styles with accent color', () => {
+		it('applies primary variant classes', () => {
 			render(<Button variant="primary">Primary</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#6366f1' });
-			expect(button).toHaveStyle({ color: '#ffffff' });
+			expect(button.className).toContain('bg-accent');
+			expect(button.className).toContain('text-white');
 		});
 
-		it('applies secondary variant styles with activity background', () => {
+		it('applies secondary variant classes', () => {
 			render(<Button variant="secondary">Secondary</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#1c1c1f' });
-			expect(button).toHaveStyle({ color: '#e4e4e7' });
+			expect(button.className).toContain('bg-bg-activity');
+			expect(button.className).toContain('text-text-main');
+			expect(button.className).toContain('border-border');
 		});
 
-		it('applies ghost variant styles with transparent background', () => {
+		it('applies ghost variant classes', () => {
 			render(<Button variant="ghost">Ghost</Button>);
 			const button = screen.getByRole('button');
-			// Check the style object has transparent background set
-			expect(button.style.backgroundColor).toBe('transparent');
+			expect(button.className).toContain('bg-transparent');
+			expect(button.className).toContain('text-text-main');
+			expect(button.className).toContain('border-transparent');
 		});
 
-		it('applies danger variant styles with error color', () => {
+		it('applies danger variant classes', () => {
 			render(<Button variant="danger">Danger</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#ef4444' });
-			expect(button).toHaveStyle({ color: '#ffffff' });
+			expect(button.className).toContain('bg-error');
+			expect(button.className).toContain('text-white');
 		});
 
-		it('applies success variant styles with success color', () => {
+		it('applies success variant classes', () => {
 			render(<Button variant="success">Success</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#22c55e' });
-			expect(button).toHaveStyle({ color: '#ffffff' });
+			expect(button.className).toContain('bg-success');
+			expect(button.className).toContain('text-white');
 		});
 
 		it('uses primary variant as default', () => {
 			render(<Button>Default Variant</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#6366f1' });
+			expect(button.className).toContain('bg-accent');
 		});
 
 		it('handles unknown variant gracefully (default case)', () => {
-			// Cast to any to test the default fallback case in the switch statement
+			// Cast to any to test the default fallback for an unknown variant
 			render(<Button variant={'unknown' as any}>Unknown</Button>);
 			const button = screen.getByRole('button');
-			// Should still render without error
+			// Should still render without error and without any of the known variant background tokens
 			expect(button).toBeInTheDocument();
+			expect(button.className).not.toContain('bg-accent');
+			expect(button.className).not.toContain('bg-bg-activity');
+			expect(button.className).not.toContain('bg-error');
+			expect(button.className).not.toContain('bg-success');
 		});
 	});
 
@@ -171,28 +147,30 @@ describe('Button Component', () => {
 			});
 		});
 
-		it('applies sm size border radius', () => {
+		it('applies sm size border radius class', () => {
 			render(<Button size="sm">Small</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ borderRadius: '4px' });
+			expect(button.className).toContain('rounded');
+			expect(button.className).not.toContain('rounded-md');
+			expect(button.className).not.toContain('rounded-lg');
 		});
 
-		it('applies md size border radius', () => {
+		it('applies md size border radius class', () => {
 			render(<Button size="md">Medium</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ borderRadius: '6px' });
+			expect(button.className).toContain('rounded-md');
 		});
 
-		it('applies lg size border radius', () => {
+		it('applies lg size border radius class', () => {
 			render(<Button size="lg">Large</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ borderRadius: '8px' });
+			expect(button.className).toContain('rounded-lg');
 		});
 
 		it('uses md size as default', () => {
 			render(<Button>Default Size</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ borderRadius: '6px' });
+			expect(button.className).toContain('rounded-md');
 		});
 
 		it('applies correct size class for sm', () => {
@@ -226,18 +204,17 @@ describe('Button Component', () => {
 			expect(screen.getByRole('button')).toBeDisabled();
 		});
 
-		it('applies disabled styles', () => {
+		it('applies disabled utility classes', () => {
 			render(<Button disabled>Disabled</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ opacity: '0.5' });
-			expect(button).toHaveStyle({ cursor: 'not-allowed' });
+			expect(button.className).toContain('disabled:opacity-50');
+			expect(button.className).toContain('disabled:cursor-not-allowed');
 		});
 
-		it('does not apply disabled styles when enabled', () => {
+		it('applies cursor-pointer class when enabled', () => {
 			render(<Button>Enabled</Button>);
 			const button = screen.getByRole('button');
-			expect(button).not.toHaveStyle({ opacity: '0.5' });
-			expect(button).toHaveStyle({ cursor: 'pointer' });
+			expect(button.className).toContain('cursor-pointer');
 		});
 
 		it('prevents click when disabled', () => {
@@ -276,11 +253,14 @@ describe('Button Component', () => {
 			expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'false');
 		});
 
-		it('applies disabled styles when loading', () => {
+		it('marks the loading button as disabled so disabled: variants kick in', () => {
 			render(<Button loading>Loading</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ opacity: '0.5' });
-			expect(button).toHaveStyle({ cursor: 'not-allowed' });
+			expect(button).toBeDisabled();
+			// disabled:* utilities are present in the class list and resolve via the
+			// HTML disabled attribute set above; jsdom does not compute the styles.
+			expect(button.className).toContain('disabled:opacity-50');
+			expect(button.className).toContain('disabled:cursor-not-allowed');
 		});
 
 		it('prevents click when loading', () => {
@@ -380,17 +360,15 @@ describe('Button Component', () => {
 	});
 
 	describe('Full Width', () => {
-		it('applies full width when fullWidth is true', () => {
+		it('applies w-full class when fullWidth is true', () => {
 			render(<Button fullWidth>Full Width</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ width: '100%' });
 			expect(button.className).toContain('w-full');
 		});
 
 		it('does not apply full width by default', () => {
 			render(<Button>Normal Width</Button>);
 			const button = screen.getByRole('button');
-			expect(button).not.toHaveStyle({ width: '100%' });
 			expect(button.className).not.toContain('w-full');
 		});
 	});
@@ -440,52 +418,51 @@ describe('Button Component', () => {
 	});
 
 	describe('Style Composition', () => {
-		it('combines variant and size styles', () => {
+		it('combines variant and size classes', () => {
 			render(
 				<Button variant="danger" size="lg">
 					Danger Large
 				</Button>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ backgroundColor: '#ef4444' });
-			expect(button).toHaveStyle({ borderRadius: '8px' });
+			expect(button.className).toContain('bg-error');
+			expect(button.className).toContain('rounded-lg');
 		});
 
-		it('applies inline flex display', () => {
+		it('applies inline-flex layout class', () => {
 			render(<Button>Flex Button</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ display: 'inline-flex' });
+			expect(button.className).toContain('inline-flex');
 		});
 
-		it('applies center alignment', () => {
+		it('applies center alignment classes', () => {
 			render(<Button>Centered Button</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ alignItems: 'center' });
-			expect(button).toHaveStyle({ justifyContent: 'center' });
+			expect(button.className).toContain('items-center');
+			expect(button.className).toContain('justify-center');
 		});
 
-		it('applies font weight', () => {
+		it('applies font-medium class', () => {
 			render(<Button>Bold Button</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ fontWeight: '500' });
+			expect(button.className).toContain('font-medium');
 		});
 
-		it('applies outline none', () => {
+		it('applies outline-none class', () => {
 			render(<Button>No Outline</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ outline: 'none' });
+			expect(button.className).toContain('outline-none');
 		});
 
-		it('applies user-select none', () => {
+		it('applies select-none class', () => {
 			render(<Button>Not Selectable</Button>);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ userSelect: 'none' });
+			expect(button.className).toContain('select-none');
 		});
 
-		it('custom style overrides default styles', () => {
+		it('custom style overrides defaults via the style prop', () => {
 			render(<Button style={{ backgroundColor: 'purple' }}>Custom</Button>);
 			const button = screen.getByRole('button');
-			// Check the style object directly
 			expect(button.style.backgroundColor).toBe('purple');
 		});
 	});
@@ -582,40 +559,40 @@ describe('IconButton Component', () => {
 	});
 
 	describe('Sizes', () => {
-		it('applies sm size with correct dimensions', () => {
+		it('applies sm size classes', () => {
 			render(
 				<IconButton size="sm" aria-label="Small">
 					<span>S</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ padding: '4px' });
-			expect(button).toHaveStyle({ minWidth: '24px' });
-			expect(button).toHaveStyle({ minHeight: '24px' });
+			expect(button.className).toContain('!p-1');
+			expect(button.className).toContain('min-w-[24px]');
+			expect(button.className).toContain('min-h-[24px]');
 		});
 
-		it('applies md size with correct dimensions', () => {
+		it('applies md size classes', () => {
 			render(
 				<IconButton size="md" aria-label="Medium">
 					<span>M</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ padding: '6px' });
-			expect(button).toHaveStyle({ minWidth: '32px' });
-			expect(button).toHaveStyle({ minHeight: '32px' });
+			expect(button.className).toContain('!p-1.5');
+			expect(button.className).toContain('min-w-[32px]');
+			expect(button.className).toContain('min-h-[32px]');
 		});
 
-		it('applies lg size with correct dimensions', () => {
+		it('applies lg size classes', () => {
 			render(
 				<IconButton size="lg" aria-label="Large">
 					<span>L</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ padding: '8px' });
-			expect(button).toHaveStyle({ minWidth: '40px' });
-			expect(button).toHaveStyle({ minHeight: '40px' });
+			expect(button.className).toContain('!p-2');
+			expect(button.className).toContain('min-w-[40px]');
+			expect(button.className).toContain('min-h-[40px]');
 		});
 
 		it('uses md size as default', () => {
@@ -625,7 +602,7 @@ describe('IconButton Component', () => {
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ minWidth: '32px' });
+			expect(button.className).toContain('min-w-[32px]');
 		});
 	});
 
@@ -650,54 +627,52 @@ describe('IconButton Component', () => {
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			// Check the style object directly
-			expect(button.style.backgroundColor).toBe('transparent');
+			expect(button.className).toContain('bg-transparent');
 		});
 	});
 
 	describe('Padding Override', () => {
-		it('includes !p-0 class to override base padding', () => {
+		it('forces padding via the !p-* class so the parent Button px-*/py-* loses', () => {
 			render(
 				<IconButton aria-label="Icon">
 					<span>I</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button.className).toContain('!p-0');
+			expect(button.className).toMatch(/!p-1\.5\b/);
 		});
 
-		it('combines custom className with !p-0', () => {
+		it('combines custom className with the size override classes', () => {
 			render(
 				<IconButton className="custom-class" aria-label="Icon">
 					<span>I</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button.className).toContain('!p-0');
+			expect(button.className).toContain('!p-1.5');
 			expect(button.className).toContain('custom-class');
 		});
 	});
 
 	describe('Custom Styles', () => {
-		it('allows custom style overrides', () => {
+		it('allows custom style overrides via the style prop', () => {
 			render(
 				<IconButton style={{ backgroundColor: 'red' }} aria-label="Styled">
 					<span>S</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			// Check the style object directly
 			expect(button.style.backgroundColor).toBe('red');
 		});
 
-		it('preserves size styles with custom styles', () => {
+		it('preserves size classes alongside custom styles', () => {
 			render(
 				<IconButton size="lg" style={{ margin: '10px' }} aria-label="Combined">
 					<span>C</span>
 				</IconButton>
 			);
 			const button = screen.getByRole('button');
-			expect(button).toHaveStyle({ minWidth: '40px' });
+			expect(button.className).toContain('min-w-[40px]');
 			expect(button).toHaveStyle({ margin: '10px' });
 		});
 	});

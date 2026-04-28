@@ -247,17 +247,8 @@ export function UsageDashboardPanel({ onClose, sendRequest }: UsageDashboardPane
 					</div>
 				) : (
 					<>
-						{/* Summary Cards */}
-						<div
-							style={{
-								display: 'flex',
-								gap: '10px',
-								marginBottom: '20px',
-								overflowX: 'auto',
-								WebkitOverflowScrolling: 'touch',
-								scrollSnapType: 'x mandatory',
-							}}
-						>
+						{/* Summary Cards — tiered grid: 1 col phone, 2 col tablet (≥600px), 3 col desktop (≥960px) */}
+						<div className="grid grid-cols-1 min-[600px]:grid-cols-2 min-[960px]:grid-cols-3 gap-[10px] mb-[20px]">
 							<SummaryCard
 								label="Tokens In"
 								value={formatTokenCount(data.totalTokensIn)}
@@ -462,13 +453,10 @@ function SummaryCard({
 	return (
 		<div
 			style={{
-				flex: '1 0 auto',
-				minWidth: '100px',
 				padding: '14px 16px',
 				backgroundColor: colors.bgSidebar,
 				borderRadius: '12px',
 				border: `1px solid ${colors.border}`,
-				scrollSnapAlign: 'start',
 			}}
 		>
 			<div

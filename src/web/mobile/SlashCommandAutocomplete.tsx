@@ -184,28 +184,8 @@ export function SlashCommandAutocomplete({
 			}}
 		>
 			{/* Header with title and close button */}
-			<div
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					justifyContent: 'space-between',
-					padding: '10px 16px',
-					borderBottom: `1px solid ${colors.border}`,
-					position: 'sticky',
-					top: 0,
-					backgroundColor: colors.bgSidebar,
-					zIndex: 1,
-				}}
-			>
-				<span
-					style={{
-						fontSize: '13px',
-						fontWeight: 600,
-						color: colors.textDim,
-						textTransform: 'uppercase',
-						letterSpacing: '0.5px',
-					}}
-				>
+			<div className="flex items-center justify-between py-2.5 px-4 border-b border-border sticky top-0 bg-bg-sidebar z-[1]">
+				<span className="text-[13px] font-semibold text-text-dim uppercase tracking-[0.5px]">
 					Commands
 				</span>
 				<button
@@ -213,26 +193,7 @@ export function SlashCommandAutocomplete({
 						e.stopPropagation();
 						onClose();
 					}}
-					style={{
-						padding: '6px',
-						borderRadius: '6px',
-						backgroundColor: 'transparent',
-						border: 'none',
-						cursor: 'pointer',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						color: colors.textDim,
-						transition: 'background-color 150ms ease, color 150ms ease',
-					}}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.backgroundColor = `${colors.textDim}20`;
-						e.currentTarget.style.color = colors.textMain;
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.backgroundColor = 'transparent';
-						e.currentTarget.style.color = colors.textDim;
-					}}
+					className="p-1.5 rounded-md bg-transparent border-none cursor-pointer flex items-center justify-center text-text-dim transition-colors duration-150 ease-in-out hover:bg-[color-mix(in_srgb,var(--maestro-text-dim)_12%,transparent)] hover:text-text-main outline-none focus-visible:ring-2 focus-visible:ring-accent"
 					aria-label="Close commands"
 				>
 					<svg

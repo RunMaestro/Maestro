@@ -1,13 +1,14 @@
 /**
  * Badge component for Maestro web interface
  *
- * A reusable badge/status indicator component that supports multiple variants
- * and sizes. Ideal for showing session states, labels, and status information.
- * Uses theme colors via CSS custom properties for consistent styling.
+ * A reusable badge/status indicator with multiple variants, sizes, and styles.
+ * Color, border, and radius tokens come from Tailwind utilities backed by the
+ * `--maestro-*` CSS custom properties (see `tailwind.config.mjs` and
+ * `src/web/utils/cssCustomProperties.ts`), so live theme swaps update visuals
+ * without re-rendering.
  */
 
 import React, { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
-import { useTheme } from './ThemeProvider';
 
 /**
  * Badge variant types
@@ -50,26 +51,103 @@ export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 /**
- * Size-based style configurations
+ * Variant → Tailwind class fragments for each surface. Color tokens resolve
+ * via `--maestro-*` CSS custom properties (see `tailwind.config.mjs`);
+ * `connecting` is a non-theme literal hex.
+ *
+ * `subtleBg` uses `color-mix()` to fake 12% opacity because Tailwind's
+ * opacity modifiers (`bg-success/10`) don't work on `var()` tokens — they
+ * require rgb-channel colors. `color-mix(in srgb, <color> 12%, transparent)`
+ * preserves the exact legacy opacity of the old `${hex}20` trick. For
+ * `connecting` the color is a literal hex so Tailwind's `/[0.125]` modifier
+ * does work, but we use `color-mix` uniformly for consistency.
  */
-const sizeStyles: Record<BadgeSize, { className: string; borderRadius: string; dotSize: string }> =
-	{
-		sm: {
-			className: 'px-1.5 py-0.5 text-xs gap-1',
-			borderRadius: '4px',
-			dotSize: '6px',
-		},
-		md: {
-			className: 'px-2 py-0.5 text-sm gap-1.5',
-			borderRadius: '6px',
-			dotSize: '8px',
-		},
-		lg: {
-			className: 'px-2.5 py-1 text-base gap-2',
-			borderRadius: '8px',
-			dotSize: '10px',
-		},
-	};
+const variantColorClasses: Record<
+	BadgeVariant,
+	{ bg: string; text: string; border: string; subtleBg: string }
+> = {
+	default: {
+		bg: 'bg-text-dim',
+		text: 'text-text-dim',
+		border: 'border-text-dim',
+		subtleBg: 'bg-[color-mix(in_srgb,var(--maestro-text-dim)_12%,transparent)]',
+	},
+	success: {
+		bg: 'bg-success',
+		text: 'text-success',
+		border: 'border-success',
+		subtleBg: 'bg-[color-mix(in_srgb,var(--maestro-success)_12%,transparent)]',
+	},
+	warning: {
+		bg: 'bg-warning',
+		text: 'text-warning',
+		border: 'border-warning',
+		subtleBg: 'bg-[color-mix(in_srgb,var(--maestro-warning)_12%,transparent)]',
+	},
+	error: {
+		bg: 'bg-error',
+		text: 'text-error',
+		border: 'border-error',
+		subtleBg: 'bg-[color-mix(in_srgb,var(--maestro-error)_12%,transparent)]',
+	},
+	info: {
+		bg: 'bg-accent',
+		text: 'text-accent',
+		border: 'border-accent',
+		subtleBg: 'bg-[color-mix(in_srgb,var(--maestro-accent)_12%,transparent)]',
+	},
+	connecting: {
+		bg: 'bg-connecting',
+		text: 'text-connecting',
+		border: 'border-connecting',
+		subtleBg: 'bg-[color-mix(in_srgb,#f97316_12%,transparent)]',
+	},
+};
+
+/**
+ * Size → padding / type-scale / gap / border-radius for non-dot badges.
+ * Tailwind's default `rounded`/`rounded-md`/`rounded-lg` are 4/6/8px and
+ * match the legacy `borderRadius` values 1:1.
+ */
+const sizeClasses: Record<BadgeSize, string> = {
+	sm: 'px-1.5 py-0.5 text-xs gap-1 rounded',
+	md: 'px-2 py-0.5 text-sm gap-1.5 rounded-md',
+	lg: 'px-2.5 py-1 text-base gap-2 rounded-lg',
+};
+
+/**
+ * Size → dot diameter. Tailwind spacing: 1.5 = 6px, 2 = 8px, 2.5 = 10px,
+ * matching the legacy `dotSize` values 1:1.
+ */
+const dotSizeClasses: Record<BadgeSize, string> = {
+	sm: 'w-1.5 h-1.5',
+	md: 'w-2 h-2',
+	lg: 'w-2.5 h-2.5',
+};
+
+/**
+ * Resolve the badgeStyle → color-class string for a given variant. Returns
+ * an empty string for unknown badgeStyles so the component still renders.
+ */
+function getStyleClasses(variant: BadgeVariant, badgeStyle: BadgeStyle): string {
+	const colors = variantColorClasses[variant] ?? variantColorClasses.default;
+	switch (badgeStyle) {
+		case 'solid':
+			return `${colors.bg} text-white`;
+		case 'outline':
+			return `bg-transparent ${colors.text} border ${colors.border}`;
+		case 'subtle':
+			return `${colors.subtleBg} ${colors.text}`;
+		case 'dot':
+			return colors.bg;
+		default:
+			return '';
+	}
+}
+
+const baseNonDotClasses = 'inline-flex items-center font-medium whitespace-nowrap leading-none';
+
+const baseDotClasses = 'inline-block rounded-full';
 
 /**
  * Badge component for the Maestro web interface
@@ -110,81 +188,26 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
 	},
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-
-	const sizeConfig = sizeStyles[size];
 	const shouldPulse = pulse || variant === 'connecting';
-
-	/**
-	 * Get the primary color for the variant
-	 */
-	const getVariantColor = (): string => {
-		switch (variant) {
-			case 'success':
-				return colors.success;
-			case 'warning':
-				return colors.warning;
-			case 'error':
-				return colors.error;
-			case 'info':
-				return colors.accent;
-			case 'connecting':
-				// Orange color for connecting state
-				return '#f97316';
-			case 'default':
-			default:
-				return colors.textDim;
-		}
-	};
-
-	/**
-	 * Get variant-specific styles based on badgeStyle
-	 */
-	const getStyles = (): React.CSSProperties => {
-		const primaryColor = getVariantColor();
-
-		switch (badgeStyle) {
-			case 'solid':
-				return {
-					backgroundColor: primaryColor,
-					color: '#ffffff',
-					border: 'none',
-				};
-			case 'outline':
-				return {
-					backgroundColor: 'transparent',
-					color: primaryColor,
-					border: `1px solid ${primaryColor}`,
-				};
-			case 'subtle':
-				return {
-					backgroundColor: `${primaryColor}20`, // 20 = ~12% opacity in hex
-					color: primaryColor,
-					border: 'none',
-				};
-			case 'dot':
-				return {
-					backgroundColor: primaryColor,
-					border: 'none',
-				};
-			default:
-				return {};
-		}
-	};
+	const styleClasses = getStyleClasses(variant, badgeStyle);
 
 	// Render dot-only badge
 	if (badgeStyle === 'dot') {
+		const dotClassName = [
+			baseDotClasses,
+			dotSizeClasses[size],
+			styleClasses,
+			shouldPulse ? 'animate-pulse' : '',
+			className,
+		]
+			.filter(Boolean)
+			.join(' ');
+
 		return (
 			<span
 				ref={ref}
-				className={`inline-block rounded-full ${shouldPulse ? 'animate-pulse' : ''} ${className}`}
-				style={{
-					width: sizeConfig.dotSize,
-					height: sizeConfig.dotSize,
-					...getStyles(),
-					...style,
-				}}
+				className={dotClassName}
+				style={style}
 				role="status"
 				aria-label={variant !== 'default' ? variant : undefined}
 				{...props}
@@ -192,25 +215,18 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
 		);
 	}
 
-	const combinedStyles: React.CSSProperties = {
-		...getStyles(),
-		borderRadius: sizeConfig.borderRadius,
-		display: 'inline-flex',
-		alignItems: 'center',
-		fontWeight: 500,
-		whiteSpace: 'nowrap',
-		lineHeight: 1,
-		...style,
-	};
+	const badgeClassName = [
+		baseNonDotClasses,
+		sizeClasses[size],
+		styleClasses,
+		shouldPulse ? 'animate-pulse' : '',
+		className,
+	]
+		.filter(Boolean)
+		.join(' ');
 
 	return (
-		<span
-			ref={ref}
-			className={`${sizeConfig.className} ${shouldPulse ? 'animate-pulse' : ''} ${className}`}
-			style={combinedStyles}
-			role="status"
-			{...props}
-		>
+		<span ref={ref} className={badgeClassName} style={style} role="status" {...props}>
 			{icon && <span className="flex-shrink-0">{icon}</span>}
 			{children && <span>{children}</span>}
 		</span>

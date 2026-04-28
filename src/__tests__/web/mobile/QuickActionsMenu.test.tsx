@@ -93,9 +93,11 @@ describe('QuickActionsMenu', () => {
 
 		it('renders backdrop overlay', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
-			const backdrop = document.querySelector('[aria-hidden="true"]');
+			const backdrop = document.querySelector('[role="presentation"]');
 			expect(backdrop).toBeInTheDocument();
-			expect(backdrop).toHaveStyle({ position: 'fixed' });
+			// ResponsiveModal applies Tailwind `.fixed` to the backdrop wrapper;
+			// in jsdom the inline `position` is empty, so we assert the class instead.
+			expect(backdrop).toHaveClass('fixed');
 		});
 
 		it('renders with empty actions array', () => {
@@ -337,27 +339,25 @@ describe('QuickActionsMenu', () => {
 		it('closes menu when backdrop is clicked', () => {
 			const onClose = vi.fn();
 			render(<QuickActionsMenu {...defaultProps} onClose={onClose} />);
-			const backdrop = document.querySelector('[aria-hidden="true"]') as HTMLElement;
+			const backdrop = document.querySelector('[role="presentation"]') as HTMLElement;
 			fireEvent.click(backdrop);
 			expect(onClose).toHaveBeenCalled();
 		});
 
 		it('backdrop covers full viewport', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
-			const backdrop = document.querySelector('[aria-hidden="true"]') as HTMLElement;
-			expect(backdrop).toHaveStyle({
-				position: 'fixed',
-				top: '0px',
-				left: '0px',
-				right: '0px',
-				bottom: '0px',
-			});
+			const backdrop = document.querySelector('[role="presentation"]') as HTMLElement;
+			// ResponsiveModal uses Tailwind `.fixed inset-0` for the backdrop;
+			// assert those classes since jsdom doesn't resolve Tailwind's generated CSS.
+			expect(backdrop).toHaveClass('fixed');
+			expect(backdrop).toHaveClass('inset-0');
 		});
 
 		it('backdrop has semi-transparent background', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
-			const backdrop = document.querySelector('[aria-hidden="true"]') as HTMLElement;
-			expect(backdrop.style.backgroundColor).toContain('rgba(0, 0, 0');
+			const backdrop = document.querySelector('[role="presentation"]') as HTMLElement;
+			// Tailwind class `bg-black/50` supplies the dim overlay. Inline style is empty in jsdom.
+			expect(backdrop).toHaveClass('bg-black/50');
 		});
 	});
 
@@ -370,7 +370,7 @@ describe('QuickActionsMenu', () => {
 		it('has aria-label on dialog container', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
 			const dialog = screen.getByRole('dialog');
-			expect(dialog).toHaveAttribute('aria-label', 'Command palette');
+			expect(dialog).toHaveAttribute('aria-label', 'Command Palette');
 		});
 
 		it('has aria-modal on dialog container', () => {
@@ -385,52 +385,37 @@ describe('QuickActionsMenu', () => {
 			expect(options.length).toBeGreaterThan(0);
 		});
 
-		it('backdrop has aria-hidden', () => {
+		it('backdrop has role="presentation"', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
-			const backdrop = document.querySelector('[aria-hidden="true"]');
+			const backdrop = document.querySelector('[role="presentation"]');
 			expect(backdrop).toBeInTheDocument();
 		});
 	});
 
 	describe('Menu styling', () => {
-		it('applies correct z-index', () => {
+		it('applies correct z-index on backdrop wrapper', () => {
+			render(<QuickActionsMenu {...defaultProps} />);
+			// ResponsiveModal puts the zIndex inline on the backdrop/presentation
+			// wrapper, not on the dialog itself.
+			const backdrop = document.querySelector('[role="presentation"]') as HTMLElement;
+			expect(backdrop).toHaveStyle({ zIndex: '300' });
+		});
+
+		it('has modal animation class', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
 			const dialog = screen.getByRole('dialog');
-			expect(dialog).toHaveStyle({ zIndex: '300' });
+			// Tailwind `animate-slideUp` (phone) or `animate-modalIn` (tablet+) —
+			// both come from `src/web/index.css`. jsdom defaults viewport to 1024px
+			// so at render time we're in the tablet+ branch.
+			expect(dialog.className).toMatch(/animate-(modalIn|slideUp)/);
 		});
 
-		it('has animation', () => {
+		it('has rounded corners', () => {
 			render(<QuickActionsMenu {...defaultProps} />);
 			const dialog = screen.getByRole('dialog');
-			expect(dialog.style.animation).toContain('quickActionsPopIn');
-		});
-
-		it('has proper border radius', () => {
-			render(<QuickActionsMenu {...defaultProps} />);
-			const dialog = screen.getByRole('dialog');
-			expect(dialog).toHaveStyle({ borderRadius: '16px' });
-		});
-	});
-
-	describe('CSS keyframes injection', () => {
-		it('injects quickActionsPopIn keyframes', () => {
-			render(<QuickActionsMenu {...defaultProps} />);
-			const styleElement = document.querySelector('style');
-			expect(styleElement).toBeInTheDocument();
-			expect(styleElement?.textContent).toContain('quickActionsPopIn');
-		});
-
-		it('injects quickActionsFadeIn keyframes', () => {
-			render(<QuickActionsMenu {...defaultProps} />);
-			const styleElement = document.querySelector('style');
-			expect(styleElement?.textContent).toContain('quickActionsFadeIn');
-		});
-
-		it('keyframes include transform: scale animation', () => {
-			render(<QuickActionsMenu {...defaultProps} />);
-			const styleElement = document.querySelector('style');
-			expect(styleElement?.textContent).toContain('scale(0.9');
-			expect(styleElement?.textContent).toContain('scale(1)');
+			// Tailwind `rounded-lg` (tablet+) or `rounded-t-2xl` (phone) provides
+			// the corner radius instead of an inline `borderRadius`.
+			expect(dialog.className).toMatch(/rounded-(lg|t-2xl)/);
 		});
 	});
 

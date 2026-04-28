@@ -828,6 +828,34 @@ describe('MessageHistory', () => {
 			const bottomRef = container.querySelector('[style*="min-height: 8px"]');
 			expect(bottomRef).toBeInTheDocument();
 		});
+
+		it('keeps overflowX hidden even with a wide markdown code block', () => {
+			// Regression guard for narrow-viewport (e.g. 320px) overflow: a long, unbreakable
+			// code line inside a markdown fence must not cause the message container to
+			// force horizontal page scroll. Pre-level scrolling lives in MobileMarkdownRenderer;
+			// the container-level defence is overflowX: 'hidden'.
+			const wideLine = 'a'.repeat(500);
+			const logs: LogEntry[] = [
+				createLogEntry({
+					source: 'stdout',
+					text: `# Heading\n\n\`\`\`js\n${wideLine}\n\`\`\``,
+				}),
+			];
+			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+
+			const scrollContainer = container.querySelector('[style*="overflow-y: auto"]');
+			expect(scrollContainer).toHaveStyle({ overflowX: 'hidden' });
+		});
+
+		it('caps message bubbles at 90% width', () => {
+			// Bubbles must stay narrower than the container so their intrinsic content
+			// never widens the scroll container past its own overflow-x boundary.
+			const logs: LogEntry[] = [createLogEntry({ source: 'stdout', text: 'Bubble width test' })];
+			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+
+			const messageCard = container.querySelector('[style*="padding: 10px 12px"]');
+			expect(messageCard).toHaveStyle({ maxWidth: '90%' });
+		});
 	});
 
 	describe('Default Export', () => {

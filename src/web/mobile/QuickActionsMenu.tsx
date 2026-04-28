@@ -7,12 +7,17 @@
  * - Keyboard navigation (Arrow keys, Enter, Escape)
  * - Recent actions tracked in localStorage
  * - Touch-friendly hit targets (minimum 44pt)
- * - Animated appearance with scale/opacity
  * - Accessible with proper ARIA roles
+ *
+ * Wrapped in `ResponsiveModal` so it renders as a bottom sheet on phones and
+ * a centered card at tablet+. Escape, backdrop click, and focus trap are
+ * inherited from `ResponsiveModal`. The search input auto-focuses on open
+ * via a nested rAF (command-palette UX: typing should work immediately).
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
+import { ResponsiveModal } from '../components';
 import { MIN_TOUCH_TARGET } from './constants';
 
 /** Represents a single action in the command palette */
@@ -70,11 +75,12 @@ function saveRecentAction(actionId: string): void {
 /**
  * QuickActionsMenu component
  *
- * A full-screen command palette providing quick access to all app actions.
+ * A command palette providing quick access to all app actions. Rendered via
+ * `ResponsiveModal`, so it's a bottom sheet on phones and a centered card at
+ * tablet+.
  */
 export function QuickActionsMenu({ isOpen, onClose, actions }: QuickActionsMenuProps) {
 	const colors = useThemeColors();
-	const menuRef = useRef<HTMLDivElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const [searchQuery, setSearchQuery] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
@@ -157,16 +163,24 @@ export function QuickActionsMenu({ isOpen, onClose, actions }: QuickActionsMenuP
 		[displayList]
 	);
 
-	// Reset state when menu opens
+	// Reset state when menu opens. ResponsiveModal schedules a single rAF to
+	// focus its dialog container; a nested rAF here runs after that and
+	// re-claims focus for the search field — command-palette UX where typing
+	// should work immediately on open.
 	useEffect(() => {
-		if (isOpen) {
-			setSearchQuery('');
-			setSelectedIndex(0);
-			// Auto-focus search input
-			requestAnimationFrame(() => {
+		if (!isOpen) return;
+		setSearchQuery('');
+		setSelectedIndex(0);
+		let innerHandle: number | null = null;
+		const outerHandle = requestAnimationFrame(() => {
+			innerHandle = requestAnimationFrame(() => {
 				searchRef.current?.focus();
 			});
-		}
+		});
+		return () => {
+			cancelAnimationFrame(outerHandle);
+			if (innerHandle !== null) cancelAnimationFrame(innerHandle);
+		};
 	}, [isOpen]);
 
 	// Scroll selected item into view
@@ -192,16 +206,13 @@ export function QuickActionsMenu({ isOpen, onClose, actions }: QuickActionsMenuP
 		[onClose]
 	);
 
-	// Handle keyboard navigation
+	// Keyboard navigation. Escape is handled by ResponsiveModal itself; this
+	// listener only covers Arrow keys and Enter for the command-palette flow.
 	useEffect(() => {
 		if (!isOpen) return;
 
 		const handleKeyDown = (event: KeyboardEvent) => {
 			switch (event.key) {
-				case 'Escape':
-					event.preventDefault();
-					onClose();
-					break;
 				case 'ArrowDown':
 					event.preventDefault();
 					setSelectedIndex((prev) => (prev < actionItems.length - 1 ? prev + 1 : 0));
@@ -221,269 +232,24 @@ export function QuickActionsMenu({ isOpen, onClose, actions }: QuickActionsMenuP
 
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [isOpen, onClose, actionItems, selectedIndex, executeAction]);
-
-	if (!isOpen) return null;
+	}, [isOpen, actionItems, selectedIndex, executeAction]);
 
 	// Track the action index separately for keyboard selection highlighting
 	let actionIndex = -1;
 
 	return (
-		<>
-			{/* Backdrop overlay */}
-			<div
-				style={{
-					position: 'fixed',
-					top: 0,
-					left: 0,
-					right: 0,
-					bottom: 0,
-					backgroundColor: 'rgba(0, 0, 0, 0.5)',
-					zIndex: 299,
-					animation: 'quickActionsFadeIn 150ms ease-out forwards',
-				}}
-				onClick={onClose}
-				aria-hidden="true"
-			/>
-
-			{/* Command palette container */}
-			<div
-				ref={menuRef}
-				role="dialog"
-				aria-label="Command palette"
-				aria-modal="true"
-				style={{
-					position: 'fixed',
-					top: '10vh',
-					left: '50%',
-					transform: 'translateX(-50%)',
-					width: 'min(90vw, 420px)',
-					maxHeight: '70vh',
-					zIndex: 300,
-					backgroundColor: colors.bgSidebar,
-					borderRadius: '16px',
-					border: `1px solid ${colors.border}`,
-					boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
-					animation: 'quickActionsPopIn 150ms ease-out forwards',
-					transformOrigin: 'top center',
-					display: 'flex',
-					flexDirection: 'column',
-					overflow: 'hidden',
-				}}
-			>
-				{/* Search input */}
+		<ResponsiveModal
+			isOpen={isOpen}
+			onClose={onClose}
+			title="Command Palette"
+			zIndex={300}
+			footer={
 				<div
 					style={{
-						padding: '12px 16px',
-						borderBottom: `1px solid ${colors.border}`,
-						flexShrink: 0,
-					}}
-				>
-					<div
-						style={{
-							display: 'flex',
-							alignItems: 'center',
-							gap: '10px',
-							backgroundColor: colors.bgMain,
-							borderRadius: '10px',
-							padding: '0 12px',
-							border: `1px solid ${colors.border}`,
-						}}
-					>
-						{/* Search icon */}
-						<svg
-							width="16"
-							height="16"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke={colors.textDim}
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							style={{ flexShrink: 0 }}
-						>
-							<circle cx="11" cy="11" r="8" />
-							<line x1="21" y1="21" x2="16.65" y2="16.65" />
-						</svg>
-						<input
-							ref={searchRef}
-							type="text"
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder="Search actions..."
-							aria-label="Search actions"
-							style={{
-								flex: 1,
-								backgroundColor: 'transparent',
-								border: 'none',
-								outline: 'none',
-								color: colors.textMain,
-								fontSize: '15px',
-								padding: '10px 0',
-								fontFamily: 'inherit',
-							}}
-						/>
-						{searchQuery && (
-							<button
-								onClick={() => setSearchQuery('')}
-								aria-label="Clear search"
-								style={{
-									background: 'none',
-									border: 'none',
-									color: colors.textDim,
-									cursor: 'pointer',
-									padding: '4px',
-									display: 'flex',
-									alignItems: 'center',
-								}}
-							>
-								<svg
-									width="14"
-									height="14"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-								>
-									<line x1="18" y1="6" x2="6" y2="18" />
-									<line x1="6" y1="6" x2="18" y2="18" />
-								</svg>
-							</button>
-						)}
-					</div>
-				</div>
-
-				{/* Action list */}
-				<div
-					role="listbox"
-					aria-label="Actions"
-					style={{
-						overflowY: 'auto',
-						flex: 1,
-						WebkitOverflowScrolling: 'touch',
-					}}
-				>
-					{displayList.length === 0 && (
-						<div
-							style={{
-								padding: '24px 16px',
-								textAlign: 'center',
-								color: colors.textDim,
-								fontSize: '14px',
-							}}
-						>
-							No matching actions
-						</div>
-					)}
-
-					{displayList.map((item, i) => {
-						if (item.type === 'header') {
-							return (
-								<div
-									key={`header-${item.label}-${i}`}
-									style={{
-										padding: '10px 16px 4px',
-										fontSize: '11px',
-										fontWeight: 600,
-										textTransform: 'uppercase',
-										letterSpacing: '0.5px',
-										color: colors.textDim,
-									}}
-									aria-hidden="true"
-								>
-									{item.label}
-								</div>
-							);
-						}
-
-						actionIndex++;
-						const currentActionIndex = actionIndex;
-						const isSelected = currentActionIndex === selectedIndex;
-
-						return (
-							<button
-								key={item.action.id}
-								ref={(el) => {
-									if (el) {
-										itemRefs.current.set(currentActionIndex, el);
-									} else {
-										itemRefs.current.delete(currentActionIndex);
-									}
-								}}
-								role="option"
-								aria-selected={isSelected}
-								onClick={() => executeAction(item.action)}
-								onMouseEnter={() => setSelectedIndex(currentActionIndex)}
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									gap: '12px',
-									width: '100%',
-									padding: '10px 16px',
-									minHeight: `${MIN_TOUCH_TARGET}px`,
-									backgroundColor: isSelected ? `${colors.accent}15` : 'transparent',
-									border: 'none',
-									color: colors.textMain,
-									fontSize: '14px',
-									textAlign: 'left',
-									cursor: 'pointer',
-									transition: 'background-color 100ms ease',
-									WebkitTapHighlightColor: 'transparent',
-								}}
-								onTouchStart={(e) => {
-									e.currentTarget.style.backgroundColor = `${colors.accent}20`;
-								}}
-								onTouchEnd={(e) => {
-									e.currentTarget.style.backgroundColor = isSelected
-										? `${colors.accent}15`
-										: 'transparent';
-								}}
-							>
-								<span
-									style={{
-										color: colors.accent,
-										display: 'flex',
-										alignItems: 'center',
-										justifyContent: 'center',
-										width: '24px',
-										height: '24px',
-										flexShrink: 0,
-									}}
-								>
-									{item.action.icon}
-								</span>
-								<span style={{ flex: 1, minWidth: 0 }}>{item.action.label}</span>
-								{item.action.shortcut && (
-									<span
-										style={{
-											fontSize: '11px',
-											color: colors.textDim,
-											backgroundColor: `${colors.textDim}15`,
-											padding: '2px 6px',
-											borderRadius: '4px',
-											fontFamily: 'monospace',
-											flexShrink: 0,
-										}}
-									>
-										{item.action.shortcut}
-									</span>
-								)}
-							</button>
-						);
-					})}
-				</div>
-
-				{/* Footer hint */}
-				<div
-					style={{
-						padding: '8px 16px',
-						borderTop: `1px solid ${colors.border}`,
 						display: 'flex',
 						gap: '12px',
 						justifyContent: 'center',
-						flexShrink: 0,
+						width: '100%',
 					}}
 				>
 					<span style={{ fontSize: '11px', color: colors.textDim }}>
@@ -526,32 +292,205 @@ export function QuickActionsMenu({ isOpen, onClose, actions }: QuickActionsMenuP
 						close
 					</span>
 				</div>
+			}
+		>
+			{/* Search input */}
+			<div
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					gap: '10px',
+					backgroundColor: colors.bgMain,
+					borderRadius: '10px',
+					padding: '0 12px',
+					border: `1px solid ${colors.border}`,
+					marginBottom: '12px',
+				}}
+			>
+				{/* Search icon */}
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={colors.textDim}
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					style={{ flexShrink: 0 }}
+				>
+					<circle cx="11" cy="11" r="8" />
+					<line x1="21" y1="21" x2="16.65" y2="16.65" />
+				</svg>
+				<input
+					ref={searchRef}
+					type="text"
+					value={searchQuery}
+					onChange={(e) => setSearchQuery(e.target.value)}
+					placeholder="Search actions..."
+					aria-label="Search actions"
+					style={{
+						flex: 1,
+						backgroundColor: 'transparent',
+						border: 'none',
+						outline: 'none',
+						color: colors.textMain,
+						fontSize: '15px',
+						padding: '10px 0',
+						fontFamily: 'inherit',
+					}}
+				/>
+				{searchQuery && (
+					<button
+						onClick={() => setSearchQuery('')}
+						aria-label="Clear search"
+						style={{
+							background: 'none',
+							border: 'none',
+							color: colors.textDim,
+							cursor: 'pointer',
+							padding: '4px',
+							display: 'flex',
+							alignItems: 'center',
+						}}
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<line x1="18" y1="6" x2="6" y2="18" />
+							<line x1="6" y1="6" x2="18" y2="18" />
+						</svg>
+					</button>
+				)}
 			</div>
 
-			{/* CSS animations */}
-			<style>
-				{`
-          @keyframes quickActionsPopIn {
-            from {
-              opacity: 0;
-              transform: translateX(-50%) scale(0.95) translateY(-8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateX(-50%) scale(1) translateY(0);
-            }
-          }
-          @keyframes quickActionsFadeIn {
-            from {
-              opacity: 0;
-            }
-            to {
-              opacity: 1;
-            }
-          }
-        `}
-			</style>
-		</>
+			{/* Action list */}
+			<div
+				role="listbox"
+				aria-label="Actions"
+				style={{
+					display: 'flex',
+					flexDirection: 'column',
+				}}
+			>
+				{displayList.length === 0 && (
+					<div
+						style={{
+							padding: '24px 16px',
+							textAlign: 'center',
+							color: colors.textDim,
+							fontSize: '14px',
+						}}
+					>
+						No matching actions
+					</div>
+				)}
+
+				{displayList.map((item, i) => {
+					if (item.type === 'header') {
+						return (
+							<div
+								key={`header-${item.label}-${i}`}
+								style={{
+									padding: '10px 4px 4px',
+									fontSize: '11px',
+									fontWeight: 600,
+									textTransform: 'uppercase',
+									letterSpacing: '0.5px',
+									color: colors.textDim,
+								}}
+								aria-hidden="true"
+							>
+								{item.label}
+							</div>
+						);
+					}
+
+					actionIndex++;
+					const currentActionIndex = actionIndex;
+					const isSelected = currentActionIndex === selectedIndex;
+
+					return (
+						<button
+							key={item.action.id}
+							ref={(el) => {
+								if (el) {
+									itemRefs.current.set(currentActionIndex, el);
+								} else {
+									itemRefs.current.delete(currentActionIndex);
+								}
+							}}
+							role="option"
+							aria-selected={isSelected}
+							onClick={() => executeAction(item.action)}
+							onMouseEnter={() => setSelectedIndex(currentActionIndex)}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '12px',
+								width: '100%',
+								padding: '10px 8px',
+								minHeight: `${MIN_TOUCH_TARGET}px`,
+								backgroundColor: isSelected ? `${colors.accent}15` : 'transparent',
+								border: 'none',
+								borderRadius: '6px',
+								color: colors.textMain,
+								fontSize: '14px',
+								textAlign: 'left',
+								cursor: 'pointer',
+								transition: 'background-color 100ms ease',
+								WebkitTapHighlightColor: 'transparent',
+							}}
+							onTouchStart={(e) => {
+								e.currentTarget.style.backgroundColor = `${colors.accent}20`;
+							}}
+							onTouchEnd={(e) => {
+								e.currentTarget.style.backgroundColor = isSelected
+									? `${colors.accent}15`
+									: 'transparent';
+							}}
+						>
+							<span
+								style={{
+									color: colors.accent,
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									width: '24px',
+									height: '24px',
+									flexShrink: 0,
+								}}
+							>
+								{item.action.icon}
+							</span>
+							<span style={{ flex: 1, minWidth: 0 }}>{item.action.label}</span>
+							{item.action.shortcut && (
+								<span
+									style={{
+										fontSize: '11px',
+										color: colors.textDim,
+										backgroundColor: `${colors.textDim}15`,
+										padding: '2px 6px',
+										borderRadius: '4px',
+										fontFamily: 'monospace',
+										flexShrink: 0,
+									}}
+								>
+									{item.action.shortcut}
+								</span>
+							)}
+						</button>
+					);
+				})}
+			</div>
+		</ResponsiveModal>
 	);
 }
 
