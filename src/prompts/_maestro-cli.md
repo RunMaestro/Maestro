@@ -103,9 +103,43 @@ Send a message to another agent and receive a JSON response. Useful for inter-ag
 | `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                                                              |
 | `-r, --read-only`    | Run in read-only mode (agent cannot modify files)                                                                                                                                                                                     |
 | `-t, --tab`          | Open/focus the agent's session tab in Maestro                                                                                                                                                                                         |
-| `-l, --live`         | Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                                                                        |
+| `-l, --live`         | **Deprecated — use `dispatch` instead.** Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                               |
 | `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                                                        |
 | `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Gated by the `allowConcurrentSend` setting (off by default); errors out with code `FORCE_NOT_ALLOWED` if not enabled |
+
+### Dispatch a Prompt to a Desktop Tab
+
+Hand a prompt to an agent in the running Maestro desktop and get back the tab/session id so you can address the same tab on follow-up calls. This is the replacement for `send --live`: same desktop-handoff behavior, but no synchronous response and no need to own a persistent channel — pollers and pipelines (Cue, Maestro-Discord, etc.) re-target by tab id.
+
+```bash
+{{MAESTRO_CLI_PATH}} dispatch <agent-id> "Your message here" [--new-tab] [-s <tab-id>] [-f]
+```
+
+| Flag                 | Description                                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`          | Create a fresh AI tab in the target agent and dispatch the prompt into it. Mutually exclusive with `-s` and `-f` (a new tab is never busy)                                             |
+| `-s, --session <id>` | Target an existing tab by its tab id (returned from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                        |
+| `-f, --force`        | Bypass the busy-state guard when writing to a busy tab. Gated by `allowConcurrentSend` (off by default); errors out with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab` |
+
+Output (always JSON; `sessionId` and `tabId` are duplicates of the same value, kept for caller convenience):
+
+```json
+{ "success": true, "agentId": "a1b2c3d4-...", "sessionId": "tab-xyz", "tabId": "tab-xyz" }
+```
+
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop acks `--new-tab` without returning a tab id, leaving nothing to chain follow-up dispatches against. Requires the desktop app to be running.
+
+#### Messages that start with a dash
+
+Messages whose first character is a dash (em-dash `—`, en-dash `–`, double-dash `--`, minus `-`) collide with option parsing and will be rejected as unknown flags. Use the standard `--` end-of-options separator so the message is passed verbatim:
+
+```bash
+{{MAESTRO_CLI_PATH}} send <agent-id> -- "———revise the spec"
+{{MAESTRO_CLI_PATH}} send <agent-id> -s <session-id> -- "--re-run"
+{{MAESTRO_CLI_PATH}} dispatch <agent-id> -- "--force the rewrite"
+```
+
+Everything after `--` is treated as positional, so any flags (`-s`, `-r`, `-t`, `--new-tab`, `-f`) must come before the separator.
 
 ### Resource Listing and Inspection
 
@@ -162,12 +196,20 @@ Use these after filesystem changes so the user sees updates immediately:
 # Open a file in Maestro
 {{MAESTRO_CLI_PATH}} open-file <file-path> [--session <id>]
 
+# Open a URL as a browser tab (scheme-less inputs like `localhost:3000` are auto-prefixed with https://)
+{{MAESTRO_CLI_PATH}} open-browser <url> [-a, --agent <id>]
+
+# Open a fresh terminal tab (cwd must be inside the target agent's working directory)
+{{MAESTRO_CLI_PATH}} open-terminal [-a, --agent <id>] [--cwd <path>] [--shell <bin>] [--name <label>]
+
 # Refresh the file tree after multiple file changes
 {{MAESTRO_CLI_PATH}} refresh-files [--session <id>]
 
 # Refresh Auto Run documents after creating or modifying them
 {{MAESTRO_CLI_PATH}} refresh-auto-run [--session <id>]
 ```
+
+`open-browser` only accepts `http(s)` URLs. `open-terminal` defaults to `zsh`; pass `--shell` to override and `--name` to set the tab label.
 
 ### Notifications
 
@@ -245,6 +287,16 @@ Unified history and AI-generated synopses across all agents.
 {{MAESTRO_CLI_PATH}} director-notes history [-d, --days <n>] [-f, --format json|markdown|text] [--filter auto|user|cue] [-l, --limit <n>]
 {{MAESTRO_CLI_PATH}} director-notes synopsis [-d, --days <n>] [--json]
 ```
+
+### Gists
+
+Publish an agent's session transcript to a GitHub gist. Routes through the running desktop app (which holds the live transcript) and uses the user's authenticated `gh` CLI under the hood.
+
+```bash
+{{MAESTRO_CLI_PATH}} gist create <agent-id> [-d, --description <text>] [-p, --public]
+```
+
+Defaults to a private gist; pass `-p` for public. Output is JSON with `gistUrl` on success. Requires the desktop app to be running and `gh` to be authenticated. Error codes: `AGENT_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `GIST_CREATE_FAILED`.
 
 ### Prompts (Self-Reference)
 
