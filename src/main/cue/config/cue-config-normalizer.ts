@@ -354,6 +354,15 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 			typeof rawSettings?.queue_size === 'number'
 				? rawSettings.queue_size
 				: DEFAULT_CUE_SETTINGS.queue_size,
+		// Pin which agent owns this cue.yaml when multiple agents share the
+		// same projectRoot. Without this passthrough, the validator and
+		// contract both accept `owner_agent_id` but `computeOwnershipWarning`
+		// always sees `undefined` and silently falls through to the "first
+		// agent wins" branch — the exact symptom reported in #912.
+		owner_agent_id:
+			typeof rawSettings?.owner_agent_id === 'string' && rawSettings.owner_agent_id.trim() !== ''
+				? rawSettings.owner_agent_id.trim()
+				: undefined,
 	};
 }
 
