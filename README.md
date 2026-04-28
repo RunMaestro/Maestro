@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/pedramamini-maestro-badge.png)](https://mseep.ai/app/pedramamini-maestro)
+
 # Maestro
 
 [![Made with Maestro](docs/assets/made-with-maestro.svg)](https://github.com/RunMaestro/Maestro)
