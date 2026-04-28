@@ -13,6 +13,36 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
+## v0.16.x - Maestro Cue
+
+**Latest: v0.16.16** | Released April 28, 2026
+
+# Major 0.16.x Additions
+
+🪄 **Maestro Cue** is a new trigger-based cross-agent orchestration capability. Heartbeats, GitHub issues/PRs, file system monitors, and other data sources can bring your agents to life and pass work between one another.
+
+💻 **Major Shell Upgrade** — Full-featured xterm.js terminal tabs alongside your existing AI and file preview tabs. Open multiple terminals and rename them freely.
+
+🧑‍✈️ GitHub Copilot-CLI — Copilot-CLI joins Maestro as a first-class agent with end-to-end integration for both local and remote (over SSH).
+
+🌐 **Web UX Parity** — The web/mobile interface now supports real PTY terminals, swipeable panels, notification dropdowns, and dozens of desktop-equivalent features. Full touch-friendly experience on tablets and phones.
+
+🔗 **SSH Shared History** — History synchronization across multiple Maestro instances working on the same project via SSH. Each host writes per-hostname JSONL files to `.maestro/history/` on the remote, so all participants see each other's work.
+
+🌍 **Browser Tabs** — Open web pages directly inside Maestro as first-class tabs alongside AI, terminal, and file preview tabs. Full address bar, navigation controls, session persistence across restarts, and bulk close support. Great for referencing docs, dashboards, or web UIs without leaving the workspace.
+
+## Changes in v0.16.16-RC
+
+MAJOR: Bugfix in Tab Renaming
+
+- XTerminal now auto-copies settled text selections to your clipboard so highlight-to-copy "just works" 📋
+- Create Worktree modal lets you type partial branch suffixes — trailing `/`, `.`, and `-` are preserved while editing ✍️
+- Branch name sanitization only trims truly invalid ref endings, so valid trailing hyphens stick around 🏷️
+- Rename Tab "Auto" tooltip now formats meta keys correctly across platforms via renderer-safe shortcut formatting ⌨️
+- Added test coverage for the XTerminal auto-copy flow, branch sanitizer rules, and tooltip key formatting 🧪
+
+---
+
 ## v0.15.x - Maestro Symphony
 
 **Latest: v0.15.3** | Released April 5, 2026
