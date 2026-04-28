@@ -236,6 +236,8 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const selectionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const lastAutoCopiedSelectionRef = useRef<string>('');
 	const lastSearchQueryRef = useRef<string>('');
 	// Deferred WebGL load: resolved when the async import completes but the container was hidden.
 	// Applied on the next visible resize or explicit refresh() call.
@@ -559,6 +561,25 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		};
 		termElement.addEventListener('contextmenu', handleContextMenu);
 
+		const selectionChangeDisposable = term.onSelectionChange(() => {
+			if (selectionCopyTimerRef.current) {
+				clearTimeout(selectionCopyTimerRef.current);
+			}
+			selectionCopyTimerRef.current = setTimeout(() => {
+				const selection = term.getSelection();
+				if (!selection) {
+					lastAutoCopiedSelectionRef.current = '';
+					return;
+				}
+				if (selection === lastAutoCopiedSelectionRef.current) return;
+				void safeClipboardWrite(selection).then((copied) => {
+					if (copied) {
+						lastAutoCopiedSelectionRef.current = selection;
+					}
+				});
+			}, 120);
+		});
+
 		// Load WebGL addon after open() so xterm's internal link layer is initialised.
 		import('@xterm/addon-webgl')
 			.then(({ WebglAddon }) => {
@@ -587,9 +608,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 
 		return () => {
 			termElement.removeEventListener('contextmenu', handleContextMenu);
+			selectionChangeDisposable.dispose();
 			linkProviderDisposable.dispose();
 			resizeObserver.disconnect();
 			if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+			if (selectionCopyTimerRef.current) clearTimeout(selectionCopyTimerRef.current);
 			webglAddonRef.current?.dispose();
 			webglAddonRef.current = null;
 			term.dispose();

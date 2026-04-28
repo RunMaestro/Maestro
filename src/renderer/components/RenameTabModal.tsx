@@ -3,7 +3,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
-import { isMacOS } from '../../shared/platformDetection';
+import { formatMetaKey } from '../utils/shortcutFormatter';
 
 interface RenameTabModalProps {
 	theme: Theme;
@@ -56,7 +56,7 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 						<button
 							type="button"
 							onClick={onAutoName}
-							title={`Auto-rename (${isMacOS() ? '⌘' : 'Ctrl'}+Shift+Enter)`}
+							title={`Auto-rename (${formatMetaKey()}+Shift+Enter)`}
 							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1 mr-auto"
 							style={{
 								borderColor: theme.colors.border,

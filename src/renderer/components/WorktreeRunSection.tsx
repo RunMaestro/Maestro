@@ -420,7 +420,11 @@ export function WorktreeRunSection({
 									<input
 										type="text"
 										value={newBranchName}
-										onChange={(e) => setNewBranchName(sanitizeGitBranchName(e.target.value))}
+										onChange={(e) =>
+											setNewBranchName(
+												sanitizeGitBranchName(e.target.value, { allowIncomplete: true })
+											)
+										}
 										className="w-full rounded-lg border px-3 py-1.5 text-sm outline-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,

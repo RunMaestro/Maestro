@@ -341,8 +341,13 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
  * Sanitize a user-entered string into a valid git branch name.
  *
  * Applies the rules `git check-ref-format` enforces: spaces and other illegal
- * characters become hyphens; leading/trailing junk is trimmed. Returns an empty
- * string when nothing usable remains (caller should treat that as invalid).
+ * characters become hyphens; leading/trailing invalid ref suffixes are trimmed.
+ * Returns an empty string when nothing usable remains (caller should treat that
+ * as invalid).
+ *
+ * `allowIncomplete` is for controlled inputs. It keeps incomplete trailing
+ * characters like `/` or `.` while the user is still typing so branch names can
+ * be entered left-to-right without cursor backtracking.
  *
  * Used by both the WorktreeRunSection (Auto Run "Create New Worktree") and the
  * CreateWorktreeModal so the same input — e.g. "Cue Dashboard" — produces the
@@ -352,11 +357,22 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
 // Matches ASCII control characters (U+0000–U+001F, U+007F) which git rejects in refs.
 const GIT_REF_CONTROL_CHARS_RE = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
 
-export function sanitizeGitBranchName(input: string): string {
+export interface SanitizeGitBranchNameOptions {
+	allowIncomplete?: boolean;
+}
+
+export function sanitizeGitBranchName(
+	input: string,
+	options: SanitizeGitBranchNameOptions = {}
+): string {
 	if (!input) return '';
+	const { allowIncomplete = false } = options;
 	let s = input.normalize('NFKC');
 	// Strip ASCII control chars first so they can't survive later substitutions.
 	s = s.replace(GIT_REF_CONTROL_CHARS_RE, '');
+	if (!allowIncomplete) {
+		s = s.trim();
+	}
 	// Replace any whitespace run with a single hyphen
 	s = s.replace(/\s+/g, '-');
 	// Replace characters git forbids in ref names
@@ -370,9 +386,11 @@ export function sanitizeGitBranchName(input: string): string {
 	s = s.replace(/-+/g, '-');
 	// Refs cannot begin with `-`, `/`, or `.`
 	s = s.replace(/^[-/.]+/, '');
-	// Refs cannot end with `/`, `.`, or `.lock`
-	s = s.replace(/\.lock$/i, '');
-	s = s.replace(/[-/.]+$/, '');
+	if (!allowIncomplete) {
+		// Refs cannot end with `/`, `.`, or `.lock`. A trailing `-` is valid.
+		s = s.replace(/\.lock$/i, '');
+		s = s.replace(/[/.]+$/, '');
+	}
 	return s;
 }
 

@@ -195,7 +195,9 @@ export function CreateWorktreeModal({
 							ref={inputRef}
 							type="text"
 							value={branchName}
-							onChange={(e) => setBranchName(sanitizeGitBranchName(e.target.value))}
+							onChange={(e) =>
+								setBranchName(sanitizeGitBranchName(e.target.value, { allowIncomplete: true }))
+							}
 							onKeyDown={handleKeyDown}
 							placeholder="feature-xyz"
 							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"

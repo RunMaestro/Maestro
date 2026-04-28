@@ -417,6 +417,17 @@ describe('gitUtils', () => {
 			expect(sanitizeGitBranchName('feat.lock')).toBe('feat');
 		});
 
+		it('keeps a trailing hyphen because git branch names allow it', () => {
+			expect(sanitizeGitBranchName('cue-dashboard-')).toBe('cue-dashboard-');
+		});
+
+		it('can preserve incomplete suffixes while editing a branch name', () => {
+			expect(sanitizeGitBranchName('cue-', { allowIncomplete: true })).toBe('cue-');
+			expect(sanitizeGitBranchName('feature/', { allowIncomplete: true })).toBe('feature/');
+			expect(sanitizeGitBranchName('release/v1.', { allowIncomplete: true })).toBe('release/v1.');
+			expect(sanitizeGitBranchName('feat.lock', { allowIncomplete: true })).toBe('feat.lock');
+		});
+
 		it('returns an empty string for input that has nothing usable', () => {
 			expect(sanitizeGitBranchName('')).toBe('');
 			expect(sanitizeGitBranchName('   ')).toBe('');
