@@ -997,7 +997,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							))}
 						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
 						<span className="mr-2">{node.emoji}</span>
-						<span className="font-medium flex-1 truncate">{node.label}</span>
+						<span className="font-medium truncate">{node.label}</span>
 						{hasChildren && (
 							<span className="text-xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
 								{node.children!.length}{' '}
@@ -1069,7 +1069,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							className="w-4 h-4 flex-shrink-0"
 							style={{ color: activeCount > 0 ? theme.colors.success : theme.colors.textDim }}
 						/>
-						<span className="flex-1 truncate">{node.label}</span>
+						<span className="truncate">{node.label}</span>
 						<span
 							className="text-xs flex items-center gap-2 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
@@ -1225,7 +1225,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								)}
 							</div>
 							{/* Action cluster: type badges + jump/kill */}
-							<div className="flex items-center gap-2 ml-auto flex-shrink-0">
+							<div className="flex items-center gap-2 flex-shrink-0">
 								{node.isAutoRun && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -1406,7 +1406,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							))}
 						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
 						<span className="mr-2">{node.emoji}</span>
-						<span className="flex-1 truncate">{node.label}</span>
+						<span className="truncate">{node.label}</span>
 						<span
 							className="text-xs flex items-center gap-2 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
@@ -1950,7 +1950,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 						{/* Footer */}
 						<div
-							className="px-6 py-3 border-t flex items-center justify-between text-xs"
+							className="px-6 py-3 border-t flex items-center gap-4 text-xs"
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textDim,
