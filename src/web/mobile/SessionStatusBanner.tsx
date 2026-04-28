@@ -281,7 +281,11 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 
 	const inputTokens = usageStats.inputTokens ?? 0;
 	const outputTokens = usageStats.outputTokens ?? 0;
-	const totalTokens = inputTokens + outputTokens;
+	// Reasoning tokens are reported separately by certain agents (Codex o3 /
+	// o4-mini). Desktop folds them into the displayed total; mirror that here
+	// so mobile parity matches.
+	const reasoningTokens = usageStats.reasoningTokens ?? 0;
+	const totalTokens = inputTokens + outputTokens + reasoningTokens;
 
 	// Don't show if no tokens yet
 	if (totalTokens === 0) {
@@ -299,6 +303,15 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 		return count.toString();
 	};
 
+	const tooltipParts = [
+		`Input: ${inputTokens.toLocaleString('en-US')}`,
+		`Output: ${outputTokens.toLocaleString('en-US')}`,
+	];
+	if (reasoningTokens > 0) {
+		tooltipParts.push(`Reasoning: ${reasoningTokens.toLocaleString('en-US')}`);
+	}
+	tooltipParts.push(`Total: ${totalTokens.toLocaleString('en-US')} tokens`);
+
 	return (
 		<span
 			style={{
@@ -314,7 +327,7 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 				lineHeight: 1,
 				flexShrink: 0,
 			}}
-			title={`Input: ${inputTokens.toLocaleString('en-US')} | Output: ${outputTokens.toLocaleString('en-US')} | Total: ${totalTokens.toLocaleString('en-US')} tokens`}
+			title={tooltipParts.join(' | ')}
 			aria-label={`${totalTokens.toLocaleString('en-US')} tokens used`}
 		>
 			<span style={{ fontSize: '10px' }}>📊</span>
