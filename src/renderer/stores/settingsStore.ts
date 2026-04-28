@@ -319,6 +319,7 @@ export interface SettingsStoreState {
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
+	groupChatsExpanded: boolean;
 	tourCompleted: boolean;
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
@@ -417,6 +418,7 @@ export interface SettingsStoreActions {
 	setTabShortcuts: (value: Record<string, Shortcut>) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
+	setGroupChatsExpanded: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
@@ -587,6 +589,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		groupChatsExpanded: true,
 		tourCompleted: false,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
@@ -871,6 +874,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUngroupedCollapsed: (value) => {
 			set({ ungroupedCollapsed: value });
 			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setGroupChatsExpanded: (value) => {
+			set({ groupChatsExpanded: value });
+			window.maestro.settings.set('groupChatsExpanded', value);
 		},
 
 		setTourCompleted: (value) => {
@@ -2015,6 +2023,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['ungroupedCollapsed'] !== undefined)
 			patch.ungroupedCollapsed = allSettings['ungroupedCollapsed'] as boolean;
 
+		if (allSettings['groupChatsExpanded'] !== undefined)
+			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
+
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
 
@@ -2309,6 +2320,7 @@ export function getSettingsActions() {
 		setUsageStats: state.setUsageStats,
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setGroupChatsExpanded: state.setGroupChatsExpanded,
 		setTourCompleted: state.setTourCompleted,
 		setFirstAutoRunCompleted: state.setFirstAutoRunCompleted,
 		setOnboardingStats: state.setOnboardingStats,

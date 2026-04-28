@@ -183,6 +183,8 @@ export interface UseSettingsReturn {
 	// UI collapse states (persistent)
 	ungroupedCollapsed: boolean;
 	setUngroupedCollapsed: (value: boolean) => void;
+	groupChatsExpanded: boolean;
+	setGroupChatsExpanded: (value: boolean) => void;
 
 	// Onboarding settings
 	tourCompleted: boolean;

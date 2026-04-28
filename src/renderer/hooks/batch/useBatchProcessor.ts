@@ -276,6 +276,11 @@ export function useBatchProcessor({
 				sessionName: string;
 				projectPath: string;
 				getCompletedTasks: () => number;
+				getTotalTasks: () => number;
+				getInputTokens: () => number;
+				getOutputTokens: () => number;
+				getTotalCost: () => number;
+				getDocumentsProcessed: () => number;
 			}
 		>
 	>({});
@@ -818,6 +823,11 @@ export function useBatchProcessor({
 				sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
 				projectPath: session.cwd,
 				getCompletedTasks: () => totalCompletedTasks,
+				getTotalTasks: () => initialTotalTasks,
+				getInputTokens: () => totalInputTokens,
+				getOutputTokens: () => totalOutputTokens,
+				getTotalCost: () => totalCost,
+				getDocumentsProcessed: () => documents.length,
 			};
 
 			// Per-loop tracking for loop summary
@@ -1861,8 +1871,11 @@ export function useBatchProcessor({
 			// Broadcast state change to web clients
 			broadcastAutoRunState(sessionId, null);
 
-			// Call completion callback if provided (only if still mounted to avoid warnings)
-			if (isMountedRef.current && onComplete) {
+			// Call completion callback if provided (only if still mounted to avoid warnings).
+			// Skip when alreadyFlushed: killBatchRun owns the onComplete call in that case
+			// (it captured the elapsed time before stopTracking zeroed it). Invoking here
+			// would double-fire the toast and submit elapsedTimeMs:0 to the leaderboard.
+			if (!alreadyFlushed && isMountedRef.current && onComplete) {
 				onComplete({
 					sessionId,
 					sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
@@ -1996,6 +2009,25 @@ export function useBatchProcessor({
 						historyError
 					);
 				}
+
+				// Fire onComplete here so the kill path records local stats and submits to
+				// the leaderboard. The natural-loop cleanup is unreliable for this: it calls
+				// timeTracking.stopTracking before reading getElapsedTime, so it would invoke
+				// onComplete with elapsedTimeMs:0, which the handler gates out.
+				if (isMountedRef.current && onComplete) {
+					onComplete({
+						sessionId,
+						sessionName: flushState.sessionName,
+						completedTasks,
+						totalTasks: flushState.getTotalTasks(),
+						wasStopped: true,
+						elapsedTimeMs: elapsedMs,
+						inputTokens: flushState.getInputTokens(),
+						outputTokens: flushState.getOutputTokens(),
+						totalCostUsd: flushState.getTotalCost(),
+						documentsProcessed: flushState.getDocumentsProcessed(),
+					});
+				}
 			}
 
 			// 1. Kill all active batch processes for this session and wait for termination before cleanup.
@@ -2058,7 +2090,7 @@ export function useBatchProcessor({
 			// 8. Allow system to sleep
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 		},
-		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking, onAddHistoryEntry]
+		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking, onAddHistoryEntry, onComplete]
 	);
 
 	/**

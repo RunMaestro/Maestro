@@ -11,6 +11,7 @@ import {
 	ChevronRight,
 	RotateCcw,
 	FlaskConical,
+	Clock,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
@@ -21,6 +22,9 @@ import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
 import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
 import { openUrl } from '../utils/openUrl';
+import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
+import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
+import { useRestartPendingStore } from '../stores/restartPendingStore';
 
 interface Release {
 	tag_name: string;
@@ -57,6 +61,14 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	// Auto-updater state
 	const [downloadStatus, setDownloadStatus] = useState<UpdateStatus>({ status: 'idle' });
 	const [downloadError, setDownloadError] = useState<string | null>(null);
+	const [showBusyWarning, setShowBusyWarning] = useState(false);
+
+	// Idle / restart-pending state
+	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
+	const anyBatchRunning = useBatchStore(selectHasAnyActiveBatch);
+	const isAppActive = anySessionBusy || anyBatchRunning;
+	const restartPending = useRestartPendingStore((s) => s.pending);
+	const setRestartPending = useRestartPendingStore((s) => s.setPending);
 	const releaseNotesMarkdownComponents = useMemo(
 		() => createReleaseNotesMarkdownComponents(theme),
 		[theme]
@@ -149,7 +161,26 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	};
 
 	const handleInstallUpdate = () => {
+		if (isAppActive) {
+			setShowBusyWarning(true);
+			return;
+		}
 		window.maestro.updates.install();
+	};
+
+	const handleRestartNow = () => {
+		setShowBusyWarning(false);
+		setRestartPending(false);
+		window.maestro.updates.install();
+	};
+
+	const handleRestartWhenIdle = () => {
+		setShowBusyWarning(false);
+		setRestartPending(true);
+	};
+
+	const handleCancelPendingRestart = () => {
+		setRestartPending(false);
 	};
 
 	const isDownloading = downloadStatus.status === 'downloading';
@@ -406,7 +437,119 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 						{/* Action Buttons */}
 						<div className="space-y-2">
-							{isDownloaded ? (
+							{isDownloaded && restartPending ? (
+								<div
+									className="p-3 rounded-lg border space-y-2"
+									style={{
+										backgroundColor: `${theme.colors.warning}15`,
+										borderColor: theme.colors.warning,
+									}}
+								>
+									<div className="flex items-start gap-2">
+										<Clock
+											className="w-4 h-4 mt-0.5 shrink-0"
+											style={{ color: theme.colors.warning }}
+										/>
+										<div className="flex-1">
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Restart pending
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												{isAppActive
+													? 'Maestro will restart automatically once all agents and Auto Runs finish.'
+													: 'Restarting…'}
+											</div>
+										</div>
+									</div>
+									<div className="flex gap-2">
+										<button
+											onClick={handleCancelPendingRestart}
+											className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+											style={{
+												borderColor: theme.colors.border,
+												borderWidth: 1,
+												color: theme.colors.textMain,
+											}}
+										>
+											Cancel
+										</button>
+										<button
+											onClick={handleRestartNow}
+											className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+											style={{
+												backgroundColor: theme.colors.warning,
+												color: theme.colors.bgMain,
+											}}
+										>
+											Restart Now Anyway
+										</button>
+									</div>
+								</div>
+							) : isDownloaded && showBusyWarning ? (
+								<div
+									className="p-3 rounded-lg border space-y-3"
+									style={{
+										backgroundColor: `${theme.colors.warning}15`,
+										borderColor: theme.colors.warning,
+									}}
+								>
+									<div className="flex items-start gap-2">
+										<AlertCircle
+											className="w-4 h-4 mt-0.5 shrink-0"
+											style={{ color: theme.colors.warning }}
+										/>
+										<div className="flex-1">
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Maestro is busy
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												{anySessionBusy && anyBatchRunning
+													? 'Agents are working and Auto Runs are in progress.'
+													: anySessionBusy
+														? 'One or more agents are currently working.'
+														: 'One or more Auto Runs are in progress.'}{' '}
+												Restarting now will interrupt them.
+											</div>
+										</div>
+									</div>
+									<div className="flex flex-col gap-2">
+										<button
+											onClick={handleRestartWhenIdle}
+											className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
+											style={{
+												backgroundColor: theme.colors.accent,
+												color: theme.colors.bgMain,
+											}}
+										>
+											<Clock className="w-4 h-4" />
+											Restart App When Idle
+										</button>
+										<div className="flex gap-2">
+											<button
+												onClick={() => setShowBusyWarning(false)}
+												className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+												style={{
+													borderColor: theme.colors.border,
+													borderWidth: 1,
+													color: theme.colors.textMain,
+												}}
+											>
+												Cancel
+											</button>
+											<button
+												onClick={handleRestartNow}
+												className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+												style={{
+													backgroundColor: theme.colors.warning,
+													color: theme.colors.bgMain,
+												}}
+											>
+												Restart Now Anyway
+											</button>
+										</div>
+									</div>
+								</div>
+							) : isDownloaded ? (
 								<button
 									onClick={handleInstallUpdate}
 									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-bold text-sm transition-colors hover:opacity-90"

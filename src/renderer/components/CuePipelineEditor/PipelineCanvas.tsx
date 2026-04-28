@@ -256,8 +256,10 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				maxZoom={2}
 				// All Pipelines view is read-only. These ReactFlow props are the
 				// first line of defense — the parent also guards each callback.
-				nodesDraggable={!isReadOnly}
-				nodesConnectable={!isReadOnly}
+				// Hand mode also disables node/group dragging so left-drag on a
+				// node falls through to the canvas pan instead of moving it.
+				nodesDraggable={!isReadOnly && interactionMode === 'pointer'}
+				nodesConnectable={!isReadOnly && interactionMode === 'pointer'}
 				elementsSelectable={!isReadOnly}
 				// Hand mode: left-drag pans (ReactFlow default). Pointer mode:
 				// left-drag box-selects, middle/right-drag still pans as an

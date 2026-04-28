@@ -1347,6 +1347,75 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
+
+		it('should fire onComplete with non-zero elapsed time on kill so the leaderboard receives it', async () => {
+			// Regression: killBatchRun used to call timeTracking.stopTracking() before the
+			// loop's natural cleanup ran. The natural cleanup then read getElapsedTime() as 0
+			// and invoked onComplete with elapsedTimeMs:0. The handler in useBatchHandlers
+			// gates leaderboard submission on `elapsedTimeMs > 0`, so kill events were silently
+			// dropped from the leaderboard tally. The fix moves the onComplete call into
+			// killBatchRun itself (where the elapsed time is still readable).
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() => {
+				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
+			});
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalled();
+			});
+
+			// Let the tracker accumulate a measurable chunk of elapsed time
+			await new Promise((r) => setTimeout(r, 25));
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(mockOnComplete).toHaveBeenCalled();
+			const completeArg = mockOnComplete.mock.calls[0][0];
+			expect(completeArg.wasStopped).toBe(true);
+			expect(completeArg.elapsedTimeMs).toBeGreaterThan(0);
+			expect(completeArg.sessionId).toBe('test-session-id');
+
+			// Let the held processTask resolve so the loop's natural cleanup can run.
+			resolveAgent!({ success: true, agentSessionId: 'test-session' });
+			await new Promise((r) => setTimeout(r, 25));
+
+			// Crucially, the natural cleanup must NOT fire a second onComplete with 0ms
+			// (which would otherwise be silently dropped by the leaderboard gate but is still
+			// a state-leak symptom that we want to lock down).
+			expect(mockOnComplete).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('worktree handling', () => {

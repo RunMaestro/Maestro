@@ -122,7 +122,7 @@ function SessionListInner(props: SessionListProps) {
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
-	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
+	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
 	const persistentWebLink = useSettingsStore((s) => s.persistentWebLink);
@@ -195,7 +195,7 @@ function SessionListInner(props: SessionListProps) {
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
 	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
 	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
-	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
+	const setGroupChatsExpanded = useSettingsStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
 	const setActiveSessionId = useCallback(
@@ -1310,6 +1310,7 @@ function SessionListInner(props: SessionListProps) {
 					getFileCount={getFileCount}
 					setActiveSessionId={setActiveSessionId}
 					handleContextMenu={handleContextMenu}
+					showUnreadAgentsOnly={showUnreadAgentsOnly}
 				/>
 			)}
 

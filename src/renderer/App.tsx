@@ -99,6 +99,8 @@ import {
 	useTourActions,
 	// Idle notification (fires command when all agents/batches finish)
 	useIdleNotification,
+	// Deferred update-restart (installs downloaded update on idle transition)
+	useRestartWhenIdle,
 	// Queue handlers (queue browser UI operations)
 	useQueueHandlers,
 	// Queue processing (execution queue processing + startup recovery)
@@ -1771,6 +1773,9 @@ function MaestroConsoleInner() {
 
 	// Idle notification — fires configured command when all agents/batches finish
 	useIdleNotification();
+
+	// Restart-when-idle — installs a downloaded update once the app is idle
+	useRestartWhenIdle();
 
 	// Queue processing (execution, startup recovery) — extracted to useQueueProcessing hook
 	const { processQueuedItem } = useQueueProcessing({

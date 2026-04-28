@@ -14,6 +14,7 @@ interface SkinnySidebarProps {
 	getFileCount: (sessionId: string) => number;
 	setActiveSessionId: (id: string) => void;
 	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
+	showUnreadAgentsOnly: boolean;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
@@ -27,10 +28,18 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	getFileCount,
 	setActiveSessionId,
 	handleContextMenu,
+	showUnreadAgentsOnly,
 }: SkinnySidebarProps) {
+	const visibleSessions = showUnreadAgentsOnly
+		? sortedSessions.filter(
+				(s) =>
+					s.id === activeSessionId || s.state === 'busy' || s.aiTabs?.some((tab) => tab.hasUnread)
+			)
+		: sortedSessions;
+
 	return (
 		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
-			{sortedSessions.map((session) => {
+			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
 				const effectiveStatusColor = isInBatch

@@ -242,7 +242,6 @@ describe('SessionList', () => {
 			draggingSessionId: null,
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
-			groupChatsExpanded: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
@@ -253,6 +252,7 @@ describe('SessionList', () => {
 			shortcuts: defaultShortcuts,
 			leftSidebarWidth: 300,
 			ungroupedCollapsed: false,
+			groupChatsExpanded: false,
 			autoRunStats: { ...DEFAULT_AUTO_RUN_STATS },
 		});
 		useBatchStore.setState({ batchRunStates: {} });

@@ -204,12 +204,16 @@ export function GroupChatList({
 		chatId: string;
 	} | null>(null);
 
-	// Track previous count to detect when chats are added
-	const prevCountRef = useRef(groupChats.length);
+	// Track previous count to detect when chats are added.
+	// Initialized to -1 so the first observed length (including async hydration
+	// from disk) is treated as the baseline rather than as a user-initiated add
+	// — otherwise the persisted collapsed state gets clobbered on every restart
+	// once group chats finish loading.
+	const prevCountRef = useRef(-1);
 
 	// Auto-expand when a new chat is added
 	useEffect(() => {
-		if (groupChats.length > prevCountRef.current) {
+		if (prevCountRef.current >= 0 && groupChats.length > prevCountRef.current) {
 			// A chat was added, expand the list
 			setIsExpanded(true);
 		}

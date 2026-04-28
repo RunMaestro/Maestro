@@ -113,7 +113,6 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 | `activeFocus`              | `FocusArea`      | `'main'`  | Current keyboard focus area   |
 | `activeRightTab`           | `RightPanelTab`  | `'files'` | Active tab in right panel     |
 | `bookmarksCollapsed`       | `boolean`        | `false`   | Bookmarks section collapsed   |
-| `groupChatsExpanded`       | `boolean`        | `true`    | Group chats section expanded  |
 | `showUnreadOnly`           | `boolean`        | `false`   | Filter session list to unread |
 | `flashNotification`        | `string \| null` | `null`    | Error flash message           |
 | `successFlashNotification` | `string \| null` | `null`    | Success flash message         |

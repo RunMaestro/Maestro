@@ -636,6 +636,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'onboarding',
 	},
+	groupChatsExpanded: {
+		description: 'Whether the "Group Chats" section in the left bar is expanded.',
+		type: 'boolean',
+		default: true,
+		category: 'onboarding',
+	},
 
 	// --- Integrations ---
 	wakatimeEnabled: {
