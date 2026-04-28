@@ -1,12 +1,15 @@
 /**
- * Playwright configuration for Electron E2E testing
+ * Playwright configuration for Maestro E2E testing
  *
- * This configuration is designed to test the Maestro Electron application.
- * E2E tests launch the actual packaged/built application and interact with
- * the UI through Playwright's browser automation.
+ * Two projects:
+ * - `electron` — launches the packaged Electron app via test fixtures
+ * - `web` — drives the standalone web/mobile interface in Chromium against
+ *   the Vite dev server (port 5174). Used for desktop↔web parity verification.
  */
 import { defineConfig, devices } from '@playwright/test';
 import path from 'path';
+
+const WEB_DEV_PORT = 5174;
 
 /**
  * See https://playwright.dev/docs/test-configuration
@@ -53,13 +56,26 @@ export default defineConfig({
 		actionTimeout: 10000,
 	},
 
-	// Configure projects for major browsers
+	// Configure projects
 	projects: [
 		{
 			name: 'electron',
 			testDir: './e2e',
+			testIgnore: '**/web/**',
 			use: {
 				// Electron-specific settings will be configured in test fixtures
+			},
+		},
+		{
+			// Drives the Vite dev server in Chromium with a mobile viewport.
+			// We use Pixel 5 (Chromium) rather than iPhone 13 (WebKit) so this
+			// project runs on the same browser already installed for other Playwright
+			// flows; the dimensions are still phone-sized for parity verification.
+			name: 'web',
+			testDir: './e2e/web',
+			use: {
+				...devices['Pixel 5'],
+				baseURL: `http://localhost:${WEB_DEV_PORT}`,
 			},
 		},
 	],
@@ -75,7 +91,18 @@ export default defineConfig({
 	// Output directory for test artifacts
 	outputDir: 'e2e-results/',
 
-	// Run local dev server before starting the tests
-	// For Electron, we build and launch the app in the test fixtures
-	// webServer: undefined,
+	// Local servers Playwright spins up before tests run.
+	// Electron tests build and launch the app inside their fixtures, so they
+	// don't need a webServer entry. The web project drives the Vite dev server.
+	webServer:
+		process.env.PLAYWRIGHT_PROJECT === 'electron'
+			? undefined
+			: {
+					command: `npm run dev:web`,
+					url: `http://localhost:${WEB_DEV_PORT}`,
+					timeout: 60_000,
+					reuseExistingServer: !process.env.CI,
+					stdout: 'ignore',
+					stderr: 'pipe',
+				},
 });
