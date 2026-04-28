@@ -328,6 +328,51 @@ describe('session show command', () => {
 		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
+	it.each([['5abc'], ['1.9'], ['5e2'], ['  '], ['']])(
+		'rejects partially-numeric --tail %p with INVALID_OPTION (no silent truncation)',
+		async (raw) => {
+			// `Number.parseInt('5abc', 10) === 5` and `parseInt('1.9', 10) === 1`
+			// silently accept these as valid tails — the strict regex precheck
+			// is the only thing keeping a typo from quietly capping history at
+			// the wrong number.
+			await sessionShow('tab-1', { tail: raw });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTION');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+	);
+
+	it('forwards --tail 0 as numeric 0 (handler enforces empty-history semantics)', async () => {
+		// `--tail 0` is a legitimate ask ("give me nothing yet, just confirm
+		// the tab exists"). The CLI must propagate the literal zero — the
+		// desktop side has its own slice-bug guard for the historical
+		// `slice(-0)` foot-gun. Asserting the wire value here keeps the two
+		// halves of the contract pinned down independently.
+		const mockSendCommand = vi.fn().mockResolvedValue({
+			type: 'session_history_result',
+			success: true,
+			tabId: 'tab-1',
+			sessionId: 'tab-1',
+			agentId: 'agent-a',
+			agentSessionId: null,
+			messages: [],
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = { sendCommand: mockSendCommand };
+			return action(mockClient as never);
+		});
+
+		await sessionShow('tab-1', { tail: '0' });
+
+		expect(mockSendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'get_session_history', tabId: 'tab-1', tail: 0 }),
+			'session_history_result'
+		);
+	});
+
 	it('surfaces TAB_NOT_FOUND from the desktop response', async () => {
 		const mockSendCommand = vi.fn().mockResolvedValue({
 			type: 'session_history_result',

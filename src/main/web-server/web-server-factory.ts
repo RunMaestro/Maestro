@@ -225,7 +225,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					logs = logs.filter((l) => typeof l.timestamp === 'number' && l.timestamp > cutoff);
 				}
 				if (options?.tail !== undefined && options.tail >= 0) {
-					logs = logs.slice(-options.tail);
+					// `slice(-0)` is identical to `slice(0)` (because `-0 === 0`),
+					// which would silently return the full transcript when the
+					// caller asked for zero messages. Compute the start index
+					// explicitly so `tail: 0` yields `[]`.
+					logs = logs.slice(Math.max(logs.length - options.tail, 0));
 				}
 				const messages = logs.map((l) => {
 					const source = typeof l.source === 'string' ? l.source : 'unknown';

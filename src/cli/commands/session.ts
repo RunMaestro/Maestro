@@ -20,7 +20,6 @@ export interface SessionListOptions {
 export interface SessionShowOptions {
 	since?: string;
 	tail?: string;
-	json?: boolean;
 }
 
 interface DesktopSessionEntry {
@@ -173,8 +172,12 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 
 	let tail: number | undefined;
 	if (options.tail !== undefined) {
-		const parsed = Number.parseInt(options.tail, 10);
-		if (!Number.isFinite(parsed) || parsed < 0) {
+		// Strict regex up front: `Number.parseInt('5abc', 10)` is `5` and
+		// `parseInt('1.9', 10)` is `1`, so a permissive parse silently accepts
+		// malformed flags and quietly truncates. Reject anything that isn't a
+		// run of digits so the caller learns about the typo immediately.
+		const trimmedTail = options.tail.trim();
+		if (!/^\d+$/.test(trimmedTail)) {
 			emitErrorJson(
 				`Invalid --tail value: ${options.tail} (expected non-negative integer)`,
 				'INVALID_OPTION'
@@ -182,7 +185,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			process.exit(1);
 			return;
 		}
-		tail = parsed;
+		tail = Number(trimmedTail);
 	}
 
 	try {
