@@ -250,6 +250,7 @@ export function useMobileSessionManagement(
 
 	// Track previous session states for detecting busy -> idle transitions
 	const previousSessionStatesRef = useRef<Map<string, string>>(new Map());
+	const toolLogIdCounterRef = useRef(0);
 
 	// Ref to track activeSessionId for use in callbacks (avoids stale closure issues)
 	// Initialize with same value as state to avoid race condition where WebSocket
@@ -806,8 +807,9 @@ export function useMobileSessionManagement(
 				if (activeSessionIdRef.current !== sessionId) return;
 				if (tabId && activeTabIdRef.current && tabId !== activeTabIdRef.current) return;
 
+				toolLogIdCounterRef.current += 1;
 				const toolLogEntry: LogEntry = {
-					id: `tool-${Date.now()}-${tool.toolName}`,
+					id: `tool-${tool.timestamp || Date.now()}-${tool.toolName}-${toolLogIdCounterRef.current}`,
 					timestamp: tool.timestamp || Date.now(),
 					text: tool.toolName,
 					source: 'tool',

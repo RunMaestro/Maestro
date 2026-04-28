@@ -365,8 +365,6 @@ export function MessageHistory({
 					const isError = source === 'stderr';
 					const isSystem = source === 'system';
 					const isThinking = source === 'thinking';
-					const isTool = source === 'tool';
-					const messageKey = entry.id || `${entry.timestamp}-${index}`;
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
@@ -391,7 +389,7 @@ export function MessageHistory({
 									? `${colors.accent}15`
 									: isError
 										? `${colors.error}10`
-										: isSystem || isTool
+										: isSystem
 											? `${colors.textDim}10`
 											: isThinking
 												? `${colors.accent}08`
@@ -400,13 +398,7 @@ export function MessageHistory({
 								border: isThinking
 									? undefined
 									: `1px solid ${
-											isUser
-												? `${colors.accent}30`
-												: isError
-													? `${colors.error}30`
-													: isTool
-														? `${colors.accent}30`
-														: colors.border
+											isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
 										}`,
 								cursor: isTruncatable ? 'pointer' : 'default',
 								// Align user messages to the right
@@ -446,8 +438,6 @@ export function MessageHistory({
 												? 'Thinking'
 												: isSystem
 													? 'System'
-													: isTool
-														? 'Tool'
 													: inputMode === 'ai'
 														? 'AI'
 														: 'Output'}
@@ -474,9 +464,7 @@ export function MessageHistory({
 									textAlign: 'left',
 								}}
 							>
-								{isTool ? (
-									<ToolCard entry={entry} />
-								) : inputMode === 'terminal' || isUser ? (
+								{inputMode === 'terminal' || isUser ? (
 									// Terminal output and user input: render as plain monospace text
 									<div
 										style={{

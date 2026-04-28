@@ -233,7 +233,13 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'test', undefined);
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'test',
+					undefined,
+					undefined,
+					false
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);

@@ -201,6 +201,9 @@ beforeEach(() => {
 		stats: {
 			recordQuery: vi.fn().mockResolvedValue(undefined),
 		},
+		web: {
+			broadcastToolExecution: vi.fn().mockResolvedValue(true),
+		},
 		logger: {
 			log: vi.fn(),
 		},
