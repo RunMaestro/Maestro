@@ -202,6 +202,16 @@ export function NewInstanceModal({
 				if (source.customProviderPath) {
 					sourceConfig.providerPath = source.customProviderPath;
 				}
+				if (source.customEffort) {
+					// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
+					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
+					// actually defines so the value round-trips through the modal.
+					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
+					const hasReasoning = sourceAgent?.configOptions?.some(
+						(opt) => opt.key === 'reasoningEffort'
+					);
+					sourceConfig[hasReasoning ? 'reasoningEffort' : 'effort'] = source.customEffort;
+				}
 				configs[source.toolType] = sourceConfig;
 			}
 

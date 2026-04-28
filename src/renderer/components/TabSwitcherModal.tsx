@@ -95,12 +95,17 @@ function getTabLastActivity(tab: AITab): number | undefined {
 /**
  * Get context usage percentage from usage stats.
  * Uses calculateContextDisplay() which handles accumulated multi-tool token overflow.
+ *
+ * Returns `null` when no trustworthy reading is available (no usage yet, or
+ * accumulated tokens overflow the window without a preserved fallback). Callers
+ * should treat `null` as "no gauge to show" rather than rendering a misleading
+ * 0% — see issue #762.
  */
-function getContextPercentage(tab: AITab, agentId?: ToolType): number {
-	if (!tab.usageStats) return 0;
+function getContextPercentage(tab: AITab, agentId?: ToolType): number | null {
+	if (!tab.usageStats) return null;
 	const { contextWindow } = tab.usageStats;
-	if (!contextWindow || contextWindow === 0) return 0;
-	return calculateContextDisplay(
+	if (!contextWindow || contextWindow === 0) return null;
+	const result = calculateContextDisplay(
 		{
 			inputTokens: tab.usageStats.inputTokens,
 			outputTokens: tab.usageStats.outputTokens,
@@ -109,7 +114,8 @@ function getContextPercentage(tab: AITab, agentId?: ToolType): number {
 		},
 		contextWindow,
 		agentId
-	).percentage;
+	);
+	return result.trustworthy ? result.percentage : null;
 }
 
 /**
@@ -792,8 +798,10 @@ export function TabSwitcherModal({
 										</div>
 									</div>
 
-									{/* Context Gauge - only show when context window is configured */}
-									{(tab.usageStats?.contextWindow ?? 0) > 0 && (
+									{/* Context Gauge — hidden when no trustworthy reading is available
+									    (overflow without a preserved fallback) so we don't surface a
+									    misleading 0%. */}
+									{contextPct !== null && (
 										<div className="flex-shrink-0">
 											<ContextGauge percentage={contextPct} theme={theme} />
 										</div>

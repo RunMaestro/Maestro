@@ -267,7 +267,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customModel,
 					customContextWindow,
 					customProviderPath,
-					customEffort,
+					customEffort: customEffort?.trim() || undefined,
 					sessionSshRemoteConfig,
 					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 				};
