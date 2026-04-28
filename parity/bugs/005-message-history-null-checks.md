@@ -34,5 +34,5 @@ git log --oneline -20 -- src/web/mobile/MessageHistory.tsx
 
 ## Pitfalls
 
-- Optional chaining shouldn't paper over real bugs — if a code path *expects* session to exist, that's a hint the component shouldn't render at all in the null case (lift the check higher)
+- Optional chaining shouldn't paper over real bugs — if a code path _expects_ session to exist, that's a hint the component shouldn't render at all in the null case (lift the check higher)
 - TypeScript may have been lying about non-nullable types — fix the types too if you find them wrong

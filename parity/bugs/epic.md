@@ -4,16 +4,16 @@ Concrete, actionable bug fixes for `src/web/`. Run in parallel with the parity t
 
 ## Tasks
 
-| # | Title | Severity | Effort |
-| --- | --- | --- | --- |
-| [001](001-session-crash-copy.md) | Session crash on copy-to-clipboard | **P0** | S |
-| [002](002-voice-input-error-toasts.md) | Voice input swallows errors silently | P1 | S |
-| [003](003-keyboard-offset-debounce.md) | iOS keyboard offset race condition | P1 | M |
-| [004](004-offline-queue-stability.md) | Offline queue retry without stability check | P1 | M |
-| [005](005-message-history-null-checks.md) | MessageHistory null session access | P1 | S |
-| [006](006-websocket-dedup-memory.md) | WebSocket dedup set unbounded growth | P2 | S |
-| [007](007-web-test-suite.md) | No test coverage in src/web/ | P2 | L |
-| [008](008-vibration-permission.md) | Android vibration permission silent fallback | P2 | S |
+| #                                         | Title                                        | Severity | Effort |
+| ----------------------------------------- | -------------------------------------------- | -------- | ------ |
+| [001](001-session-crash-copy.md)          | Session crash on copy-to-clipboard           | **P0**   | S      |
+| [002](002-voice-input-error-toasts.md)    | Voice input swallows errors silently         | P1       | S      |
+| [003](003-keyboard-offset-debounce.md)    | iOS keyboard offset race condition           | P1       | M      |
+| [004](004-offline-queue-stability.md)     | Offline queue retry without stability check  | P1       | M      |
+| [005](005-message-history-null-checks.md) | MessageHistory null session access           | P1       | S      |
+| [006](006-websocket-dedup-memory.md)      | WebSocket dedup set unbounded growth         | P2       | S      |
+| [007](007-web-test-suite.md)              | No test coverage in src/web/                 | P2       | L      |
+| [008](008-vibration-permission.md)        | Android vibration permission silent fallback | P2       | S      |
 
 ## Severity definitions
 

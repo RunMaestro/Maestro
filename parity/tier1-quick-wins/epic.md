@@ -4,16 +4,16 @@ Low-effort, high-value web/mobile parity tasks. All target `src/web/mobile/`. Da
 
 ## Tasks
 
-| # | Title | Effort | Depends on | Shared touchpoints |
-| --- | --- | --- | --- | --- |
-| [001](001-execution-queue-mobile.md) | Execution queue indicator + browser | S | — | new component |
-| [002](002-tool-call-cards.md) | Tool call card display in response viewer | S | — | `MessageHistory.tsx` |
-| [003](003-git-status-widget.md) | Git status widget (compact) | S | — | session header |
-| [004](004-thinking-status-pill.md) | Multi-tab thinking status awareness | S-M | — | `AutoRunIndicator` |
-| [005](005-achievement-badge.md) | Achievement / Conductor badge card | M | — | new component |
-| [006](006-cli-activity-banner.md) | Playbook execution status banner | S | — | `SessionStatusBanner.tsx` |
-| [007](007-queue-reorder-mobile.md) | Drag-to-reorder queued items | M | **001** | `QueuedItemsList` mobile |
-| [008](008-output-truncation-badge.md) | Max-output-lines truncation indicator | S | — | `ResponseViewer` footer |
+| #                                     | Title                                     | Effort | Depends on | Shared touchpoints        |
+| ------------------------------------- | ----------------------------------------- | ------ | ---------- | ------------------------- |
+| [001](001-execution-queue-mobile.md)  | Execution queue indicator + browser       | S      | —          | new component             |
+| [002](002-tool-call-cards.md)         | Tool call card display in response viewer | S      | —          | `MessageHistory.tsx`      |
+| [003](003-git-status-widget.md)       | Git status widget (compact)               | S      | —          | session header            |
+| [004](004-thinking-status-pill.md)    | Multi-tab thinking status awareness       | S-M    | —          | `AutoRunIndicator`        |
+| [005](005-achievement-badge.md)       | Achievement / Conductor badge card        | M      | —          | new component             |
+| [006](006-cli-activity-banner.md)     | Playbook execution status banner          | S      | —          | `SessionStatusBanner.tsx` |
+| [007](007-queue-reorder-mobile.md)    | Drag-to-reorder queued items              | M      | **001**    | `QueuedItemsList` mobile  |
+| [008](008-output-truncation-badge.md) | Max-output-lines truncation indicator     | S      | —          | `ResponseViewer` footer   |
 
 ## Suggested execution order
 

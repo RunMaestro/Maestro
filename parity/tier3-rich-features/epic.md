@@ -18,6 +18,7 @@ Each item here is large enough to deserve its own RFC and multi-PR rollout. We d
 ## Expansion criteria
 
 Per item:
+
 1. Validate user demand (mobile users actually want this — check feedback, issues)
 2. Estimate via spike (~half-day investigation)
 3. Decompose into ≥3 independent tasks if possible

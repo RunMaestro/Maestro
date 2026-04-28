@@ -15,13 +15,14 @@ Run one playbook at a time on your current branch. Agent executes tasks in docum
 Each task gets its own playbook run on its own git worktree (its own branch, its own checkout). Multiple Maestro agents execute simultaneously on different worktrees. Best for: independent tasks with no shared file changes (most of Tier 1).
 
 **Setup per playbook:**
+
 ```json
 {
-  "worktreeSettings": {
-    "branchNameTemplate": "parity/{{task-slug}}",
-    "createPROnCompletion": true,
-    "prTargetBranch": "main"
-  }
+	"worktreeSettings": {
+		"branchNameTemplate": "parity/{{task-slug}}",
+		"createPROnCompletion": true,
+		"prTargetBranch": "main"
+	}
 }
 ```
 
@@ -29,17 +30,17 @@ Each task gets its own playbook run on its own git worktree (its own branch, its
 
 ### C. Subagent fan-out within a task
 
-A single playbook task where the executing agent uses the `Task` tool (Claude Code's subagent system) to parallelize *within* the task — e.g. "research file X, file Y, file Z in parallel, then implement." This is up to the executing agent; not something we configure at the playbook level.
+A single playbook task where the executing agent uses the `Task` tool (Claude Code's subagent system) to parallelize _within_ the task — e.g. "research file X, file Y, file Z in parallel, then implement." This is up to the executing agent; not something we configure at the playbook level.
 
 ## Recommended mode per tier
 
-| Tier / Lane | Recommended mode | Why |
-| --- | --- | --- |
-| Tier 1 quick wins | **B (worktree-parallel)** | Tasks are independent UI components, perfect for parallel branches |
-| Tier 2 read-only views | B with one exception (file preview tasks share `FilePreview.tsx`) | Mostly independent |
-| Tier 3 rich features | **A (sequential)** | Higher complexity, more chance of conflicts |
-| Tier 4 heavy IPC | A | Deep architectural changes — review one at a time |
-| Bugs | **B for P0/P1, A for P2** | Bugs are independent fixes; ship them parallel |
+| Tier / Lane            | Recommended mode                                                  | Why                                                                |
+| ---------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Tier 1 quick wins      | **B (worktree-parallel)**                                         | Tasks are independent UI components, perfect for parallel branches |
+| Tier 2 read-only views | B with one exception (file preview tasks share `FilePreview.tsx`) | Mostly independent                                                 |
+| Tier 3 rich features   | **A (sequential)**                                                | Higher complexity, more chance of conflicts                        |
+| Tier 4 heavy IPC       | A                                                                 | Deep architectural changes — review one at a time                  |
+| Bugs                   | **B for P0/P1, A for P2**                                         | Bugs are independent fixes; ship them parallel                     |
 
 ## Conflict avoidance
 
@@ -50,6 +51,7 @@ The epic for each tier flags known shared touchpoints in its "Dependencies" sect
 ## Validation per task
 
 Every task ends with:
+
 ```bash
 npm run lint && npm run lint:eslint && npm run test
 ```

@@ -14,6 +14,7 @@ Very-high-effort features that require deep desktop↔web plumbing changes. Like
 ## Why "very high effort"
 
 Each item requires:
+
 - New WebSocket message types (web → desktop write requests)
 - Permission/authentication model (mobile clients are remote — must we allow them to mutate settings?)
 - Conflict resolution (what if desktop and mobile edit the same setting simultaneously?)
@@ -22,6 +23,7 @@ Each item requires:
 ## Expansion criteria
 
 Do not author task docs in this tier until:
+
 1. Tier 1, 2, and at least one Tier 3 feature have shipped
 2. A maintainer-approved RFC exists for the bidirectional-write pattern
 3. User signal justifies the cost (concrete asks, not speculative wants)

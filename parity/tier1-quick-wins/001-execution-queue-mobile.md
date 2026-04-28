@@ -48,6 +48,7 @@ The data is already broadcast: `executionQueue` is part of `SessionData` over We
 ## Verify-first
 
 Before starting:
+
 ```bash
 git log --oneline -20 --grep="queue"
 gh pr list --state open --search "execution queue"

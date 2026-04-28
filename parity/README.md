@@ -58,14 +58,14 @@ Constraints:
 
 ## Status tracking
 
-| Tier | Tasks | Status |
-| --- | --- | --- |
-| Tier 1 — Quick wins | 8 | planned |
-| Tier 2 — Read-only views | TBD | stubbed |
-| Tier 3 — Rich features | TBD | stubbed |
-| Tier 4 — Heavy IPC | TBD | stubbed |
-| Tier 5 — Architecture mismatch | TBD | stubbed |
-| Bugs | 8 | planned |
+| Tier                           | Tasks | Status  |
+| ------------------------------ | ----- | ------- |
+| Tier 1 — Quick wins            | 8     | planned |
+| Tier 2 — Read-only views       | TBD   | stubbed |
+| Tier 3 — Rich features         | TBD   | stubbed |
+| Tier 4 — Heavy IPC             | TBD   | stubbed |
+| Tier 5 — Architecture mismatch | TBD   | stubbed |
+| Bugs                           | 8     | planned |
 
 Update task status by ticking items in each task doc. Update tier status here once a tier is fully complete.
 
