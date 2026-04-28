@@ -3,6 +3,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 
 const LOG_CONTEXT = '[DocumentGraph]';
 
@@ -153,6 +154,7 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 					/dist/,
 					/build/,
 					/\.git/,
+					WINDOWS_LOCKED_SYSTEM_FILES,
 				],
 				persistent: true,
 				ignoreInitial: true, // Don't emit events for existing files on startup
