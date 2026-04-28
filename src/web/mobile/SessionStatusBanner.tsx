@@ -303,10 +303,21 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 		return count.toString();
 	};
 
+	// Cache token counts come through for Claude/Codex; desktop's usage
+	// breakdown surfaces them, mobile previously did not.
+	const cacheReadTokens = usageStats.cacheReadInputTokens ?? 0;
+	const cacheCreationTokens = usageStats.cacheCreationInputTokens ?? 0;
+
 	const tooltipParts = [
 		`Input: ${inputTokens.toLocaleString('en-US')}`,
 		`Output: ${outputTokens.toLocaleString('en-US')}`,
 	];
+	if (cacheReadTokens > 0) {
+		tooltipParts.push(`Cache read: ${cacheReadTokens.toLocaleString('en-US')}`);
+	}
+	if (cacheCreationTokens > 0) {
+		tooltipParts.push(`Cache create: ${cacheCreationTokens.toLocaleString('en-US')}`);
+	}
 	if (reasoningTokens > 0) {
 		tooltipParts.push(`Reasoning: ${reasoningTokens.toLocaleString('en-US')}`);
 	}
