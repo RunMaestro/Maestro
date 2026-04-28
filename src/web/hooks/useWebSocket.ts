@@ -17,7 +17,7 @@ import { webLogger } from '../utils/logger';
 /**
  * Cap on the dedup cache for session_output messages. The previous
  * implementation grew to 1000 entries then rebuilt a smaller Set; switching
- * to a bounded LRU keeps memory flat and eviction O(1).
+ * to a bounded Map keeps memory flat and eviction O(1).
  */
 const MAX_SEEN_MSG_IDS = 500;
 
@@ -861,6 +861,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						// Dedupe using message ID if available
 						if (outputMsg.msgId) {
 							if (seenMsgIdsRef.current.has(outputMsg.msgId)) {
+								// Refresh recency before skipping so eviction is LRU-on-access.
+								seenMsgIdsRef.current.delete(outputMsg.msgId);
+								seenMsgIdsRef.current.set(outputMsg.msgId, true);
 								webLogger.debug(
 									`DEDUPE: Skipping duplicate session_output msgId=${outputMsg.msgId}`,
 									'WebSocket'
@@ -868,7 +871,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 								break;
 							}
 							seenMsgIdsRef.current.set(outputMsg.msgId, true);
-							// Bounded LRU: if we hit the cap, drop the oldest insertion.
+							// Bounded LRU: if we hit the cap, drop the least recently seen ID.
 							// Map iteration is insertion-order so .keys().next() is the oldest.
 							if (seenMsgIdsRef.current.size > MAX_SEEN_MSG_IDS) {
 								const oldest = seenMsgIdsRef.current.keys().next().value;

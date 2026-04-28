@@ -258,6 +258,7 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 						style={{
 							overflow: 'hidden',
 							textOverflow: 'ellipsis',
+							minWidth: 0,
 						}}
 					>
 						{session.worktreeBranch}

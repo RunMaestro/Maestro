@@ -281,11 +281,10 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 
 	const inputTokens = usageStats.inputTokens ?? 0;
 	const outputTokens = usageStats.outputTokens ?? 0;
-	// Reasoning tokens are reported separately by certain agents (Codex o3 /
-	// o4-mini). Desktop folds them into the displayed total; mirror that here
-	// so mobile parity matches.
+	// Reasoning tokens are reported separately by certain agents, but they are
+	// already included in outputTokens. Keep them as a tooltip breakdown only.
 	const reasoningTokens = usageStats.reasoningTokens ?? 0;
-	const totalTokens = inputTokens + outputTokens + reasoningTokens;
+	const totalTokens = inputTokens + outputTokens;
 
 	// Don't show if no tokens yet
 	if (totalTokens === 0) {
