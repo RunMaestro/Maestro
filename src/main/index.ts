@@ -655,6 +655,13 @@ app.whenReady().then(async () => {
 		},
 		onPreventSleep: (reason) => powerManager.addBlockReason(reason),
 		onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
+		// Phase 01 — gate cue_events stats lineage writes on the
+		// `encoreFeatures.usageStats` flag. Read on every record so toggling
+		// the Encore flag at runtime takes effect without an app restart.
+		getUsageStatsEnabled: () => {
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return ef.usageStats === true;
+		},
 	});
 
 	logger.info('Core services initialized', 'Startup');

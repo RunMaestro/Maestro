@@ -38,7 +38,9 @@ export interface CueCompletionServiceDeps {
 		sub: CueSubscription,
 		event: ReturnType<typeof createCueEvent>,
 		sourceSessionName: string,
-		chainDepth?: number
+		chainDepth?: number,
+		chainRootId?: string,
+		parentEventId?: string
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	maxChainDepth: number;
@@ -209,8 +211,24 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 							continue;
 						}
 
+						// Phase 01 — propagate chain lineage. The downstream run
+						// inherits the parent's chainRootId (or the parent's
+						// runId, when the parent was itself a root). parentEventId
+						// is always the parent's runId. Both undefined for non-Cue
+						// completions (e.g. exit-listener) — those start a new
+						// root in the next run's `cue_events` row.
+						const childChainRootId = completionData?.chainRootId ?? completionData?.parentRunId;
+						const childParentEventId = completionData?.parentRunId;
 						deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed)`);
-						deps.onDispatch(ownerSessionId, sub, event, completingName, chainDepth);
+						deps.onDispatch(
+							ownerSessionId,
+							sub,
+							event,
+							completingName,
+							chainDepth,
+							childChainRootId,
+							childParentEventId
+						);
 						continue;
 					}
 

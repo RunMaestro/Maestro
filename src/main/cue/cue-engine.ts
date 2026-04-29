@@ -124,6 +124,13 @@ export interface CueEngineDeps {
 	onPreventSleep?: (reason: string) => void;
 	/** Called to allow system sleep (e.g., when Cue scheduled subscriptions or runs end) */
 	onAllowSleep?: (reason: string) => void;
+	/**
+	 * Phase 01 — gate for `pipeline_id` / `chain_root_id` / `parent_event_id`
+	 * writes on the `cue_events` table. Wired through to `CueRunManager`. The
+	 * production wiring reads `encoreFeatures.usageStats` from the settings
+	 * store; tests typically pass `() => true` or omit (defaults to off).
+	 */
+	getUsageStatsEnabled?: () => boolean;
 }
 
 export class CueEngine {
@@ -189,7 +196,7 @@ export class CueEngine {
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
-			onRunCompleted: (sessionId, result, subscriptionName, chainDepth) => {
+			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
 				// Carry forwarded outputs from the triggering event through to the
 				// completion notification so downstream agents can access them via
@@ -206,6 +213,11 @@ export class CueEngine {
 					triggeredBy: subscriptionName,
 					chainDepth: (chainDepth ?? 0) + 1,
 					forwardedOutputs: forwarded,
+					// Phase 01 — propagate chain lineage so the completion
+					// service can stamp it onto the next dispatched run's
+					// `cue_events` row.
+					parentRunId: result.runId,
+					chainRootId,
 				});
 			},
 			onRunStopped: (result) => {
@@ -223,17 +235,31 @@ export class CueEngine {
 			},
 			// Phase 12A: queue rows survive app crash / quit.
 			queuePersistence: this.queuePersistence,
+			// Phase 01: gate cue_events stats lineage writes on the Encore flag.
+			getUsageStatsEnabled: deps.getUsageStatsEnabled,
 		});
 		this.fanInTracker = createCueFanInTracker({
 			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
-			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+			dispatchSubscription: (
+				ownerSessionId,
+				sub,
+				event,
+				sourceSessionName,
+				chainDepth,
+				promptOverride,
+				chainRootId,
+				parentEventId
+			) => {
 				return this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
 					sourceSessionName,
-					chainDepth
+					chainDepth,
+					promptOverride,
+					chainRootId,
+					parentEventId
 				);
 			},
 		});
@@ -249,7 +275,9 @@ export class CueEngine {
 				chainDepth,
 				cliOutput,
 				action,
-				command
+				command,
+				chainRootId,
+				parentEventId
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -262,7 +290,9 @@ export class CueEngine {
 					action,
 					command,
 					undefined, // queuedAtOverride — fresh dispatch, not a restore
-					pipelineName
+					pipelineName,
+					chainRootId,
+					parentEventId
 				);
 			},
 			onLog: meteredOnLog,
@@ -308,13 +338,24 @@ export class CueEngine {
 				return views;
 			},
 			fanInTracker: this.fanInTracker,
-			onDispatch: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+			onDispatch: (
+				ownerSessionId,
+				sub,
+				event,
+				sourceSessionName,
+				chainDepth,
+				chainRootId,
+				parentEventId
+			) => {
 				this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
 					sourceSessionName,
-					chainDepth
+					chainDepth,
+					undefined, // no prompt override on chained completions
+					chainRootId,
+					parentEventId
 				);
 			},
 			onLog: meteredOnLog,

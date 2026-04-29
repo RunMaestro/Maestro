@@ -197,7 +197,8 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.objectContaining({ status: 'completed' }),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 		});
 
@@ -214,7 +215,8 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.objectContaining({ status: 'failed' }),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 		});
 
@@ -236,7 +238,8 @@ describe('createCueRunManager', () => {
 					stderr: 'spawn ENOENT',
 				}),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 		});
 
@@ -281,7 +284,8 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.anything(),
 				'test-sub',
-				3
+				3,
+				expect.any(String)
 			);
 		});
 
@@ -1032,7 +1036,8 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.objectContaining({ status: 'completed' }),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'warn',
@@ -1165,7 +1170,8 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.objectContaining({ stdout: 'MAIN_TASK_OUTPUT', status: 'completed' }),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 			// Warning explaining the fallback was surfaced to the activity log.
 			expect(
@@ -1198,7 +1204,8 @@ describe('createCueRunManager', () => {
 					stderr: expect.stringContaining('spawn ENOENT'),
 				}),
 				'test-sub',
-				undefined
+				undefined,
+				expect.any(String)
 			);
 		});
 
