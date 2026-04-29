@@ -1660,6 +1660,78 @@ describe('agentStore', () => {
 			);
 		});
 
+		it('prefers tab-level customModel/customEffort over session values', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						customModel: 'tab-model',
+						customEffort: 'tab-effort',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Hello' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: 'tab-model',
+					sessionCustomEffort: 'tab-effort',
+				})
+			);
+		});
+
+		it('falls back to session customModel/customEffort when tab override is unset', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customModel: 'session-model',
+				customEffort: 'session-effort',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'conv-1',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Hello' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionCustomModel: 'session-model',
+					sessionCustomEffort: 'session-effort',
+				})
+			);
+		});
+
 		it('tracks pendingAICommandForSynopsis for command items', async () => {
 			const session = createMockSession({
 				id: 'session-1',

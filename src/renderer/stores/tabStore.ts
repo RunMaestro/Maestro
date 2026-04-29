@@ -180,6 +180,16 @@ export interface TabStoreActions {
 	 */
 	cycleThinkingMode: (tabId: string) => void;
 
+	/**
+	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
+	 */
+	setTabModel: (tabId: string, model: string | undefined) => void;
+
+	/**
+	 * Set per-tab effort/reasoning override. Pass undefined to clear and fall back to session/agent default.
+	 */
+	setTabEffort: (tabId: string, effort: string | undefined) => void;
+
 	// === Tab reordering ===
 
 	/**
@@ -471,6 +481,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const currentIndex = THINKING_CYCLE.indexOf(currentMode);
 		const nextMode = THINKING_CYCLE[(currentIndex + 1) % THINKING_CYCLE.length];
 		updateAiTab(tabId, { showThinking: nextMode });
+	},
+
+	setTabModel: (tabId, model) => {
+		updateAiTab(tabId, { customModel: model || undefined });
+	},
+
+	setTabEffort: (tabId, effort) => {
+		updateAiTab(tabId, { customEffort: effort || undefined });
 	},
 
 	// Tab reordering

@@ -432,6 +432,8 @@ export interface AITab {
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	customModel?: string; // Per-tab model override; falls back to session.customModel, then agent default
+	customEffort?: string; // Per-tab effort/reasoning override; falls back to session.customEffort, then agent default
 	awaitingSessionId?: boolean; // True when this tab sent a message and is awaiting its session ID
 	thinkingStartTime?: number; // Timestamp when tab started thinking (for elapsed time display)
 	scrollTop?: number; // Saved scroll position for this tab's output view
