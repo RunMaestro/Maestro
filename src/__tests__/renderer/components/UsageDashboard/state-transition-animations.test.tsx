@@ -6,7 +6,7 @@
  *
  * Animation types tested:
  * - View mode transition animations (dashboard-content-enter)
- * - Staggered card entrance animations (dashboard-card-enter)
+ * - Staggered card entrance animations (card-enter)
  * - Chart section enter animations (dashboard-section-enter)
  * - Reduced motion accessibility handling
  */
@@ -208,12 +208,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(expectedKeyframe.to.opacity).toBe(1);
 		});
 
-		it('defines dashboard-card-enter keyframe animation', () => {
+		it('defines card-enter keyframe animation', () => {
 			const expectedKeyframe = {
-				from: { opacity: 0, transform: 'translateY(12px) scale(0.98)' },
+				from: { opacity: 0, transform: 'translateY(12px) scale(0.96)' },
 				to: { opacity: 1, transform: 'translateY(0) scale(1)' },
 			};
-			expect(expectedKeyframe.from.transform).toContain('scale(0.98)');
+			expect(expectedKeyframe.from.transform).toContain('scale(0.96)');
 			expect(expectedKeyframe.to.transform).toContain('scale(1)');
 		});
 
@@ -290,12 +290,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 			bySessionByDay: {},
 		};
 
-		it('applies dashboard-card-enter class to metric cards', () => {
+		it('applies card-enter class to metric cards', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
 			cards.forEach((card) => {
-				expect(card).toHaveClass('dashboard-card-enter');
+				expect(card).toHaveClass('card-enter');
 			});
 		});
 
@@ -307,7 +307,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 
 			// Verify each card has incrementing animation delay
 			cards.forEach((card, index) => {
-				const expectedDelay = `${index * 50}ms`;
+				const expectedDelay = `${index * 80}ms`;
 				expect(card).toHaveStyle({ animationDelay: expectedDelay });
 			});
 		});
@@ -319,11 +319,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
 		});
 
-		it('last card has 450ms delay (9 * 50ms)', () => {
+		it('last card has 720ms delay (9 * 80ms)', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards[9]).toHaveStyle({ animationDelay: '450ms' });
+			expect(cards[9]).toHaveStyle({ animationDelay: '720ms' });
 		});
 	});
 
@@ -442,9 +442,9 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(expectedDuration).toBe('0.35s');
 		});
 
-		it('card stagger interval is 50ms', () => {
-			const expectedInterval = 50;
-			expect(expectedInterval).toBe(50);
+		it('card stagger interval is 80ms', () => {
+			const expectedInterval = 80;
+			expect(expectedInterval).toBe(80);
 		});
 
 		it('section stagger interval is 100ms', () => {
@@ -458,7 +458,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			// CSS media query in index.css disables animations:
 			// @media (prefers-reduced-motion: reduce) {
 			//   .dashboard-content-enter,
-			//   .dashboard-card-enter,
+			//   .card-enter,
 			//   .dashboard-section-enter {
 			//     animation: none !important;
 			//     opacity: 1 !important;
@@ -495,7 +495,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 
 		it('card and section animations start with opacity 0', () => {
 			// Initial state before animation plays
-			const cssDefinition = '.dashboard-card-enter { opacity: 0; }';
+			const cssDefinition = '.card-enter { opacity: 0; }';
 			expect(cssDefinition).toContain('opacity: 0');
 		});
 	});

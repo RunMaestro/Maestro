@@ -17,7 +17,7 @@
  * - Formatted values for readability
  */
 
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import {
 	MessageSquare,
 	Clock,
@@ -110,6 +110,7 @@ export function getCardStyles(
 				...base,
 				backgroundColor: theme.colors.bgActivity,
 				border: `1px solid ${theme.colors.border}`,
+				borderTop: `2px solid ${accent}`,
 				boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
 			};
 		case 'outlined':
@@ -161,16 +162,22 @@ const MetricCard = memo(function MetricCard({
 	variant = 'elevated',
 	accentColor,
 }: MetricCardProps) {
+	const [hovered, setHovered] = useState(false);
+
 	return (
 		<div
-			className="p-4 flex items-start gap-3 dashboard-card-enter"
+			className="p-4 flex items-start gap-3 card-enter"
 			style={{
 				...getCardStyles(variant, theme, accentColor),
-				animationDelay: `${animationIndex * 50}ms`,
+				animationDelay: `${animationIndex * 80}ms`,
+				transform: hovered ? 'scale(0.98)' : undefined,
+				filter: hovered ? 'brightness(1.1)' : undefined,
 			}}
 			data-testid="metric-card"
 			role="group"
 			aria-label={`${label}: ${value}`}
+			onMouseEnter={() => setHovered(true)}
+			onMouseLeave={() => setHovered(false)}
 		>
 			<div
 				className="flex-shrink-0 p-2 rounded-md"
@@ -188,7 +195,14 @@ const MetricCard = memo(function MetricCard({
 				>
 					{label}
 				</div>
-				<div className="text-2xl font-bold" style={{ color: theme.colors.textMain }} title={value}>
+				<div
+					className="font-bold"
+					style={{
+						color: theme.colors.textMain,
+						fontSize: 'clamp(18px, 3vw, 28px)',
+					}}
+					title={value}
+				>
 					{value}
 				</div>
 				{extra}
