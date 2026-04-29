@@ -200,6 +200,7 @@ describe('autorun IPC handlers', () => {
 				'autorun:writeDoc',
 				'autorun:saveImage',
 				'autorun:deleteImage',
+				'autorun:replaceImage',
 				'autorun:listImages',
 				'autorun:deleteFolder',
 				'autorun:watchFolder',
