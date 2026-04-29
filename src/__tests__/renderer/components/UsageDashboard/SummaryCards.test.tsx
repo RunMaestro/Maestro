@@ -385,10 +385,59 @@ describe('SummaryCards', () => {
 		it('renders SVG icons for each metric', () => {
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
-			// Scope to the metrics grid so the realtime card's icons don't inflate the count
+			// Scope to the metrics grid so the realtime card's icons don't inflate the count.
+			// Subtract sparkline SVGs (rendered for the Total Queries + Total Time cards) so
+			// this assertion stays focused on the per-metric lucide icon.
 			const grid = screen.getByTestId('summary-cards');
 			const svgElements = grid.querySelectorAll('svg');
-			expect(svgElements.length).toBe(10);
+			const sparklines = grid.querySelectorAll(
+				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
+			);
+			expect(svgElements.length - sparklines.length).toBe(10);
+		});
+	});
+
+	describe('Sparklines', () => {
+		const dataWithByDay: StatsAggregation = {
+			...mockData,
+			byDay: [
+				{ date: '2024-12-15', count: 10, duration: 600000 },
+				{ date: '2024-12-16', count: 20, duration: 1200000 },
+				{ date: '2024-12-17', count: 15, duration: 800000 },
+				{ date: '2024-12-18', count: 30, duration: 1500000 },
+				{ date: '2024-12-19', count: 25, duration: 1300000 },
+				{ date: '2024-12-20', count: 50, duration: 2400000 },
+				{ date: '2024-12-21', count: 100, duration: 4800000 },
+			],
+		};
+
+		it('renders sparklines on Total Queries and Total Time cards when byDay has data', () => {
+			render(<SummaryCards data={dataWithByDay} theme={theme} />);
+
+			const queriesCard = screen.getByRole('group', { name: /Total Queries: 150/i });
+			const totalTimeCard = screen.getByRole('group', { name: /Total Time: 2h 0m/i });
+
+			expect(queriesCard.querySelector('[data-testid="sparkline"]')).not.toBeNull();
+			expect(totalTimeCard.querySelector('[data-testid="sparkline"]')).not.toBeNull();
+		});
+
+		it('does not render sparklines on cards without trend data', () => {
+			render(<SummaryCards data={dataWithByDay} theme={theme} sessions={mockSessions} />);
+
+			const agentsCard = screen.getByRole('group', { name: /^Agents:/i });
+			const openTabsCard = screen.getByRole('group', { name: /Open Tabs:/i });
+
+			expect(agentsCard.querySelector('[data-testid="sparkline"]')).toBeNull();
+			expect(openTabsCard.querySelector('[data-testid="sparkline"]')).toBeNull();
+		});
+
+		it('renders an empty (dashed-baseline) sparkline when byDay is empty', () => {
+			// emptyData has byDay: [] — left-padded to seven zeros, the Sparkline
+			// collapses to its empty/dashed baseline state.
+			render(<SummaryCards data={emptyData} theme={theme} />);
+
+			const queriesCard = screen.getByRole('group', { name: /Total Queries: 0/i });
+			expect(queriesCard.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
 		});
 	});
 

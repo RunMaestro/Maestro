@@ -36,6 +36,33 @@ import {
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatCost } from '../../../shared/formatters';
+import { Sparkline } from './Sparkline';
+
+type ByDayEntry = StatsAggregation['byDay'][number];
+
+const SPARKLINE_DAYS = 7;
+
+/**
+ * Extracts the most recent `SPARKLINE_DAYS` daily query counts (oldest →
+ * newest), left-padding with zeros so the returned array always has
+ * `SPARKLINE_DAYS` entries. This keeps sparkline geometry stable when
+ * the user has fewer than a week of activity.
+ */
+export function getLast7Days(byDay: ByDayEntry[]): number[] {
+	const counts = byDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
+	if (counts.length >= SPARKLINE_DAYS) return counts;
+	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
+}
+
+/**
+ * Same as {@link getLast7Days} but pulls each day's total `duration`
+ * (in ms) instead of the query count.
+ */
+export function getLast7DaysDuration(byDay: ByDayEntry[]): number[] {
+	const durations = byDay.slice(-SPARKLINE_DAYS).map((d) => d.duration);
+	if (durations.length >= SPARKLINE_DAYS) return durations;
+	return [...new Array(SPARKLINE_DAYS - durations.length).fill(0), ...durations];
+}
 
 interface SummaryCardsProps {
 	/** Aggregated stats data from the API */
@@ -270,6 +297,10 @@ interface MetricCardProps {
 	variant?: CardVariant;
 	/** Optional accent color override for `outlined` / `filled` variants */
 	accentColor?: string;
+	/** Optional 7-day trend data rendered as a mini sparkline in the corner */
+	sparklineData?: number[];
+	/** Sparkline stroke + fill color; defaults to the theme accent */
+	sparklineColor?: string;
 }
 
 const MetricCard = memo(function MetricCard({
@@ -281,12 +312,14 @@ const MetricCard = memo(function MetricCard({
 	extra,
 	variant = 'elevated',
 	accentColor,
+	sparklineData,
+	sparklineColor,
 }: MetricCardProps) {
 	const [hovered, setHovered] = useState(false);
 
 	return (
 		<div
-			className="p-4 flex items-start gap-3 card-enter"
+			className="relative p-4 flex items-start gap-3 card-enter"
 			style={{
 				...getCardStyles(variant, theme, accentColor),
 				animationDelay: `${animationIndex * 80}ms`,
@@ -327,6 +360,16 @@ const MetricCard = memo(function MetricCard({
 				</div>
 				{extra}
 			</div>
+			{sparklineData && (
+				<div className="absolute bottom-2 right-2 opacity-60 pointer-events-none">
+					<Sparkline
+						data={sparklineData}
+						color={sparklineColor ?? theme.colors.accent}
+						width={60}
+						height={20}
+					/>
+				</div>
+			)}
 		</div>
 	);
 });
@@ -731,11 +774,16 @@ export const SummaryCards = memo(function SummaryCards({
 			};
 		}, [data.byAgent, data.bySource, data.byHour, data.byLocation, agentCount, data.totalQueries]);
 
+	const queriesSparkline = useMemo(() => getLast7Days(data.byDay), [data.byDay]);
+	const durationSparkline = useMemo(() => getLast7DaysDuration(data.byDay), [data.byDay]);
+
 	const metrics: Array<{
 		icon: React.ReactNode;
 		label: string;
 		value: string;
 		extra?: React.ReactNode;
+		sparklineData?: number[];
+		sparklineColor?: string;
 	}> = [
 		{
 			icon: <Layers className="w-4 h-4" />,
@@ -752,6 +800,7 @@ export const SummaryCards = memo(function SummaryCards({
 			icon: <MessageSquare className="w-4 h-4" />,
 			label: 'Total Queries',
 			value: formatNumber(data.totalQueries),
+			sparklineData: queriesSparkline,
 		},
 		{
 			icon: <Zap className="w-4 h-4" />,
@@ -762,6 +811,7 @@ export const SummaryCards = memo(function SummaryCards({
 			icon: <Clock className="w-4 h-4" />,
 			label: 'Total Time',
 			value: formatDuration(data.totalDuration),
+			sparklineData: durationSparkline,
 		},
 		{
 			icon: <Timer className="w-4 h-4" />,
@@ -810,6 +860,8 @@ export const SummaryCards = memo(function SummaryCards({
 						theme={theme}
 						animationIndex={index}
 						extra={metric.extra}
+						sparklineData={metric.sparklineData}
+						sparklineColor={metric.sparklineColor}
 					/>
 				))}
 			</div>
