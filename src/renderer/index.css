@@ -753,6 +753,64 @@ svg.wand-sparkle-active path:nth-child(8) {
    End Header Bar Container Queries
    ========================================== */
 
+/* ==========================================
+   Sidebar Parent-Child Tree Connectors
+   ==========================================
+   Visually links a parent agent in the sidebar to its expanded worktree
+   children with a vertical line and per-child horizontal branch.
+
+   --tree-line-color: stroke color for the connecting lines (set inline
+                      from the active theme accent)
+   --tree-bg-color:   sidebar background, used to mask the vertical line
+                      below the last child so it terminates cleanly
+*/
+
+.tree-children {
+	position: relative;
+}
+
+.tree-children::before {
+	content: '';
+	position: absolute;
+	left: 20px;
+	top: 0;
+	bottom: 12px;
+	width: 1px;
+	background-color: var(--tree-line-color, rgba(255, 255, 255, 0.15));
+	pointer-events: none;
+}
+
+.tree-child {
+	position: relative;
+}
+
+.tree-child::before {
+	content: '';
+	position: absolute;
+	left: 20px;
+	top: 50%;
+	width: 12px;
+	height: 1px;
+	background-color: var(--tree-line-color, rgba(255, 255, 255, 0.15));
+	pointer-events: none;
+}
+
+/* Cap the vertical line below the last child so it doesn't overshoot */
+.tree-child:last-child::after {
+	content: '';
+	position: absolute;
+	left: 20px;
+	top: 50%;
+	bottom: 0;
+	width: 1px;
+	background-color: var(--tree-bg-color, transparent);
+	pointer-events: none;
+}
+
+/* ==========================================
+   End Sidebar Parent-Child Tree Connectors
+   ========================================== */
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-pulse,
 	.animate-spin,
