@@ -25,6 +25,7 @@ import { useImageAnnotatorStore } from './imageAnnotatorStore';
 import { useAnnotatorState } from './useAnnotatorState';
 import { AnnotatorCanvas } from './AnnotatorCanvas';
 import { AnnotatorToolbar } from './AnnotatorToolbar';
+import { AnnotatorSettingsDrawer } from './AnnotatorSettingsDrawer';
 import compositeAnnotatedImage from './compositeAnnotatedImage';
 
 interface ImageAnnotatorProps {
@@ -117,41 +118,27 @@ function ImageAnnotatorContent({
 			role="dialog"
 			aria-modal="true"
 			aria-label="Image Annotator"
-			className="fixed inset-0 z-[160] flex"
+			className="fixed inset-0 z-[160]"
 			style={{
 				backgroundColor: `${theme.colors.bgMain}f2`,
 				color: theme.colors.textMain,
 			}}
 		>
-			<div className="relative flex-1">
-				<AnnotatorCanvas ref={svgRef} imageDataUrl={imageDataUrl} state={state} />
-				<AnnotatorToolbar
-					state={state}
-					theme={theme}
-					drawerOpen={drawerOpen}
-					onToggleDrawer={toggleDrawer}
-					onSave={handleSave}
-					onCopy={handleCopy}
-					onCancel={closeAnnotator}
-				/>
-			</div>
-			{drawerOpen && (
-				<aside
-					aria-label="Drawing settings"
-					className="flex flex-col w-72 border-l p-4 overflow-y-auto"
-					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
-					}}
-				>
-					<div className="text-sm font-medium mb-2" style={{ color: theme.colors.textMain }}>
-						Drawing settings
-					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
-						Settings UI lands in the next phase.
-					</div>
-				</aside>
-			)}
+			<AnnotatorCanvas ref={svgRef} imageDataUrl={imageDataUrl} state={state} />
+			<AnnotatorToolbar
+				state={state}
+				theme={theme}
+				drawerOpen={drawerOpen}
+				onToggleDrawer={toggleDrawer}
+				onSave={handleSave}
+				onCopy={handleCopy}
+				onCancel={closeAnnotator}
+			/>
+			<AnnotatorSettingsDrawer
+				open={drawerOpen}
+				onClose={() => setDrawerOpen(false)}
+				theme={theme}
+			/>
 		</div>
 	);
 }
