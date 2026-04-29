@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { OscStreamParser } from '../shell-integration/oscParser';
 
 /**
  * Configuration for spawning a new process
@@ -81,8 +82,21 @@ export interface ManagedProcess {
 		currentCwd?: string;
 		lastExitCode?: number;
 	};
-	/** Per-process OSC stream parser instance (terminal tabs only). Typed as unknown until oscParser.ts is introduced. */
-	oscParser?: unknown;
+	/** Per-process OSC stream parser instance (terminal tabs only). */
+	oscParser?: OscStreamParser;
+}
+
+/**
+ * Snapshot of shell-integration state forwarded to the renderer when a
+ * command-start or command-finished sequence fires. `commandRunning` is the
+ * authoritative live/idle bit; `currentCommand` may persist past a command
+ * finishing (we keep the last command around so it can be re-executed on
+ * restart). `lastExitCode` is `undefined` until the first command finishes.
+ */
+export interface TerminalCommandState {
+	currentCommand?: string;
+	commandRunning: boolean;
+	lastExitCode?: number;
 }
 
 export interface UsageTotals {
@@ -127,6 +141,8 @@ export interface ProcessManagerEvents {
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
+	'terminal-command-state': (sessionId: string, state: TerminalCommandState) => void;
+	'terminal-cwd': (sessionId: string, cwd: string) => void;
 }
 
 export interface ToolExecution {

@@ -2,11 +2,12 @@ import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { logger } from '../../utils/logger';
-import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
+import type { ProcessConfig, ManagedProcess, SpawnResult, TerminalCommandState } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { buildPtyTerminalEnv, buildChildProcessEnv } from '../utils/envBuilder';
 import { isWindows } from '../../../shared/platformDetection';
 import { getShellIntegrationArgs, getShellIntegrationEnv } from '../../shell-integration';
+import { OscStreamParser, type OscEvent } from '../../shell-integration/oscParser';
 import { getSettingsStore } from '../../stores/getters';
 
 /**
@@ -139,11 +140,33 @@ export class PtySpawner {
 				args: ptyArgs,
 			};
 
+			// Terminal tabs get an OSC stream parser + initial shell-integration
+			// state so command/cwd tracking works even before the first prompt
+			// fires (UI can read `commandRunning: false` immediately). AI-agent
+			// PTYs skip this — their output isn't a shell prompt and would never
+			// emit our OSC sequences anyway.
+			if (isTerminal) {
+				managedProcess.oscParser = new OscStreamParser();
+				managedProcess.shellIntegration = { commandRunning: false };
+			}
+
 			this.processes.set(sessionId, managedProcess);
 
 			// Handle output
 			ptyProcess.onData((data) => {
 				const managedProc = this.processes.get(sessionId);
+
+				// OSC parsing runs on the raw chunk (before stripControlSequences),
+				// so partial sequences split across chunks are correctly stitched
+				// by the parser's residual buffer. The original `data` is still
+				// what we forward to xterm.js — the parser is read-only.
+				if (isTerminal && managedProc?.oscParser) {
+					const { events } = managedProc.oscParser.parse(data);
+					for (const event of events) {
+						this.handleOscEvent(sessionId, managedProc, event);
+					}
+				}
+
 				const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
 				logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
 					sessionId,
@@ -186,5 +209,69 @@ export class PtySpawner {
 			});
 			return { pid: -1, success: false };
 		}
+	}
+
+	/**
+	 * Apply an OSC event to a managed process's shell-integration state and
+	 * emit the corresponding renderer-facing event.
+	 *
+	 * `command-start` and `command-finished` both emit `terminal-command-state`
+	 * with the current snapshot — the renderer treats `commandRunning` as the
+	 * authoritative live/idle bit. We deliberately do NOT clear `currentCommand`
+	 * on `command-finished`: it sticks around so the persistence layer can
+	 * snapshot the last-run command for restart re-execution.
+	 *
+	 * `prompt-start` (133;A) and `command-output` (133;C) carry no state we
+	 * forward today — they're parsed for boundary correctness but emit nothing.
+	 */
+	private handleOscEvent(sessionId: string, proc: ManagedProcess, event: OscEvent): void {
+		if (!proc.shellIntegration) {
+			// Defensive: only initialized for terminal tabs. If we somehow get
+			// here for a non-terminal proc, silently drop the event rather than
+			// constructing state for a session that has no UI tab to receive it.
+			return;
+		}
+
+		switch (event.type) {
+			case 'command-start': {
+				proc.shellIntegration.currentCommand = event.command;
+				proc.shellIntegration.commandRunning = true;
+				this.emitTerminalCommandState(sessionId, proc.shellIntegration);
+				return;
+			}
+			case 'command-finished': {
+				proc.shellIntegration.commandRunning = false;
+				if (event.exitCode !== undefined) {
+					proc.shellIntegration.lastExitCode = event.exitCode;
+				}
+				this.emitTerminalCommandState(sessionId, proc.shellIntegration);
+				return;
+			}
+			case 'cwd-change': {
+				if (event.cwd === undefined) return;
+				proc.shellIntegration.currentCwd = event.cwd;
+				// Mirror onto the canonical `cwd` field too — downstream consumers
+				// (process info queries, UI tooltips) read `proc.cwd` directly and
+				// shouldn't need to know about shell-integration state.
+				proc.cwd = event.cwd;
+				this.emitter.emit('terminal-cwd', sessionId, event.cwd);
+				return;
+			}
+			case 'prompt-start':
+			case 'command-output':
+				return;
+		}
+	}
+
+	private emitTerminalCommandState(
+		sessionId: string,
+		state: NonNullable<ManagedProcess['shellIntegration']>
+	): void {
+		const snapshot: TerminalCommandState = {
+			currentCommand: state.currentCommand,
+			commandRunning: state.commandRunning,
+			lastExitCode: state.lastExitCode,
+		};
+		this.emitter.emit('terminal-command-state', sessionId, snapshot);
 	}
 }

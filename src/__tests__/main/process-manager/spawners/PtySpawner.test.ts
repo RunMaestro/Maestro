@@ -270,3 +270,213 @@ describe('PtySpawner - shell integration injection', () => {
 		});
 	});
 });
+
+// ── OSC parsing & event emission ───────────────────────────────────────────
+
+describe('PtySpawner - OSC parsing in onData', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockPtySpawn.mockImplementation(() => {
+			mockPtyProcess = createMockPtyProcess();
+			return mockPtyProcess;
+		});
+		mockSetting.mockImplementation((_key, defaultValue) => defaultValue);
+	});
+
+	/**
+	 * Helper that spawns a terminal session, captures the onData callback the
+	 * spawner registered, and returns a function that feeds it raw bytes (the
+	 * shape `node-pty` would deliver via `onData`).
+	 */
+	function spawnAndCaptureOnData(shell = 'zsh'): {
+		processes: Map<string, ManagedProcess>;
+		emitter: EventEmitter;
+		feed: (data: string) => void;
+	} {
+		const { spawner, processes, emitter } = createTestContext();
+		spawner.spawn(createTerminalConfig({ shell }));
+		const onDataFn = mockPtyProcess.onData.mock.calls[0]?.[0];
+		expect(onDataFn).toBeDefined();
+		return { processes, emitter, feed: (data: string) => onDataFn(data) };
+	}
+
+	// Sequence-builder helpers keep tests readable. `\x1b]133;B;cmd=<hex>\x07`
+	// is what the shell scripts actually emit; matching that wire format keeps
+	// these tests honest about what the parser sees in production.
+	const toHex = (s: string): string =>
+		Array.from(new TextEncoder().encode(s))
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('');
+	const oscPromptStart = '\x1b]133;A\x07';
+	const oscCommandStart = (cmd: string): string => `\x1b]133;B;cmd=${toHex(cmd)}\x07`;
+	const oscCommandOutput = '\x1b]133;C\x07';
+	const oscCommandFinished = (exit: number): string => `\x1b]133;D;${exit}\x07`;
+	const osc7 = (path: string): string => `\x1b]7;file://localhost${encodeURI(path)}\x07`;
+
+	describe('process initialization', () => {
+		it('creates an OscStreamParser and shellIntegration state on terminal tabs', () => {
+			const { processes } = spawnAndCaptureOnData();
+			const proc = processes.get('test-session');
+			expect(proc?.oscParser).toBeDefined();
+			expect(proc?.shellIntegration).toEqual({ commandRunning: false });
+		});
+
+		it('does NOT create a parser for non-terminal (AI agent) PTY sessions', () => {
+			const { spawner, processes } = createTestContext();
+			spawner.spawn({
+				sessionId: 'agent-session',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				command: 'claude',
+				args: ['--print'],
+				requiresPty: true,
+			});
+			const proc = processes.get('agent-session');
+			expect(proc?.oscParser).toBeUndefined();
+			expect(proc?.shellIntegration).toBeUndefined();
+		});
+	});
+
+	describe('command-start (OSC 133;B)', () => {
+		it('updates state and emits terminal-command-state with the decoded command', () => {
+			const { processes, emitter, feed } = spawnAndCaptureOnData();
+			const stateEvents: any[] = [];
+			emitter.on('terminal-command-state', (sid, state) => {
+				stateEvents.push({ sid, state });
+			});
+
+			feed(oscCommandStart('btop'));
+
+			const proc = processes.get('test-session');
+			expect(proc?.shellIntegration?.currentCommand).toBe('btop');
+			expect(proc?.shellIntegration?.commandRunning).toBe(true);
+
+			expect(stateEvents).toHaveLength(1);
+			expect(stateEvents[0].sid).toBe('test-session');
+			expect(stateEvents[0].state).toEqual({
+				currentCommand: 'btop',
+				commandRunning: true,
+				lastExitCode: undefined,
+			});
+		});
+
+		it('handles UTF-8 multi-byte command text via hex decoding', () => {
+			const { processes, feed } = spawnAndCaptureOnData();
+			feed(oscCommandStart('echo 你好'));
+			expect(processes.get('test-session')?.shellIntegration?.currentCommand).toBe('echo 你好');
+		});
+
+		it('handles a command-start with no cmd= payload (recorded as undefined)', () => {
+			const { processes, feed } = spawnAndCaptureOnData();
+			feed('\x1b]133;B\x07');
+			const si = processes.get('test-session')?.shellIntegration;
+			expect(si?.currentCommand).toBeUndefined();
+			expect(si?.commandRunning).toBe(true);
+		});
+	});
+
+	describe('command-finished (OSC 133;D)', () => {
+		it('flips commandRunning to false, records exit code, preserves last command', () => {
+			const { processes, emitter, feed } = spawnAndCaptureOnData();
+			const stateEvents: any[] = [];
+			emitter.on('terminal-command-state', (_sid, state) => stateEvents.push(state));
+
+			feed(oscCommandStart('false') + oscCommandOutput + oscCommandFinished(1));
+
+			const si = processes.get('test-session')?.shellIntegration;
+			// currentCommand intentionally preserved past command-finished — the
+			// persistence layer needs the last-run command for restart re-exec.
+			expect(si?.currentCommand).toBe('false');
+			expect(si?.commandRunning).toBe(false);
+			expect(si?.lastExitCode).toBe(1);
+
+			// Two state emissions: one on start (running=true), one on finish.
+			expect(stateEvents).toHaveLength(2);
+			expect(stateEvents[0].commandRunning).toBe(true);
+			expect(stateEvents[1].commandRunning).toBe(false);
+			expect(stateEvents[1].lastExitCode).toBe(1);
+		});
+
+		it('emits when command-finished arrives without an exit code (legacy/non-zsh emitters)', () => {
+			const { processes, emitter, feed } = spawnAndCaptureOnData();
+			const stateEvents: any[] = [];
+			emitter.on('terminal-command-state', (_sid, state) => stateEvents.push(state));
+
+			feed('\x1b]133;D\x07');
+
+			const si = processes.get('test-session')?.shellIntegration;
+			expect(si?.commandRunning).toBe(false);
+			expect(si?.lastExitCode).toBeUndefined();
+			expect(stateEvents).toHaveLength(1);
+		});
+	});
+
+	describe('cwd-change (OSC 7)', () => {
+		it('updates currentCwd, mirrors onto proc.cwd, and emits terminal-cwd', () => {
+			const { processes, emitter, feed } = spawnAndCaptureOnData();
+			const cwdEvents: any[] = [];
+			emitter.on('terminal-cwd', (sid, cwd) => cwdEvents.push({ sid, cwd }));
+
+			feed(osc7('/tmp/work'));
+
+			const proc = processes.get('test-session');
+			expect(proc?.shellIntegration?.currentCwd).toBe('/tmp/work');
+			// Mirroring onto proc.cwd lets generic process-info consumers read
+			// the live cwd without knowing about shell-integration state.
+			expect(proc?.cwd).toBe('/tmp/work');
+			expect(cwdEvents).toEqual([{ sid: 'test-session', cwd: '/tmp/work' }]);
+		});
+
+		it('percent-decodes paths with spaces', () => {
+			const { processes, feed } = spawnAndCaptureOnData();
+			feed('\x1b]7;file://localhost/tmp/with%20space\x07');
+			expect(processes.get('test-session')?.cwd).toBe('/tmp/with space');
+		});
+	});
+
+	describe('boundary sequences (no state forwarded)', () => {
+		it('does not emit on prompt-start (133;A) or command-output (133;C)', () => {
+			const { emitter, feed } = spawnAndCaptureOnData();
+			const stateEvents: any[] = [];
+			const cwdEvents: any[] = [];
+			emitter.on('terminal-command-state', (s) => stateEvents.push(s));
+			emitter.on('terminal-cwd', (s) => cwdEvents.push(s));
+
+			feed(oscPromptStart + oscCommandOutput);
+
+			expect(stateEvents).toHaveLength(0);
+			expect(cwdEvents).toHaveLength(0);
+		});
+	});
+
+	describe('split-chunk handling', () => {
+		it('stitches an OSC sequence split across two onData calls', () => {
+			const { processes, feed } = spawnAndCaptureOnData();
+			const seq = oscCommandStart('claude');
+			const split = Math.floor(seq.length / 2);
+			feed(seq.slice(0, split));
+			// Mid-sequence: parser should still be waiting; no state yet.
+			expect(processes.get('test-session')?.shellIntegration?.commandRunning).toBe(false);
+			feed(seq.slice(split));
+			expect(processes.get('test-session')?.shellIntegration?.currentCommand).toBe('claude');
+			expect(processes.get('test-session')?.shellIntegration?.commandRunning).toBe(true);
+		});
+	});
+
+	describe('mixed output (raw text + OSC interleaved)', () => {
+		it('still forwards raw bytes to the buffer manager unchanged', () => {
+			// The parser is read-only — the user's terminal must render every
+			// byte the shell wrote, including the OSC sequences themselves.
+			const { spawner, bufferManager } = createTestContext();
+			spawner.spawn(createTerminalConfig({ shell: 'zsh' }));
+			const onDataFn = mockPtyProcess.onData.mock.calls[0][0];
+
+			const chunk = `prompt$ ${oscCommandStart('ls')}ls${oscCommandFinished(0)}`;
+			onDataFn(chunk);
+
+			// stripControlSequences mock is identity; emitDataBuffered receives
+			// the unmodified chunk. Just check it was called with the input.
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith('test-session', chunk);
+		});
+	});
+});
