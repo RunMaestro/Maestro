@@ -89,6 +89,14 @@ interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	// Per-session per-day breakdown for agent usage chart
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	// Worktree breakdown (added in stats DB v5; optional for backwards
+	// compatibility — populated at runtime by the stats aggregation handler).
+	worktreeQueries?: number;
+	parentQueries?: number;
+	byWorktreeStatus?: {
+		worktree: { count: number; duration: number };
+		parent: { count: number; duration: number };
+	};
 }
 
 // View mode options for the dashboard

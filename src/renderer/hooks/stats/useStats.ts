@@ -39,6 +39,15 @@ export interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	// Per-session per-day breakdown for agent usage chart
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	// Worktree breakdown (added in stats DB v5; optional so tests / older
+	// callers don't have to populate them — runtime data from the stats
+	// aggregation handler always includes these fields).
+	worktreeQueries?: number;
+	parentQueries?: number;
+	byWorktreeStatus?: {
+		worktree: { count: number; duration: number };
+		parent: { count: number; duration: number };
+	};
 }
 
 // Return type for the useStats hook
