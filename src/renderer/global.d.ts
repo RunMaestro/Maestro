@@ -282,6 +282,13 @@ interface MaestroAPI {
 				sshRemote: { id: string; name: string; host: string } | null
 			) => void
 		) => () => void;
+		onTerminalCommandState: (
+			callback: (
+				sessionId: string,
+				state: { currentCommand?: string; commandRunning: boolean; lastExitCode?: number }
+			) => void
+		) => () => void;
+		onTerminalCwd: (callback: (sessionId: string, cwd: string) => void) => () => void;
 		onRemoteCommand: (
 			callback: (
 				sessionId: string,

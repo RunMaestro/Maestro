@@ -63,6 +63,8 @@ let onAgentErrorHandler: ListenerCallback | undefined;
 let onThinkingChunkHandler: ListenerCallback | undefined;
 let onSshRemoteHandler: ListenerCallback | undefined;
 let onToolExecutionHandler: ListenerCallback | undefined;
+let onTerminalCwdHandler: ListenerCallback | undefined;
+let onTerminalCommandStateHandler: ListenerCallback | undefined;
 
 const mockUnsubscribeData = vi.fn();
 const mockUnsubscribeExit = vi.fn();
@@ -75,6 +77,8 @@ const mockUnsubscribeAgentError = vi.fn();
 const mockUnsubscribeThinkingChunk = vi.fn();
 const mockUnsubscribeSshRemote = vi.fn();
 const mockUnsubscribeToolExecution = vi.fn();
+const mockUnsubscribeTerminalCwd = vi.fn();
+const mockUnsubscribeTerminalCommandState = vi.fn();
 
 const mockProcess = {
 	onData: vi.fn((handler: ListenerCallback) => {
@@ -120,6 +124,14 @@ const mockProcess = {
 	onToolExecution: vi.fn((handler: ListenerCallback) => {
 		onToolExecutionHandler = handler;
 		return mockUnsubscribeToolExecution;
+	}),
+	onTerminalCwd: vi.fn((handler: ListenerCallback) => {
+		onTerminalCwdHandler = handler;
+		return mockUnsubscribeTerminalCwd;
+	}),
+	onTerminalCommandState: vi.fn((handler: ListenerCallback) => {
+		onTerminalCommandStateHandler = handler;
+		return mockUnsubscribeTerminalCommandState;
 	}),
 	getActiveProcesses: vi.fn().mockResolvedValue([]),
 	spawn: vi.fn(),
@@ -177,6 +189,8 @@ beforeEach(() => {
 	onThinkingChunkHandler = undefined;
 	onSshRemoteHandler = undefined;
 	onToolExecutionHandler = undefined;
+	onTerminalCwdHandler = undefined;
+	onTerminalCommandStateHandler = undefined;
 
 	// Reset stores
 	useSessionStore.setState({
@@ -244,7 +258,7 @@ describe('getErrorTitleForType', () => {
 
 describe('useAgentListeners', () => {
 	describe('listener registration', () => {
-		it('registers all 11 IPC listeners on mount', () => {
+		it('registers all 13 IPC listeners on mount', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
@@ -258,10 +272,12 @@ describe('useAgentListeners', () => {
 			expect(mockProcess.onAgentError).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onSshRemote).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onTerminalCwd).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onTerminalCommandState).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(1);
 		});
 
-		it('unsubscribes all 11 listeners on unmount', () => {
+		it('unsubscribes all 13 listeners on unmount', () => {
 			const deps = createMockDeps();
 			const { unmount } = renderHook(() => useAgentListeners(deps));
 
@@ -277,6 +293,8 @@ describe('useAgentListeners', () => {
 			expect(mockUnsubscribeAgentError).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeThinkingChunk).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeSshRemote).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeTerminalCwd).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeTerminalCommandState).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(1);
 		});
 
@@ -1509,6 +1527,128 @@ describe('useAgentListeners', () => {
 				host: 'example.com',
 			});
 			expect(updated?.sshRemoteId).toBe('remote-1');
+		});
+	});
+
+	// ========================================================================
+	// onTerminalCwd handler
+	// ========================================================================
+
+	describe('onTerminalCwd', () => {
+		it('updates session.shellCwd when cwd changes', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1', shellCwd: '/home/user' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onTerminalCwdHandler?.('sess-1-terminal', '/tmp');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.shellCwd).toBe('/tmp');
+		});
+
+		it('does nothing when cwd matches the existing shellCwd', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1', shellCwd: '/tmp' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			const before = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			onTerminalCwdHandler?.('sess-1-terminal', '/tmp');
+			const after = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+
+			// Reference equality — early-out path should not allocate a new session object.
+			expect(after).toBe(before);
+		});
+
+		it('handles future per-tab session ID format `${id}-terminal-${tabId}`', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1', shellCwd: '/home/user' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onTerminalCwdHandler?.('sess-1-terminal-tab-7', '/var/log');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.shellCwd).toBe('/var/log');
+		});
+
+		it('ignores events whose sessionId does not match a terminal pattern', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1', shellCwd: '/home/user' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onTerminalCwdHandler?.('sess-1-ai-tab-1', '/tmp');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.shellCwd).toBe('/home/user');
+		});
+	});
+
+	// ========================================================================
+	// onTerminalCommandState handler
+	// ========================================================================
+	// Subscription is wired but the dispatch is intentionally a no-op today —
+	// `Session.terminalTabs[]` and the `updateTerminalTabCommand` helper land
+	// in subsequent tasks of the terminal-persistence plan. These tests pin
+	// the subscription contract (registered + cleaned up) so the IPC pipe
+	// stays plumbed end-to-end while the dispatch destination is built.
+
+	describe('onTerminalCommandState', () => {
+		it('subscribes without throwing when state is delivered', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			expect(() => {
+				onTerminalCommandStateHandler?.('sess-1-terminal', {
+					currentCommand: 'btop',
+					commandRunning: true,
+				});
+			}).not.toThrow();
+		});
+
+		it('does not mutate session state today (deferred to a later task)', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1', shellCwd: '/home/user' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			const before = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			onTerminalCommandStateHandler?.('sess-1-terminal', {
+				currentCommand: 'btop',
+				commandRunning: true,
+				lastExitCode: undefined,
+			});
+			const after = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+
+			expect(after).toBe(before);
 		});
 	});
 

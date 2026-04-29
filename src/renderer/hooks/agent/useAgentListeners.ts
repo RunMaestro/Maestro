@@ -259,7 +259,7 @@ export function getErrorTitleForType(type: AgentError['type']): string {
  *
  * Handles: onData, onExit, onSessionId, onSlashCommands, onStderr,
  * onCommandExit, onUsage, onAgentError, onThinkingChunk, onSshRemote,
- * onToolExecution.
+ * onTerminalCwd, onTerminalCommandState, onToolExecution.
  *
  * Call once in App.tsx. Empty dependency array — runs on mount, cleans up on unmount.
  */
@@ -1840,6 +1840,49 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		);
 
 		// ================================================================
+		// onTerminalCwd — Handle shell-integration CWD changes (OSC 7)
+		// ================================================================
+		// Terminal session IDs are formatted as `${actualSessionId}-terminal`
+		// (single terminal per Maestro session today). When multi-tab terminals
+		// land, the suffix will likely become `-terminal-${tabId}` — handle that
+		// shape too so this listener doesn't need to be updated again.
+		const unsubscribeTerminalCwd = window.maestro.process.onTerminalCwd?.(
+			(sessionId: string, cwd: string) => {
+				const tabbedMatch = sessionId.match(/^(.+)-terminal-(.+)$/);
+				let actualSessionId: string;
+				if (tabbedMatch) {
+					actualSessionId = tabbedMatch[1];
+				} else if (sessionId.endsWith('-terminal')) {
+					actualSessionId = sessionId.slice(0, -'-terminal'.length);
+				} else {
+					return;
+				}
+
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === actualSessionId && s.shellCwd !== cwd ? { ...s, shellCwd: cwd } : s
+					)
+				);
+			}
+		);
+
+		// ================================================================
+		// onTerminalCommandState — Handle shell-integration command state
+		// ================================================================
+		// Subscription is registered to complete the IPC pipe end-to-end (preload
+		// → renderer). The actual store dispatch is deferred until the
+		// `updateTerminalTabCommand` helper and `Session.terminalTabs[]` field
+		// land in subsequent tasks (see 2026-04-05-Terminal-Persistence plan).
+		const unsubscribeTerminalCommandState = window.maestro.process.onTerminalCommandState?.(
+			(
+				_sessionId: string,
+				_state: { currentCommand?: string; commandRunning: boolean; lastExitCode?: number }
+			) => {
+				// Intentionally empty — see comment block above.
+			}
+		);
+
+		// ================================================================
 		// onToolExecution — Handle tool execution events
 		// ================================================================
 		const unsubscribeToolExecution = window.maestro.process.onToolExecution?.(
@@ -1964,6 +2007,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeAgentError();
 			unsubscribeThinkingChunk?.();
 			unsubscribeSshRemote?.();
+			unsubscribeTerminalCwd?.();
+			unsubscribeTerminalCommandState?.();
 			unsubscribeToolExecution?.();
 			// Cancel any pending thinking chunk RAF and clear buffer
 			if (thinkingChunkRafIdRef.current !== null) {
