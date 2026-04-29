@@ -16,7 +16,7 @@ import React, { memo, useMemo, useCallback, useState } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
-import { findSessionByStatId, isWorktreeAgent } from './chartUtils';
+import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
 
 interface AgentData {
 	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
@@ -177,6 +177,19 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 		const items: AgentData[] = [];
 
+		// Resolve raw provider keys (e.g. "claude-code") to user-facing names
+		// (e.g. the user's "Backend API" session name, or the prettified
+		// "Claude Code" fallback). Built from the union of byAgent and the split
+		// aggregation so both rendering paths get coherent labels.
+		const providerKeys = Array.from(
+			new Set([
+				...Object.keys(data.byAgent),
+				...(splitAggregation ? Object.keys(splitAggregation) : []),
+			])
+		);
+		const nameMap = buildNameMap(providerKeys, sessions);
+		const resolveLabel = (provider: string) => nameMap.get(provider)?.name ?? provider;
+
 		// Track unique providers in deterministic order to assign colors stably.
 		const providerColorIdx: Record<string, number> = {};
 		const assignColor = (provider: string): string => {
@@ -189,10 +202,11 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		if (splitAggregation) {
 			for (const [provider, buckets] of Object.entries(splitAggregation)) {
 				const color = assignColor(provider);
+				const baseLabel = resolveLabel(provider);
 				if (buckets.regular.count > 0 || buckets.regular.duration > 0) {
 					items.push({
 						key: provider,
-						label: provider,
+						label: baseLabel,
 						agent: provider,
 						count: buckets.regular.count,
 						duration: buckets.regular.duration,
@@ -205,7 +219,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 				if (buckets.worktree.count > 0 || buckets.worktree.duration > 0) {
 					items.push({
 						key: `${provider}__worktree`,
-						label: `${provider} (Worktree)`,
+						label: `${baseLabel} (Worktree)`,
 						agent: provider,
 						count: buckets.worktree.count,
 						duration: buckets.worktree.duration,
@@ -219,21 +233,22 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		} else {
 			for (const [provider, stats] of Object.entries(data.byAgent)) {
 				const color = assignColor(provider);
+				const resolved = nameMap.get(provider);
 				items.push({
 					key: provider,
-					label: provider,
+					label: resolved?.name ?? provider,
 					agent: provider,
 					count: stats.count,
 					duration: stats.duration,
 					durationPercentage: totalDuration > 0 ? (stats.duration / totalDuration) * 100 : 0,
 					color,
-					isWorktree: false,
+					isWorktree: resolved?.isWorktree ?? false,
 				});
 			}
 		}
 
 		return items.sort((a, b) => b.duration - a.duration);
-	}, [data.byAgent, splitAggregation, theme, colorBlindMode]);
+	}, [data.byAgent, splitAggregation, theme, colorBlindMode, sessions]);
 
 	const hasWorktreeBars = useMemo(() => agentData.some((d) => d.isWorktree), [agentData]);
 

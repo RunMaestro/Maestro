@@ -132,10 +132,12 @@ describe('AgentComparisonChart', () => {
 		it('renders agent names', () => {
 			render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-			// Use getAllByText since agent names appear in both bar labels and legend
-			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getAllByText('factory-droid').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getAllByText('terminal').length).toBeGreaterThanOrEqual(1);
+			// Without sessions, raw agent type keys are prettified via
+			// AGENT_DISPLAY_NAMES (e.g. "claude-code" → "Claude Code").
+			// Use getAllByText since names appear in both bar labels and legend.
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Factory Droid').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Terminal').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('renders with empty data showing message', () => {
@@ -148,7 +150,7 @@ describe('AgentComparisonChart', () => {
 			render(<AgentComparisonChart data={singleAgentData} theme={theme} />);
 
 			// Use getAllByText since agent name appears in both bar label and legend
-			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
 			// Single agent should show 100%
 			expect(screen.getByText('100.0%')).toBeInTheDocument();
 		});
@@ -196,10 +198,11 @@ describe('AgentComparisonChart', () => {
 			const agentLabels = container.querySelectorAll('.w-28.truncate');
 			const agentNames = Array.from(agentLabels).map((el) => el.textContent);
 
-			// In duration mode, claude-code has highest duration (2000000), then codex (1600000), then terminal (500000)
-			expect(agentNames[0]).toBe('claude-code');
-			expect(agentNames[1]).toBe('factory-droid');
-			expect(agentNames[2]).toBe('terminal');
+			// Bars are sorted by duration: claude-code (2000000) > factory-droid
+			// (1600000) > terminal (500000). Labels are prettified by buildNameMap.
+			expect(agentNames[0]).toBe('Claude Code');
+			expect(agentNames[1]).toBe('Factory Droid');
+			expect(agentNames[2]).toBe('Terminal');
 		});
 	});
 
@@ -473,10 +476,11 @@ describe('AgentComparisonChart', () => {
 				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
 			);
 
-			// "claude-code" appears in both the bar label and the legend
-			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
-			// "claude-code (Worktree)" appears in both the bar label and the legend
-			expect(screen.getAllByText('claude-code (Worktree)').length).toBeGreaterThanOrEqual(1);
+			// Two sessions share toolType "claude-code" so resolveAgentDisplayName
+			// falls back to the prettified type name. Labels appear in both the
+			// bar row and the legend.
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Claude Code (Worktree)').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('renders the Agent vs Worktree Agent legend when worktrees are present', () => {
@@ -528,6 +532,109 @@ describe('AgentComparisonChart', () => {
 			render(<AgentComparisonChart data={mockData} theme={theme} />);
 
 			expect(screen.queryByText(/\(Worktree\)/)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Session Name Resolution', () => {
+		it('uses the user-assigned session name when a single session matches the provider', () => {
+			// One session of toolType "claude-code" — buildNameMap should pick
+			// the session's name ("Backend API") for the bar label.
+			const session = makeSession({
+				id: 'backend-api',
+				name: 'Backend API',
+				toolType: 'claude-code',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[session]} />);
+
+			expect(screen.getAllByText('Backend API').length).toBeGreaterThanOrEqual(1);
+			expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+		});
+
+		it('falls back to prettified type when multiple sessions share the same provider', () => {
+			// Two distinct claude-code sessions — buildNameMap can't pick one,
+			// so it should use the prettified type name.
+			const a = makeSession({ id: 'a', name: 'Frontend', toolType: 'claude-code' });
+			const b = makeSession({ id: 'b', name: 'Backend', toolType: 'claude-code' });
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[a, b]} />);
+
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('disambiguates colliding display names with " (2)" suffixes', () => {
+			// Two providers, single matching session each, both named "Worker".
+			// buildNameMap should append " (2)" to the second to avoid collision.
+			const a = makeSession({ id: 'a', name: 'Worker', toolType: 'claude-code' });
+			const b = makeSession({ id: 'b', name: 'Worker', toolType: 'opencode' });
+			const data: StatsAggregation = {
+				...mockData,
+				byAgent: {
+					'claude-code': { count: 30, duration: 2000000 },
+					opencode: { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[a, b]} />);
+
+			expect(screen.getAllByText('Worker').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Worker (2)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('uses prettified type for providers with no matching session', () => {
+			// Sessions present but none with matching toolType — falls through
+			// to prettifyAgentType.
+			const session = makeSession({
+				id: 'unrelated',
+				name: 'Unrelated',
+				toolType: 'opencode',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'factory-droid': { count: 10, duration: 500000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[session]} />);
+
+			expect(screen.getAllByText('Factory Droid').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('uses resolved name in tooltip', () => {
+			const session = makeSession({
+				id: 'backend-api',
+				name: 'Backend API',
+				toolType: 'claude-code',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={data} theme={theme} sessions={[session]} />
+			);
+
+			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			fireEvent.mouseEnter(barRows[0]);
+
+			const tooltip = container.querySelector('.fixed.z-50');
+			expect(tooltip?.textContent).toContain('Backend API');
 		});
 	});
 });
