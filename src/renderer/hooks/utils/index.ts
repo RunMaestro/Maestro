@@ -11,3 +11,10 @@ export { useDebouncedValue, useThrottledCallback, useDebouncedCallback } from '.
 // Debounced session persistence
 export { useDebouncedPersistence, DEFAULT_DEBOUNCE_DELAY } from './useDebouncedPersistence';
 export type { UseDebouncedPersistenceReturn } from './useDebouncedPersistence';
+
+// Periodic terminal command-state polling (Phase 7 fallback)
+export {
+	useTerminalCommandStatePolling,
+	applyTerminalCommandSnapshot,
+	DEFAULT_TERMINAL_POLL_INTERVAL_MS,
+} from './useTerminalCommandStatePolling';

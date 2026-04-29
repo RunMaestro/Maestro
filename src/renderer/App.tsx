@@ -39,6 +39,7 @@ import {
 	// Settings
 	useSettings,
 	useDebouncedPersistence,
+	useTerminalCommandStatePolling,
 	// Session management
 	useActivityTracker,
 	useHandsOnTimeTracker,
@@ -1670,6 +1671,11 @@ function MaestroConsoleInner() {
 		sessions,
 		initialLoadComplete
 	);
+
+	// Poll active terminals every 5s for foreground command + cwd snapshots so
+	// persistence has a current value even when shell integration isn't active
+	// (Phase 7 of the terminal-persistence plan).
+	useTerminalCommandStatePolling();
 
 	// Session lifecycle operations (rename, delete, star, unread, groups persistence, nav tracking)
 	// — provided by useSessionLifecycle hook (Phase 2H)
