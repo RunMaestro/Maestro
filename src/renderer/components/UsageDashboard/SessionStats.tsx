@@ -15,7 +15,7 @@ import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
-import { isWorktreeAgent } from './chartUtils';
+import { isWorktreeAgent, resolveAgentDisplayName } from './chartUtils';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -81,23 +81,6 @@ function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): s
 		'#6366f1',
 	];
 	return additionalColors[(index - 1) % additionalColors.length];
-}
-
-/**
- * Format agent type display name
- */
-function formatAgentName(toolType: ToolType): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return names[toolType] || toolType;
 }
 
 export const SessionStats = memo(function SessionStats({
@@ -180,7 +163,10 @@ export const SessionStats = memo(function SessionStats({
 		};
 	}, [agentSessions]);
 
-	// Sort agents by count (descending)
+	// Sort agents by count (descending) and resolve display names from sessions
+	// so the breakdown surfaces user-assigned names (e.g. "Backend API") when a
+	// provider has a single registered session, falling back to the prettified
+	// agent type when multiple sessions share the type.
 	const sortedAgents = useMemo(
 		() =>
 			Object.entries(stats.byAgent)
@@ -189,8 +175,9 @@ export const SessionStats = memo(function SessionStats({
 					agent: agent as ToolType,
 					count,
 					color: getAgentColor(index, theme, colorBlindMode),
+					displayName: resolveAgentDisplayName(agent, agentSessions).name,
 				})),
-		[stats.byAgent, theme, colorBlindMode]
+		[stats.byAgent, theme, colorBlindMode, agentSessions]
 	);
 
 	if (agentSessions.length === 0) {
@@ -284,7 +271,7 @@ export const SessionStats = memo(function SessionStats({
 										className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
 										style={{ backgroundColor: agent.color }}
 									/>
-									{formatAgentName(agent.agent)}
+									{agent.displayName}
 								</div>
 
 								{/* Bar */}

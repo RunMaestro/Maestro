@@ -102,3 +102,41 @@ describe('SessionStats — worktree breakdown', () => {
 		expect(screen.queryByTestId('worktree-breakdown')).not.toBeInTheDocument();
 	});
 });
+
+describe('SessionStats — agent type display names', () => {
+	it('shows the user-assigned name when only one session of that type exists', () => {
+		const sessions = [makeSession({ name: 'Backend API', toolType: 'claude-code' })];
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		expect(screen.getByText('Backend API')).toBeInTheDocument();
+		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+	});
+
+	it('shows the prettified type when multiple sessions share the type', () => {
+		const sessions = [
+			makeSession({ name: 'Frontend', toolType: 'claude-code' }),
+			makeSession({ name: 'Backend', toolType: 'claude-code' }),
+		];
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		expect(screen.getByText('Claude Code')).toBeInTheDocument();
+		expect(screen.queryByText('Frontend')).not.toBeInTheDocument();
+		expect(screen.queryByText('Backend')).not.toBeInTheDocument();
+	});
+
+	it('uses canonical display names for known agent types via shared resolver', () => {
+		const sessions = [
+			makeSession({ name: 'A', toolType: 'opencode' }),
+			makeSession({ name: 'B', toolType: 'opencode' }),
+			makeSession({ name: 'C', toolType: 'factory-droid' }),
+			makeSession({ name: 'D', toolType: 'factory-droid' }),
+		];
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		expect(screen.getByText('OpenCode')).toBeInTheDocument();
+		expect(screen.getByText('Factory Droid')).toBeInTheDocument();
+	});
+});
