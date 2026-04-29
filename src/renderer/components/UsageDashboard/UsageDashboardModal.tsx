@@ -132,12 +132,17 @@ export function UsageDashboardModal({
 	defaultTimeRange = 'week',
 	sessions = EMPTY_SESSIONS,
 }: UsageDashboardModalProps) {
-	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+	// Tab visibility must match the IPC handler's gating: both Encore flags
+	// have to be on, otherwise the renderer hits a generic error/retry state
+	// instead of the friendly disabled note.
+	const cueTabEnabled = useSettingsStore(
+		(s) => s.encoreFeatures.maestroCue && s.encoreFeatures.usageStats
+	);
 	const VIEW_MODE_TABS = useMemo<{ value: ViewMode; label: string }[]>(() => {
-		return maestroCueEnabled
+		return cueTabEnabled
 			? [...BASE_VIEW_MODE_TABS, { value: 'cue', label: 'Cue' }]
 			: BASE_VIEW_MODE_TABS;
-	}, [maestroCueEnabled]);
+	}, [cueTabEnabled]);
 
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
 	const [viewMode, setViewMode] = useState<ViewMode>('overview');
@@ -342,12 +347,12 @@ export function UsageDashboardModal({
 		}
 	}, [viewMode]);
 
-	// Fall back to 'overview' if Maestro Cue is disabled while the Cue tab is active
+	// Fall back to 'overview' if either Encore flag flips off while the Cue tab is active
 	useEffect(() => {
-		if (!maestroCueEnabled && viewMode === 'cue') {
+		if (!cueTabEnabled && viewMode === 'cue') {
 			switchViewMode('overview');
 		}
-	}, [maestroCueEnabled, viewMode, switchViewMode]);
+	}, [cueTabEnabled, viewMode, switchViewMode]);
 
 	// Get section label for accessibility
 	const getSectionLabel = useCallback((sectionId: SectionId): string => {

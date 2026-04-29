@@ -4,8 +4,9 @@
  * Verifies:
  * - The "Cue" tab is visible when both encoreFeatures.maestroCue and
  *   encoreFeatures.usageStats are true.
- * - The "Cue" tab is hidden when encoreFeatures.maestroCue is false (the
- *   rest of the dashboard still works).
+ * - The "Cue" tab is hidden when EITHER Encore flag is off (matches the IPC
+ *   handler's gating; otherwise the user lands on a generic error/retry note
+ *   instead of the friendly disabled state).
  * - Switching to the Cue tab renders <CueStats>.
  */
 
@@ -121,8 +122,12 @@ describe('UsageDashboardModal — Cue tab gating', () => {
 		expect(screen.getByRole('tab', { name: 'Cue' })).toBeInTheDocument();
 	});
 
-	it('hides the "Cue" tab when maestroCue is disabled (rest of dashboard still renders)', async () => {
-		setEncoreFlags({ maestroCue: false, usageStats: true });
+	it.each([
+		['maestroCue is disabled', { maestroCue: false, usageStats: true }],
+		['usageStats is disabled', { maestroCue: true, usageStats: false }],
+		['both flags are disabled', { maestroCue: false, usageStats: false }],
+	])('hides the "Cue" tab when %s (rest of dashboard still renders)', async (_label, flags) => {
+		setEncoreFlags(flags);
 
 		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
