@@ -720,7 +720,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 			});
 
 			// Verify that the statement was called with normalized path
-			// insertQueryEvent now has 9 parameters: id, sessionId, agentType, source, startTime, duration, projectPath, tabId, isRemote
+			// insertQueryEvent now has 10 parameters: id, sessionId, agentType, source, startTime, duration, projectPath, tabId, isRemote, isWorktree
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String), // id
 				'session-1',
@@ -730,7 +730,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				'C:/Users/TestUser/Projects/MyApp', // normalized path
 				'tab-1',
-				null // isRemote (undefined → null)
+				null, // isRemote (undefined → null)
+				null // isWorktree (undefined → null)
 			);
 		});
 
@@ -749,7 +750,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				tabId: 'tab-1',
 			});
 
-			// insertQueryEvent now has 9 parameters including isRemote
+			// insertQueryEvent now has 10 parameters including isRemote and isWorktree
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -759,7 +760,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				'/Users/testuser/Projects/MyApp', // unchanged
 				'tab-1',
-				null // isRemote (undefined → null)
+				null, // isRemote (undefined → null)
+				null // isWorktree (undefined → null)
 			);
 		});
 
@@ -777,7 +779,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				// projectPath is undefined
 			});
 
-			// insertQueryEvent now has 9 parameters including isRemote
+			// insertQueryEvent now has 10 parameters including isRemote and isWorktree
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -787,7 +789,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				null, // undefined becomes null
 				null, // tabId undefined → null
-				null // isRemote undefined → null
+				null, // isRemote undefined → null
+				null // isWorktree undefined → null
 			);
 		});
 	});

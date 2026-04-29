@@ -18,6 +18,8 @@ export interface QueryEvent {
 	tabId?: string;
 	/** Whether this query was executed on a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this query came from a worktree session (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -64,6 +66,8 @@ export interface SessionLifecycleEvent {
 	duration?: number;
 	/** Whether this was a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this session is a worktree (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -112,4 +116,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 5;
