@@ -161,6 +161,56 @@ describe('AgentEfficiencyChart', () => {
 		});
 	});
 
+	describe('Drill-down filter', () => {
+		it('renders all entries at full opacity when no activeFilterKey is provided', () => {
+			const { container } = render(<AgentEfficiencyChart data={baseData} theme={theme} />);
+			// Row containers live at the top of the .space-y-3 wrapper as
+			// `.flex.items-center.gap-3` divs. With no filter, neither row should
+			// have the dim opacity applied.
+			const rows = container.querySelectorAll('.space-y-3 > div.flex.items-center.gap-3');
+			expect(rows.length).toBe(2);
+			rows.forEach((row) => {
+				expect((row as HTMLElement).style.opacity).not.toBe('0.3');
+			});
+		});
+
+		it('dims rows that do not match activeFilterKey to 0.3 opacity', () => {
+			const { container } = render(
+				<AgentEfficiencyChart data={baseData} theme={theme} activeFilterKey="claude-code" />
+			);
+			const rows = container.querySelectorAll(
+				'.space-y-3 > div.flex.items-center.gap-3'
+			) as NodeListOf<HTMLElement>;
+			expect(rows.length).toBe(2);
+
+			// Two providers: claude-code (matches) and factory-droid (dimmed).
+			// Sort by efficiency: data has claude-code at 2000000/30 ≈ 66667ms,
+			// factory-droid at 1600000/20 = 80000ms — claude-code is faster, so
+			// it renders first. We don't depend on order; instead, find the row
+			// whose label is "Claude Code" vs "Factory Droid".
+			const claudeRow = Array.from(rows).find((r) => r.textContent?.includes('Claude Code'));
+			const factoryRow = Array.from(rows).find((r) => r.textContent?.includes('Factory Droid'));
+
+			expect(claudeRow).toBeDefined();
+			expect(factoryRow).toBeDefined();
+			expect(claudeRow?.style.opacity).not.toBe('0.3');
+			expect(factoryRow?.style.opacity).toBe('0.3');
+		});
+
+		it('dims all rows when activeFilterKey matches no entry', () => {
+			const { container } = render(
+				<AgentEfficiencyChart data={baseData} theme={theme} activeFilterKey="nonexistent" />
+			);
+			const rows = container.querySelectorAll(
+				'.space-y-3 > div.flex.items-center.gap-3'
+			) as NodeListOf<HTMLElement>;
+			expect(rows.length).toBe(2);
+			rows.forEach((row) => {
+				expect(row.style.opacity).toBe('0.3');
+			});
+		});
+	});
+
 	describe('Worktree Differentiation', () => {
 		it('splits worktree agents into separate rows tagged with "(Worktree)"', () => {
 			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });

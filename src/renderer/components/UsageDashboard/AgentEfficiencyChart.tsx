@@ -28,7 +28,7 @@ interface AgentEfficiencyChartProps {
 	/** Current sessions list — when provided, agents are labeled with their
 	 * user-assigned session names and worktree agents render with a striped pattern. */
 	sessions?: Session[];
-	/** Active drill-down filter key — consumed in a follow-up task to dim non-selected entries. */
+	/** Active drill-down filter key — when set, non-matching entries dim to 0.3 opacity. */
 	activeFilterKey?: string | null;
 }
 
@@ -80,6 +80,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 	theme,
 	colorBlindMode = false,
 	sessions,
+	activeFilterKey = null,
 }: AgentEfficiencyChartProps) {
 	// Compute per-(provider, worktree-status) aggregation when sessions are
 	// available and at least one worktree session is found. Returns null
@@ -206,7 +207,10 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 	if (efficiencyData.length === 0) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Agent Efficiency
 				</h3>
 				<div
@@ -225,7 +229,10 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 			style={{ backgroundColor: theme.colors.bgMain }}
 			data-testid="agent-efficiency-chart"
 		>
-			<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+			<h3
+				className="text-sm font-medium mb-4"
+				style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+			>
 				Agent Efficiency
 				<span className="text-xs font-normal ml-2" style={{ color: theme.colors.textDim }}>
 					(avg response time per query)
@@ -245,9 +252,17 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 					return efficiencyData.map((agent) => {
 						const percentage = maxDuration > 0 ? (agent.avgDuration / maxDuration) * 100 : 0;
 						const color = getAgentColor(providerColorIdx[agent.agent], theme, colorBlindMode);
+						const isDimmed = activeFilterKey !== null && activeFilterKey !== agent.key;
 
 						return (
-							<div key={agent.key} className="flex items-center gap-3">
+							<div
+								key={agent.key}
+								className="flex items-center gap-3"
+								style={{
+									opacity: isDimmed ? 0.3 : 1,
+									transition: 'opacity 0.15s ease',
+								}}
+							>
 								{/* Agent name */}
 								<div
 									className="w-28 text-sm truncate flex-shrink-0 flex items-center gap-2"

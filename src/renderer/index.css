@@ -319,6 +319,15 @@ textarea::placeholder {
 	opacity: 0;
 }
 
+.chart-clickable {
+	cursor: pointer;
+	transition: opacity 0.15s ease;
+}
+
+.chart-clickable:hover {
+	opacity: 0.8;
+}
+
 .animate-in {
 	animation: fade-in 0.2s ease-in;
 }
@@ -849,6 +858,11 @@ svg.wand-sparkle-active path:nth-child(8) {
 		animation: none !important;
 		opacity: 1 !important;
 		transform: none !important;
+	}
+
+	/* Disable chart-clickable hover transition for reduced motion */
+	.chart-clickable {
+		transition: none !important;
 	}
 
 	/* Disable bouncing dots animation for reduced motion users */

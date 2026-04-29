@@ -162,6 +162,56 @@ function filterStatsForAgent(stats: StatsAggregation, agentKey: string): StatsAg
 	};
 }
 
+/**
+ * Placeholder shown in place of charts that don't have a per-agent breakdown
+ * (ActivityHeatmap, PeakHoursChart, WeekdayComparisonChart) while a drill-down
+ * filter is active. Surfaces the filtered agent's name and a clickable "Clear
+ * filter" link so the user can recover the full view in one click.
+ */
+function FilteredChartPlaceholder({
+	chartName,
+	theme,
+	onClear,
+}: {
+	chartName: string;
+	theme: Theme;
+	onClear: () => void;
+}) {
+	return (
+		<div
+			className="p-4 rounded-lg flex items-center justify-center"
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				color: theme.colors.textDim,
+				minHeight: 120,
+			}}
+			data-testid={`filtered-placeholder-${chartName.toLowerCase().replace(/\s+/g, '-')}`}
+			role="status"
+			aria-live="polite"
+		>
+			<span className="text-sm">
+				Hourly breakdown not available for individual agents.{' '}
+				<button
+					type="button"
+					onClick={onClear}
+					className="chart-clickable underline"
+					style={{
+						color: theme.colors.accent,
+						background: 'none',
+						border: 'none',
+						padding: 0,
+						font: 'inherit',
+					}}
+					data-testid={`filtered-placeholder-clear-${chartName.toLowerCase().replace(/\s+/g, '-')}`}
+				>
+					Clear filter
+				</button>{' '}
+				to see all data.
+			</span>
+		</div>
+	);
+}
+
 interface UsageDashboardModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -1028,11 +1078,19 @@ export function UsageDashboardModal({
 										data-testid="section-peak-hours"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Peak Hours">
-											<PeakHoursChart
-												data={filteredStats ?? data}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Peak Hours"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<PeakHoursChart
+													data={filteredStats ?? data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -1055,12 +1113,20 @@ export function UsageDashboardModal({
 										data-testid="section-activity-heatmap"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={filteredStats ?? data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Activity Heatmap"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<ActivityHeatmap
+													data={filteredStats ?? data}
+													timeRange={timeRange}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -1249,12 +1315,20 @@ export function UsageDashboardModal({
 										data-testid="section-activity-heatmap"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={filteredStats ?? data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Activity Heatmap"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<ActivityHeatmap
+													data={filteredStats ?? data}
+													timeRange={timeRange}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -1276,11 +1350,19 @@ export function UsageDashboardModal({
 										data-testid="section-weekday-comparison"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Weekday Comparison">
-											<WeekdayComparisonChart
-												data={filteredStats ?? data}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Weekday Comparison"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<WeekdayComparisonChart
+													data={filteredStats ?? data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
