@@ -14,7 +14,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
-import { ensureInUnifiedTabOrder } from '../../utils/tabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
 	createTerminalTab as createTerminalTabHelper,
 	addTerminalTab as addTerminalTabHelper,
@@ -160,11 +160,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai' as const,
-					unifiedTabOrder: ensureInUnifiedTabOrder(
-						s.unifiedTabOrder || [],
-						'browser',
-						newBrowserTab.id
-					),
+					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+						type: 'browser',
+						id: newBrowserTab.id,
+					}),
 				};
 			})
 		);

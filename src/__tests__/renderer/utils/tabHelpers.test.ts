@@ -136,7 +136,7 @@ describe('tabHelpers', () => {
 		it('creates a new tab with default options', () => {
 			const session = createMockSession({ aiTabs: [] });
 
-			const result = createTab(session);
+			const result = createTab(session)!;
 
 			expect(result.tab).toMatchObject({
 				id: 'mock-generated-id',
@@ -172,7 +172,7 @@ describe('tabHelpers', () => {
 				saveToHistory: true,
 			};
 
-			const result = createTab(session, options);
+			const result = createTab(session, options)!;
 
 			expect(result.tab.agentSessionId).toBe('claude-123');
 			expect(result.tab.name).toBe('My Tab');
@@ -186,19 +186,19 @@ describe('tabHelpers', () => {
 			const session = createMockSession({ aiTabs: [] });
 
 			// Default should be 'off'
-			const defaultResult = createTab(session);
+			const defaultResult = createTab(session)!;
 			expect(defaultResult.tab.showThinking).toBe('off');
 
 			// Explicit 'on'
-			const trueResult = createTab(session, { showThinking: 'on' });
+			const trueResult = createTab(session, { showThinking: 'on' })!;
 			expect(trueResult.tab.showThinking).toBe('on');
 
 			// Explicit 'off'
-			const falseResult = createTab(session, { showThinking: 'off' });
+			const falseResult = createTab(session, { showThinking: 'off' })!;
 			expect(falseResult.tab.showThinking).toBe('off');
 
 			// Explicit 'sticky'
-			const stickyResult = createTab(session, { showThinking: 'sticky' });
+			const stickyResult = createTab(session, { showThinking: 'sticky' })!;
 			expect(stickyResult.tab.showThinking).toBe('sticky');
 		});
 
@@ -209,7 +209,7 @@ describe('tabHelpers', () => {
 				activeTabId: 'existing-tab',
 			});
 
-			const result = createTab(session);
+			const result = createTab(session)!;
 
 			expect(result.session.aiTabs).toHaveLength(2);
 			expect(result.session.aiTabs[0]).toBe(existingTab);
@@ -223,7 +223,7 @@ describe('tabHelpers', () => {
 				activeTabId: 'existing-tab',
 			});
 
-			const result = createTab(session);
+			const result = createTab(session)!;
 
 			expect(result.session.activeTabId).toBe(result.tab.id);
 		});
@@ -236,10 +236,111 @@ describe('tabHelpers', () => {
 				activeBrowserTabId: 'browser-1',
 			});
 
-			const result = createTab(session);
+			const result = createTab(session)!;
 
 			expect(result.session.activeBrowserTabId).toBeNull();
 			expect(result.session.activeTabId).toBe(result.tab.id);
+		});
+
+		it('inserts new AI tab directly to the right of the active AI tab in unifiedTabOrder', () => {
+			const tabA = createMockTab({ id: 'tab-a' });
+			const tabB = createMockTab({ id: 'tab-b' });
+			const tabC = createMockTab({ id: 'tab-c' });
+			const session = createMockSession({
+				aiTabs: [tabA, tabB, tabC],
+				activeTabId: 'tab-b',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'tab-b' },
+					{ type: 'ai', id: 'tab-c' },
+				],
+			});
+
+			const result = createTab(session)!;
+
+			expect(result.session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'tab-a' },
+				{ type: 'ai', id: 'tab-b' },
+				{ type: 'ai', id: result.tab.id },
+				{ type: 'ai', id: 'tab-c' },
+			]);
+		});
+
+		it('inserts new AI tab directly to the right of an active terminal tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				terminalTabs: [
+					{
+						id: 'term-1',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '',
+						createdAt: 0,
+						state: 'idle',
+					},
+				],
+				activeTerminalTabId: 'term-1',
+				inputMode: 'terminal',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+				],
+			});
+
+			const result = createTab(session)!;
+
+			expect(result.session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'terminal', id: 'term-1' },
+				{ type: 'ai', id: result.tab.id },
+			]);
+		});
+
+		it('inserts new AI tab directly to the right of an active file tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = createTab(session)!;
+
+			expect(result.session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'file', id: 'file-1' },
+				{ type: 'ai', id: result.tab.id },
+			]);
+		});
+
+		it('appends new AI tab when active tab cannot be located in unifiedTabOrder', () => {
+			const tabA = createMockTab({ id: 'tab-a' });
+			const session = createMockSession({
+				aiTabs: [tabA],
+				activeTabId: 'tab-a',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-a' },
+					{ type: 'ai', id: 'orphan-not-in-data' },
+				],
+			});
+
+			const result = createTab(session)!;
+
+			// Active tab is tab-a at index 0 — new tab should land at index 1
+			expect(result.session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'tab-a' },
+				{ type: 'ai', id: result.tab.id },
+				{ type: 'ai', id: 'orphan-not-in-data' },
+			]);
 		});
 	});
 

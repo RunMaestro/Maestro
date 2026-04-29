@@ -161,6 +161,87 @@ describe('addTerminalTab', () => {
 		expect(updated.terminalTabs).toHaveLength(2);
 		expect(updated.unifiedTabOrder).toHaveLength(2);
 	});
+
+	it('inserts the new terminal directly to the right of the active terminal tab', () => {
+		const term1 = createMockTerminalTab({ id: 'term-1' });
+		const term2 = createMockTerminalTab({ id: 'term-2' });
+		const session = createMockSession({
+			terminalTabs: [term1, term2],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'terminal', id: 'term-1' },
+				{ type: 'terminal', id: 'term-2' },
+			],
+		});
+		const newTab = createMockTerminalTab({ id: 'new-tab' });
+
+		const updated = addTerminalTab(session, newTab);
+
+		expect(updated.unifiedTabOrder).toEqual([
+			{ type: 'terminal', id: 'term-1' },
+			{ type: 'terminal', id: 'new-tab' },
+			{ type: 'terminal', id: 'term-2' },
+		]);
+	});
+
+	it('inserts the new terminal directly to the right of the active AI tab', () => {
+		const session = createMockSession({
+			aiTabs: [
+				{
+					id: 'ai-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+					state: 'idle',
+				},
+				{
+					id: 'ai-2',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+					state: 'idle',
+				},
+			],
+			activeTabId: 'ai-1',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'ai', id: 'ai-2' },
+			],
+		});
+		const newTab = createMockTerminalTab({ id: 'new-term' });
+
+		const updated = addTerminalTab(session, newTab);
+
+		expect(updated.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'ai-1' },
+			{ type: 'terminal', id: 'new-term' },
+			{ type: 'ai', id: 'ai-2' },
+		]);
+	});
+
+	it('appends when active tab is missing from unifiedTabOrder', () => {
+		const session = createMockSession({
+			activeTabId: 'ai-missing',
+			unifiedTabOrder: [{ type: 'ai', id: 'ai-other' }],
+		});
+		const newTab = createMockTerminalTab({ id: 'new-term' });
+
+		const updated = addTerminalTab(session, newTab);
+
+		expect(updated.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'ai-other' },
+			{ type: 'terminal', id: 'new-term' },
+		]);
+	});
 });
 
 describe('closeTerminalTab', () => {
