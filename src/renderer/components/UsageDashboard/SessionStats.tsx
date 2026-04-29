@@ -15,6 +15,7 @@ import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { isWorktreeAgent } from './chartUtils';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -119,6 +120,8 @@ export const SessionStats = memo(function SessionStats({
 		let localSessions = 0;
 		let bookmarked = 0;
 		let withWorktrees = 0;
+		let worktreeChildren = 0;
+		let regularSessions = 0;
 
 		for (const session of agentSessions) {
 			// Count by agent type
@@ -152,6 +155,15 @@ export const SessionStats = memo(function SessionStats({
 			if (session.worktreeConfig || session.parentSessionId) {
 				withWorktrees++;
 			}
+
+			// Worktree children (sessions spawned from a parent) vs regular agents.
+			// A "regular" session here is anything that is NOT a worktree child —
+			// parent agents are counted as regular alongside standalone agents.
+			if (isWorktreeAgent(session)) {
+				worktreeChildren++;
+			} else {
+				regularSessions++;
+			}
 		}
 
 		return {
@@ -163,6 +175,8 @@ export const SessionStats = memo(function SessionStats({
 			localSessions,
 			bookmarked,
 			withWorktrees,
+			worktreeChildren,
+			regularSessions,
 		};
 	}, [agentSessions]);
 
@@ -230,6 +244,22 @@ export const SessionStats = memo(function SessionStats({
 					theme={theme}
 					subValue={stats.remoteSessions > 0 ? `${stats.remoteSessions} remote` : undefined}
 				/>
+			</div>
+
+			{/* Worktree vs Regular Breakdown */}
+			<div
+				className="flex items-center gap-2 mb-4 text-xs"
+				style={{ color: theme.colors.textDim }}
+				data-testid="worktree-breakdown"
+				aria-label={`Regular: ${stats.regularSessions} | Worktree: ${stats.worktreeChildren}`}
+			>
+				<span>
+					Regular: <span style={{ color: theme.colors.textMain }}>{stats.regularSessions}</span>
+				</span>
+				<span style={{ opacity: 0.5 }}>|</span>
+				<span>
+					Worktree: <span style={{ color: theme.colors.textMain }}>{stats.worktreeChildren}</span>
+				</span>
 			</div>
 
 			{/* Agent Type Breakdown */}
