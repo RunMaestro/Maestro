@@ -1,7 +1,6 @@
 import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, FolderTree } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
-import { getStatusColor } from '../utils/theme';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -124,6 +123,12 @@ export const SessionItem = memo(function SessionItem({
 	// Determine if we show the GIT/LOCAL badge (not shown in bookmark variant, terminal sessions, or worktree variant)
 	const showGitLocalBadge =
 		variant !== 'bookmark' && variant !== 'worktree' && session.toolType !== 'terminal';
+
+	// Status indicator: enhanced color/animation/label, plus hollow signal for
+	// Claude Code agents that haven't bound to a provider session yet.
+	const statusInfo = getEnhancedStatusColor(session, theme, isInBatch);
+	const isDisconnected =
+		session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch;
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -389,32 +394,34 @@ export const SessionItem = memo(function SessionItem({
 					))}
 
 				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
-				<div className="relative ml-auto">
+				<div className="relative ml-auto w-2 h-2">
+					{/* Pulse ring: only renders for animated states, sits behind the dot */}
+					{statusInfo.animate && (
+						<span
+							className="absolute inset-0 rounded-full animate-ping"
+							style={{ backgroundColor: statusInfo.color, opacity: 0.3 }}
+							aria-hidden="true"
+						/>
+					)}
+					{/* Core status dot: filled by default, hollow when Claude has no provider session.
+					    Busy CLI activity overrides the generic "Thinking" tooltip with the playbook name. */}
 					<div
-						className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
+						className="relative w-2 h-2 rounded-full"
 						style={
-							session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
-								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
+							isDisconnected
+								? {
+										border: `1.5px solid ${theme.colors.textDim}`,
+										backgroundColor: 'transparent',
+									}
 								: {
-										backgroundColor: isInBatch
-											? theme.colors.warning
-											: getStatusColor(session.state, theme),
+										backgroundColor: statusInfo.color,
+										boxShadow: statusInfo.animate ? `0 0 6px ${statusInfo.color}60` : undefined,
 									}
 						}
 						title={
-							session.toolType === 'claude-code' && !session.agentSessionId
-								? 'No active Claude session'
-								: session.state === 'idle'
-									? 'Ready and waiting'
-									: session.state === 'busy'
-										? session.cliActivity
-											? `CLI: Running playbook "${session.cliActivity.playbookName}"`
-											: 'Agent is thinking'
-										: session.state === 'connecting'
-											? 'Attempting to establish connection'
-											: session.state === 'error'
-												? 'No connection with agent'
-												: 'Waiting for input'
+							session.state === 'busy' && session.cliActivity && !isInBatch
+								? `CLI: Running playbook "${session.cliActivity.playbookName}"`
+								: statusInfo.label
 						}
 					/>
 					{/* Unread Notification Badge */}
