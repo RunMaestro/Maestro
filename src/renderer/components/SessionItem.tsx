@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
+import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, FolderTree } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -153,6 +153,16 @@ export const SessionItem = memo(function SessionItem({
 						{/* Branch icon for worktree children */}
 						{variant === 'worktree' && (
 							<GitBranch className="w-3 h-3 shrink-0" style={{ color: theme.colors.accent }} />
+						)}
+						{/* Parent agent indicator: shown for sessions that have spawned worktree children */}
+						{variant !== 'worktree' && session.worktreeConfig && (
+							<span
+								className="shrink-0 inline-flex"
+								title="Parent agent with worktrees"
+								aria-label="Parent agent with worktrees"
+							>
+								<FolderTree size={10} style={{ color: theme.colors.textDim }} />
+							</span>
 						)}
 						<span
 							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
