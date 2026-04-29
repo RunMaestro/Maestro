@@ -25,6 +25,8 @@ import { getWindowsShellForAgentExecution } from '../../process-manager/utils/sh
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
+import { detectForegroundCommand } from '../../shell-integration/fallbackDetector';
+import type { TerminalForegroundSnapshot } from '../../process-manager/types';
 import { MaestroSettings } from './persistence';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -637,6 +639,45 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				args: p.args,
 			}));
 		})
+	);
+
+	// Get the current foreground command + cwd for a terminal session.
+	// Used by the renderer's polling fallback when no OSC events are arriving
+	// (shells without integration, integration disabled, or before the first
+	// prompt fires). Returns null for non-terminal sessions or unknown IDs.
+	ipcMain.handle(
+		'process:getTerminalCommandState',
+		withIpcErrorLogging(
+			handlerOpts('getTerminalCommandState'),
+			async (sessionId: string): Promise<TerminalForegroundSnapshot | null> => {
+				const processManager = requireProcessManager(getProcessManager);
+				const proc = processManager.get(sessionId);
+				if (!proc || !proc.isTerminal) return null;
+
+				// Shell-integration state (populated by the OSC parser) is
+				// authoritative when present. Its presence — not the contents —
+				// is the signal that the integration is active for this tab,
+				// so we trust an explicit `commandRunning: false` even if no
+				// command has fired yet.
+				if (proc.shellIntegration) {
+					return {
+						currentCommand: proc.shellIntegration.currentCommand,
+						commandRunning: proc.shellIntegration.commandRunning,
+						currentCwd: proc.cwd,
+					};
+				}
+
+				// Fallback: peek at the shell's child processes. A child means
+				// a foreground command is (probably) running; no children means
+				// the shell is at its prompt.
+				const fallbackCommand = await detectForegroundCommand(proc.pid);
+				return {
+					currentCommand: fallbackCommand ?? undefined,
+					commandRunning: fallbackCommand !== null,
+					currentCwd: proc.cwd,
+				};
+			}
+		)
 	);
 
 	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)

@@ -99,6 +99,24 @@ export interface TerminalCommandState {
 	lastExitCode?: number;
 }
 
+/**
+ * Polling-style snapshot returned by the `process:getTerminalCommandState`
+ * IPC handler. The renderer polls this on an interval for terminal tabs that
+ * never received OSC events (shells without integration, integration disabled,
+ * or before the first prompt fires) so persistence still has a current command
+ * to snapshot for restart re-execution.
+ *
+ * `currentCommand` is the live command when `commandRunning` is true, the
+ * last-run command otherwise. `currentCwd` reflects the shell's current
+ * working directory (updated by OSC 7 if shell integration is active, else
+ * the spawn cwd).
+ */
+export interface TerminalForegroundSnapshot {
+	currentCommand?: string;
+	commandRunning: boolean;
+	currentCwd?: string;
+}
+
 export interface UsageTotals {
 	inputTokens: number;
 	outputTokens: number;

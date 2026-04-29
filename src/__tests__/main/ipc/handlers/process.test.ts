@@ -54,6 +54,13 @@ vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
 
+// Mock the ps-based fallback detector — we drive its return value per-test
+// to verify the handler picks the right path between shell-integration state
+// and the ps fallback.
+vi.mock('../../../../main/shell-integration/fallbackDetector', () => ({
+	detectForegroundCommand: vi.fn(),
+}));
+
 // Mock streamJsonBuilder for SSH image tests
 vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
 	buildStreamJsonMessage: vi.fn((prompt: string, images: string[]) => {
@@ -199,6 +206,7 @@ describe('process IPC handlers', () => {
 		kill: ReturnType<typeof vi.fn>;
 		resize: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
+		get: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: {
@@ -226,6 +234,7 @@ describe('process IPC handlers', () => {
 			kill: vi.fn(),
 			resize: vi.fn(),
 			getAll: vi.fn(),
+			get: vi.fn(),
 			runCommand: vi.fn(),
 		};
 
@@ -287,6 +296,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:getTerminalCommandState',
 				'process:runCommand',
 			];
 
@@ -839,6 +849,141 @@ describe('process IPC handlers', () => {
 			expect(result[0]).not.toHaveProperty('outputParser');
 			expect(result[0]).toHaveProperty('sessionId');
 			expect(result[0]).toHaveProperty('pid');
+		});
+	});
+
+	describe('process:getTerminalCommandState', () => {
+		// Mocked at module top via vi.mock; pulled fresh per-test
+		// so we can drive its return value for the fallback path tests.
+		const getDetector = async () => {
+			const mod = await import('../../../../main/shell-integration/fallbackDetector');
+			return vi.mocked(mod.detectForegroundCommand);
+		};
+
+		it('should return null when the session has no managed process', async () => {
+			mockProcessManager.get.mockReturnValue(undefined);
+			const detector = await getDetector();
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'unknown-session');
+
+			expect(mockProcessManager.get).toHaveBeenCalledWith('unknown-session');
+			expect(result).toBeNull();
+			expect(detector).not.toHaveBeenCalled();
+		});
+
+		it('should return null when the session is not a terminal', async () => {
+			mockProcessManager.get.mockReturnValue({
+				sessionId: 'session-1',
+				isTerminal: false,
+				pid: 1234,
+				cwd: '/home',
+				shellIntegration: { commandRunning: true, currentCommand: 'whatever' },
+			});
+			const detector = await getDetector();
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'session-1');
+
+			expect(result).toBeNull();
+			expect(detector).not.toHaveBeenCalled();
+		});
+
+		it('should return shell-integration state when present (running)', async () => {
+			mockProcessManager.get.mockReturnValue({
+				sessionId: 'session-1-terminal',
+				isTerminal: true,
+				pid: 1234,
+				cwd: '/Users/dev/project',
+				shellIntegration: {
+					currentCommand: 'btop',
+					commandRunning: true,
+					lastExitCode: 0,
+				},
+			});
+			const detector = await getDetector();
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'session-1-terminal');
+
+			expect(result).toEqual({
+				currentCommand: 'btop',
+				commandRunning: true,
+				currentCwd: '/Users/dev/project',
+			});
+			// `lastExitCode` is internal state — not part of the snapshot contract
+			expect(result).not.toHaveProperty('lastExitCode');
+			// Fallback must NOT fire when shell integration is providing data
+			expect(detector).not.toHaveBeenCalled();
+		});
+
+		it('should return shell-integration state when present (idle)', async () => {
+			mockProcessManager.get.mockReturnValue({
+				sessionId: 'session-1-terminal',
+				isTerminal: true,
+				pid: 1234,
+				cwd: '/Users/dev/project',
+				// Initial state: parser exists but no commands have run yet
+				shellIntegration: { commandRunning: false },
+			});
+			const detector = await getDetector();
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'session-1-terminal');
+
+			// `commandRunning: false` from shell integration is authoritative —
+			// we trust it instead of falling back to ps, even though
+			// `currentCommand` is undefined.
+			expect(result).toEqual({
+				currentCommand: undefined,
+				commandRunning: false,
+				currentCwd: '/Users/dev/project',
+			});
+			expect(detector).not.toHaveBeenCalled();
+		});
+
+		it('should fall back to detectForegroundCommand when no shell integration', async () => {
+			mockProcessManager.get.mockReturnValue({
+				sessionId: 'session-1-terminal',
+				isTerminal: true,
+				pid: 4321,
+				cwd: '/Users/dev/work',
+				// Note: no `shellIntegration` field — shell does not support OSC 133
+				// or terminalShellIntegration setting was off at spawn time.
+			});
+			const detector = await getDetector();
+			detector.mockResolvedValueOnce('htop -d 5');
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'session-1-terminal');
+
+			expect(detector).toHaveBeenCalledWith(4321);
+			expect(result).toEqual({
+				currentCommand: 'htop -d 5',
+				commandRunning: true,
+				currentCwd: '/Users/dev/work',
+			});
+		});
+
+		it('should report idle when fallback detector finds no children', async () => {
+			mockProcessManager.get.mockReturnValue({
+				sessionId: 'session-1-terminal',
+				isTerminal: true,
+				pid: 4321,
+				cwd: '/tmp',
+			});
+			const detector = await getDetector();
+			detector.mockResolvedValueOnce(null);
+
+			const handler = handlers.get('process:getTerminalCommandState');
+			const result = await handler!({} as any, 'session-1-terminal');
+
+			expect(detector).toHaveBeenCalledWith(4321);
+			expect(result).toEqual({
+				currentCommand: undefined,
+				commandRunning: false,
+				currentCwd: '/tmp',
+			});
 		});
 	});
 
