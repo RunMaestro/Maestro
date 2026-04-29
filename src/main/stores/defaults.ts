@@ -74,6 +74,13 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
 	spellCheck: false,
+	annotatorPenColor: '#ec4899',
+	annotatorPenSize: 8,
+	annotatorThinning: 0.5,
+	annotatorSmoothing: 0.5,
+	annotatorStreamline: 0.5,
+	annotatorTaperStart: 0,
+	annotatorTaperEnd: 0,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {
