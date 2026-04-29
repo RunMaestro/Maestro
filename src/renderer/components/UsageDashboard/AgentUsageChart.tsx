@@ -19,6 +19,7 @@ import { format, parseISO } from 'date-fns';
 import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { findSessionByStatId, isWorktreeAgent } from './chartUtils';
 
 // 10 distinct colors for agents
 const AGENT_COLORS = [
@@ -138,17 +139,16 @@ function getAgentColor(index: number, colorBlindMode: boolean): string {
 /**
  * Extract a display name from a session ID
  * Session IDs are in format: "sessionId-ai-tabId" or similar
- * Returns the first 8 chars of the session UUID or the name if found
+ * Returns the first 8 chars of the session UUID or the name if found.
+ * Worktree agents are suffixed with " (WT)" so they're distinguishable in
+ * legends and tooltips.
  */
 function getSessionDisplayName(sessionId: string, sessions?: Session[]): string {
-	// Try to find the session by ID to get its name
-	if (sessions) {
-		// Session IDs in stats may include tab suffixes like "-ai-tabId"
-		// Try to match the base session ID
-		const session = sessions.find((s) => sessionId.startsWith(s.id));
-		if (session?.name) {
-			return session.name;
-		}
+	const session = findSessionByStatId(sessionId, sessions);
+	const suffix = session && isWorktreeAgent(session) ? ' (WT)' : '';
+
+	if (session?.name) {
+		return `${session.name}${suffix}`;
 	}
 
 	// Fallback: extract the UUID part and show first 8 chars
@@ -157,9 +157,9 @@ function getSessionDisplayName(sessionId: string, sessions?: Session[]): string 
 	if (parts.length >= 5) {
 		// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 		// Take first segment
-		return parts[0].substring(0, 8).toUpperCase();
+		return `${parts[0].substring(0, 8).toUpperCase()}${suffix}`;
 	}
-	return sessionId.substring(0, 8).toUpperCase();
+	return `${sessionId.substring(0, 8).toUpperCase()}${suffix}`;
 }
 
 export const AgentUsageChart = memo(function AgentUsageChart({
@@ -181,7 +181,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 	const innerHeight = chartHeight - padding.top - padding.bottom;
 
 	// Get list of agents and their data (limited to top 10 by total queries)
-	const { agents, chartData, allDates, agentDisplayNames } = useMemo(() => {
+	const { agents, chartData, allDates, agentDisplayNames, worktreeAgents } = useMemo(() => {
 		const bySessionByDay = data.bySessionByDay || {};
 
 		// Calculate total queries per session to rank them
@@ -196,10 +196,15 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		const topSessions = sessionTotals.slice(0, 10);
 		const agentList = topSessions.map((s) => s.sessionId);
 
-		// Build display name map
+		// Build display name map and worktree flag set
 		const displayNames: Record<string, string> = {};
+		const worktreeSet = new Set<string>();
 		for (const sessionId of agentList) {
 			displayNames[sessionId] = getSessionDisplayName(sessionId, sessions);
+			const session = findSessionByStatId(sessionId, sessions);
+			if (session && isWorktreeAgent(session)) {
+				worktreeSet.add(sessionId);
+			}
 		}
 
 		// Collect all unique dates from selected agents
@@ -248,6 +253,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			chartData: agentData,
 			allDates: combinedData,
 			agentDisplayNames: displayNames,
+			worktreeAgents: worktreeSet,
 		};
 	}, [data.bySessionByDay, sessions]);
 
@@ -442,6 +448,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 						{/* Lines for each agent */}
 						{agents.map((agent, agentIdx) => {
 							const color = getAgentColor(agentIdx, colorBlindMode);
+							const isWorktree = worktreeAgents.has(agent);
 							return (
 								<path
 									key={`line-${agent}`}
@@ -451,6 +458,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 									strokeWidth={2}
 									strokeLinecap="round"
 									strokeLinejoin="round"
+									strokeDasharray={isWorktree ? '5 3' : undefined}
 									style={{ transition: 'd 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
 								/>
 							);
@@ -542,9 +550,24 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			>
 				{agents.map((agent, idx) => {
 					const color = getAgentColor(idx, colorBlindMode);
+					const isWorktree = worktreeAgents.has(agent);
 					return (
 						<div key={agent} className="flex items-center gap-1.5">
-							<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
+							{isWorktree ? (
+								<svg width={12} height={2} aria-hidden="true">
+									<line
+										x1={0}
+										y1={1}
+										x2={12}
+										y2={1}
+										stroke={color}
+										strokeWidth={2}
+										strokeDasharray="3 2"
+									/>
+								</svg>
+							) : (
+								<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
+							)}
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								{agentDisplayNames[agent]}
 							</span>

@@ -778,6 +778,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -975,6 +976,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>

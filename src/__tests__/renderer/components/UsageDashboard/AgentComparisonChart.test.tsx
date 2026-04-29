@@ -18,7 +18,38 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AgentComparisonChart } from '../../../../renderer/components/UsageDashboard/AgentComparisonChart';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
+import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+
+let _sessionIdCounter = 0;
+function makeSession(overrides: Partial<Session> = {}): Session {
+	_sessionIdCounter++;
+	return {
+		id: `s${_sessionIdCounter}`,
+		name: `Session ${_sessionIdCounter}`,
+		toolType: 'claude-code',
+		state: 'idle',
+		cwd: '/tmp',
+		fullPath: '/tmp',
+		projectRoot: '/tmp',
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		createdAt: 0,
+		...overrides,
+	} as Session;
+}
 
 // Test theme
 const theme = THEMES['dracula'];
@@ -418,6 +449,85 @@ describe('AgentComparisonChart', () => {
 
 			const firstBar = bars[0] as HTMLElement;
 			expect(firstBar.style.transition).toContain('opacity');
+		});
+	});
+
+	describe('Worktree Differentiation', () => {
+		it('splits worktree agents into separate bars and tags them with "(Worktree)"', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			// "claude-code" appears in both the bar label and the legend
+			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
+			// "claude-code (Worktree)" appears in both the bar label and the legend
+			expect(screen.getAllByText('claude-code (Worktree)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('renders the Agent vs Worktree Agent legend when worktrees are present', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			const legendBlock = container.querySelector('[aria-label="Worktree differentiation legend"]');
+			expect(legendBlock).not.toBeNull();
+			expect(legendBlock?.textContent).toContain('Agent');
+			expect(legendBlock?.textContent).toContain('Worktree Agent');
+		});
+
+		it('does not render the worktree legend when no worktree sessions exist', () => {
+			const regular = makeSession({ id: 'reg', toolType: 'claude-code' });
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					reg: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[regular]} />
+			);
+
+			expect(container.querySelector('[aria-label="Worktree differentiation legend"]')).toBeNull();
+		});
+
+		it('falls back to byAgent aggregation when sessions prop is not provided', () => {
+			// Without sessions, no worktree info — should render exactly the
+			// providers in byAgent without "(Worktree)" suffixes.
+			render(<AgentComparisonChart data={mockData} theme={theme} />);
+
+			expect(screen.queryByText(/\(Worktree\)/)).not.toBeInTheDocument();
 		});
 	});
 });
