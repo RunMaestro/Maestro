@@ -81,6 +81,7 @@ import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
+import { ensureShellIntegrationFiles } from './shell-integration/setup';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
 	DEMO_MODE,
@@ -392,6 +393,10 @@ app.whenReady().then(async () => {
 		logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
 		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 	}
+
+	// Write shell integration loader files for terminal PTY spawns. Idempotent;
+	// errors are swallowed inside the function (degrades to ps fallback).
+	ensureShellIntegrationFiles();
 
 	// Set up IPC handlers
 	logger.debug('Setting up IPC handlers', 'Startup');
