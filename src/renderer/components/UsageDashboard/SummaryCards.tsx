@@ -80,6 +80,60 @@ function formatNumber(num: number): string {
 }
 
 /**
+ * Visual variants for metric cards.
+ *
+ * - `elevated`: solid background, subtle border + shadow (default)
+ * - `outlined`: transparent background, accent-colored border
+ * - `filled`: tinted accent background with accent border
+ * - `ghost`: transparent background, no border
+ */
+export type CardVariant = 'elevated' | 'outlined' | 'filled' | 'ghost';
+
+/**
+ * Compute variant-specific card styles. The accent color falls back to the
+ * theme's accent when not provided so callers can tint cards independently.
+ */
+export function getCardStyles(
+	variant: CardVariant,
+	theme: Theme,
+	accentColor?: string
+): React.CSSProperties {
+	const accent = accentColor ?? theme.colors.accent;
+	const base: React.CSSProperties = {
+		borderRadius: '10px',
+		transition: 'all 200ms cubic-bezier(0.4, 0, 0.2, 1)',
+	};
+
+	switch (variant) {
+		case 'elevated':
+			return {
+				...base,
+				backgroundColor: theme.colors.bgActivity,
+				border: `1px solid ${theme.colors.border}`,
+				boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+			};
+		case 'outlined':
+			return {
+				...base,
+				backgroundColor: 'transparent',
+				border: `1px solid ${accent}66`,
+			};
+		case 'filled':
+			return {
+				...base,
+				backgroundColor: `${accent}26`,
+				border: `1px solid ${accent}4D`,
+			};
+		case 'ghost':
+			return {
+				...base,
+				backgroundColor: 'transparent',
+				border: 'none',
+			};
+	}
+}
+
+/**
  * Single metric card component
  */
 interface MetricCardProps {
@@ -91,6 +145,10 @@ interface MetricCardProps {
 	animationIndex?: number;
 	/** Optional content rendered below the value (e.g. status breakdown) */
 	extra?: React.ReactNode;
+	/** Visual variant — defaults to `'elevated'` */
+	variant?: CardVariant;
+	/** Optional accent color override for `outlined` / `filled` variants */
+	accentColor?: string;
 }
 
 const MetricCard = memo(function MetricCard({
@@ -100,12 +158,14 @@ const MetricCard = memo(function MetricCard({
 	theme,
 	animationIndex = 0,
 	extra,
+	variant = 'elevated',
+	accentColor,
 }: MetricCardProps) {
 	return (
 		<div
-			className="p-4 rounded-lg flex items-start gap-3 dashboard-card-enter"
+			className="p-4 flex items-start gap-3 dashboard-card-enter"
 			style={{
-				backgroundColor: theme.colors.bgMain,
+				...getCardStyles(variant, theme, accentColor),
 				animationDelay: `${animationIndex * 50}ms`,
 			}}
 			data-testid="metric-card"

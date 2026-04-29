@@ -347,7 +347,7 @@ describe('SummaryCards', () => {
 			const cards = screen.getAllByTestId('metric-card');
 			cards.forEach((card) => {
 				expect(card).toHaveStyle({
-					backgroundColor: theme.colors.bgMain,
+					backgroundColor: theme.colors.bgActivity,
 				});
 			});
 		});
@@ -368,7 +368,7 @@ describe('SummaryCards', () => {
 			const cards = screen.getAllByTestId('metric-card');
 			cards.forEach((card) => {
 				expect(card).toHaveStyle({
-					backgroundColor: nordTheme.colors.bgMain,
+					backgroundColor: nordTheme.colors.bgActivity,
 				});
 			});
 		});
