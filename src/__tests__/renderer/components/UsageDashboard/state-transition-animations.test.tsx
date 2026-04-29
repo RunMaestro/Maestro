@@ -53,6 +53,7 @@ vi.mock('lucide-react', () => {
 		Zap: createIcon('zap', '⚡'),
 		PanelTop: createIcon('panel-top', '🔲'),
 		Trophy: createIcon('trophy', '🏆'),
+		Filter: createIcon('filter', '🔍'),
 	};
 });
 

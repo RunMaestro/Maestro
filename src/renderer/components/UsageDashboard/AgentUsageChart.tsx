@@ -61,6 +61,10 @@ interface AgentUsageChartProps {
 	colorBlindMode?: boolean;
 	/** Current sessions for mapping IDs to names */
 	sessions?: Session[];
+	/** Drill-down click handler — wired by the dashboard, consumed in a follow-up task. */
+	onAgentClick?: (key: string, displayName: string) => void;
+	/** Active drill-down filter key — consumed in a follow-up task to dim non-selected lines. */
+	activeFilterKey?: string | null;
 }
 
 /**

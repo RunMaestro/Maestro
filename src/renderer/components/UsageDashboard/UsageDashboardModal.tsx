@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
+import { X, BarChart3, Calendar, Download, Database, Filter } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { AgentOverviewCards } from './AgentOverviewCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
@@ -248,7 +248,10 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen, defaultTimeRange]);
 
-	// Register with layer stack for proper Escape handling
+	// Register with layer stack for proper Escape handling.
+	// When a drill-down filter is active, Escape clears the filter first
+	// instead of closing the modal — coordinated through the layer stack so
+	// the modal still owns the only Escape-keydown listener.
 	useEffect(() => {
 		if (isOpen) {
 			const id = registerLayer({
@@ -257,7 +260,13 @@ export function UsageDashboardModal({
 				blocksLowerLayers: true,
 				capturesFocus: true,
 				focusTrap: 'lenient',
-				onEscape: () => onCloseRef.current(),
+				onEscape: () => {
+					if (filterRef.current) {
+						setFilter(null);
+					} else {
+						onCloseRef.current();
+					}
+				},
 			});
 			return () => unregisterLayer(id);
 		}
@@ -371,12 +380,11 @@ export function UsageDashboardModal({
 		return data;
 	}, [data, filter]);
 
-	// These bindings are scaffolding for the drill-down UI (filter bar,
-	// per-chart click handlers) added in the follow-up task. `void` keeps
-	// TS6133 / no-unused-vars quiet without leaving the wiring half-built.
-	void handleFilterByAgent;
-	void clearFilter;
-	void filteredStats;
+	// Mirror the active filter into a ref so the layer-stack `onEscape`
+	// callback (registered once when the modal opens) can read the latest
+	// value without forcing the layer to re-register on every filter change.
+	const filterRef = useRef(filter);
+	filterRef.current = filter;
 
 	// Handle Cmd+Shift+[ and Cmd+Shift+] for tab navigation
 	useEffect(() => {
@@ -789,6 +797,46 @@ export function UsageDashboardModal({
 					className="flex-1 overflow-y-auto scrollbar-thin p-6"
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
+					{/* Drill-down Filter Indicator — visible whenever a chart filter is active */}
+					{filter && (
+						<div
+							className="card-enter mb-4"
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								backgroundColor: `${theme.colors.accent}26`, // 15% over base alpha
+								borderLeft: `3px solid ${theme.colors.accent}`,
+								borderRadius: '8px',
+								padding: '8px 12px',
+								color: theme.colors.textMain,
+							}}
+							data-testid="dashboard-filter-bar"
+							role="status"
+							aria-live="polite"
+						>
+							<Filter size={14} style={{ color: theme.colors.accent }} aria-hidden="true" />
+							<span className="text-sm">
+								Filtered to: <strong>{filter.displayName}</strong>
+							</span>
+							<button
+								type="button"
+								onClick={clearFilter}
+								className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors"
+								style={{ color: theme.colors.textDim }}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+								}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								aria-label="Clear filter"
+								title="Clear filter (Esc)"
+								data-testid="dashboard-filter-clear"
+							>
+								<X size={14} />
+								Clear
+							</button>
+						</div>
+					)}
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
@@ -835,7 +883,11 @@ export function UsageDashboardModal({
 									    provides its own role="region" + aria-label. */}
 									{sessions.length > 0 && (
 										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
-											<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
+											<AgentOverviewCards
+												sessions={sessions}
+												data={filteredStats ?? data}
+												theme={theme}
+											/>
 										</ChartErrorBoundary>
 									)}
 
@@ -858,7 +910,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Summary Cards">
 											<SummaryCards
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												columns={layout.summaryCardsCols}
 												sessions={sessions}
@@ -886,10 +938,12 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Comparison">
 											<AgentComparisonChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -921,7 +975,7 @@ export function UsageDashboardModal({
 										>
 											<ChartErrorBoundary theme={theme} chartName="Source Distribution">
 												<SourceDistributionChart
-													data={data}
+													data={filteredStats ?? data}
 													theme={theme}
 													colorBlindMode={colorBlindMode}
 												/>
@@ -947,7 +1001,7 @@ export function UsageDashboardModal({
 										>
 											<ChartErrorBoundary theme={theme} chartName="Location Distribution">
 												<LocationDistributionChart
-													data={data}
+													data={filteredStats ?? data}
 													theme={theme}
 													colorBlindMode={colorBlindMode}
 												/>
@@ -974,7 +1028,11 @@ export function UsageDashboardModal({
 										data-testid="section-peak-hours"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Peak Hours">
-											<PeakHoursChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
+											<PeakHoursChart
+												data={filteredStats ?? data}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+											/>
 										</ChartErrorBoundary>
 									</div>
 
@@ -998,7 +1056,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
 											<ActivityHeatmap
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
@@ -1026,7 +1084,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
 											<DurationTrendsChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
@@ -1070,7 +1128,11 @@ export function UsageDashboardModal({
 									    (same pattern as AgentOverviewCards in the Overview tab). */}
 									{sessions.some((s) => !!s.parentSessionId) && (
 										<ChartErrorBoundary theme={theme} chartName="Worktree Analytics">
-											<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />
+											<WorktreeAnalytics
+												sessions={sessions}
+												data={filteredStats ?? data}
+												theme={theme}
+											/>
 										</ChartErrorBoundary>
 									)}
 
@@ -1094,10 +1156,11 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Efficiency">
 											<AgentEfficiencyChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1122,10 +1185,12 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
 											<AgentComparisonChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1150,11 +1215,13 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Usage">
 											<AgentUsageChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1183,7 +1250,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
 											<ActivityHeatmap
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
@@ -1210,7 +1277,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Weekday Comparison">
 											<WeekdayComparisonChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>
@@ -1236,7 +1303,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
 											<DurationTrendsChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}

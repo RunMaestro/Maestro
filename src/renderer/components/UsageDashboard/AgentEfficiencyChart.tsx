@@ -28,6 +28,8 @@ interface AgentEfficiencyChartProps {
 	/** Current sessions list — when provided, agents are labeled with their
 	 * user-assigned session names and worktree agents render with a striped pattern. */
 	sessions?: Session[];
+	/** Active drill-down filter key — consumed in a follow-up task to dim non-selected entries. */
+	activeFilterKey?: string | null;
 }
 
 /**

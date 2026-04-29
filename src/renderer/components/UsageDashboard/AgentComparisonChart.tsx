@@ -41,6 +41,10 @@ interface AgentComparisonChartProps {
 	colorBlindMode?: boolean;
 	/** Current sessions list — when provided, worktree agents are split into separate bars. */
 	sessions?: Session[];
+	/** Drill-down click handler — wired by the dashboard, consumed in a follow-up task. */
+	onAgentClick?: (key: string, displayName: string) => void;
+	/** Active drill-down filter key — consumed in a follow-up task to dim non-selected bars. */
+	activeFilterKey?: string | null;
 }
 
 /**
