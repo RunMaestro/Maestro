@@ -9,6 +9,8 @@ import { buildPtyTerminalEnv, buildChildProcessEnv } from '../utils/envBuilder';
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { getShellIntegrationArgs, getShellIntegrationEnv } from '../../shell-integration';
+import { getSettingsStore } from '../../stores/getters';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -107,6 +109,22 @@ export class PtySpawner {
 							globalVarKeys: globalVarKeys.slice(0, 10), // First 10 keys for visibility
 						}
 					);
+				}
+
+				// Inject shell integration (zsh/bash only; helpers return empty for
+				// other shells so the merge/prepend is a safe no-op there). Setting
+				// defaults to true; explicit `false` disables for the whole tab.
+				if (getSettingsStore().get('terminalShellIntegration', true)) {
+					const integrationArgs = getShellIntegrationArgs(ptyCommand);
+					const integrationEnv = getShellIntegrationEnv(ptyCommand);
+					if (Object.keys(integrationEnv).length > 0) {
+						Object.assign(ptyEnv, integrationEnv);
+					}
+					if (integrationArgs.length > 0) {
+						// Prepend so the user's `shellArgs` overrides ours if they
+						// happen to set the same flag (e.g. a custom `--rcfile`).
+						ptyArgs = [...integrationArgs, ...ptyArgs];
+					}
 				}
 			} else {
 				// For AI agents in PTY mode: use same env building logic as child processes
