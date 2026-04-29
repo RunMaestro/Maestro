@@ -78,6 +78,34 @@ function queryBySource(db: Database.Database, startTime: number): { user: number
 	return result;
 }
 
+function queryByWorktreeStatus(
+	db: Database.Database,
+	startTime: number
+): { worktreeQueries: number; parentQueries: number } {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT COALESCE(is_worktree, 0) as is_worktree, COUNT(*) as count
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY COALESCE(is_worktree, 0)
+    `
+		)
+		.all(startTime) as Array<{ is_worktree: number; count: number }>;
+
+	const result = { worktreeQueries: 0, parentQueries: 0 };
+	for (const row of rows) {
+		if (row.is_worktree === 1) {
+			result.worktreeQueries = row.count;
+		} else {
+			result.parentQueries += row.count;
+		}
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:byWorktreeStatus');
+	return result;
+}
+
 function queryByLocation(
 	db: Database.Database,
 	startTime: number
@@ -322,6 +350,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const byHour = queryByHour(db, startTime);
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
+	const worktreeStatus = queryByWorktreeStatus(db, startTime);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 		range,
@@ -349,5 +378,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		...sessionStats,
 		byAgentByDay,
 		bySessionByDay,
+		worktreeQueries: worktreeStatus.worktreeQueries,
+		parentQueries: worktreeStatus.parentQueries,
 	};
 }

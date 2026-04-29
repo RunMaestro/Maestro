@@ -729,6 +729,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					const isAutoRunQuery = deps.getBatchStateRef.current
 						? deps.getBatchStateRef.current(sessionIdForStats).isRunning
 						: false;
+					const sessionForStats = getSessions().find((s) => s.id === sessionIdForStats);
 
 					window.maestro.stats
 						.recordQuery({
@@ -740,6 +741,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							projectPath: toastData.projectPath,
 							tabId: toastData.tabId,
 							isRemote: toastData.isRemote,
+							isWorktree: !!sessionForStats?.parentSessionId,
 						})
 						.catch((err) => {
 							console.warn('[onProcessExit] Failed to record query stats:', err);

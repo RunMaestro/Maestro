@@ -21,6 +21,7 @@ export interface QueryEvent {
 	projectPath?: string;
 	tabId?: string;
 	isRemote?: boolean;
+	isWorktree?: boolean;
 }
 
 /**
@@ -58,6 +59,7 @@ export interface SessionCreatedEvent {
 	projectPath?: string;
 	createdAt: number;
 	isRemote?: boolean;
+	isWorktree?: boolean;
 }
 
 /**
