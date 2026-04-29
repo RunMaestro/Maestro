@@ -245,6 +245,9 @@ export const MODAL_PRIORITIES = {
 	/** Save markdown modal */
 	SAVE_MARKDOWN: 160,
 
+	/** Image annotator modal - above lightbox so Escape closes annotator first */
+	IMAGE_ANNOTATOR: 165,
+
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,
 
