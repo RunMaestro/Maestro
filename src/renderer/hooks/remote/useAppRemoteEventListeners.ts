@@ -22,6 +22,7 @@ import {
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
+import { gitService } from '../../services/git';
 
 // ============================================================================
 // Dependencies interface
@@ -493,6 +494,32 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				showThinking: currentDefaults.defaultShowThinking,
 			};
 
+			// Probe git repo state for the cwd so the header badge shows the branch
+			// instead of "LOCAL". Mirrors the GUI's useSessionCrud flow. For SSH
+			// sessions, defer the check until onSshRemote fires (see useAgentListeners).
+			const sshConfig = config?.sessionSshRemoteConfig as
+				| { enabled?: boolean; remoteId?: string | null }
+				| undefined;
+			const isRemoteSession = !!(sshConfig?.enabled && sshConfig.remoteId);
+			let isGitRepo = false;
+			let gitBranches: string[] | undefined;
+			let gitTags: string[] | undefined;
+			let gitRefsCacheTime: number | undefined;
+			if (!isRemoteSession) {
+				try {
+					isGitRepo = await gitService.isRepo(cwd);
+					if (isGitRepo) {
+						[gitBranches, gitTags] = await Promise.all([
+							gitService.getBranches(cwd),
+							gitService.getTags(cwd),
+						]);
+						gitRefsCacheTime = Date.now();
+					}
+				} catch (err) {
+					logger.error('[Remote] git probe failed during session create', undefined, err);
+				}
+			}
+
 			const newSession: Session = {
 				id: newId,
 				name,
@@ -502,7 +529,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				cwd,
 				fullPath: cwd,
 				projectRoot: cwd,
-				isGitRepo: false,
+				isGitRepo,
+				...(gitBranches !== undefined && { gitBranches }),
+				...(gitTags !== undefined && { gitTags }),
+				...(gitRefsCacheTime !== undefined && { gitRefsCacheTime }),
 				aiLogs: [],
 				shellLogs: [
 					{
