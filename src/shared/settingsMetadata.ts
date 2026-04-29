@@ -326,6 +326,30 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'shell',
 	},
+	terminalShellIntegration: {
+		description: 'Enable shell integration for command tracking in terminal tabs.',
+		type: 'boolean',
+		default: true,
+		category: 'shell',
+	},
+	terminalPersistCommands: {
+		description: 'Persist and restore running commands in terminal tabs across restarts.',
+		type: 'boolean',
+		default: true,
+		category: 'shell',
+	},
+	terminalRestartWhitelist: {
+		description: 'Commands auto-re-executed on terminal tab restart (prefix match).',
+		type: 'array',
+		default: [],
+		category: 'shell',
+	},
+	terminalRestartBlacklist: {
+		description: 'Commands never re-executed on terminal tab restart (prefix match).',
+		type: 'array',
+		default: ['rm ', 'sudo rm', 'dd ', 'mkfs'],
+		category: 'shell',
+	},
 
 	// --- Logging ---
 	logLevel: {
