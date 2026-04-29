@@ -26,6 +26,7 @@ import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
@@ -970,6 +971,16 @@ export function UsageDashboardModal({
 											/>
 										</ChartErrorBoundary>
 									</div>
+
+									{/* Worktree Analytics — only shown when at least one worktree
+									    session exists. WorktreeAnalytics provides its own role="region"
+									    + aria-label, so it sits outside the keyboard-navigable sections
+									    (same pattern as AgentOverviewCards in the Overview tab). */}
+									{sessions.some((s) => !!s.parentSessionId) && (
+										<ChartErrorBoundary theme={theme} chartName="Worktree Analytics">
+											<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />
+										</ChartErrorBoundary>
+									)}
 
 									{/* Agent Efficiency */}
 									<div
