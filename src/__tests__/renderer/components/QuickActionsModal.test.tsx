@@ -314,7 +314,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('auto-expands collapsed group when jumping to session in group', () => {
+		it('auto-expands collapsed group when jumping to non-bookmarked session in group', () => {
 			const session = createMockSession({ groupId: 'group-1' });
 			const group = createMockGroup({ collapsed: true });
 			const props = createDefaultProps({
@@ -329,6 +329,53 @@ describe('QuickActionsModal', () => {
 			const setGroupsFn = props.setGroups.mock.calls[0][0];
 			const result = setGroupsFn([group]);
 			expect(result[0].collapsed).toBe(false);
+		});
+
+		describe('bookmarked-agent jump routing', () => {
+			it('expands the bookmarks section (not the group) when both are collapsed', () => {
+				useUIStore.setState({ bookmarksCollapsed: true });
+
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: true });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+				expect(props.setGroups).not.toHaveBeenCalled();
+			});
+
+			it('leaves bookmarks collapsed when the parent group is already expanded', () => {
+				useUIStore.setState({ bookmarksCollapsed: true });
+
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: false });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
+				expect(props.setGroups).not.toHaveBeenCalled();
+			});
+
+			it('does nothing extra when bookmarks section is already expanded', () => {
+				useUIStore.setState({ bookmarksCollapsed: false });
+
+				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
+				const group = createMockGroup({ collapsed: true });
+				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				render(<QuickActionsModal {...props} />);
+
+				fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
+				expect(props.setGroups).not.toHaveBeenCalled();
+			});
 		});
 
 		it('handles Create New Agent action', () => {
