@@ -265,6 +265,11 @@ interface MaestroAPI {
 				childProcesses?: Array<{ pid: number; command: string }>;
 			}>
 		>;
+		getTerminalCommandState: (sessionId: string) => Promise<{
+			currentCommand?: string;
+			commandRunning: boolean;
+			currentCwd?: string;
+		} | null>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;

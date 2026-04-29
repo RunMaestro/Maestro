@@ -168,6 +168,48 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('getTerminalCommandState', () => {
+		it('should invoke process:getTerminalCommandState with sessionId', async () => {
+			mockInvoke.mockResolvedValue({
+				currentCommand: 'btop',
+				commandRunning: true,
+				currentCwd: '/home/user',
+			});
+
+			const result = await api.getTerminalCommandState('session-123');
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:getTerminalCommandState', 'session-123');
+			expect(result).toEqual({
+				currentCommand: 'btop',
+				commandRunning: true,
+				currentCwd: '/home/user',
+			});
+		});
+
+		it('should pass through null when session is unknown or not a terminal', async () => {
+			mockInvoke.mockResolvedValue(null);
+
+			const result = await api.getTerminalCommandState('unknown-session');
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:getTerminalCommandState', 'unknown-session');
+			expect(result).toBeNull();
+		});
+
+		it('should pass through idle snapshot (commandRunning: false, no command)', async () => {
+			mockInvoke.mockResolvedValue({
+				commandRunning: false,
+				currentCwd: '/tmp',
+			});
+
+			const result = await api.getTerminalCommandState('session-123');
+
+			expect(result).toEqual({
+				commandRunning: false,
+				currentCwd: '/tmp',
+			});
+		});
+	});
+
 	describe('onData', () => {
 		it('should register event listener for process:data', () => {
 			const callback = vi.fn();

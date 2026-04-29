@@ -159,6 +159,20 @@ export interface TerminalCommandState {
 }
 
 /**
+ * Polling-style snapshot returned by `getTerminalCommandState`. Combines the
+ * live shell-integration command/cwd state with the spawn cwd so the renderer
+ * always has a current value to persist for restart re-execution, even when
+ * shell integration isn't installed.
+ *
+ * Mirrors `TerminalForegroundSnapshot` in `src/main/process-manager/types.ts`.
+ */
+export interface TerminalForegroundSnapshot {
+	currentCommand?: string;
+	commandRunning: boolean;
+	currentCwd?: string;
+}
+
+/**
  * Creates the process API object for preload exposure
  */
 export function createProcessApi() {
@@ -225,6 +239,18 @@ export function createProcessApi() {
 		 */
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>
 			ipcRenderer.invoke('process:getActiveProcesses'),
+
+		/**
+		 * Get the current foreground command + cwd for a terminal session.
+		 * Returns shell-integration state when available, otherwise falls back
+		 * to inspecting the shell's child processes via `ps` / `wmic`. Returns
+		 * `null` for non-terminal sessions or unknown session IDs.
+		 *
+		 * Used by the renderer's polling fallback so persistence still has a
+		 * current command snapshot when shell integration isn't installed.
+		 */
+		getTerminalCommandState: (sessionId: string): Promise<TerminalForegroundSnapshot | null> =>
+			ipcRenderer.invoke('process:getTerminalCommandState', sessionId),
 
 		// Event listeners
 
