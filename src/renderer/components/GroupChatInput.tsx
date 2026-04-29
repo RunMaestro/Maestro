@@ -672,18 +672,18 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					<button
 						onClick={handleSend}
 						disabled={!message.trim()}
-						className="p-2.5 rounded-lg transition-colors"
+						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
 						style={{
 							backgroundColor: message.trim()
 								? isBusy
 									? theme.colors.warning
 									: theme.colors.accent
 								: theme.colors.border,
-							color: message.trim() ? '#ffffff' : theme.colors.textDim,
+							color: message.trim() ? theme.colors.accentForeground : theme.colors.textDim,
 						}}
 						title={isBusy ? 'Queue message' : 'Send message'}
 					>
-						<ArrowUp className="w-5 h-5" />
+						<ArrowUp className="w-4 h-4" />
 					</button>
 				</div>
 			</div>
