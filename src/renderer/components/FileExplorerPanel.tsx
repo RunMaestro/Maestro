@@ -38,6 +38,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { getRevealLabel, getOpenInLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
@@ -919,18 +920,16 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		}
 	}, [deleteModal, session.id, session.fileTree, onShowFlash, sshRemoteId, setSessions]);
 
-	// Close context menu on Escape key
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && contextMenu) {
+	// Close context menu on Escape key (only attached while the menu is open).
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') {
 				setContextMenu(null);
 			}
-		};
-		if (contextMenu) {
-			window.addEventListener('keydown', handleKeyDown);
-			return () => window.removeEventListener('keydown', handleKeyDown);
-		}
-	}, [contextMenu]);
+		},
+		{ enabled: contextMenu !== null }
+	);
 
 	// Register layer when filter is open
 	useEffect(() => {
