@@ -74,6 +74,15 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Shell integration state populated from OSC 133/7 sequences (terminal tabs only) */
+	shellIntegration?: {
+		currentCommand?: string;
+		commandRunning: boolean;
+		currentCwd?: string;
+		lastExitCode?: number;
+	};
+	/** Per-process OSC stream parser instance (terminal tabs only). Typed as unknown until oscParser.ts is introduced. */
+	oscParser?: unknown;
 }
 
 export interface UsageTotals {
