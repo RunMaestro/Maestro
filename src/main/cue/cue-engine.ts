@@ -63,6 +63,7 @@ import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-d
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
+import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -198,6 +199,27 @@ export class CueEngine {
 			onLog: meteredOnLog,
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				// Telemetry: emit `run_completed` once per natural completion.
+				// task_kind is derived here rather than inside the run manager
+				// so the engine remains the sole authority on telemetry shape.
+				// `agent.completed` events came from chain propagation (handoff
+				// between agents). Subscriptions with `action: command` represent
+				// a command node firing. Everything else is a trigger-driven run.
+				const taskKind: 'agent_handoff' | 'command_node' | 'trigger_action' =
+					result.event.type === 'agent.completed'
+						? 'agent_handoff'
+						: result.event.payload?.actionKind === 'command'
+							? 'command_node'
+							: 'trigger_action';
+				recordTelemetryRunCompleted({
+					subscriptionName,
+					pipelineName: result.pipelineName,
+					taskKind,
+					chainRootId: chainRootId ?? null,
+					parentRunId: (result.event.payload?.parentRunId as string | undefined) ?? null,
+					durationMs: result.durationMs,
+					status: result.status,
+				});
 				// Carry forwarded outputs from the triggering event through to the
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).

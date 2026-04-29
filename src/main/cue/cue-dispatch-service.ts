@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import { recordTriggerFired } from './cue-telemetry';
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -60,6 +61,16 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			chainRootId?: string,
 			parentEventId?: string
 		): number {
+			// Telemetry: one `trigger_fired` per subscription dispatch (not per
+			// fan-out target). Best-effort and gated on Encore flags inside the
+			// telemetry module — never throws into the dispatch path.
+			recordTriggerFired({
+				eventType: event.type,
+				subscriptionName: sub.name,
+				pipelineName: sub.pipeline_name,
+				triggerName: event.triggerName,
+			});
+
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
 				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);

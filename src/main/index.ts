@@ -12,6 +12,7 @@ import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import type { AgentId } from '../shared/agentIds';
 import { CueEngine } from './cue/cue-engine';
+import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
 	recordCueHistoryEntry,
@@ -662,6 +663,20 @@ app.whenReady().then(async () => {
 		getUsageStatsEnabled: () => {
 			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 			return ef.usageStats === true;
+		},
+	});
+
+	// Configure Cue telemetry submitter. Reads installationId / encore flags
+	// on every event so toggling Cue or usageStats at runtime takes effect
+	// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
+	// — both flags required.
+	configureCueTelemetry({
+		getInstallationId: () => store.get('installationId') as string | null,
+		getAppVersion: () => app.getVersion(),
+		getPlatform: () => process.platform,
+		isEncoreEnabled: () => {
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return ef.maestroCue === true && ef.usageStats === true;
 		},
 	});
 

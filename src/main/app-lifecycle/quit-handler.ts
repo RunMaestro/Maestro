@@ -14,6 +14,7 @@ import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
 import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
+import { flushTelemetry } from '../cue/cue-telemetry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 
 /**
@@ -235,6 +236,16 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		stopAllCueRuns();
 		stopAllCueShellRuns();
 		stopAllCueCliRuns();
+
+		// Flush Cue telemetry outbox before quit so events captured between the
+		// last autorun and shutdown aren't deferred to the next launch (or lost
+		// if the user uninstalls). Fire-and-forget — performCleanup is sync and
+		// the network call may not finish before quit, but unflushed rows
+		// survive in SQLite for the next session.
+		flushTelemetry({ reason: 'app-quit' }).catch(() => {
+			// Errors already logged inside flushTelemetry; suppress here so a
+			// network failure during shutdown doesn't crash the cleanup pass.
+		});
 
 		// Clean up all running processes
 		logger.info('Killing all running processes', 'Shutdown');

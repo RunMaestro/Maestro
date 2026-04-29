@@ -16,6 +16,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getStatsDB } from '../../stats';
+import { flushTelemetry } from '../../cue/cue-telemetry';
 import {
 	QueryEvent,
 	AutoRunSession,
@@ -145,6 +146,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					logger.warn(`Auto Run session not found: ${id}`, LOG_CONTEXT);
 				}
 				broadcastStatsUpdate(getMainWindow);
+
+				// Cue telemetry — autorun completion is the user's natural quiet
+				// window, so we flush the outbox here. Fire-and-forget: a failed
+				// flush leaves rows in the outbox for the next attempt and must
+				// not delay the IPC return. The submitter checks Encore flags
+				// internally; nothing happens if Cue/usageStats are off.
+				void flushTelemetry({ reason: 'autorun' });
+
 				return updated;
 			}
 		)

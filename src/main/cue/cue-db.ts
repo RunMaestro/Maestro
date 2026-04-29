@@ -119,6 +119,23 @@ const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_queued ON cue_event_queue(queued_at)
 `;
 
+// Telemetry outbox — buffers telemetry events between flushes. Rows are
+// inserted from the dispatch / run-completion hot paths, read in batches by
+// the submitter, and deleted only after a successful POST to runmaestro.ai.
+// Failed flushes leave rows in place so the next flush retries them. Bounded
+// in practice by the outbox-threshold flush trigger.
+const CREATE_CUE_TELEMETRY_OUTBOX_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_telemetry_outbox (
+    id TEXT PRIMARY KEY,
+    event_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`;
+
+const CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_telemetry_outbox_created ON cue_telemetry_outbox(created_at)
+`;
+
 // ============================================================================
 // Module State
 // ============================================================================
@@ -185,6 +202,8 @@ export function initCueDb(
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
+	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
+	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -659,4 +678,76 @@ export function safeRemoveQueuedEvent(id: string): void {
 		);
 		captureException(err, { operation: 'safeRemoveQueuedEvent', id });
 	}
+}
+
+// ============================================================================
+// Telemetry Outbox
+// ============================================================================
+
+export interface CueTelemetryOutboxRow {
+	id: string;
+	eventJson: string;
+	createdAt: number;
+}
+
+/**
+ * Insert a telemetry event into the outbox. Failures are non-fatal — the
+ * dispatch / run-completion hot paths must never throw because of telemetry.
+ * A dropped row means at most one missed event in the next batch.
+ */
+export function insertTelemetryEvent(id: string, eventJson: string): void {
+	if (!db) return;
+	try {
+		db.prepare(
+			`INSERT OR REPLACE INTO cue_telemetry_outbox (id, event_json, created_at) VALUES (?, ?, ?)`
+		).run(id, eventJson, Date.now());
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to insert telemetry event (id=${id}): ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
+}
+
+/**
+ * Read up to `limit` outbox rows ordered by `created_at` (oldest first) so the
+ * submitter sends events in the order they were captured.
+ */
+export function getTelemetryBatch(limit: number): CueTelemetryOutboxRow[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, event_json, created_at FROM cue_telemetry_outbox ORDER BY created_at ASC LIMIT ?`
+		)
+		.all(limit) as Array<{ id: string; event_json: string; created_at: number }>;
+	return rows.map((row) => ({
+		id: row.id,
+		eventJson: row.event_json,
+		createdAt: row.created_at,
+	}));
+}
+
+/**
+ * Delete outbox rows by id after a successful submission. Missing rows are a
+ * no-op (a concurrent flush could have removed them already).
+ */
+export function deleteTelemetryEvents(ids: string[]): void {
+	if (!db || ids.length === 0) return;
+	const placeholders = ids.map(() => '?').join(',');
+	db.prepare(`DELETE FROM cue_telemetry_outbox WHERE id IN (${placeholders})`).run(...ids);
+}
+
+/** Count rows in the outbox. Used by the threshold-flush guard. */
+export function countTelemetryEvents(): number {
+	if (!db) return 0;
+	const row = db.prepare(`SELECT COUNT(*) AS c FROM cue_telemetry_outbox`).get() as
+		| { c: number }
+		| undefined;
+	return row?.c ?? 0;
+}
+
+/** Truncate the outbox. Used by tests and the kill-switch reset path. */
+export function clearTelemetryOutbox(): void {
+	if (!db) return;
+	db.prepare(`DELETE FROM cue_telemetry_outbox`).run();
 }
