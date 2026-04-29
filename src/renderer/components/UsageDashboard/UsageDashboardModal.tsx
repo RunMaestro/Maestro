@@ -33,9 +33,11 @@ import { LongestAutoRunsTable } from './LongestAutoRunsTable';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
+import { CueStats } from './CueStats';
 import type { Theme, Session } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
@@ -71,7 +73,7 @@ const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 // StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
-type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';
+type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun' | 'cue';
 
 interface UsageDashboardModalProps {
 	isOpen: boolean;
@@ -112,8 +114,8 @@ const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
 	{ value: 'all', label: 'All Time' },
 ];
 
-// View mode tabs
-const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
+// View mode tabs (base list — Cue is appended dynamically when the Encore flag is on)
+const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
@@ -130,6 +132,13 @@ export function UsageDashboardModal({
 	defaultTimeRange = 'week',
 	sessions = EMPTY_SESSIONS,
 }: UsageDashboardModalProps) {
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+	const VIEW_MODE_TABS = useMemo<{ value: ViewMode; label: string }[]>(() => {
+		return maestroCueEnabled
+			? [...BASE_VIEW_MODE_TABS, { value: 'cue', label: 'Cue' }]
+			: BASE_VIEW_MODE_TABS;
+	}, [maestroCueEnabled]);
+
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
 	const [viewMode, setViewMode] = useState<ViewMode>('overview');
 	const [data, setData] = useState<StatsAggregation | null>(null);
@@ -273,7 +282,7 @@ export function UsageDashboardModal({
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [isOpen, switchViewMode]);
+	}, [isOpen, switchViewMode, VIEW_MODE_TABS]);
 
 	// Track container width for responsive layout
 	useEffect(() => {
@@ -326,10 +335,19 @@ export function UsageDashboardModal({
 				return ACTIVITY_SECTIONS;
 			case 'autorun':
 				return AUTORUN_SECTIONS;
+			case 'cue':
+				return [];
 			default:
 				return OVERVIEW_SECTIONS;
 		}
 	}, [viewMode]);
+
+	// Fall back to 'overview' if Maestro Cue is disabled while the Cue tab is active
+	useEffect(() => {
+		if (!maestroCueEnabled && viewMode === 'cue') {
+			switchViewMode('overview');
+		}
+	}, [maestroCueEnabled, viewMode, switchViewMode]);
 
 	// Get section label for accessibility
 	const getSectionLabel = useCallback((sectionId: SectionId): string => {
@@ -383,7 +401,7 @@ export function UsageDashboardModal({
 				}
 			}
 		},
-		[viewMode, switchViewMode, currentSections, data, navigateToSection]
+		[viewMode, switchViewMode, currentSections, data, navigateToSection, VIEW_MODE_TABS]
 	);
 
 	// Handle keyboard navigation for chart sections
@@ -655,7 +673,7 @@ export function UsageDashboardModal({
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
-							viewMode={viewMode}
+							viewMode={viewMode === 'cue' ? 'overview' : viewMode}
 							chartGridCols={layout.chartGridCols}
 							summaryCardsCols={layout.summaryCardsCols}
 							autoRunStatsCols={layout.autoRunStatsCols}
@@ -1159,6 +1177,10 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 								</>
+							)}
+
+							{viewMode === 'cue' && (
+								<CueStats timeRange={timeRange} theme={theme} colorBlindMode={colorBlindMode} />
 							)}
 						</div>
 					)}
