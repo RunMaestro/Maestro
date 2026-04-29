@@ -79,6 +79,17 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		wizardState: undefined,
 	}));
 
+	// Clean terminal tabs: PTY processes don't survive app restart, but we want
+	// to remember what was running so the restart re-execution flow can offer
+	// to re-run it (Phase 5 of terminal persistence plan). Preserves
+	// currentCommand verbatim; flips commandRunning to false; sets persistCommand
+	// when a command was live at persist time so the restart path can detect it.
+	const cleanedTerminalTabs = session.terminalTabs?.map((tab) => ({
+		...tab,
+		commandRunning: false,
+		persistCommand: tab.commandRunning ? true : undefined,
+	}));
+
 	// Return session without runtime-only fields
 
 	const {
@@ -99,6 +110,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	return {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
+		terminalTabs: cleanedTerminalTabs,
 		activeTabId: newActiveTabId,
 		// Reset runtime-only session state - processes don't survive app restart
 		state: 'idle',
