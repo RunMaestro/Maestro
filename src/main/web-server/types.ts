@@ -355,6 +355,16 @@ export type NotifyToastKind = 'success' | 'info' | 'warning' | 'error';
  */
 export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
 
+/**
+ * Data-driven click intent for an externally-fired toast. Mirrors
+ * `ToastClickAction` in `renderer/stores/notificationStore.ts` — the only
+ * subset that survives serialization across the IPC bridge.
+ */
+export type NotifyToastClickAction =
+	| { kind: 'jump-session'; sessionId: string; tabId?: string }
+	| { kind: 'open-file'; sessionId: string; path: string }
+	| { kind: 'open-url'; url: string };
+
 export interface NotifyToastParams {
 	title: string;
 	message: string;
@@ -369,6 +379,17 @@ export interface NotifyToastParams {
 	dismissible?: boolean;
 	/** Optional agent/session ID — clicking the toast jumps to it. */
 	sessionId?: string;
+	/** Optional AI tab ID within the agent — paired with `sessionId` for jump-to-tab. */
+	tabId?: string;
+	/** Optional inline action link rendered beneath the message body (opens in browser). */
+	actionUrl?: string;
+	/** Optional label for `actionUrl` (defaults to the URL itself). */
+	actionLabel?: string;
+	/**
+	 * Optional click action describing what happens when the toast body is
+	 * clicked. Takes precedence over `sessionId`/`tabId`-driven jump behavior.
+	 */
+	clickAction?: NotifyToastClickAction;
 }
 
 export interface NotifyCenterFlashParams {

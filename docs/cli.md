@@ -661,17 +661,42 @@ maestro-cli notify toast "Action required" "Approve the PR before EOD" \
 
 # Toast linked to an agent (clicking jumps to it).
 maestro-cli notify toast "Auto Run done" "All tasks completed" --agent <agent-id>
+
+# Jump to a specific AI tab inside the agent.
+maestro-cli notify toast "Diff ready" "Switch to review tab" \
+    --agent <agent-id> --tab <tab-id>
+
+# Open a file in the agent's File Preview pane on click.
+maestro-cli notify toast "Patch ready" "Open the diff" \
+    --agent <agent-id> --open-file src/foo.ts
+
+# Open an external URL in the system browser on click.
+maestro-cli notify toast "Run finished" "View logs" \
+    --open-url https://example.com/logs
+
+# Render an inline action link beneath the message body (separate from
+# the body click). Useful for "view PR" style affordances.
+maestro-cli notify toast "PR opened" "Auto Run completed" \
+    --agent <agent-id> \
+    --action-url https://github.com/org/repo/pull/42 --action-label "View PR"
 ```
 
-| Flag               | Description                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------ |
-| `-c, --color`      | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                   |
-| `-t, --type`       | **[deprecated]** `success \| info \| warning \| error` — prefer `--color`                        |
-| `--timeout <sec>`  | Auto-dismiss after N seconds (range: `(0, 60]`; wins over `--duration`)                          |
-| `-d, --duration`   | Same as `--timeout` (legacy alias; range: `(0, 60]`)                                             |
-| `--dismissible`    | Sticky toast — no auto-dismiss, click to close. Mutually exclusive with `--timeout`/`--duration` |
-| `-a, --agent <id>` | Associate with an agent so clicking the toast jumps to it                                        |
-| `--json`           | JSON output for scripting                                                                        |
+| Flag                    | Description                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `-c, --color`           | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                   |
+| `-t, --type`            | **[deprecated]** `success \| info \| warning \| error` — prefer `--color`                        |
+| `--timeout <sec>`       | Auto-dismiss after N seconds (range: `(0, 60]`; wins over `--duration`)                          |
+| `-d, --duration`        | Same as `--timeout` (legacy alias; range: `(0, 60]`)                                             |
+| `--dismissible`         | Sticky toast — no auto-dismiss, click to close. Mutually exclusive with `--timeout`/`--duration` |
+| `-a, --agent <id>`      | Associate with an agent so clicking the toast jumps to it                                        |
+| `--tab <id>`            | AI tab ID within the agent — clicking jumps to that tab. Requires `--agent`                      |
+| `--open-file <path>`    | On click, switch to the agent and open the file in File Preview. Requires `--agent`              |
+| `--open-url <url>`      | On click, open the URL in the system browser. Mutually exclusive with `--open-file`              |
+| `--action-url <url>`    | Inline link rendered beneath the message body (separate from the body click — opens in browser)  |
+| `--action-label <text>` | Label for `--action-url` (defaults to the URL itself); requires `--action-url`                   |
+| `--json`                | JSON output for scripting                                                                        |
+
+The body-click hierarchy is: `--open-file` / `--open-url` (mutually exclusive) > `--agent` (+ optional `--tab`). `--action-url` is independent — it renders a separate inline link button and does not affect the body click.
 
 ##### Center Flash
 

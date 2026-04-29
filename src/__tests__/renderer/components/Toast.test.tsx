@@ -199,6 +199,88 @@ describe('Toast', () => {
 		});
 	});
 
+	describe('clickAction', () => {
+		it('jump-session: dispatches onSessionClick with the action sessionId/tabId', () => {
+			const onSessionClick = vi.fn();
+			setStoreToasts([
+				createMockToast({
+					clickAction: { kind: 'jump-session', sessionId: 'sess-9', tabId: 'tab-3' },
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
+			fireEvent.click(clickableToast!);
+
+			expect(onSessionClick).toHaveBeenCalledWith('sess-9', 'tab-3');
+		});
+
+		it('clickAction takes precedence over legacy sessionId/tabId fields', () => {
+			const onSessionClick = vi.fn();
+			setStoreToasts([
+				createMockToast({
+					sessionId: 'legacy-session',
+					tabId: 'legacy-tab',
+					clickAction: { kind: 'jump-session', sessionId: 'sess-9' },
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
+			fireEvent.click(clickableToast!);
+
+			// Should pick the clickAction's sessionId, not the legacy one
+			expect(onSessionClick).toHaveBeenCalledWith('sess-9', undefined);
+			expect(onSessionClick).not.toHaveBeenCalledWith('legacy-session', 'legacy-tab');
+		});
+
+		it('open-file: dispatches the maestro:openFileTab CustomEvent', () => {
+			const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+			setStoreToasts([
+				createMockToast({
+					clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
+			fireEvent.click(clickableToast!);
+
+			const matched = dispatchSpy.mock.calls.find(
+				([e]) => e instanceof CustomEvent && e.type === 'maestro:openFileTab'
+			);
+			expect(matched).toBeTruthy();
+			const evt = matched![0] as CustomEvent;
+			expect(evt.detail).toEqual({ sessionId: 'sess-9', filePath: '/tmp/foo.ts' });
+			dispatchSpy.mockRestore();
+		});
+
+		it('open-url: opens the URL via the shell helper', () => {
+			setStoreToasts([
+				createMockToast({
+					clickAction: { kind: 'open-url', url: 'https://example.com/logs' },
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
+			fireEvent.click(clickableToast!);
+
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith('https://example.com/logs');
+		});
+
+		it('makes a toast clickable even without a sessionId', () => {
+			setStoreToasts([
+				createMockToast({
+					clickAction: { kind: 'open-url', url: 'https://example.com' },
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.cursor-pointer')).toBeInTheDocument();
+		});
+	});
+
 	describe('animation states', () => {
 		it('starts with entering animation then transitions to normal', () => {
 			setStoreToasts([createMockToast()]);

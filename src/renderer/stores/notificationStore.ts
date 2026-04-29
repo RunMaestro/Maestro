@@ -44,6 +44,21 @@ const TOAST_TYPE_TO_COLOR: Record<ToastType, ToastColor> = {
 	error: 'red',
 };
 
+/**
+ * Discriminated union for what happens when the toast body is clicked.
+ *
+ * Externally-fired toasts (e.g. via `maestro-cli notify toast`) cannot pass a
+ * function callback over the IPC bridge, so we describe the click intent as
+ * data instead. The renderer dispatches based on `kind`:
+ *   - jump-session: switch to the agent (and optionally a specific AI tab)
+ *   - open-file: switch to the agent and open a file in its File Preview pane
+ *   - open-url: open an external URL in the system browser
+ */
+export type ToastClickAction =
+	| { kind: 'jump-session'; sessionId: string; tabId?: string }
+	| { kind: 'open-file'; sessionId: string; path: string }
+	| { kind: 'open-url'; url: string };
+
 export interface Toast {
 	id: string;
 	/** Resolved color used for icon, accent, and progress bar. */
@@ -80,8 +95,14 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
-	// Generic click handler — if set, clicking the toast invokes this callback
+	// Generic click handler — if set, clicking the toast invokes this callback.
+	// Renderer-only — not serializable across the CLI/web bridge.
 	onClick?: () => void;
+	// Data-driven click intent — preferred for externally-fired toasts since it
+	// crosses the IPC boundary. If both `onClick` and `clickAction` are set,
+	// `onClick` wins (it can do anything; `clickAction` is the limited subset
+	// that survives serialization).
+	clickAction?: ToastClickAction;
 }
 
 export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {

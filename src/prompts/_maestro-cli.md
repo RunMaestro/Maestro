@@ -239,6 +239,16 @@ You can surface two distinct kinds of notifications inside the desktop app. Both
 # Sticky toast — no auto-dismiss, requires user click. Use for critical messages.
 {{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --color red --dismissible
 
+# Click actions — what happens when the user clicks the toast body.
+# Body-click hierarchy: --open-file / --open-url (mutually exclusive) > --agent (+ optional --tab).
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id>                       # jump to agent
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id> --tab <tab-id>        # jump to specific AI tab
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" -a <agent-id> --open-file <path>    # open file in File Preview
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --open-url <url>                    # open URL in system browser
+
+# Inline action link — separate from the body click; renders a small link button beneath the message.
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" --action-url <url> [--action-label "<text>"]
+
 # Center flash — momentary, exclusive, replaces any active flash.
 {{MAESTRO_CLI_PATH}} notify flash "<message>" [--color <color>] [-D "<detail>"] [--timeout <sec>] [--json]
 ```
@@ -247,6 +257,13 @@ Caps:
 
 - **Toast:** `--timeout` range `(0, 60]` seconds. Use `--dismissible` (no timeout, click to close) for messages the user must acknowledge. `--timeout` and `--dismissible` are mutually exclusive.
 - **Center Flash:** `--timeout` range `(0, 5]` seconds (or `--duration <ms>` range `(0, 5000]`). No "never dismiss" option — flashes are by design momentary.
+
+Click-action constraints:
+
+- `--tab` requires `--agent` (a tab is scoped to an agent).
+- `--open-file` requires `--agent` (File Preview is scoped to an agent) and is mutually exclusive with `--open-url`.
+- `--action-label` requires `--action-url`.
+- `--action-url` is **independent** of the body click — it renders a separate inline link button. Use it when the toast should both jump somewhere on body click and offer a side affordance (e.g. body click jumps to the agent, action link opens the PR).
 
 Both commands accept `--variant` (toast: `--type`) as a deprecated alias for callers using the legacy semantic API (`success`/`info`/`warning`/`error` → `green`/`theme`/`yellow`/`red`). Prefer `--color` in new scripts.
 

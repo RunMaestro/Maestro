@@ -486,6 +486,23 @@ notify
 		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout/--duration'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
+	.option(
+		'--tab <id>',
+		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
+	)
+	.option(
+		'--action-url <url>',
+		'Inline link rendered beneath the message body (opens in browser when clicked)'
+	)
+	.option('--action-label <text>', 'Label for --action-url (defaults to the URL itself)')
+	.option(
+		'--open-file <path>',
+		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)'
+	)
+	.option(
+		'--open-url <url>',
+		'On click, open this URL in the system browser (mutually exclusive with --open-file)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
 
