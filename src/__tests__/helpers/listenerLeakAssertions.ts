@@ -9,10 +9,12 @@
  *   unmount();
  *   expectAllListenersRemoved(addSpy, removeSpy);
  *
- * The assertion verifies that every (eventType, listener) pair passed to
- * addEventListener was later passed to removeEventListener with the same
- * listener reference. Anonymous-handler leaks are caught because we compare
- * by identity, not name.
+ * The assertion verifies that every (eventType, listener, capture) triple
+ * passed to addEventListener was later passed to removeEventListener with
+ * matching identity. Per DOM spec, only the `capture` flag from the options
+ * bag (or the legacy boolean `useCapture`) participates in listener identity
+ * — `passive`, `once`, `signal` do not. Anonymous-handler leaks are caught
+ * because we compare listener references by identity, not by name.
  */
 
 import { vi, type MockInstance } from 'vitest';
@@ -46,41 +48,61 @@ export function spyOnListeners(target: EventTarget = document): ListenerSpyHandl
 }
 
 /**
- * Throw if any (eventType, listener) pair added via addEventListener was not
- * later passed to removeEventListener with the same listener reference.
+ * Normalize the third argument to addEventListener / removeEventListener
+ * (which can be `undefined`, a boolean useCapture flag, or an
+ * AddEventListenerOptions object) into the single `capture` boolean that
+ * actually participates in listener identity per the DOM spec.
+ */
+function getCaptureFlag(options: unknown): boolean {
+	if (typeof options === 'boolean') return options;
+	if (options !== null && typeof options === 'object' && 'capture' in options) {
+		return Boolean((options as { capture?: unknown }).capture);
+	}
+	return false;
+}
+
+/**
+ * Throw if any (eventType, listener, capture) triple added via
+ * addEventListener was not later passed to removeEventListener with matching
+ * identity. A listener registered with `{ capture: true }` and removed
+ * without options is correctly reported as a leak — the spec treats those
+ * as two different listener registrations.
  *
- * If the same pair was added more than once (rare but legal), each add
+ * If the same triple was added more than once (rare but legal), each add
  * needs a matching remove — this is a count-aware multiset comparison.
  */
 export function expectAllListenersRemoved(
 	addSpy: AddListenerSpy,
 	removeSpy: RemoveListenerSpy
 ): void {
-	const added = addSpy.mock.calls.map(([eventType, listener]) => ({
+	const added = addSpy.mock.calls.map(([eventType, listener, options]) => ({
 		eventType: String(eventType),
 		listener,
+		capture: getCaptureFlag(options),
 	}));
-	const removed = removeSpy.mock.calls.map(([eventType, listener]) => ({
+	const removed = removeSpy.mock.calls.map(([eventType, listener, options]) => ({
 		eventType: String(eventType),
 		listener,
+		capture: getCaptureFlag(options),
 	}));
 
 	const remaining = [...removed];
-	const leaked: Array<{ eventType: string }> = [];
+	const leaked: Array<{ eventType: string; capture: boolean }> = [];
 
 	for (const add of added) {
 		const idx = remaining.findIndex(
-			(r) => r.eventType === add.eventType && r.listener === add.listener
+			(r) =>
+				r.eventType === add.eventType && r.listener === add.listener && r.capture === add.capture
 		);
 		if (idx === -1) {
-			leaked.push({ eventType: add.eventType });
+			leaked.push({ eventType: add.eventType, capture: add.capture });
 		} else {
 			remaining.splice(idx, 1);
 		}
 	}
 
 	if (leaked.length > 0) {
-		const summary = leaked.map((l) => l.eventType).join(', ');
+		const summary = leaked.map((l) => `${l.eventType}${l.capture ? ' (capture)' : ''}`).join(', ');
 		throw new Error(
 			`Listener leak: ${leaked.length} listener(s) added but never removed [${summary}]. ` +
 				`Total adds: ${added.length}, total removes: ${removed.length}.`

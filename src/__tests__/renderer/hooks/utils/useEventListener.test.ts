@@ -65,13 +65,19 @@ describe('useEventListener', () => {
 			expect(handler).not.toHaveBeenCalled();
 		});
 
-		it('attaches to a DOM element target', () => {
+		it('attaches to a DOM element target and removes the listener on unmount', () => {
 			const el = document.createElement('div');
 			document.body.appendChild(el);
 			const handler = vi.fn();
-			renderHook(() => useEventListener('click', handler, { target: el }));
+			const { unmount } = renderHook(() => useEventListener('click', handler, { target: el }));
+
 			fireEvent.click(el);
 			expect(handler).toHaveBeenCalledTimes(1);
+
+			unmount();
+			fireEvent.click(el);
+			expect(handler).toHaveBeenCalledTimes(1);
+
 			document.body.removeChild(el);
 		});
 

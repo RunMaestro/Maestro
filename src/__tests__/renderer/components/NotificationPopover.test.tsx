@@ -38,10 +38,15 @@ function Harness({ onClose }: { onClose: () => void }) {
 
 describe('NotificationPopover', () => {
 	let onClose: ReturnType<typeof vi.fn>;
+	let originalGetBoundingClientRect: typeof HTMLElement.prototype.getBoundingClientRect;
 
 	beforeEach(() => {
 		onClose = vi.fn();
 		// Provide a non-zero rect so the popover renders (it bails out if rect is null).
+		// Save the original so we can restore it in afterEach — vi.clearAllMocks()
+		// does NOT undo prototype-method assignments, and leaving the mock in place
+		// pollutes other tests in the same vitest worker.
+		originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 		HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
 			top: 100,
 			left: 100,
@@ -56,6 +61,7 @@ describe('NotificationPopover', () => {
 	});
 
 	afterEach(() => {
+		HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
 		vi.clearAllMocks();
 	});
 
