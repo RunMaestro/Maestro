@@ -10,6 +10,7 @@
 import type { UpdateInfo, ProgressInfo, AppUpdater } from 'electron-updater';
 import { BrowserWindow, ipcMain } from 'electron';
 import { logger } from './utils/logger';
+import { captureException } from './utils/sentry';
 import { isWebContentsAvailable } from './utils/safe-send';
 
 export interface UpdateStatus {
@@ -60,8 +61,13 @@ function getAutoUpdater(): AppUpdater {
  * @internal Test-only: inject a mock autoUpdater. The real implementation is
  * loaded via dynamic `require` to defer electron.app access, which sidesteps
  * vitest's module mocker — this hook lets tests provide a stand-in.
+ *
+ * Hard-gated to non-production builds: the symbol still exists in production
+ * bundles (TS can't conditionally export) but the body is a no-op there, so
+ * a stray call can't subvert the real updater singleton.
  */
 export function __setAutoUpdaterForTesting(updater: AppUpdater | null): void {
+	if (process.env.NODE_ENV === 'production') return;
 	_autoUpdater = updater;
 }
 
@@ -242,6 +248,11 @@ function setupIpcHandlers(): void {
 				`onBeforeQuitAndInstall hook threw: ${err instanceof Error ? err.message : String(err)}`,
 				'AutoUpdater'
 			);
+			void captureException(err instanceof Error ? err : new Error(String(err)), {
+				module: 'AutoUpdater',
+				hook: 'onBeforeQuitAndInstall',
+				operation: 'updates:install',
+			});
 		}
 		autoUpdater.quitAndInstall(false, true);
 	});

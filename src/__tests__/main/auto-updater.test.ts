@@ -37,6 +37,11 @@ vi.mock('../../main/utils/safe-send', () => ({
 	isWebContentsAvailable: vi.fn(() => false),
 }));
 
+const mockCaptureException = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 // electron-updater is loaded via dynamic `require` inside auto-updater.ts to
 // defer electron.app access — that bypasses vitest's module mocker. We use the
 // __setAutoUpdaterForTesting escape hatch instead.
@@ -108,14 +113,15 @@ describe('main/auto-updater', () => {
 			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
 		});
 
-		it('still calls quitAndInstall if onBeforeQuitAndInstall throws', async () => {
+		it('still calls quitAndInstall if onBeforeQuitAndInstall throws and reports to Sentry', async () => {
 			const { initAutoUpdater, __setAutoUpdaterForTesting } =
 				await import('../../main/auto-updater');
 			__setAutoUpdaterForTesting(
 				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
 			);
+			const hookError = new Error('hook blew up');
 			const onBeforeQuitAndInstall = vi.fn(() => {
-				throw new Error('hook blew up');
+				throw hookError;
 			});
 
 			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0], {
@@ -128,6 +134,39 @@ describe('main/auto-updater', () => {
 			expect(() => installHandler!()).not.toThrow();
 
 			expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
+			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				hookError,
+				expect.objectContaining({
+					module: 'AutoUpdater',
+					hook: 'onBeforeQuitAndInstall',
+					operation: 'updates:install',
+				})
+			);
+		});
+
+		it('wraps non-Error throws from onBeforeQuitAndInstall before reporting to Sentry', async () => {
+			const { initAutoUpdater, __setAutoUpdaterForTesting } =
+				await import('../../main/auto-updater');
+			__setAutoUpdaterForTesting(
+				mockAutoUpdater as unknown as Parameters<typeof __setAutoUpdaterForTesting>[0]
+			);
+			const onBeforeQuitAndInstall = vi.fn(() => {
+				// eslint-disable-next-line @typescript-eslint/no-throw-literal
+				throw 'string-thrown';
+			});
+
+			initAutoUpdater({} as Parameters<typeof initAutoUpdater>[0], {
+				onBeforeQuitAndInstall,
+			});
+
+			const installHandler = ipcHandlers.get('updates:install');
+			installHandler!();
+
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'string-thrown' }),
+				expect.any(Object)
+			);
 			expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
 		});
 	});
