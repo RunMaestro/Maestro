@@ -45,7 +45,10 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 				// Hollow "no Claude session bound" dot only applies when truly idle —
 				// active states surface the normal color so fresh agents still light up.
 				const isUnboundIdle =
-					session.toolType === 'claude-code' && !session.agentSessionId && session.state === 'idle';
+					session.toolType === 'claude-code' &&
+					!session.agentSessionId &&
+					!isInBatch &&
+					session.state === 'idle';
 				const effectiveStatusColor = isInBatch
 					? theme.colors.warning
 					: isUnboundIdle
@@ -74,7 +77,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
 								style={{
 									opacity: activeSessionId === session.id ? 1 : 0.25,
-									...(isUnboundIdle && !isInBatch
+									...(isUnboundIdle
 										? {
 												border: `1.5px solid ${theme.colors.textDim}`,
 												backgroundColor: 'transparent',
