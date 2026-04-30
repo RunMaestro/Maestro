@@ -13,17 +13,24 @@
  */
 
 import React, { memo, useMemo, useCallback, useState } from 'react';
-import type { Theme } from '../../types';
+import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
 
 interface AgentData {
+	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
+	key: string;
+	/** Provider name shown in the bar label, optionally suffixed with "(Worktree)". */
+	label: string;
+	/** Underlying provider/agent type used for color assignment. */
 	agent: string;
 	count: number;
 	duration: number;
 	durationPercentage: number;
 	color: string;
+	isWorktree: boolean;
 }
 
 interface AgentComparisonChartProps {
@@ -33,6 +40,16 @@ interface AgentComparisonChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
+	/** Current sessions list — when provided, worktree agents are split into separate bars. */
+	sessions?: Session[];
+	/** Drill-down click handler — fires with the bar's `key`/`label` on click. */
+	onAgentClick?: (key: string, displayName: string) => void;
+	/**
+	 * Active drill-down filter key. When set, the matching bar gets an accent
+	 * outline; non-matching bars dim to 30% opacity. `null` (or undefined) means
+	 * no filter is active and bars render normally.
+	 */
+	activeFilterKey?: string | null;
 }
 
 /**
@@ -74,29 +91,146 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	data,
 	theme,
 	colorBlindMode = false,
+	sessions,
+	onAgentClick,
+	activeFilterKey = null,
 }: AgentComparisonChartProps) {
 	const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
+	// Compute per-(provider, worktree-status) aggregation when sessions are
+	// available and the underlying per-session breakdown identifies any
+	// worktree agents. Returns null if differentiation isn't possible — the
+	// caller falls back to the legacy by-provider aggregation.
+	const splitAggregation = useMemo((): Record<
+		string,
+		{ regular: { count: number; duration: number }; worktree: { count: number; duration: number } }
+	> | null => {
+		const bySessionByDay = data.bySessionByDay;
+		if (!sessions || sessions.length === 0) return null;
+		if (!bySessionByDay || Object.keys(bySessionByDay).length === 0) return null;
+
+		const result: Record<
+			string,
+			{
+				regular: { count: number; duration: number };
+				worktree: { count: number; duration: number };
+			}
+		> = {};
+		let foundWorktree = false;
+
+		for (const [statSessionId, days] of Object.entries(bySessionByDay)) {
+			const session = findSessionByStatId(statSessionId, sessions);
+			if (!session) continue; // Historical session no longer present — skip.
+			const provider = session.toolType;
+			const isWt = isWorktreeAgent(session);
+			if (isWt) foundWorktree = true;
+
+			if (!result[provider]) {
+				result[provider] = {
+					regular: { count: 0, duration: 0 },
+					worktree: { count: 0, duration: 0 },
+				};
+			}
+			const bucket = isWt ? result[provider].worktree : result[provider].regular;
+			for (const day of days) {
+				bucket.count += day.count;
+				bucket.duration += day.duration;
+			}
+		}
+
+		// If no worktree agents were found, splitting adds no signal — let the
+		// chart render the simpler byAgent view to avoid losing historical data
+		// from sessions that aren't currently in the sessions list.
+		return foundWorktree ? result : null;
+	}, [data.bySessionByDay, sessions]);
+
 	// Process and sort agent data
 	const agentData = useMemo((): AgentData[] => {
-		const entries = Object.entries(data.byAgent);
-		if (entries.length === 0) return [];
+		const totalDuration =
+			(splitAggregation
+				? Object.values(splitAggregation).reduce(
+						(sum, p) => sum + p.regular.duration + p.worktree.duration,
+						0
+					)
+				: Object.values(data.byAgent).reduce((sum, stats) => sum + stats.duration, 0)) || 0;
 
-		// Calculate total duration for percentage
-		const totalDuration = entries.reduce((sum, [, stats]) => sum + stats.duration, 0);
+		const items: AgentData[] = [];
 
-		// Map and sort by duration descending
-		return entries
-			.map(([agent, stats], index) => ({
-				agent,
-				count: stats.count,
-				duration: stats.duration,
-				durationPercentage: totalDuration > 0 ? (stats.duration / totalDuration) * 100 : 0,
-				color: getAgentColor(agent, index, theme, colorBlindMode),
-			}))
-			.sort((a, b) => b.duration - a.duration);
-	}, [data.byAgent, theme, colorBlindMode]);
+		// Resolve raw provider keys (e.g. "claude-code") to user-facing names
+		// (e.g. the user's "Backend API" session name, or the prettified
+		// "Claude Code" fallback). Built from the union of byAgent and the split
+		// aggregation so both rendering paths get coherent labels.
+		const providerKeys = Array.from(
+			new Set([
+				...Object.keys(data.byAgent),
+				...(splitAggregation ? Object.keys(splitAggregation) : []),
+			])
+		);
+		const nameMap = buildNameMap(providerKeys, sessions);
+		const resolveLabel = (provider: string) => nameMap.get(provider)?.name ?? provider;
+
+		// Track unique providers in deterministic order to assign colors stably.
+		const providerColorIdx: Record<string, number> = {};
+		const assignColor = (provider: string): string => {
+			if (!(provider in providerColorIdx)) {
+				providerColorIdx[provider] = Object.keys(providerColorIdx).length;
+			}
+			return getAgentColor(provider, providerColorIdx[provider], theme, colorBlindMode);
+		};
+
+		if (splitAggregation) {
+			for (const [provider, buckets] of Object.entries(splitAggregation)) {
+				const color = assignColor(provider);
+				const baseLabel = resolveLabel(provider);
+				if (buckets.regular.count > 0 || buckets.regular.duration > 0) {
+					items.push({
+						key: provider,
+						label: baseLabel,
+						agent: provider,
+						count: buckets.regular.count,
+						duration: buckets.regular.duration,
+						durationPercentage:
+							totalDuration > 0 ? (buckets.regular.duration / totalDuration) * 100 : 0,
+						color,
+						isWorktree: false,
+					});
+				}
+				if (buckets.worktree.count > 0 || buckets.worktree.duration > 0) {
+					items.push({
+						key: `${provider}__worktree`,
+						label: `${baseLabel} (Worktree)`,
+						agent: provider,
+						count: buckets.worktree.count,
+						duration: buckets.worktree.duration,
+						durationPercentage:
+							totalDuration > 0 ? (buckets.worktree.duration / totalDuration) * 100 : 0,
+						color,
+						isWorktree: true,
+					});
+				}
+			}
+		} else {
+			for (const [provider, stats] of Object.entries(data.byAgent)) {
+				const color = assignColor(provider);
+				const resolved = nameMap.get(provider);
+				items.push({
+					key: provider,
+					label: resolved?.name ?? provider,
+					agent: provider,
+					count: stats.count,
+					duration: stats.duration,
+					durationPercentage: totalDuration > 0 ? (stats.duration / totalDuration) * 100 : 0,
+					color,
+					isWorktree: resolved?.isWorktree ?? false,
+				});
+			}
+		}
+
+		return items.sort((a, b) => b.duration - a.duration);
+	}, [data.byAgent, splitAggregation, theme, colorBlindMode, sessions]);
+
+	const hasWorktreeBars = useMemo(() => agentData.some((d) => d.isWorktree), [agentData]);
 
 	// Get max duration for bar width calculation
 	const maxDuration = useMemo(() => {
@@ -119,10 +253,22 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		setTooltipPos(null);
 	}, []);
 
-	// Get hovered agent data for tooltip
+	// Forward bar clicks to the dashboard's drill-down handler. The dashboard
+	// owns toggle behavior (clicking the active bar clears the filter); this
+	// component just reports which row was clicked.
+	const handleAgentClick = useCallback(
+		(key: string, label: string) => {
+			if (!onAgentClick) return;
+			onAgentClick(key, label);
+		},
+		[onAgentClick]
+	);
+
+	// Get hovered agent data for tooltip (matched by row key, since the same
+	// provider can appear twice — once as regular and once as worktree).
 	const hoveredAgentData = useMemo(() => {
 		if (!hoveredAgent) return null;
-		return agentData.find((d) => d.agent === hoveredAgent) || null;
+		return agentData.find((d) => d.key === hoveredAgent) || null;
 	}, [hoveredAgent, agentData]);
 
 	// Bar height
@@ -137,7 +283,10 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		>
 			{/* Header */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Provider Comparison
 				</h3>
 			</div>
@@ -155,17 +304,39 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 					<div className="space-y-2" role="list" aria-label="Agent usage data">
 						{agentData.map((agent) => {
 							const barWidth = maxDuration > 0 ? (agent.duration / maxDuration) * 100 : 0;
-							const isHovered = hoveredAgent === agent.agent;
+							const isHovered = hoveredAgent === agent.key;
+							const isClickable = !!onAgentClick;
+							const isFiltered = activeFilterKey != null;
+							const isSelected = isFiltered && activeFilterKey === agent.key;
+							const isDimmed = isFiltered && !isSelected;
 
 							return (
 								<div
-									key={agent.agent}
+									key={agent.key}
 									className="flex items-center gap-3"
-									style={{ height: barHeight }}
-									onMouseEnter={(e) => handleMouseEnter(agent.agent, e)}
+									style={{
+										height: barHeight,
+										cursor: isClickable ? 'pointer' : undefined,
+										opacity: isDimmed ? 0.3 : 1,
+										transition: 'opacity 0.2s ease',
+									}}
+									onMouseEnter={(e) => handleMouseEnter(agent.key, e)}
 									onMouseLeave={handleMouseLeave}
+									onClick={isClickable ? () => handleAgentClick(agent.key, agent.label) : undefined}
+									onKeyDown={
+										isClickable
+											? (e) => {
+													if (e.key === 'Enter' || e.key === ' ') {
+														e.preventDefault();
+														handleAgentClick(agent.key, agent.label);
+													}
+												}
+											: undefined
+									}
 									role="listitem"
-									aria-label={`${agent.agent}: ${agent.count} queries, ${formatDuration(agent.duration)}`}
+									tabIndex={isClickable ? 0 : undefined}
+									aria-pressed={isClickable ? isSelected : undefined}
+									aria-label={`${agent.label}: ${agent.count} queries, ${formatDuration(agent.duration)}${isClickable ? '. Click to filter dashboard.' : ''}`}
 								>
 									{/* Agent name label */}
 									<div
@@ -173,9 +344,9 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 										style={{
 											color: isHovered ? theme.colors.textMain : theme.colors.textDim,
 										}}
-										title={agent.agent}
+										title={agent.label}
 									>
-										{agent.agent}
+										{agent.label}
 									</div>
 
 									{/* Bar container */}
@@ -183,12 +354,17 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 										className="flex-1 h-full rounded overflow-hidden relative"
 										style={{
 											backgroundColor: `${theme.colors.border}30`,
+											// Selected bar gets an accent outline (analogue of recharts
+											// `<Cell>` stroke + strokeWidth). `boxShadow` is used over
+											// `border` so the bar geometry doesn't shift on selection.
+											boxShadow: isSelected ? `inset 0 0 0 2px ${theme.colors.accent}` : undefined,
+											transition: 'box-shadow 0.2s ease',
 										}}
 										role="meter"
 										aria-valuenow={agent.durationPercentage}
 										aria-valuemin={0}
 										aria-valuemax={100}
-										aria-label={`${agent.agent} usage percentage`}
+										aria-label={`${agent.label} usage percentage`}
 									>
 										{/* Bar fill */}
 										<div
@@ -196,7 +372,18 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 											style={{
 												width: `${Math.max(barWidth, 2)}%`,
 												backgroundColor: agent.color,
-												opacity: isHovered ? 1 : 0.85,
+												// Worktree bars render at reduced opacity with a diagonal stripe
+												// overlay so they're visually distinct from regular agent bars.
+												opacity: isHovered
+													? agent.isWorktree
+														? 0.75
+														: 1
+													: agent.isWorktree
+														? 0.55
+														: 0.85,
+												backgroundImage: agent.isWorktree
+													? 'repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0 4px, transparent 4px 8px)'
+													: undefined,
 												transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease',
 											}}
 											aria-hidden="true"
@@ -270,7 +457,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 								className="w-2 h-2 rounded-full"
 								style={{ backgroundColor: hoveredAgentData.color }}
 							/>
-							{hoveredAgentData.agent}
+							{hoveredAgentData.label}
 						</div>
 						<div style={{ color: theme.colors.textDim }}>
 							<div>
@@ -291,10 +478,19 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 					aria-label="Chart legend"
 				>
 					{agentData.slice(0, 6).map((agent) => (
-						<div key={agent.agent} className="flex items-center gap-1.5" role="listitem">
-							<div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: agent.color }} />
+						<div key={agent.key} className="flex items-center gap-1.5" role="listitem">
+							<div
+								className="w-2.5 h-2.5 rounded-sm"
+								style={{
+									backgroundColor: agent.color,
+									opacity: agent.isWorktree ? 0.55 : 1,
+									backgroundImage: agent.isWorktree
+										? 'repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0 2px, transparent 2px 4px)'
+										: undefined,
+								}}
+							/>
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{agent.agent}
+								{agent.label}
 							</span>
 						</div>
 					))}
@@ -302,6 +498,38 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							+{agentData.length - 6} more
 						</span>
+					)}
+					{hasWorktreeBars && (
+						<div
+							className="flex items-center gap-3 w-full mt-1 pt-2 border-t"
+							style={{ borderColor: `${theme.colors.border}60` }}
+							role="listitem"
+							aria-label="Worktree differentiation legend"
+						>
+							<div className="flex items-center gap-1.5">
+								<div
+									className="w-2.5 h-2.5 rounded-sm"
+									style={{ backgroundColor: theme.colors.textDim, opacity: 0.85 }}
+								/>
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									Agent
+								</span>
+							</div>
+							<div className="flex items-center gap-1.5">
+								<div
+									className="w-2.5 h-2.5 rounded-sm"
+									style={{
+										backgroundColor: theme.colors.textDim,
+										opacity: 0.55,
+										backgroundImage:
+											'repeating-linear-gradient(45deg, rgba(255,255,255,0.18) 0 2px, transparent 2px 4px)',
+									}}
+								/>
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									Worktree Agent
+								</span>
+							</div>
+						</div>
 					)}
 				</div>
 			)}

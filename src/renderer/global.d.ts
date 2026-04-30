@@ -2487,6 +2487,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			tabId?: string;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string>;
 		// Start an Auto Run session (returns session ID)
 		startAutoRun: (session: {
@@ -2575,6 +2576,12 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			worktreeQueries: number;
+			parentQueries: number;
+			byWorktreeStatus: {
+				worktree: { count: number; duration: number };
+				parent: { count: number; duration: number };
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
@@ -2600,6 +2607,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			createdAt: number;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string | null>;
 		// Record session closure
 		recordSessionClosed: (sessionId: string, closedAt: number) => Promise<boolean>;

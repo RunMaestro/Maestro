@@ -496,22 +496,28 @@ export class HistoryManager {
 			fs.mkdirSync(this.historyDir, { recursive: true });
 		}
 
-		this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
-			if (filename?.endsWith('.json')) {
-				const sessionId = filename.replace('.json', '');
-				logger.debug(`History file changed: ${filename}`, LOG_CONTEXT);
-				onExternalChange(sessionId);
-			}
-		});
+		try {
+			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
+				if (filename?.endsWith('.json')) {
+					const sessionId = filename.replace('.json', '');
+					logger.debug(`History file changed: ${filename}`, LOG_CONTEXT);
+					onExternalChange(sessionId);
+				}
+			});
 
-		// fs.watch emits 'error' when the watched directory becomes unavailable
-		// (removed, permission change, network volume disconnect). Without a listener
-		// the EventEmitter throws as an unhandled exception and crashes the main process.
-		this.watcher.on('error', (err) => {
-			logger.warn(`History watcher error: ${String(err)}`, LOG_CONTEXT);
-		});
+			// fs.watch emits 'error' when the watched directory becomes unavailable
+			// (removed, permission change, network volume disconnect). Without a listener
+			// the EventEmitter throws as an unhandled exception and crashes the main process.
+			this.watcher.on('error', (err) => {
+				logger.warn(`History watcher error: ${String(err)}`, LOG_CONTEXT);
+			});
 
-		logger.info('Started watching history directory', LOG_CONTEXT);
+			logger.info('Started watching history directory', LOG_CONTEXT);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			logger.warn(`Failed to start history watcher: ${message}`, LOG_CONTEXT);
+			this.watcher = null;
+		}
 	}
 
 	/**

@@ -203,7 +203,10 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 		>
 			{/* Header with title */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Session Location
 				</h3>
 			</div>

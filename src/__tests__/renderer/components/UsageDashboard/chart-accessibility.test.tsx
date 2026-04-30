@@ -296,13 +296,16 @@ describe('Chart Accessibility - SummaryCards', () => {
 
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
-		expect(groups).toHaveLength(10); // 10 metric cards
+		const metricCards = screen.getAllByTestId('metric-card');
+		expect(metricCards).toHaveLength(10); // 10 metric cards
+		metricCards.forEach((card) => {
+			expect(card).toHaveAttribute('role', 'group');
+		});
 	});
 
 	it('metric cards have descriptive aria-labels', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
+		const metricCards = screen.getAllByTestId('metric-card');
 
 		const expectedLabels = [
 			/Agents/i,
@@ -317,19 +320,19 @@ describe('Chart Accessibility - SummaryCards', () => {
 			/Local %/i,
 		];
 
-		groups.forEach((group, index) => {
-			expect(group).toHaveAttribute('aria-label');
-			const label = group.getAttribute('aria-label') || '';
+		metricCards.forEach((card, index) => {
+			expect(card).toHaveAttribute('aria-label');
+			const label = card.getAttribute('aria-label') || '';
 			expect(label).toMatch(expectedLabels[index]);
 		});
 	});
 
 	it('metric cards include values in aria-labels', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
-		const groups = screen.getAllByRole('group');
+		const metricCards = screen.getAllByTestId('metric-card');
 
-		groups.forEach((group) => {
-			const label = group.getAttribute('aria-label') || '';
+		metricCards.forEach((card) => {
+			const label = card.getAttribute('aria-label') || '';
 			// Should contain a value (number, time, or percentage)
 			expect(label).toMatch(/: .+/); // Has colon followed by value
 		});

@@ -55,6 +55,10 @@ vi.mock('lucide-react', () => {
 		Trophy: createIcon('trophy', '🏆'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
+		Filter: createIcon('filter', '🔍'),
+		Cpu: createIcon('cpu', '🖥️'),
+		DollarSign: createIcon('dollar', '💲'),
+		Activity: createIcon('activity', '📈'),
 	};
 });
 

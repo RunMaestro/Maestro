@@ -13,12 +13,43 @@
  * - Applies theme colors correctly
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AgentComparisonChart } from '../../../../renderer/components/UsageDashboard/AgentComparisonChart';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
+import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+
+let _sessionIdCounter = 0;
+function makeSession(overrides: Partial<Session> = {}): Session {
+	_sessionIdCounter++;
+	return {
+		id: `s${_sessionIdCounter}`,
+		name: `Session ${_sessionIdCounter}`,
+		toolType: 'claude-code',
+		state: 'idle',
+		cwd: '/tmp',
+		fullPath: '/tmp',
+		projectRoot: '/tmp',
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		createdAt: 0,
+		...overrides,
+	} as Session;
+}
 
 // Test theme
 const theme = THEMES['dracula'];
@@ -101,10 +132,12 @@ describe('AgentComparisonChart', () => {
 		it('renders agent names', () => {
 			render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-			// Use getAllByText since agent names appear in both bar labels and legend
-			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getAllByText('factory-droid').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getAllByText('terminal').length).toBeGreaterThanOrEqual(1);
+			// Without sessions, raw agent type keys are prettified via
+			// AGENT_DISPLAY_NAMES (e.g. "claude-code" → "Claude Code").
+			// Use getAllByText since names appear in both bar labels and legend.
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Factory Droid').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Terminal').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('renders with empty data showing message', () => {
@@ -117,7 +150,7 @@ describe('AgentComparisonChart', () => {
 			render(<AgentComparisonChart data={singleAgentData} theme={theme} />);
 
 			// Use getAllByText since agent name appears in both bar label and legend
-			expect(screen.getAllByText('claude-code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
 			// Single agent should show 100%
 			expect(screen.getByText('100.0%')).toBeInTheDocument();
 		});
@@ -165,10 +198,11 @@ describe('AgentComparisonChart', () => {
 			const agentLabels = container.querySelectorAll('.w-28.truncate');
 			const agentNames = Array.from(agentLabels).map((el) => el.textContent);
 
-			// In duration mode, claude-code has highest duration (2000000), then codex (1600000), then terminal (500000)
-			expect(agentNames[0]).toBe('claude-code');
-			expect(agentNames[1]).toBe('factory-droid');
-			expect(agentNames[2]).toBe('terminal');
+			// Bars are sorted by duration: claude-code (2000000) > factory-droid
+			// (1600000) > terminal (500000). Labels are prettified by buildNameMap.
+			expect(agentNames[0]).toBe('Claude Code');
+			expect(agentNames[1]).toBe('Factory Droid');
+			expect(agentNames[2]).toBe('Terminal');
 		});
 	});
 
@@ -418,6 +452,354 @@ describe('AgentComparisonChart', () => {
 
 			const firstBar = bars[0] as HTMLElement;
 			expect(firstBar.style.transition).toContain('opacity');
+		});
+	});
+
+	describe('Worktree Differentiation', () => {
+		it('splits worktree agents into separate bars and tags them with "(Worktree)"', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			// Two sessions share toolType "claude-code" so resolveAgentDisplayName
+			// falls back to the prettified type name. Labels appear in both the
+			// bar row and the legend.
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Claude Code (Worktree)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('renders the Agent vs Worktree Agent legend when worktrees are present', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			const legendBlock = container.querySelector('[aria-label="Worktree differentiation legend"]');
+			expect(legendBlock).not.toBeNull();
+			expect(legendBlock?.textContent).toContain('Agent');
+			expect(legendBlock?.textContent).toContain('Worktree Agent');
+		});
+
+		it('does not render the worktree legend when no worktree sessions exist', () => {
+			const regular = makeSession({ id: 'reg', toolType: 'claude-code' });
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					reg: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={dataWithSessions} theme={theme} sessions={[regular]} />
+			);
+
+			expect(container.querySelector('[aria-label="Worktree differentiation legend"]')).toBeNull();
+		});
+
+		it('falls back to byAgent aggregation when sessions prop is not provided', () => {
+			// Without sessions, no worktree info — should render exactly the
+			// providers in byAgent without "(Worktree)" suffixes.
+			render(<AgentComparisonChart data={mockData} theme={theme} />);
+
+			expect(screen.queryByText(/\(Worktree\)/)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Drill-Down Filtering', () => {
+		// `[role="listitem"]` targets the outer bar row only — the inner count/
+		// duration labels share `.flex.items-center.gap-3` but have no role.
+		const BAR_ROW_SELECTOR = '[role="listitem"][aria-label]';
+
+		it('does not set cursor pointer or tabIndex when onAgentClick is not provided', () => {
+			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			expect(barRows.length).toBeGreaterThan(0);
+			const firstRow = barRows[0] as HTMLElement;
+			expect(firstRow.style.cursor).toBe('');
+			expect(firstRow.getAttribute('tabIndex')).toBeNull();
+		});
+
+		it('sets cursor pointer and tabIndex when onAgentClick is provided', () => {
+			const onAgentClick = vi.fn();
+			const { container } = render(
+				<AgentComparisonChart data={mockData} theme={theme} onAgentClick={onAgentClick} />
+			);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			const firstRow = barRows[0] as HTMLElement;
+			expect(firstRow.style.cursor).toBe('pointer');
+			expect(firstRow.getAttribute('tabIndex')).toBe('0');
+		});
+
+		it('fires onAgentClick with the bar key and resolved label on click', () => {
+			const onAgentClick = vi.fn();
+			const { container } = render(
+				<AgentComparisonChart data={mockData} theme={theme} onAgentClick={onAgentClick} />
+			);
+
+			// Bars are sorted by duration desc → claude-code is first.
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			fireEvent.click(barRows[0]);
+
+			expect(onAgentClick).toHaveBeenCalledTimes(1);
+			expect(onAgentClick).toHaveBeenCalledWith('claude-code', 'Claude Code');
+		});
+
+		it('fires onAgentClick on Enter and Space key activation', () => {
+			const onAgentClick = vi.fn();
+			const { container } = render(
+				<AgentComparisonChart data={mockData} theme={theme} onAgentClick={onAgentClick} />
+			);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			fireEvent.keyDown(barRows[0], { key: 'Enter' });
+			fireEvent.keyDown(barRows[0], { key: ' ' });
+
+			expect(onAgentClick).toHaveBeenCalledTimes(2);
+		});
+
+		it('dims non-matching bars to 30% opacity when activeFilterKey is set', () => {
+			const { container } = render(
+				<AgentComparisonChart
+					data={mockData}
+					theme={theme}
+					onAgentClick={vi.fn()}
+					activeFilterKey="claude-code"
+				/>
+			);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			// Sorted: claude-code (selected, opacity 1), factory-droid + terminal (dimmed)
+			expect((barRows[0] as HTMLElement).style.opacity).toBe('1');
+			expect((barRows[1] as HTMLElement).style.opacity).toBe('0.3');
+			expect((barRows[2] as HTMLElement).style.opacity).toBe('0.3');
+		});
+
+		it('renders bars at full opacity when no filter is active', () => {
+			const { container } = render(
+				<AgentComparisonChart
+					data={mockData}
+					theme={theme}
+					onAgentClick={vi.fn()}
+					activeFilterKey={null}
+				/>
+			);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			barRows.forEach((row) => {
+				expect((row as HTMLElement).style.opacity).toBe('1');
+			});
+		});
+
+		it('applies an accent-colored outline to the selected bar container', () => {
+			const { container } = render(
+				<AgentComparisonChart
+					data={mockData}
+					theme={theme}
+					onAgentClick={vi.fn()}
+					activeFilterKey="claude-code"
+				/>
+			);
+
+			const barContainers = container.querySelectorAll(
+				'.flex-1.h-full.rounded.overflow-hidden.relative'
+			);
+			expect(barContainers.length).toBe(3);
+			// Selected bar (claude-code, sorted first) gets an inset accent outline.
+			const selected = barContainers[0] as HTMLElement;
+			expect(selected.style.boxShadow).toContain('inset');
+			expect(selected.style.boxShadow).toContain('2px');
+			// Non-selected bars do not have the outline.
+			expect((barContainers[1] as HTMLElement).style.boxShadow).toBe('');
+		});
+
+		it('reflects selection state via aria-pressed', () => {
+			const { container } = render(
+				<AgentComparisonChart
+					data={mockData}
+					theme={theme}
+					onAgentClick={vi.fn()}
+					activeFilterKey="factory-droid"
+				/>
+			);
+
+			const barRows = container.querySelectorAll(BAR_ROW_SELECTOR);
+			// Sorted by duration: claude-code (false), factory-droid (true), terminal (false).
+			expect(barRows[0].getAttribute('aria-pressed')).toBe('false');
+			expect(barRows[1].getAttribute('aria-pressed')).toBe('true');
+			expect(barRows[2].getAttribute('aria-pressed')).toBe('false');
+		});
+
+		it('passes the worktree key suffix when a worktree bar is clicked', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+			const onAgentClick = vi.fn();
+
+			const dataWithSessions: StatsAggregation = {
+				...mockData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart
+					data={dataWithSessions}
+					theme={theme}
+					sessions={[parent, worktree]}
+					onAgentClick={onAgentClick}
+				/>
+			);
+
+			// Find the worktree bar by aria-label suffix and click it.
+			const barRows = Array.from(container.querySelectorAll(BAR_ROW_SELECTOR)) as HTMLElement[];
+			const worktreeRow = barRows.find((row) =>
+				row.getAttribute('aria-label')?.startsWith('Claude Code (Worktree)')
+			);
+			expect(worktreeRow).toBeDefined();
+
+			fireEvent.click(worktreeRow!);
+
+			expect(onAgentClick).toHaveBeenCalledWith('claude-code__worktree', 'Claude Code (Worktree)');
+		});
+	});
+
+	describe('Session Name Resolution', () => {
+		it('uses the user-assigned session name when a single session matches the provider', () => {
+			// One session of toolType "claude-code" — buildNameMap should pick
+			// the session's name ("Backend API") for the bar label.
+			const session = makeSession({
+				id: 'backend-api',
+				name: 'Backend API',
+				toolType: 'claude-code',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[session]} />);
+
+			expect(screen.getAllByText('Backend API').length).toBeGreaterThanOrEqual(1);
+			expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+		});
+
+		it('falls back to prettified type when multiple sessions share the same provider', () => {
+			// Two distinct claude-code sessions — buildNameMap can't pick one,
+			// so it should use the prettified type name.
+			const a = makeSession({ id: 'a', name: 'Frontend', toolType: 'claude-code' });
+			const b = makeSession({ id: 'b', name: 'Backend', toolType: 'claude-code' });
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[a, b]} />);
+
+			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('disambiguates colliding display names with " (2)" suffixes', () => {
+			// Two providers, single matching session each, both named "Worker".
+			// buildNameMap should append " (2)" to the second to avoid collision.
+			const a = makeSession({ id: 'a', name: 'Worker', toolType: 'claude-code' });
+			const b = makeSession({ id: 'b', name: 'Worker', toolType: 'opencode' });
+			const data: StatsAggregation = {
+				...mockData,
+				byAgent: {
+					'claude-code': { count: 30, duration: 2000000 },
+					opencode: { count: 20, duration: 1000000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[a, b]} />);
+
+			expect(screen.getAllByText('Worker').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Worker (2)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('uses prettified type for providers with no matching session', () => {
+			// Sessions present but none with matching toolType — falls through
+			// to prettifyAgentType.
+			const session = makeSession({
+				id: 'unrelated',
+				name: 'Unrelated',
+				toolType: 'opencode',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'factory-droid': { count: 10, duration: 500000 },
+				},
+			};
+
+			render(<AgentComparisonChart data={data} theme={theme} sessions={[session]} />);
+
+			expect(screen.getAllByText('Factory Droid').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('uses resolved name in tooltip', () => {
+			const session = makeSession({
+				id: 'backend-api',
+				name: 'Backend API',
+				toolType: 'claude-code',
+			});
+			const data: StatsAggregation = {
+				...singleAgentData,
+				byAgent: {
+					'claude-code': { count: 20, duration: 1000000 },
+				},
+			};
+
+			const { container } = render(
+				<AgentComparisonChart data={data} theme={theme} sessions={[session]} />
+			);
+
+			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			fireEvent.mouseEnter(barRows[0]);
+
+			const tooltip = container.querySelector('.fixed.z-50');
+			expect(tooltip?.textContent).toContain('Backend API');
 		});
 	});
 });

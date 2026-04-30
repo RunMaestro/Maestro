@@ -15,8 +15,9 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
-import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
+import { X, BarChart3, Calendar, Download, Database, Filter } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
+import { AgentOverviewCards } from './AgentOverviewCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
 import { SourceDistributionChart } from './SourceDistributionChart';
@@ -26,6 +27,7 @@ import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
@@ -69,11 +71,119 @@ type SectionId =
 // Performance metrics instance for dashboard
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 
-// Stats time range type matching the backend API
 // StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
 type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun' | 'cue';
+
+// Drill-down filter applied across all charts. `key` is the per-agent map key
+// used in `byAgent` / `byAgentByDay` (or session id for `bySessionByDay`).
+interface DashboardFilter {
+	type: 'agent' | 'session';
+	key: string;
+	displayName: string;
+}
+
+/**
+ * Filter a StatsAggregation down to a single agent's data.
+ *
+ * Filters the per-agent maps (`byAgent`, `byAgentByDay`, `bySessionByDay`) to
+ * include only entries for the selected key, then recalculates the totals
+ * (`totalQueries`, `totalDuration`, `avgDuration`) from what remains. Other
+ * fields (per-source, per-location, per-day, per-hour) are passed through
+ * unchanged — the per-agent data does not exist on those breakdowns, so the
+ * filtered view falls back to global numbers for charts that consume them.
+ */
+function filterStatsForAgent(stats: StatsAggregation, agentKey: string): StatsAggregation {
+	const agentEntry = stats.byAgent[agentKey];
+	const filteredByAgent: Record<string, { count: number; duration: number }> = agentEntry
+		? { [agentKey]: agentEntry }
+		: {};
+
+	const agentDayEntry = stats.byAgentByDay[agentKey];
+	const filteredByAgentByDay: Record<
+		string,
+		Array<{ date: string; count: number; duration: number }>
+	> = agentDayEntry ? { [agentKey]: agentDayEntry } : {};
+
+	// `bySessionByDay` is keyed by session id, but the drill-down filter key is
+	// an agent identifier. Match sessions whose key starts with the agent key
+	// (the agent provider is the prefix in session ids); when nothing matches,
+	// fall back to an empty map so dependent charts render zero state.
+	const filteredBySessionByDay: Record<
+		string,
+		Array<{ date: string; count: number; duration: number }>
+	> = {};
+	for (const [sessionKey, days] of Object.entries(stats.bySessionByDay)) {
+		if (sessionKey === agentKey || sessionKey.startsWith(`${agentKey}:`)) {
+			filteredBySessionByDay[sessionKey] = days;
+		}
+	}
+
+	const totalQueries = agentEntry?.count ?? 0;
+	const totalDuration = agentEntry?.duration ?? 0;
+	const avgDuration = totalQueries > 0 ? totalDuration / totalQueries : 0;
+
+	return {
+		...stats,
+		byAgent: filteredByAgent,
+		byAgentByDay: filteredByAgentByDay,
+		bySessionByDay: filteredBySessionByDay,
+		totalQueries,
+		totalDuration,
+		avgDuration,
+	};
+}
+
+/**
+ * Placeholder shown in place of charts that don't have a per-agent breakdown
+ * (ActivityHeatmap, PeakHoursChart, WeekdayComparisonChart) while a drill-down
+ * filter is active. Surfaces the filtered agent's name and a clickable "Clear
+ * filter" link so the user can recover the full view in one click.
+ */
+function FilteredChartPlaceholder({
+	chartName,
+	theme,
+	onClear,
+}: {
+	chartName: string;
+	theme: Theme;
+	onClear: () => void;
+}) {
+	return (
+		<div
+			className="p-4 rounded-lg flex items-center justify-center"
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				color: theme.colors.textDim,
+				minHeight: 120,
+			}}
+			data-testid={`filtered-placeholder-${chartName.toLowerCase().replace(/\s+/g, '-')}`}
+			role="status"
+			aria-live="polite"
+		>
+			<span className="text-sm">
+				Hourly breakdown not available for individual agents.{' '}
+				<button
+					type="button"
+					onClick={onClear}
+					className="chart-clickable underline"
+					style={{
+						color: theme.colors.accent,
+						background: 'none',
+						border: 'none',
+						padding: 0,
+						font: 'inherit',
+					}}
+					data-testid={`filtered-placeholder-clear-${chartName.toLowerCase().replace(/\s+/g, '-')}`}
+				>
+					Clear filter
+				</button>{' '}
+				to see all data.
+			</span>
+		</div>
+	);
+}
 
 interface UsageDashboardModalProps {
 	isOpen: boolean;
@@ -154,6 +264,7 @@ export function UsageDashboardModal({
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
+	const [filter, setFilter] = useState<DashboardFilter | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -171,11 +282,29 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen, defaultTimeRange]);
 
-	// Register with layer stack for proper Escape handling
-	useModalLayer(MODAL_PRIORITIES.USAGE_DASHBOARD, undefined, () => onCloseRef.current(), {
-		focusTrap: 'lenient',
-		enabled: isOpen,
-	});
+	// Mirror the active filter into a ref so the layer-stack `onEscape`
+	// callback can read the latest value without forcing re-registration.
+	const filterRef = useRef(filter);
+	filterRef.current = filter;
+
+	// Register with layer stack for proper Escape handling.
+	// When a drill-down filter is active, Escape clears the filter first
+	// instead of closing the modal.
+	useModalLayer(
+		MODAL_PRIORITIES.USAGE_DASHBOARD,
+		undefined,
+		() => {
+			if (filterRef.current) {
+				setFilter(null);
+			} else {
+				onCloseRef.current();
+			}
+		},
+		{
+			focusTrap: 'lenient',
+			enabled: isOpen,
+		}
+	);
 
 	// Fetch stats data when range changes
 	const fetchStats = useCallback(
@@ -260,6 +389,41 @@ export function UsageDashboardModal({
 		setViewMode(mode);
 		setFocusedSection(null);
 	}, []);
+
+	// Drill-down filter handlers. Clicking the same agent again clears the
+	// filter (toggle); clicking a different agent replaces it.
+	const handleFilterByAgent = useCallback((key: string, displayName: string) => {
+		setFilter((current) =>
+			current && current.type === 'agent' && current.key === key
+				? null
+				: { type: 'agent', key, displayName }
+		);
+	}, []);
+
+	const clearFilter = useCallback(() => {
+		setFilter(null);
+	}, []);
+
+	// Reset the drill-down filter when the time range or active dashboard tab
+	// changes. The filter key only makes sense in the context of the data
+	// currently on screen — switching to a different time range or view can
+	// surface a totally different set of agents, so leaving a stale filter
+	// active would silently hide all charts. setState with `null` is a no-op
+	// when no filter is active, so this is cheap on the common path.
+	useEffect(() => {
+		setFilter(null);
+	}, [timeRange, viewMode]);
+
+	// Apply the active filter to the aggregation. When no filter is set, pass
+	// the raw stats through unchanged so referential equality is preserved
+	// (downstream charts can rely on memoization).
+	const filteredStats = useMemo(() => {
+		if (!data || !filter) return data;
+		if (filter.type === 'agent') {
+			return filterStatsForAgent(data, filter.key);
+		}
+		return data;
+	}, [data, filter]);
 
 	// Handle Cmd+Shift+[ and Cmd+Shift+] for tab navigation
 	useEffect(() => {
@@ -675,6 +839,46 @@ export function UsageDashboardModal({
 					className="flex-1 overflow-y-auto scrollbar-thin p-6"
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
+					{/* Drill-down Filter Indicator — visible whenever a chart filter is active */}
+					{filter && (
+						<div
+							className="card-enter mb-4"
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								backgroundColor: `${theme.colors.accent}26`, // 15% over base alpha
+								borderLeft: `3px solid ${theme.colors.accent}`,
+								borderRadius: '8px',
+								padding: '8px 12px',
+								color: theme.colors.textMain,
+							}}
+							data-testid="dashboard-filter-bar"
+							role="status"
+							aria-live="polite"
+						>
+							<Filter size={14} style={{ color: theme.colors.accent }} aria-hidden="true" />
+							<span className="text-sm">
+								Filtered to: <strong>{filter.displayName}</strong>
+							</span>
+							<button
+								type="button"
+								onClick={clearFilter}
+								className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors"
+								style={{ color: theme.colors.textDim }}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}25`)
+								}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								aria-label="Clear filter"
+								title="Clear filter (Esc)"
+								data-testid="dashboard-filter-clear"
+							>
+								<X size={14} />
+								Clear
+							</button>
+						</div>
+					)}
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
@@ -716,6 +920,20 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
+									{/* Active Agents Overview - per-agent status, branch, sparkline.
+									    Sits above keyboard-navigable sections; AgentOverviewCards
+									    provides its own role="region" + aria-label. */}
+									{sessions.length > 0 && (
+										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
+											<AgentOverviewCards
+												sessions={sessions}
+												data={filteredStats ?? data}
+												theme={theme}
+												activeFilterKey={filter?.key ?? null}
+											/>
+										</ChartErrorBoundary>
+									)}
+
 									{/* Summary Stats Cards - Horizontal row at top, responsive */}
 									<div
 										ref={setSectionRef('summary-cards')}
@@ -735,7 +953,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Summary Cards">
 											<SummaryCards
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												columns={layout.summaryCardsCols}
 												sessions={sessions}
@@ -763,9 +981,12 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Comparison">
 											<AgentComparisonChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -797,7 +1018,7 @@ export function UsageDashboardModal({
 										>
 											<ChartErrorBoundary theme={theme} chartName="Source Distribution">
 												<SourceDistributionChart
-													data={data}
+													data={filteredStats ?? data}
 													theme={theme}
 													colorBlindMode={colorBlindMode}
 												/>
@@ -823,7 +1044,7 @@ export function UsageDashboardModal({
 										>
 											<ChartErrorBoundary theme={theme} chartName="Location Distribution">
 												<LocationDistributionChart
-													data={data}
+													data={filteredStats ?? data}
 													theme={theme}
 													colorBlindMode={colorBlindMode}
 												/>
@@ -850,7 +1071,19 @@ export function UsageDashboardModal({
 										data-testid="section-peak-hours"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Peak Hours">
-											<PeakHoursChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Peak Hours"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<PeakHoursChart
+													data={filteredStats ?? data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -873,12 +1106,20 @@ export function UsageDashboardModal({
 										data-testid="section-activity-heatmap"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Activity Heatmap"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<ActivityHeatmap
+													data={filteredStats ?? data}
+													timeRange={timeRange}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -902,7 +1143,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
 											<DurationTrendsChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
@@ -940,6 +1181,20 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
+									{/* Worktree Analytics — only shown when at least one worktree
+									    session exists. WorktreeAnalytics provides its own role="region"
+									    + aria-label, so it sits outside the keyboard-navigable sections
+									    (same pattern as AgentOverviewCards in the Overview tab). */}
+									{sessions.some((s) => !!s.parentSessionId) && (
+										<ChartErrorBoundary theme={theme} chartName="Worktree Analytics">
+											<WorktreeAnalytics
+												sessions={sessions}
+												data={filteredStats ?? data}
+												theme={theme}
+											/>
+										</ChartErrorBoundary>
+									)}
+
 									{/* Agent Efficiency */}
 									<div
 										ref={setSectionRef('agent-efficiency')}
@@ -960,9 +1215,11 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Efficiency">
 											<AgentEfficiencyChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -987,9 +1244,12 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
 											<AgentComparisonChart
-												data={data}
+												data={filteredStats ?? data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1014,11 +1274,13 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Usage">
 											<AgentUsageChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
+												onAgentClick={handleFilterByAgent}
+												activeFilterKey={filter?.key ?? null}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1046,12 +1308,20 @@ export function UsageDashboardModal({
 										data-testid="section-activity-heatmap"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-											<ActivityHeatmap
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Activity Heatmap"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<ActivityHeatmap
+													data={filteredStats ?? data}
+													timeRange={timeRange}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -1073,11 +1343,19 @@ export function UsageDashboardModal({
 										data-testid="section-weekday-comparison"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Weekday Comparison">
-											<WeekdayComparisonChart
-												data={data}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
+											{filter ? (
+												<FilteredChartPlaceholder
+													chartName="Weekday Comparison"
+													theme={theme}
+													onClear={clearFilter}
+												/>
+											) : (
+												<WeekdayComparisonChart
+													data={filteredStats ?? data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											)}
 										</ChartErrorBoundary>
 									</div>
 
@@ -1100,7 +1378,7 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
 											<DurationTrendsChart
-												data={data}
+												data={filteredStats ?? data}
 												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}

@@ -350,7 +350,10 @@ export const AutoRunStats = memo(function AutoRunStats({
 				role="figure"
 				aria-label={`Tasks completed over time chart. ${tasksByDate.length} days of data.`}
 			>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks Completed Over Time
 				</h3>
 

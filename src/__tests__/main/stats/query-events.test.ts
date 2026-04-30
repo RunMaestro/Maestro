@@ -279,7 +279,7 @@ describe('Stats aggregation and filtering', () => {
 
 			// Should only contain headers
 			expect(csv).toBe(
-				'id,sessionId,agentType,source,startTime,duration,projectPath,tabId,isRemote'
+				'id,sessionId,agentType,source,startTime,duration,projectPath,tabId,isRemote,isWorktree'
 			);
 		});
 	});

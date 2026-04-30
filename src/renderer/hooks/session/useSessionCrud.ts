@@ -277,6 +277,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					projectPath: workingDir,
 					createdAt: Date.now(),
 					isRemote: !!isRemoteSession,
+					isWorktree: false,
 				});
 
 				setActiveFocus('main');

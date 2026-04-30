@@ -1221,6 +1221,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				projectPath: directoryPath,
 				createdAt: Date.now(),
 				isRemote: !!sessionSshRemoteConfig?.enabled,
+				isWorktree: false,
 			});
 
 			clearResumeState();
