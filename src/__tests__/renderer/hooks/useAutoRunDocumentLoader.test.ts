@@ -926,16 +926,13 @@ describe('useAutoRunDocumentLoader', () => {
 			});
 
 			mockListDocs.mockResolvedValue({ success: true, files: ['active-doc'], tree: [] });
-			// Call sequence:
-			// 1. task count for 'active-doc' (initial effect)
-			// 2. selected file content for 'active-doc' (initial effect)
-			// 3. task count for 'active-doc' (file change re-load)
-			// 4. selected file content for 'active-doc' (file change re-load)
+			// The loader reads each doc once per pass — content captured during the
+			// task-count pass is reused for the selected file (no separate content fetch).
+			// 1. initial pass for 'active-doc'
+			// 2. file-change refresh for 'active-doc'
 			mockReadDoc
-				.mockResolvedValueOnce({ success: true, content: '- [x] Done' }) // 1: initial task count
-				.mockResolvedValueOnce({ success: true, content: 'initial content' }) // 2: initial selected file
-				.mockResolvedValueOnce({ success: true, content: '- [x] Done' }) // 3: file change task count
-				.mockResolvedValueOnce({ success: true, content: 'updated content' }); // 4: file change selected file
+				.mockResolvedValueOnce({ success: true, content: 'initial content - [x] Done' })
+				.mockResolvedValueOnce({ success: true, content: 'updated content - [x] Done' });
 
 			const session = createMockSession({
 				id: 'session-1',
@@ -963,7 +960,7 @@ describe('useAutoRunDocumentLoader', () => {
 			await waitFor(() => {
 				const sessions = useSessionStore.getState().sessions;
 				const updated = sessions.find((s) => s.id === 'session-1');
-				expect(updated?.autoRunContent).toBe('updated content');
+				expect(updated?.autoRunContent).toBe('updated content - [x] Done');
 			});
 		});
 
