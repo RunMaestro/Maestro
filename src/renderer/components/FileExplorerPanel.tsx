@@ -1103,6 +1103,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								? 'rgba(255,255,255,0.1)'
 								: undefined,
 					}}
+					draggable
+					onDragStart={(e) => {
+						e.dataTransfer.setData('application/x-maestro-file-path', fullPath);
+						e.dataTransfer.effectAllowed = 'copy';
+					}}
 					onMouseDown={(e) => {
 						// Prevent focus from leaving the filter input when filtering
 						if (fileTreeFilter.length > 0) {
@@ -1195,8 +1200,24 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		]
 	);
 
+	// Swallow drag-enter/leave that propagate to the app-level overlay handler
+	// while a Files-panel drag is moving WITHIN the panel itself. Otherwise the
+	// drop overlay flashes on every row-to-row transition because each child
+	// element fires dragenter/dragleave that bumps the app-level counter.
+	// External (OS) file drags still bubble normally so the overlay shows when
+	// the cursor is over the file panel during a Finder/Explorer drag.
+	const handleInternalDragBubble = (e: React.DragEvent) => {
+		if (e.dataTransfer.types.includes('application/x-maestro-file-path')) {
+			e.stopPropagation();
+		}
+	};
+
 	return (
-		<div className="flex flex-col h-full relative">
+		<div
+			className="flex flex-col h-full relative"
+			onDragEnter={handleInternalDragBubble}
+			onDragLeave={handleInternalDragBubble}
+		>
 			{/* File Tree Filter */}
 			{fileTreeFilterOpen && (
 				<div className="mb-3 pt-4">

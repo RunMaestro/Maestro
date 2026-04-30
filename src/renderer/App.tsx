@@ -982,11 +982,11 @@ function MaestroConsoleInner() {
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	const {
-		handleImageDragEnter,
-		handleImageDragLeave,
-		handleImageDragOver,
-		isDraggingImage,
-		setIsDraggingImage,
+		handleFileDragEnter,
+		handleFileDragLeave,
+		handleFileDragOver,
+		isDraggingFile,
+		setIsDraggingFile,
 		dragCounterRef,
 		handleFileClick,
 		updateSessionWorkingDirectory,
@@ -1440,7 +1440,7 @@ function MaestroConsoleInner() {
 		terminalOutputRef,
 		fileTreeKeyboardNavRef,
 		dragCounterRef,
-		setIsDraggingImage,
+		setIsDraggingFile,
 		getBatchState,
 		activeBatchRunState,
 		processQueuedItemRef,
@@ -2566,19 +2566,26 @@ function MaestroConsoleInner() {
 					fontFamily: fontFamily,
 					fontSize: `${fontSize}px`,
 				}}
-				onDragEnter={handleImageDragEnter}
-				onDragLeave={handleImageDragLeave}
-				onDragOver={handleImageDragOver}
+				onDragEnter={handleFileDragEnter}
+				onDragLeave={handleFileDragLeave}
+				onDragOver={handleFileDragOver}
 				onDrop={handleDrop}
 			>
-				{/* Image Drop Overlay */}
-				{isDraggingImage && (
+				{/* External File Drop Overlay */}
+				{isDraggingFile && (
 					<div
-						className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center"
+						className="fixed inset-0 z-[9999] flex items-center justify-center cursor-pointer"
 						style={{ backgroundColor: `${theme.colors.accent}20` }}
+						onClick={() => {
+							// Escape hatch: if the overlay ever gets stuck (drag canceled in
+							// a way that didn't fire dragend or dragleave), clicking it
+							// resets the drag state.
+							dragCounterRef.current = 0;
+							setIsDraggingFile(false);
+						}}
 					>
 						<div
-							className="pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-4"
+							className="pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-3"
 							style={{
 								borderColor: theme.colors.accent,
 								backgroundColor: `${theme.colors.bgMain}ee`,
@@ -2599,7 +2606,10 @@ function MaestroConsoleInner() {
 								/>
 							</svg>
 							<span className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
-								Drop image to attach
+								Drop file or folder
+							</span>
+							<span className="text-sm" style={{ color: theme.colors.textDim }}>
+								Images attach as thumbnails. Anything else becomes an @reference.
 							</span>
 						</div>
 					</div>

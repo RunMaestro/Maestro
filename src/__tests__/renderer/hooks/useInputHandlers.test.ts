@@ -180,7 +180,7 @@ function createMockDeps(overrides: Partial<UseInputHandlersDeps> = {}): UseInput
 		terminalOutputRef: { current: { focus: vi.fn() } } as any,
 		fileTreeKeyboardNavRef: { current: false },
 		dragCounterRef: { current: 0 },
-		setIsDraggingImage: vi.fn(),
+		setIsDraggingFile: vi.fn(),
 		getBatchState: vi.fn().mockReturnValue(createDefaultBatchState()),
 		activeBatchRunState: createDefaultBatchState(),
 		processQueuedItemRef: { current: null },
@@ -957,6 +957,7 @@ describe('useInputHandlers', () => {
 			const dropEvent = {
 				preventDefault: vi.fn(),
 				dataTransfer: {
+					getData: () => '',
 					files: { length: 0 } as any,
 				},
 			} as unknown as React.DragEvent;
@@ -966,7 +967,7 @@ describe('useInputHandlers', () => {
 			});
 
 			expect(deps.dragCounterRef.current).toBe(0);
-			expect(deps.setIsDraggingImage).toHaveBeenCalledWith(false);
+			expect(deps.setIsDraggingFile).toHaveBeenCalledWith(false);
 		});
 
 		it('ignores drops in terminal mode', () => {
@@ -981,6 +982,7 @@ describe('useInputHandlers', () => {
 			const dropEvent = {
 				preventDefault: vi.fn(),
 				dataTransfer: {
+					getData: () => '',
 					files: {
 						length: 1,
 						0: { type: 'image/png' },
@@ -1013,6 +1015,7 @@ describe('useInputHandlers', () => {
 			const dropEvent = {
 				preventDefault: vi.fn(),
 				dataTransfer: {
+					getData: () => '',
 					files: {
 						length: 1,
 						0: mockFile,
@@ -1542,6 +1545,7 @@ describe('useInputHandlers', () => {
 			const dropEvent = {
 				preventDefault: vi.fn(),
 				dataTransfer: {
+					getData: () => '',
 					files: {
 						length: 2,
 						0: { type: 'application/pdf', name: 'doc.pdf' },
@@ -1587,6 +1591,7 @@ describe('useInputHandlers', () => {
 				const dropEvent = {
 					preventDefault: vi.fn(),
 					dataTransfer: {
+						getData: () => '',
 						files: {
 							length: 2,
 							0: { type: 'image/png', name: 'img1.png' },
@@ -1608,6 +1613,400 @@ describe('useInputHandlers', () => {
 			} finally {
 				global.FileReader = originalFileReader;
 			}
+		});
+
+		it('inserts @<path> into AI input when dropping an internal Files-panel drag', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'src/main/index.ts' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/main/index.ts ');
+		});
+
+		it('appends @<path> with a separating space when input already has content', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.setInputValue('look at');
+			});
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'README.md' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('look at @README.md ');
+		});
+
+		it('ignores internal Files-panel drag when group chat is active', () => {
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'src/main/index.ts' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('inserts @<relative-path> when an external file inside the project is dropped in AI mode', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'README.md', path: '/test/docs/README.md' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@docs/README.md ');
+		});
+
+		it('inserts an absolute @<path> when an external file outside the project is dropped', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: '', name: 'notes', path: '/Users/somebody/notes' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@/Users/somebody/notes ');
+		});
+
+		it('joins multiple external file drops with spaces', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 2,
+						0: { type: 'text/plain', name: 'a.ts', path: '/test/src/a.ts' },
+						1: { type: '', name: 'docs', path: '/test/docs' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/a.ts @docs ');
+		});
+
+		it('updates group chat draftMessage when external files are dropped during group chat', () => {
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'a.ts', path: '/test/src/a.ts' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(setGroupChats).toHaveBeenCalled();
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@src/a.ts ');
+		});
+
+		it('appends to existing group chat draft with a separating space', () => {
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: 'check',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next =
+					typeof updater === 'function'
+						? updater(useGroupChatStore.getState().groupChats)
+						: updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'README.md', path: '/test/README.md' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('check @README.md ');
+		});
+
+		it('ignores files without a path (browser-only drops have no fs path)', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'pasted.txt' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('stages an image when an image path is dragged from the Files panel', async () => {
+			const dataUrl = 'data:image/png;base64,FAKEPNG';
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(dataUrl);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'assets/logo.png' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			await act(async () => {
+				result.current.handleDrop(dropEvent);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/test/assets/logo.png', undefined);
+			const sessions = useSessionStore.getState().sessions;
+			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages).toEqual([dataUrl]);
+			// Image staging path must NOT also insert an @-mention.
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('does not stage anything when the IPC returns a non-data-url string for an image path', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('not a data url');
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'assets/logo.png' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			await act(async () => {
+				result.current.handleDrop(dropEvent);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages ?? []).toEqual([]);
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('still inserts @<path> for non-image extensions dragged from the Files panel', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'src/util.ts' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/util.ts ');
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
+		it('relativizes a Windows-style backslash path inside a Windows-style project root', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'index.ts',
+							path: 'C:\\Users\\Alice\\proj\\src\\index.ts',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/index.ts ');
+		});
+
+		it('falls back to the absolute (forward-slash) path when Windows casing does not match', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'index.ts',
+							path: 'c:\\users\\alice\\proj\\src\\index.ts',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			// Casing differs from projectRoot — relative match must NOT fire.
+			// The path is still emitted, just absolute, slash-normalised.
+			expect(result.current.inputValue).toBe('@c:/users/alice/proj/src/index.ts ');
 		});
 	});
 

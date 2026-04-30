@@ -30,6 +30,29 @@ import type { TabCompletionSuggestion } from './useTabCompletion';
 import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+
+function isImagePath(path: string): boolean {
+	const ext = path.toLowerCase().split('.').pop();
+	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
+}
+
+/**
+ * Convert an absolute filesystem path into the form used inside an `@` mention:
+ * if it sits inside `projectRoot`, return the relative path; otherwise return
+ * the absolute path unchanged. Forward-slash normalised so Windows drops still
+ * produce a clean mention.
+ */
+function toMentionPath(absolutePath: string, projectRoot?: string): string {
+	const norm = absolutePath.replace(/\\/g, '/');
+	if (!projectRoot) return norm;
+	const root = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	if (norm === root) return '.';
+	if (norm.startsWith(root + '/')) {
+		return norm.slice(root.length + 1);
+	}
+	return norm;
+}
 
 // ============================================================================
 // Dependencies interface
@@ -45,7 +68,7 @@ export interface UseInputHandlersDeps {
 	/** Drag counter ref for image drop handling */
 	dragCounterRef: React.MutableRefObject<number>;
 	/** Set dragging image state */
-	setIsDraggingImage: (value: boolean) => void;
+	setIsDraggingFile: (value: boolean) => void;
 
 	// From useBatchHandlers
 	/** Get batch state for a specific session */
@@ -140,7 +163,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		terminalOutputRef,
 		fileTreeKeyboardNavRef,
 		dragCounterRef,
-		setIsDraggingImage,
+		setIsDraggingFile,
 		getBatchState,
 		activeBatchRunState,
 		processQueuedItemRef,
@@ -569,21 +592,97 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[activeGroupChatId, activeSession, setInputValue, setStagedImages]
 	);
 
+	const appendMentionsToAiInput = useCallback(
+		(paths: string[]) => {
+			if (paths.length === 0) return;
+			const joined = paths.map((p) => `@${p}`).join(' ');
+			setInputValue((prev) => {
+				if (!prev) return joined + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + joined + ' ';
+			});
+		},
+		[setInputValue]
+	);
+
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+		if (paths.length === 0) return;
+		const joined = paths.map((p) => `@${p}`).join(' ');
+		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		if (!chatId) return;
+		setGroupChats((prev) =>
+			prev.map((c) => {
+				if (c.id !== chatId) return c;
+				const current = c.draftMessage ?? '';
+				const sep = current && !/\s$/.test(current) ? ' ' : '';
+				const next = current ? current + sep + joined + ' ' : joined + ' ';
+				return { ...c, draftMessage: next };
+			})
+		);
+	}, []);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
 			dragCounterRef.current = 0;
-			setIsDraggingImage(false);
+			setIsDraggingFile(false);
 
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
+			// Files-panel drag: image files are staged as image attachments;
+			// other files/folders are inserted as @<path> in the AI input.
+			// AI mode only; group chat is excluded.
+			const internalPath = e.dataTransfer.getData('application/x-maestro-file-path');
+			if (internalPath) {
+				if (isGroupChatActive || !isDirectAIMode) return;
+
+				if (isImagePath(internalPath)) {
+					// `internalPath` is built by FileExplorerPanel relative to
+					// `session.fullPath` (see TreeRow's `${session.fullPath}/${fullPath}`),
+					// so resolve against fullPath first to stay consistent with the
+					// explorer's own absolute-path construction.
+					const treeRoot = activeSession?.fullPath ?? activeSession?.projectRoot;
+					if (!treeRoot) return;
+					const absolutePath = `${treeRoot}/${internalPath}`;
+					const sshRemoteId =
+						activeSession?.sshRemoteId ??
+						activeSession?.sessionSshRemoteConfig?.remoteId ??
+						undefined;
+					void window.maestro.fs
+						.readFile(absolutePath, sshRemoteId)
+						.then((content) => {
+							if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
+							setStagedImages((prev) => {
+								if (prev.includes(content)) {
+									setSuccessFlashNotification('Duplicate image ignored');
+									setTimeout(() => setSuccessFlashNotification(null), 2000);
+									return prev;
+								}
+								return [...prev, content];
+							});
+						})
+						.catch(() => {
+							setSuccessFlashNotification('Could not read image file');
+							setTimeout(() => setSuccessFlashNotification(null), 2000);
+						});
+					return;
+				}
+
+				appendMentionsToAiInput([internalPath]);
+				inputRef.current?.focus();
+				return;
+			}
+
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
 			const files = e.dataTransfer.files;
+			const externalPaths: string[] = [];
+			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
-				if (files[i].type.startsWith('image/')) {
+				const file = files[i];
+				if (file.type.startsWith('image/')) {
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {
@@ -609,11 +708,32 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							}
 						}
 					};
-					reader.readAsDataURL(files[i]);
+					reader.readAsDataURL(file);
+				} else {
+					// External non-image file or folder — collect path for @-mention.
+					const filePath = (file as File & { path?: string }).path;
+					if (filePath) {
+						externalPaths.push(toMentionPath(filePath, projectRoot));
+					}
+				}
+			}
+
+			if (externalPaths.length > 0) {
+				if (isGroupChatActive) {
+					appendMentionsToGroupChatDraft(externalPaths);
+				} else if (isDirectAIMode) {
+					appendMentionsToAiInput(externalPaths);
+					inputRef.current?.focus();
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setStagedImages]
+		[
+			activeGroupChatId,
+			activeSession,
+			setStagedImages,
+			appendMentionsToAiInput,
+			appendMentionsToGroupChatDraft,
+		]
 	);
 
 	// ====================================================================
