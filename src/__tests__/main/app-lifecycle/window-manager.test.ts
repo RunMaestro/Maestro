@@ -624,7 +624,7 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 
-		it('should allow file:// navigation within renderer directory in production', async () => {
+		it('should allow file:// navigation to the renderer entry HTML in production', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
 			const windowManager = createWindowManager({
@@ -646,7 +646,7 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow file:// navigation within the renderer's directory (/path/to/)
+			// Should allow file:// navigation to the renderer entry HTML itself.
 			const mockEvent = { preventDefault: vi.fn() };
 			navigateHandler(mockEvent, 'file:///path/to/index.html');
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
@@ -677,6 +677,37 @@ describe('app-lifecycle/window-manager', () => {
 			// Should block file:// navigation to paths outside the renderer directory
 			const mockEvent = { preventDefault: vi.fn() };
 			navigateHandler(mockEvent, 'file:///etc/passwd');
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('regression: should block file:// navigation to other files inside the renderer directory in production', async () => {
+			// A relative <a href="foo.md"> in chat output resolves against the
+			// current page URL (the renderer's index.html), producing a file://
+			// URL inside the renderer dir. The previous "directory prefix" check
+			// allowed that through, unloading the app to a non-existent file.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'file:///path/to/TEST-PLAN-0.16.15-RC.md');
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 

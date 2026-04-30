@@ -3,7 +3,7 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { BrowserWindow, Menu, ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
@@ -377,12 +377,13 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					const devUrl = new URL(devServerUrl);
 					if (parsedUrl.origin === devUrl.origin) return;
 				} else {
-					// In production, only allow file:// URLs within the app's renderer directory
-					if (
-						parsedUrl.protocol === 'file:' &&
-						url.includes(path.dirname(rendererPath).replace(/\\/g, '/'))
-					)
-						return;
+					// In production, only allow navigation to the renderer entry HTML
+					// itself. A previous "directory prefix" check let any file inside
+					// the renderer dir through, which meant a stray <a href="foo.md">
+					// in chat output could resolve relative to index.html and unload
+					// the app to a non-existent bundle file.
+					const rendererFileUrl = pathToFileURL(rendererPath).href;
+					if (parsedUrl.protocol === 'file:' && url === rendererFileUrl) return;
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');
