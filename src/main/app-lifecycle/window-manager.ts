@@ -148,6 +148,12 @@ export interface WindowManagerDependencies {
 	useNativeTitleBar: boolean;
 	/** Whether to auto-hide the menu bar (Linux/Windows) */
 	autoHideMenuBar: boolean;
+	/**
+	 * Lazy getter for the quit handler's confirmQuit function. Used by the
+	 * auto-updater install path to bypass the busy-agent quit confirmation
+	 * gate. Lazy because the quit handler is constructed after the window.
+	 */
+	getConfirmQuit?: () => (() => void) | null | undefined;
 }
 
 /** Window manager instance */
@@ -171,6 +177,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		devServerUrl,
 		useNativeTitleBar,
 		autoHideMenuBar,
+		getConfirmQuit,
 	} = deps;
 
 	return {
@@ -526,7 +533,12 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 			// Initialize auto-updater (only in production)
 			if (!isDevelopment) {
-				initAutoUpdater(mainWindow);
+				initAutoUpdater(mainWindow, {
+					onBeforeQuitAndInstall: () => {
+						const confirmQuit = getConfirmQuit?.();
+						confirmQuit?.();
+					},
+				});
 				logger.info('Auto-updater initialized', 'Window');
 			} else {
 				// Register stub handlers in development mode so users get a helpful error

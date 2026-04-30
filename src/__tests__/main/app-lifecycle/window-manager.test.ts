@@ -442,6 +442,66 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockInitAutoUpdater).toHaveBeenCalled();
 		});
 
+		it('passes onBeforeQuitAndInstall to auto-updater that invokes confirmQuit', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const confirmQuit = vi.fn();
+			const getConfirmQuit = vi.fn(() => confirmQuit);
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				getConfirmQuit,
+			});
+
+			windowManager.createWindow();
+
+			// initAutoUpdater(window, options)
+			expect(mockInitAutoUpdater).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ onBeforeQuitAndInstall: expect.any(Function) })
+			);
+
+			// Pull the option and confirm it routes to confirmQuit
+			const options = mockInitAutoUpdater.mock.calls[0][1] as {
+				onBeforeQuitAndInstall: () => void;
+			};
+			options.onBeforeQuitAndInstall();
+
+			expect(getConfirmQuit).toHaveBeenCalled();
+			expect(confirmQuit).toHaveBeenCalledTimes(1);
+		});
+
+		it('onBeforeQuitAndInstall is a no-op when quit handler is not yet wired', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				getConfirmQuit: () => null,
+			});
+
+			windowManager.createWindow();
+
+			const options = mockInitAutoUpdater.mock.calls[0][1] as {
+				onBeforeQuitAndInstall: () => void;
+			};
+			expect(() => options.onBeforeQuitAndInstall()).not.toThrow();
+		});
+
 		it('should register stub handlers in development mode', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 

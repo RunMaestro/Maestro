@@ -133,6 +133,7 @@ import {
 	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
+	type QuitHandler,
 } from './app-lifecycle';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
@@ -308,6 +309,12 @@ const settingsWatcher = createSettingsWatcher({
 const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
+// Forward declaration: quitHandler is constructed after the window, but the
+// window manager needs a lazy reference so the auto-updater install path can
+// bypass the busy-agent quit confirmation gate (otherwise on Windows the
+// installer is orphaned by before-quit preventDefault).
+let quitHandler: QuitHandler | null = null;
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
@@ -317,6 +324,7 @@ const windowManager = createWindowManager({
 	devServerUrl: devServerUrl,
 	useNativeTitleBar,
 	autoHideMenuBar,
+	getConfirmQuit: () => quitHandler?.confirmQuit,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
@@ -805,7 +813,7 @@ app.on('window-all-closed', () => {
 });
 
 // Create and setup quit handler with dependency injection (Phase 4 refactoring)
-const quitHandler = createQuitHandler({
+quitHandler = createQuitHandler({
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
 	getWebServer: () => webServer,

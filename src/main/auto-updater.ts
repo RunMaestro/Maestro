@@ -29,6 +29,7 @@ export interface UpdateStatus {
 let mainWindow: BrowserWindow | null = null;
 let currentStatus: UpdateStatus = { status: 'idle' };
 let ipcHandlersRegistered = false;
+let onBeforeQuitAndInstall: (() => void) | null = null;
 
 // Lazy-loaded autoUpdater instance
 let _autoUpdater: AppUpdater | null = null;
@@ -56,10 +57,33 @@ function getAutoUpdater(): AppUpdater {
 }
 
 /**
+ * @internal Test-only: inject a mock autoUpdater. The real implementation is
+ * loaded via dynamic `require` to defer electron.app access, which sidesteps
+ * vitest's module mocker — this hook lets tests provide a stand-in.
+ */
+export function __setAutoUpdaterForTesting(updater: AppUpdater | null): void {
+	_autoUpdater = updater;
+}
+
+/**
+ * Options for initializing the auto-updater.
+ */
+export interface InitAutoUpdaterOptions {
+	/**
+	 * Called immediately before `autoUpdater.quitAndInstall()` runs (i.e. when the
+	 * user clicks "Install Update"). Lets the host bypass the busy-agent quit
+	 * confirmation gate so the Windows installer — which spawns waiting on our PID
+	 * — isn't orphaned by `before-quit` preventDefault.
+	 */
+	onBeforeQuitAndInstall?: () => void;
+}
+
+/**
  * Initialize the auto-updater and set up event handlers
  */
-export function initAutoUpdater(window: BrowserWindow): void {
+export function initAutoUpdater(window: BrowserWindow, options?: InitAutoUpdaterOptions): void {
 	mainWindow = window;
+	onBeforeQuitAndInstall = options?.onBeforeQuitAndInstall ?? null;
 
 	const autoUpdater = getAutoUpdater();
 
@@ -207,6 +231,18 @@ function setupIpcHandlers(): void {
 	// Install update (quit and install)
 	ipcMain.handle('updates:install', () => {
 		logger.info('Installing update — quitting and restarting app', 'AutoUpdater');
+		// Bypass the busy-agent quit confirmation gate. The user already opted in
+		// via the update modal, and on Windows quitAndInstall spawns the NSIS
+		// installer bound to our PID — if before-quit preventDefaults the quit, the
+		// installer is orphaned waiting for a parent exit that may never come.
+		try {
+			onBeforeQuitAndInstall?.();
+		} catch (err) {
+			logger.warn(
+				`onBeforeQuitAndInstall hook threw: ${err instanceof Error ? err.message : String(err)}`,
+				'AutoUpdater'
+			);
+		}
 		autoUpdater.quitAndInstall(false, true);
 	});
 
