@@ -93,6 +93,15 @@ export const SessionItem = memo(function SessionItem({
 	const showGitLocalBadge =
 		variant !== 'bookmark' && variant !== 'worktree' && session.toolType !== 'terminal';
 
+	// Hollow "no Claude session bound" dot only applies when truly idle —
+	// active states (busy/connecting/etc.) must surface their color so
+	// fresh agents that are working still light up.
+	const isUnboundIdle =
+		session.toolType === 'claude-code' &&
+		!session.agentSessionId &&
+		!isInBatch &&
+		session.state === 'idle';
+
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
 		const isWorktree = variant === 'worktree';
@@ -341,7 +350,7 @@ export const SessionItem = memo(function SessionItem({
 						<div
 							className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
 							style={
-								session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+								isUnboundIdle
 									? {
 											border: `1.5px solid ${theme.colors.textDim}`,
 											backgroundColor: 'transparent',
@@ -353,7 +362,7 @@ export const SessionItem = memo(function SessionItem({
 										}
 							}
 							title={
-								session.toolType === 'claude-code' && !session.agentSessionId
+								isUnboundIdle
 									? 'No active Claude session'
 									: session.state === 'idle'
 										? 'Ready and waiting'
