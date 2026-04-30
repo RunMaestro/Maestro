@@ -20,7 +20,7 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { buildNameMap } from './chartUtils';
+import { buildNameMap, clampTooltipToViewport } from './chartUtils';
 
 // 10 distinct colors for agents
 const AGENT_COLORS = [
@@ -503,40 +503,62 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					</svg>
 				)}
 
-				{/* Tooltip */}
-				{hoveredDay && tooltipPos && allDates[hoveredDay.dayIndex] && (
-					<div
-						className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-						style={{
-							left: tooltipPos.x,
-							top: tooltipPos.y - 8,
-							transform: 'translate(-50%, -100%)',
-							backgroundColor: theme.colors.bgActivity,
-							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						<div className="font-medium mb-1">{allDates[hoveredDay.dayIndex].formattedDate}</div>
-						<div style={{ color: theme.colors.textDim }}>
-							{agents.map((agent, idx) => {
-								const dayData = allDates[hoveredDay.dayIndex].agents[agent];
-								if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
-								const color = getAgentColor(idx, colorBlindMode);
-								return (
-									<div key={agent} className="flex items-center gap-2">
-										<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-										<span>{agentDisplayNames[agent]}:</span>
-										<span style={{ color: theme.colors.textMain }}>
-											{metricMode === 'count'
-												? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
-												: formatDuration(dayData.duration)}
-										</span>
-									</div>
-								);
-							})}
-						</div>
-					</div>
-				)}
+				{/* Tooltip — clamped to viewport so points near the chart edges don't
+				    push the tooltip off-screen. Width/height are estimates; the
+				    `whitespace-nowrap` plus per-agent rows can grow taller, but
+				    clamping the rough envelope is enough to keep it visible. */}
+				{hoveredDay &&
+					tooltipPos &&
+					allDates[hoveredDay.dayIndex] &&
+					(() => {
+						const visibleAgents = agents.filter((agent) => {
+							const dayData = allDates[hoveredDay.dayIndex].agents[agent];
+							return dayData && (dayData.count > 0 || dayData.duration > 0);
+						});
+						const tooltipWidth = 280;
+						const tooltipHeight = 32 + visibleAgents.length * 18;
+						const { left, top } = clampTooltipToViewport({
+							anchorX: tooltipPos.x,
+							anchorY: tooltipPos.y - 8,
+							width: tooltipWidth,
+							height: tooltipHeight,
+							transform: 'top-center',
+						});
+						return (
+							<div
+								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+								style={{
+									left,
+									top,
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div className="font-medium mb-1">
+									{allDates[hoveredDay.dayIndex].formattedDate}
+								</div>
+								<div style={{ color: theme.colors.textDim }}>
+									{agents.map((agent, idx) => {
+										const dayData = allDates[hoveredDay.dayIndex].agents[agent];
+										if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
+										const color = getAgentColor(idx, colorBlindMode);
+										return (
+											<div key={agent} className="flex items-center gap-2">
+												<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+												<span>{agentDisplayNames[agent]}:</span>
+												<span style={{ color: theme.colors.textMain }}>
+													{metricMode === 'count'
+														? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
+														: formatDuration(dayData.duration)}
+												</span>
+											</div>
+										);
+									})}
+								</div>
+							</div>
+						);
+					})()}
 			</div>
 
 			{/* Legend — clickable when `onAgentClick` is wired (drill-down filter). */}

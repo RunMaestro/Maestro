@@ -297,7 +297,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const metricCards = screen.getAllByTestId('metric-card');
-		expect(metricCards).toHaveLength(10); // 10 metric cards
+		expect(metricCards).toHaveLength(12); // 12 metric cards
 		metricCards.forEach((card) => {
 			expect(card).toHaveAttribute('role', 'group');
 		});
@@ -307,6 +307,9 @@ describe('Chart Accessibility - SummaryCards', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const metricCards = screen.getAllByTestId('metric-card');
 
+		// Card list updated: Interactive % / Local % were replaced with the
+		// streak-momentum row (Current Streak / Best Day / Active Days /
+		// Worktree %).
 		const expectedLabels = [
 			/Agents/i,
 			/Open Tabs/i,
@@ -316,8 +319,10 @@ describe('Chart Accessibility - SummaryCards', () => {
 			/Avg Duration/i,
 			/Peak Hour/i,
 			/Top Agent/i,
-			/Interactive %/i,
-			/Local %/i,
+			/Current Streak/i,
+			/Best Day/i,
+			/Active Days/i,
+			/Worktree %/i,
 		];
 
 		metricCards.forEach((card, index) => {

@@ -11,6 +11,7 @@ import {
 	ChevronRight,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { useSettingsStore } from '../stores/settingsStore';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -139,6 +140,9 @@ export const SessionItem = memo(function SessionItem({
 	onToggleBookmark,
 	onToggleWorktrees,
 }: SessionItemProps) {
+	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
+	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
+
 	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
 	const isWorktreeParent = variant !== 'worktree' && Boolean(session.worktreeConfig);
@@ -279,7 +283,7 @@ export const SessionItem = memo(function SessionItem({
 							</span>
 						)}
 						{/* Worktree badge to visually mark worktree children */}
-						{variant === 'worktree' && (
+						{variant === 'worktree' && showWorktreePill && (
 							<span
 								className="text-[9px] font-medium uppercase tracking-wider px-1 py-0.5 rounded shrink-0"
 								style={{
@@ -295,15 +299,18 @@ export const SessionItem = memo(function SessionItem({
 				)}
 
 				{/* Branch name for worktree children (below session name) */}
-				{variant === 'worktree' && session.worktreeBranch && !isEditing && (
-					<div
-						className="text-[10px] mt-0.5 truncate"
-						style={{ color: theme.colors.textDim }}
-						title={session.worktreeBranch}
-					>
-						{session.worktreeBranch}
-					</div>
-				)}
+				{variant === 'worktree' &&
+					showWorktreeBranchName &&
+					session.worktreeBranch &&
+					!isEditing && (
+						<div
+							className="text-[10px] mt-0.5 truncate"
+							style={{ color: theme.colors.textDim }}
+							title={session.worktreeBranch}
+						>
+							{session.worktreeBranch}
+						</div>
+					)}
 
 				{/* Session metadata row (hidden for compact worktree variant) */}
 				{variant !== 'worktree' && (

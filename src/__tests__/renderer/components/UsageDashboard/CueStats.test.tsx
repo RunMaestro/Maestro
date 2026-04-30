@@ -405,18 +405,21 @@ describe('CueStats', () => {
 	});
 
 	describe('Coverage warnings', () => {
-		it('renders the warnings banner when coverageWarnings is non-empty', async () => {
+		// The coverage-warning banner was removed from the Cue tab — the
+		// upstream payload still includes the warnings, but we no longer
+		// surface them to users. Confirm the banner stays hidden even when
+		// the aggregation contains warnings.
+		it('does not render the coverage warnings banner even when warnings are present', async () => {
 			mockGetAggregation.mockResolvedValue(aggregationWithWarnings);
 
 			render(<CueStats timeRange="week" theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('cue-stats-coverage-warnings')).toBeInTheDocument();
+				expect(screen.getByTestId('cue-stats')).toBeInTheDocument();
 			});
 
-			expect(screen.getByText('Coverage warnings')).toBeInTheDocument();
-			expect(screen.getByText('factory-droid sessions have no token data')).toBeInTheDocument();
-			expect(screen.getByText('opencode sessions are missing cost data')).toBeInTheDocument();
+			expect(screen.queryByTestId('cue-stats-coverage-warnings')).not.toBeInTheDocument();
+			expect(screen.queryByText('Coverage warnings')).not.toBeInTheDocument();
 		});
 	});
 

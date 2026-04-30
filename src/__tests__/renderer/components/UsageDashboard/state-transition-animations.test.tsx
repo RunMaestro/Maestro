@@ -60,6 +60,10 @@ vi.mock('lucide-react', () => {
 		Cpu: createIcon('cpu', '🖥️'),
 		DollarSign: createIcon('dollar', '💲'),
 		Activity: createIcon('activity', '📈'),
+		// New SummaryCards momentum-row icons
+		Flame: createIcon('flame', '🔥'),
+		CalendarCheck: createIcon('calendar-check', '📆'),
+		GitBranch: createIcon('git-branch', '🌿'),
 	};
 });
 
@@ -292,7 +296,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards.length).toBe(10); // 10 metric cards
+			expect(cards.length).toBe(12); // 12 metric cards (was 10)
 
 			// Verify each card has incrementing animation delay
 			cards.forEach((card, index) => {
@@ -308,11 +312,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
 		});
 
-		it('last card has 720ms delay (9 * 80ms)', () => {
+		it('last card has 880ms delay (11 * 80ms)', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards[9]).toHaveStyle({ animationDelay: '720ms' });
+			expect(cards[11]).toHaveStyle({ animationDelay: '880ms' });
 		});
 	});
 
@@ -344,24 +348,28 @@ describe('Usage Dashboard State Transition Animations', () => {
 			});
 		});
 
-		it('applies section animation to agents view', async () => {
+		it('applies section animation to agent-overview view', async () => {
+			// The previous "Agents" tab content (session-stats / agent-comparison
+			// charts) moved to a new "Agent Overview" tab. The "Agents" tab now
+			// renders only the AgentOverviewCards section.
 			render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to agents view
-			const agentsTab = screen.getByRole('tab', { name: /agents/i });
-			fireEvent.click(agentsTab);
+			// Switch to Agent Overview view (5 tabs total now; index 2)
+			const tabs = screen.getAllByRole('tab');
+			fireEvent.click(tabs[2]);
 
 			await waitFor(() => {
-				// Session stats is now the first section in agents view
+				// Session stats is the first section in agent-overview view
 				const sessionStatsSection = screen.getByTestId('section-session-stats');
 				expect(sessionStatsSection).toHaveClass('dashboard-section-enter');
 				expect(sessionStatsSection).toHaveStyle({ animationDelay: '0ms' });
 
-				// Agent comparison is now second with 100ms delay
+				// Provider comparison is third (after agent-efficiency at 50ms)
+				// with 100ms delay
 				const agentSection = screen.getByTestId('section-agent-comparison');
 				expect(agentSection).toHaveClass('dashboard-section-enter');
 				expect(agentSection).toHaveStyle({ animationDelay: '100ms' });

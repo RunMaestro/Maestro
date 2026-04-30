@@ -17,7 +17,12 @@ import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
+import {
+	findSessionByStatId,
+	isWorktreeAgent,
+	buildNameMap,
+	clampTooltipToViewport,
+} from './chartUtils';
 
 interface AgentData {
 	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
@@ -426,9 +431,9 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 											{formatNumber(agent.count)} {agent.count === 1 ? 'query' : 'queries'}
 										</div>
 										<div
-											className="w-14 text-xs text-right font-medium"
+											className="text-xs text-right font-medium whitespace-nowrap"
 											title="Total duration"
-											style={{ color: theme.colors.textMain }}
+											style={{ color: theme.colors.textMain, minWidth: 80 }}
 										>
 											{formatDuration(agent.duration)}
 										</div>
@@ -439,34 +444,48 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 					</div>
 				)}
 
-				{/* Tooltip */}
-				{hoveredAgentData && tooltipPos && (
-					<div
-						className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-						style={{
-							left: tooltipPos.x,
-							top: tooltipPos.y,
-							transform: 'translateY(-50%)',
-							backgroundColor: theme.colors.bgActivity,
-							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						<div className="font-medium mb-1 flex items-center gap-2">
+				{/* Tooltip — anchored to the right of the bar with `left-center`, then
+				    clamped to the viewport so wide tooltips on narrow modals don't
+				    extend off-screen. */}
+				{hoveredAgentData &&
+					tooltipPos &&
+					(() => {
+						const tooltipWidth = 200;
+						const tooltipHeight = 64;
+						const { left, top } = clampTooltipToViewport({
+							anchorX: tooltipPos.x,
+							anchorY: tooltipPos.y,
+							width: tooltipWidth,
+							height: tooltipHeight,
+							transform: 'left-center',
+						});
+						return (
 							<div
-								className="w-2 h-2 rounded-full"
-								style={{ backgroundColor: hoveredAgentData.color }}
-							/>
-							{hoveredAgentData.label}
-						</div>
-						<div style={{ color: theme.colors.textDim }}>
-							<div>
-								{hoveredAgentData.count} {hoveredAgentData.count === 1 ? 'query' : 'queries'}
+								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+								style={{
+									left,
+									top,
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div className="font-medium mb-1 flex items-center gap-2">
+									<div
+										className="w-2 h-2 rounded-full"
+										style={{ backgroundColor: hoveredAgentData.color }}
+									/>
+									{hoveredAgentData.label}
+								</div>
+								<div style={{ color: theme.colors.textDim }}>
+									<div>
+										{hoveredAgentData.count} {hoveredAgentData.count === 1 ? 'query' : 'queries'}
+									</div>
+									<div>{formatDuration(hoveredAgentData.duration)} total</div>
+								</div>
 							</div>
-							<div>{formatDuration(hoveredAgentData.duration)} total</div>
-						</div>
-					</div>
-				)}
+						);
+					})()}
 			</div>
 
 			{/* Legend */}

@@ -23,15 +23,17 @@ import {
 	Clock,
 	Timer,
 	Bot,
-	Users,
 	Layers,
 	Sunrise,
-	Globe,
 	Zap,
 	PanelTop,
 	Cpu,
 	DollarSign,
 	Activity,
+	Flame,
+	Trophy,
+	CalendarCheck,
+	GitBranch,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -56,6 +58,100 @@ export function getLast7Days(byDay: ByDayEntry[]): number[] {
 	const counts = byDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
 	if (counts.length >= SPARKLINE_DAYS) return counts;
 	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
+}
+
+/**
+ * Walk a `byDay` series newest → oldest and return both:
+ *   - `current`: consecutive days *up to and including today* with non-zero
+ *     activity. Today missing? Streak is 0 (we don't pad — a streak that
+ *     hasn't been touched today is broken, period).
+ *   - `max`: longest run of consecutive non-zero days anywhere in the series.
+ *
+ * Operates on the `byDay` rows the aggregation already produces; gaps in the
+ * array are treated as zeros (the series isn't always dense for short ranges).
+ */
+export function computeStreaks(byDay: ByDayEntry[]): { current: number; max: number } {
+	if (byDay.length === 0) return { current: 0, max: 0 };
+
+	// Build a Set of YYYY-MM-DD strings with non-zero counts so we can probe
+	// arbitrary days without index gymnastics.
+	const activeDays = new Set<string>();
+	for (const day of byDay) {
+		if (day.count > 0) activeDays.add(day.date);
+	}
+	if (activeDays.size === 0) return { current: 0, max: 0 };
+
+	// Local YYYY-MM-DD formatter — matches what the aggregation emits and
+	// avoids the UTC-shift trap of `.toISOString().slice(0,10)`.
+	const ymd = (d: Date) =>
+		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+	let current = 0;
+	const cursor = new Date();
+	while (activeDays.has(ymd(cursor))) {
+		current += 1;
+		cursor.setDate(cursor.getDate() - 1);
+	}
+
+	// Sort the active days ascending and walk for the max-run computation.
+	const sortedDates = [...activeDays].sort();
+	let max = 0;
+	let run = 0;
+	let prev: Date | null = null;
+	for (const dateStr of sortedDates) {
+		const [y, m, d] = dateStr.split('-').map(Number);
+		const date = new Date(y, m - 1, d);
+		if (prev) {
+			const dayDiff = Math.round((date.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000));
+			run = dayDiff === 1 ? run + 1 : 1;
+		} else {
+			run = 1;
+		}
+		if (run > max) max = run;
+		prev = date;
+	}
+
+	return { current, max };
+}
+
+/**
+ * Pick the single day with the most queries. Returns null when the byDay
+ * series has no activity (so callers can render an "N/A" affordance instead
+ * of a zero-value card).
+ */
+export function findBestDay(byDay: ByDayEntry[]): { date: string; count: number } | null {
+	let best: ByDayEntry | null = null;
+	for (const day of byDay) {
+		if (day.count > 0 && (!best || day.count > best.count)) best = day;
+	}
+	return best ? { date: best.date, count: best.count } : null;
+}
+
+/**
+ * Count days with at least one query inside the byDay series. This is the
+ * "active days in range" stat — different from the streak because gaps are
+ * allowed.
+ */
+export function countActiveDays(byDay: ByDayEntry[]): number {
+	let n = 0;
+	for (const day of byDay) {
+		if (day.count > 0) n += 1;
+	}
+	return n;
+}
+
+/**
+ * Format a YYYY-MM-DD date string as a short "Mon DD" label (e.g. "Apr 17")
+ * without going through a full `Date` lookup chain at every render. The
+ * input format is what `byDay` produces; bail to the original string if
+ * parsing fails so we never render a literal `Invalid Date`.
+ */
+export function formatShortDate(dateStr: string): string {
+	const parts = dateStr.split('-').map(Number);
+	if (parts.length !== 3 || parts.some(Number.isNaN)) return dateStr;
+	const [y, m, d] = parts;
+	const date = new Date(y, m - 1, d);
+	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -628,8 +724,6 @@ export const RealtimeMetricsCard = memo(function RealtimeMetricsCard({
 	);
 });
 
-const EMPTY_SESSIONS: Session[] = [];
-
 export const SummaryCards = memo(function SummaryCards({
 	data,
 	theme,
@@ -706,42 +800,40 @@ export const SummaryCards = memo(function SummaryCards({
 	) : null;
 
 	// Calculate derived metrics
-	const { mostActiveAgent, interactiveRatio, peakHour, localVsRemote, queriesPerSession } =
-		useMemo(() => {
-			// Find most active agent by query count
-			const agents = Object.entries(data.byAgent);
-			const topAgent = agents.length > 0 ? agents.sort((a, b) => b[1].count - a[1].count)[0] : null;
+	const { mostActiveAgent, peakHour, queriesPerSession } = useMemo(() => {
+		// Find most active agent by query count
+		const agents = Object.entries(data.byAgent);
+		const topAgent = agents.length > 0 ? agents.sort((a, b) => b[1].count - a[1].count)[0] : null;
 
-			// Calculate interactive percentage
-			const totalBySource = data.bySource.user + data.bySource.auto;
-			const ratio =
-				totalBySource > 0 ? `${Math.round((data.bySource.user / totalBySource) * 100)}%` : 'N/A';
+		// Find peak usage hour (hour with most queries)
+		const hourWithMostQueries = data.byHour.reduce(
+			(max, curr) => (curr.count > max.count ? curr : max),
+			{ hour: 0, count: 0, duration: 0 }
+		);
+		const peak = hourWithMostQueries.count > 0 ? formatHour(hourWithMostQueries.hour) : 'N/A';
 
-			// Find peak usage hour (hour with most queries)
-			const hourWithMostQueries = data.byHour.reduce(
-				(max, curr) => (curr.count > max.count ? curr : max),
-				{ hour: 0, count: 0, duration: 0 }
-			);
-			const peak = hourWithMostQueries.count > 0 ? formatHour(hourWithMostQueries.hour) : 'N/A';
+		// Calculate queries per session using agent count for consistency
+		const qps = agentCount > 0 ? (data.totalQueries / agentCount).toFixed(1) : 'N/A';
 
-			// Calculate local vs remote percentage
-			const totalByLocation = data.byLocation.local + data.byLocation.remote;
-			const localPercent =
-				totalByLocation > 0
-					? `${Math.round((data.byLocation.local / totalByLocation) * 100)}%`
-					: 'N/A';
+		return {
+			mostActiveAgent: topAgent ? topAgent[0] : 'N/A',
+			peakHour: peak,
+			queriesPerSession: qps,
+		};
+	}, [data.byAgent, data.byHour, agentCount, data.totalQueries]);
 
-			// Calculate queries per session using agent count for consistency
-			const qps = agentCount > 0 ? (data.totalQueries / agentCount).toFixed(1) : 'N/A';
+	const streaks = useMemo(() => computeStreaks(data.byDay), [data.byDay]);
+	const bestDay = useMemo(() => findBestDay(data.byDay), [data.byDay]);
+	const activeDays = useMemo(() => countActiveDays(data.byDay), [data.byDay]);
 
-			return {
-				mostActiveAgent: topAgent ? topAgent[0] : 'N/A',
-				interactiveRatio: ratio,
-				peakHour: peak,
-				localVsRemote: localPercent,
-				queriesPerSession: qps,
-			};
-		}, [data.byAgent, data.bySource, data.byHour, data.byLocation, agentCount, data.totalQueries]);
+	// Worktree adoption — fraction of queries originating from worktree-child
+	// agents. The aggregation already exposes `worktreeQueries` / `parentQueries`
+	// so we don't need to walk session lists here.
+	const worktreeShare = useMemo(() => {
+		const total = data.worktreeQueries + data.parentQueries;
+		if (total === 0) return null;
+		return Math.round((data.worktreeQueries / total) * 100);
+	}, [data.worktreeQueries, data.parentQueries]);
 
 	const queriesSparkline = useMemo(() => getLast7Days(data.byDay), [data.byDay]);
 	const durationSparkline = useMemo(() => getLast7DaysDuration(data.byDay), [data.byDay]);
@@ -797,54 +889,72 @@ export const SummaryCards = memo(function SummaryCards({
 			label: 'Top Agent',
 			value: mostActiveAgent,
 		},
+		// Streak / momentum row — replaces the always-stable Local% and
+		// Interactive% cards, which were context-free numbers that never
+		// changed. Streak tells the user something they actually want to know.
 		{
-			icon: <Users className="w-4 h-4" />,
-			label: 'Interactive %',
-			value: interactiveRatio,
+			icon: <Flame className="w-4 h-4" />,
+			label: 'Current Streak',
+			value: streaks.current === 0 ? '—' : `${streaks.current}d`,
+			extra:
+				streaks.max > 0 ? (
+					<div
+						className="text-[10px] mt-1 uppercase tracking-wide"
+						style={{ color: theme.colors.textDim }}
+					>
+						Best: {streaks.max}d
+					</div>
+				) : undefined,
 		},
 		{
-			icon: <Globe className="w-4 h-4" />,
-			label: 'Local %',
-			value: localVsRemote,
+			icon: <Trophy className="w-4 h-4" />,
+			label: 'Best Day',
+			value: bestDay ? formatNumber(bestDay.count) : '—',
+			extra: bestDay ? (
+				<div
+					className="text-[10px] mt-1 uppercase tracking-wide"
+					style={{ color: theme.colors.textDim }}
+				>
+					{formatShortDate(bestDay.date)}
+				</div>
+			) : undefined,
+		},
+		{
+			icon: <CalendarCheck className="w-4 h-4" />,
+			label: 'Active Days',
+			value: formatNumber(activeDays),
+		},
+		{
+			icon: <GitBranch className="w-4 h-4" />,
+			label: 'Worktree %',
+			value: worktreeShare == null ? '—' : `${worktreeShare}%`,
 		},
 	];
 
 	return (
-		<>
-			<div
-				className="grid gap-4"
-				style={{
-					gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-				}}
-				data-testid="summary-cards"
-				role="region"
-				aria-label="Usage summary metrics"
-			>
-				{metrics.map((metric, index) => (
-					<MetricCard
-						key={metric.label}
-						icon={metric.icon}
-						label={metric.label}
-						value={metric.value}
-						theme={theme}
-						animationIndex={index}
-						extra={metric.extra}
-						sparklineData={metric.sparklineData}
-						sparklineColor={metric.sparklineColor}
-					/>
-				))}
-			</div>
-			<div
-				className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3"
-				data-testid="summary-realtime-row"
-			>
-				<RealtimeMetricsCard
-					sessions={sessions ?? EMPTY_SESSIONS}
+		<div
+			className="grid gap-4"
+			style={{
+				gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+			}}
+			data-testid="summary-cards"
+			role="region"
+			aria-label="Usage summary metrics"
+		>
+			{metrics.map((metric, index) => (
+				<MetricCard
+					key={metric.label}
+					icon={metric.icon}
+					label={metric.label}
+					value={metric.value}
 					theme={theme}
-					animationDelay={320}
+					animationIndex={index}
+					extra={metric.extra}
+					sparklineData={metric.sparklineData}
+					sparklineColor={metric.sparklineColor}
 				/>
-			</div>
-		</>
+			))}
+		</div>
 	);
 });
 

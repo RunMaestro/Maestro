@@ -16,6 +16,7 @@ import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
+import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[CueStats]';
 
@@ -31,6 +32,45 @@ export interface CueStatsHandlerDependencies {
 	settingsStore: {
 		get: (key: string) => unknown;
 	};
+	/**
+	 * Optional accessor for the running Cue engine. When provided, the handler
+	 * builds a `subscriptionName → pipelineName` map from the live config so
+	 * legacy events with NULL `pipeline_id` still resolve to their actual
+	 * pipeline instead of dumping into "Unattributed".
+	 */
+	getCueEngine?: () => CueEngine | null;
+}
+
+/**
+ * Build a `subscriptionName → pipelineName` lookup from the engine's current
+ * graph data. Subscriptions without a `pipeline_name` field are skipped — they
+ * legitimately don't belong to a pipeline. When the engine isn't available
+ * (or has no sessions registered yet), returns an empty map.
+ */
+function buildSubscriptionToPipelineMap(
+	getCueEngine: (() => CueEngine | null) | undefined
+): Map<string, string> {
+	const result = new Map<string, string>();
+	const engine = getCueEngine?.();
+	if (!engine) return result;
+	let graph: ReturnType<CueEngine['getGraphData']>;
+	try {
+		graph = engine.getGraphData();
+	} catch {
+		// Engine isn't started or threw while reading config. The query falls
+		// back to the persisted `pipeline_id` column, so an empty map is fine.
+		return result;
+	}
+	for (const session of graph) {
+		for (const sub of session.subscriptions) {
+			const pipeline =
+				typeof sub.pipeline_name === 'string' && sub.pipeline_name.length > 0
+					? sub.pipeline_name
+					: null;
+			if (pipeline) result.set(sub.name, pipeline);
+		}
+	}
+	return result;
 }
 
 /**
@@ -47,7 +87,7 @@ function isCueStatsEnabled(settingsStore: { get: (key: string) => unknown }): bo
  * Register the Cue Stats IPC handler.
  */
 export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): void {
-	const { settingsStore } = deps;
+	const { settingsStore, getCueEngine } = deps;
 
 	ipcMain.handle(
 		'cue-stats:get-aggregation',
@@ -57,7 +97,8 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 				if (!isCueStatsEnabled(settingsStore)) {
 					throw new Error('CueStatsDisabled');
 				}
-				return getCueStatsAggregation(range);
+				const subscriptionToPipeline = buildSubscriptionToPipelineMap(getCueEngine);
+				return getCueStatsAggregation(range, { subscriptionToPipeline });
 			}
 		)
 	);

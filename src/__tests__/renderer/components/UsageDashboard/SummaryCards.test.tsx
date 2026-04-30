@@ -111,26 +111,6 @@ const singleAgentData: StatsAggregation = {
 	bySessionByDay: {},
 };
 
-// Only auto queries
-const onlyAutoData: StatsAggregation = {
-	totalQueries: 100,
-	totalDuration: 3600000, // 1 hour
-	avgDuration: 36000,
-	byAgent: {
-		'claude-code': { count: 100, duration: 3600000 },
-	},
-	bySource: { user: 0, auto: 100 },
-	byLocation: { local: 100, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 10,
-	sessionsByAgent: { 'claude-code': 10 },
-	sessionsByDay: [],
-	avgSessionDuration: 360000,
-	byAgentByDay: {},
-	bySessionByDay: {},
-};
-
 // Mock sessions with tabs for open tab count testing
 const mockSessions = [
 	{
@@ -161,11 +141,13 @@ describe('SummaryCards', () => {
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all ten metric cards', () => {
+		it('renders all twelve metric cards', () => {
+			// Card count grew from 10 to 12: Interactive % + Local % were removed,
+			// and Current Streak / Best Day / Active Days / Worktree % were added.
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(10);
+			expect(cards).toHaveLength(12);
 		});
 
 		it('renders Total Queries metric', async () => {
@@ -196,14 +178,27 @@ describe('SummaryCards', () => {
 			expect(screen.getByText('claude-code')).toBeInTheDocument();
 		});
 
-		it('renders Interactive % metric', () => {
+		// Interactive % / Local % cards were removed in favor of streak,
+		// best-day, active-days, and worktree % which surface signal that
+		// actually changes day to day. Confirm the new cards render.
+		it('renders Current Streak metric', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByText('Current Streak')).toBeInTheDocument();
+		});
 
-			expect(screen.getByText('Interactive %')).toBeInTheDocument();
-			// Interactive % card shows 80% (120 user / 150 total)
-			// Use aria-label to find the specific card since Local % may also show 80%
-			const interactiveCard = screen.getByRole('group', { name: /Interactive %: 80%/i });
-			expect(interactiveCard).toBeInTheDocument();
+		it('renders Best Day metric', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByText('Best Day')).toBeInTheDocument();
+		});
+
+		it('renders Active Days metric', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByText('Active Days')).toBeInTheDocument();
+		});
+
+		it('renders Worktree % metric', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByText('Worktree %')).toBeInTheDocument();
 		});
 
 		it('renders Open Tabs metric with correct count', () => {
@@ -312,40 +307,10 @@ describe('SummaryCards', () => {
 		});
 	});
 
-	describe('Interactive Ratio Calculation', () => {
-		it('calculates correct percentage', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			// 120 user / (120 + 30) = 80% for Interactive %
-			// Find the Interactive % card specifically by its aria-label
-			const interactiveCard = screen.getByRole('group', { name: /Interactive %: 80%/i });
-			expect(interactiveCard).toBeInTheDocument();
-		});
-
-		it('shows 100% for user-only queries', () => {
-			render(<SummaryCards data={singleAgentData} theme={theme} />);
-
-			// For singleAgentData: bySource = { user: 50, auto: 0 } = 100% interactive
-			const interactiveCard = screen.getByRole('group', { name: /Interactive %: 100%/i });
-			expect(interactiveCard).toBeInTheDocument();
-		});
-
-		it('shows 0% for auto-only queries', () => {
-			render(<SummaryCards data={onlyAutoData} theme={theme} />);
-
-			// For onlyAutoData: bySource = { user: 0, auto: 100 } = 0% interactive
-			const interactiveCard = screen.getByRole('group', { name: /Interactive %: 0%/i });
-			expect(interactiveCard).toBeInTheDocument();
-		});
-
-		it('shows N/A when no source data exists', () => {
-			render(<SummaryCards data={emptyData} theme={theme} />);
-
-			// Should show N/A for interactive % when no data
-			const naElements = screen.getAllByText('N/A');
-			expect(naElements.length).toBeGreaterThanOrEqual(1);
-		});
-	});
+	// Interactive Ratio tests removed — the Interactive % card is no longer
+	// rendered. Top Agent / Peak Hour still surface N/A when their inputs are
+	// empty, which the existing "Most Active Agent Calculation > shows N/A"
+	// test already covers.
 
 	describe('Theme Support', () => {
 		it('applies theme background color to cards', () => {
@@ -393,7 +358,7 @@ describe('SummaryCards', () => {
 			const sparklines = grid.querySelectorAll(
 				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
 			);
-			expect(svgElements.length - sparklines.length).toBe(10);
+			expect(svgElements.length - sparklines.length).toBe(12);
 		});
 	});
 

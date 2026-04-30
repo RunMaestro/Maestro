@@ -1076,9 +1076,13 @@ function setupIpcHandlers() {
 		settingsStore: store,
 	});
 
-	// Register Cue Stats handlers for the Cue Dashboard aggregation query
+	// Register Cue Stats handlers for the Cue Dashboard aggregation query.
+	// Pass `getCueEngine` so the handler can fall back to the live cue config
+	// when persisted `pipeline_id` is null (legacy events / events recorded
+	// before lineage tracking was enabled).
 	registerCueStatsHandlers({
 		settingsStore: store,
+		getCueEngine: () => cueEngine,
 	});
 
 	// Register Document Graph handlers for file watching

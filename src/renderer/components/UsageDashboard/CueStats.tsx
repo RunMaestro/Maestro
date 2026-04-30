@@ -24,6 +24,7 @@ import {
 	XCircle,
 	Zap,
 } from 'lucide-react';
+// AlertTriangle still used by `DisabledNote`; CoverageWarningsBanner was removed.
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import type {
@@ -82,46 +83,6 @@ function formatPercent(ratio: number): string {
 	return `${Math.round(ratio * 100)}%`;
 }
 
-/* ---------------------------- Coverage banner ---------------------------- */
-
-const CoverageWarningsBanner = memo(function CoverageWarningsBanner({
-	warnings,
-	theme,
-}: {
-	warnings: string[];
-	theme: Theme;
-}) {
-	if (warnings.length === 0) return null;
-	return (
-		<div
-			className="rounded-lg border p-3 flex items-start gap-3"
-			style={{
-				backgroundColor: `${theme.colors.warning}15`,
-				borderColor: `${theme.colors.warning}40`,
-				color: theme.colors.textMain,
-			}}
-			role="status"
-			data-testid="cue-stats-coverage-warnings"
-		>
-			<AlertTriangle
-				className="w-4 h-4 mt-0.5 flex-shrink-0"
-				style={{ color: theme.colors.warning }}
-				aria-hidden="true"
-			/>
-			<div className="flex-1 text-sm">
-				<div className="font-medium mb-1" style={{ color: theme.colors.textMain }}>
-					Coverage warnings
-				</div>
-				<ul className="list-disc pl-5 space-y-0.5" style={{ color: theme.colors.textDim }}>
-					{warnings.map((w) => (
-						<li key={w}>{w}</li>
-					))}
-				</ul>
-			</div>
-		</div>
-	);
-});
-
 /* ----------------------------- Summary cards ----------------------------- */
 
 const SUMMARY_SPARKLINE_LIMIT = 14;
@@ -141,10 +102,13 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 	totals,
 	timeSeries,
 	theme,
+	hasTokenData,
 }: {
 	totals: CueStatsTotals;
 	timeSeries: CueTimeBucket[];
 	theme: Theme;
+	/** When false, the Total Tokens card is hidden and the grid shrinks to 3 columns. */
+	hasTokenData: boolean;
 }) {
 	const successPct = formatPercent(successRate(totals));
 	const tokens = totalTokens(totals);
@@ -172,10 +136,12 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 		marginTop: 2,
 	};
 
+	const cardCount = hasTokenData ? 4 : 3;
+
 	return (
 		<div
 			className="grid gap-4"
-			style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+			style={{ gridTemplateColumns: `repeat(${cardCount}, minmax(0, 1fr))` }}
 			data-testid="cue-stats-summary-cards"
 		>
 			<MetricCard
@@ -207,19 +173,21 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 				value={formatDurationHuman(totals.totalDurationMs)}
 				animationIndex={2}
 			/>
-			<MetricCard
-				theme={theme}
-				icon={<Coins className="w-4 h-4" />}
-				label="Total Tokens"
-				value={formatTokensCompact(tokens)}
-				animationIndex={3}
-				sparklineData={tokenSparkline}
-				extra={
-					totals.totalCostUsd != null && totals.totalCostUsd > 0 ? (
-						<div style={sublabelStyle}>{formatCost(totals.totalCostUsd)}</div>
-					) : undefined
-				}
-			/>
+			{hasTokenData && (
+				<MetricCard
+					theme={theme}
+					icon={<Coins className="w-4 h-4" />}
+					label="Total Tokens"
+					value={formatTokensCompact(tokens)}
+					animationIndex={3}
+					sparklineData={tokenSparkline}
+					extra={
+						totals.totalCostUsd != null && totals.totalCostUsd > 0 ? (
+							<div style={sublabelStyle}>{formatCost(totals.totalCostUsd)}</div>
+						) : undefined
+					}
+				/>
+			)}
 		</div>
 	);
 });
@@ -495,6 +463,10 @@ interface GroupTableProps {
 	testId: string;
 	keyLabel: string;
 	formatLabel?: (label: string, key: string) => string;
+	/** When true, the Total Tokens / Total Cost columns are dropped from the
+	 *  table — used when the active range has no token data so we don't
+	 *  render columns of zeros and dashes. */
+	hideTokenColumns?: boolean;
 }
 
 const GroupTable = memo(function GroupTable({
@@ -504,6 +476,7 @@ const GroupTable = memo(function GroupTable({
 	testId,
 	keyLabel,
 	formatLabel,
+	hideTokenColumns = false,
 }: GroupTableProps) {
 	const [sortKey, setSortKey] = useState<GroupSortKey>('occurrences');
 	const [sortDesc, setSortDesc] = useState(true);
@@ -593,19 +566,21 @@ const GroupTable = memo(function GroupTable({
 										['tokens', 'Total Tokens'],
 										['cost', 'Total Cost'],
 									] as Array<[GroupSortKey, string]>
-								).map(([key, label]) => (
-									<th
-										key={key}
-										className="text-left text-xs font-medium uppercase tracking-wider px-3 py-2 border-b cursor-pointer select-none"
-										style={headerStyle}
-										onClick={() => setSort(key)}
-										role="button"
-										aria-sort={sortKey === key ? (sortDesc ? 'descending' : 'ascending') : 'none'}
-									>
-										{label}
-										{sortIndicator(key)}
-									</th>
-								))}
+								)
+									.filter(([key]) => (hideTokenColumns ? key !== 'tokens' && key !== 'cost' : true))
+									.map(([key, label]) => (
+										<th
+											key={key}
+											className="text-left text-xs font-medium uppercase tracking-wider px-3 py-2 border-b cursor-pointer select-none"
+											style={headerStyle}
+											onClick={() => setSort(key)}
+											role="button"
+											aria-sort={sortKey === key ? (sortDesc ? 'descending' : 'ascending') : 'none'}
+										>
+											{label}
+											{sortIndicator(key)}
+										</th>
+									))}
 							</tr>
 						</thead>
 						<tbody>
@@ -634,12 +609,18 @@ const GroupTable = memo(function GroupTable({
 										<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 											{formatDurationHuman(avg)}
 										</td>
-										<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
-											{formatTokensCompact(tokens)}
-										</td>
-										<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
-											{row.totals.totalCostUsd != null ? formatCost(row.totals.totalCostUsd) : '—'}
-										</td>
+										{!hideTokenColumns && (
+											<>
+												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
+													{formatTokensCompact(tokens)}
+												</td>
+												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
+													{row.totals.totalCostUsd != null
+														? formatCost(row.totals.totalCostUsd)
+														: '—'}
+												</td>
+											</>
+										)}
 									</tr>
 								);
 							})}
@@ -1010,17 +991,22 @@ export const CueStats = memo(function CueStats({
 		);
 	}
 
+	// Token sections are noise when no agent in the active range emitted any
+	// tokens (typical when none of the running agents have a tokens accessor
+	// or before the Cue token pipeline has data). Hide both the agent-tokens
+	// chart and the token columns/totals rather than showing 0s everywhere.
+	const totalTokensSeen =
+		aggregation.totals.totalInputTokens + aggregation.totals.totalOutputTokens;
+	const hasTokenData = totalTokensSeen > 0;
+
 	return (
 		<div className="space-y-6" data-testid="cue-stats">
-			{aggregation.coverageWarnings.length > 0 && (
-				<CoverageWarningsBanner warnings={aggregation.coverageWarnings} theme={theme} />
-			)}
-
 			<ChartErrorBoundary theme={theme} chartName="Cue Summary">
 				<SummaryCardsRow
 					totals={aggregation.totals}
 					timeSeries={aggregation.timeSeries}
 					theme={theme}
+					hasTokenData={hasTokenData}
 				/>
 			</ChartErrorBoundary>
 
@@ -1040,16 +1026,19 @@ export const CueStats = memo(function CueStats({
 					theme={theme}
 					testId="cue-stats-pipeline-table"
 					keyLabel="Pipeline"
+					hideTokenColumns={!hasTokenData}
 				/>
 			</ChartErrorBoundary>
 
-			<ChartErrorBoundary theme={theme} chartName="Cue By Agent">
-				<AgentTokensChart
-					rows={aggregation.byAgent}
-					theme={theme}
-					colorBlindMode={colorBlindMode}
-				/>
-			</ChartErrorBoundary>
+			{hasTokenData && (
+				<ChartErrorBoundary theme={theme} chartName="Cue By Agent">
+					<AgentTokensChart
+						rows={aggregation.byAgent}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+					/>
+				</ChartErrorBoundary>
+			)}
 
 			<ChartErrorBoundary theme={theme} chartName="Cue By Subscription">
 				<GroupTable
@@ -1058,6 +1047,7 @@ export const CueStats = memo(function CueStats({
 					theme={theme}
 					testId="cue-stats-subscription-table"
 					keyLabel="Subscription"
+					hideTokenColumns={!hasTokenData}
 				/>
 			</ChartErrorBoundary>
 

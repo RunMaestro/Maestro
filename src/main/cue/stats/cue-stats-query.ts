@@ -142,8 +142,25 @@ function bucketSizeFor(timeRange: CueStatsTimeRange): number {
 	return timeRange === 'day' || timeRange === 'week' ? HOUR_MS : DAY_MS;
 }
 
-function pipelineGroupKey(event: CueEventRecord): { key: string; label: string } {
+/**
+ * Resolve an event to a `{ key, label }` describing its pipeline group.
+ *
+ * Order of resolution:
+ *   1. The persisted `pipelineId` column on the row (Phase 01 lineage).
+ *   2. A live `subscriptionName → pipelineName` lookup from the running cue
+ *      engine — covers events that were recorded before lineage tracking was
+ *      enabled, OR before `pipeline_name` was added to the project's cue
+ *      config. Without this fallback, every old event lands in "Unattributed"
+ *      even when the user has a fully-defined pipeline graph.
+ *   3. The synthetic "Unattributed" bucket as a last resort.
+ */
+function pipelineGroupKey(
+	event: CueEventRecord,
+	subscriptionToPipeline?: Map<string, string>
+): { key: string; label: string } {
 	if (event.pipelineId) return { key: event.pipelineId, label: event.pipelineId };
+	const fallback = subscriptionToPipeline?.get(event.subscriptionName);
+	if (fallback) return { key: fallback, label: fallback };
 	return { key: UNATTRIBUTED_PIPELINE_KEY, label: UNATTRIBUTED_PIPELINE_LABEL };
 }
 
@@ -325,6 +342,16 @@ function buildCoverageWarnings(summaries: Map<string, SessionTokenSummary>): str
 }
 
 /**
+ * Optional resolver hooks for {@link getCueStatsAggregation}. Currently the
+ * caller may supply a `subscriptionName → pipelineName` map drawn from the
+ * live cue engine; the query uses it to attribute legacy / untagged events
+ * to their actual pipeline instead of dropping them in "Unattributed".
+ */
+export interface CueStatsAggregationOptions {
+	subscriptionToPipeline?: Map<string, string>;
+}
+
+/**
  * Compute the full Cue stats payload for the given time range.
  *
  * Reads `cue_events` for the window, resolves token summaries per unique
@@ -333,7 +360,8 @@ function buildCoverageWarnings(summaries: Map<string, SessionTokenSummary>): str
  * series. Caller (the IPC handler) is responsible for gating on Encore flags.
  */
 export async function getCueStatsAggregation(
-	timeRange: CueStatsTimeRange
+	timeRange: CueStatsTimeRange,
+	options: CueStatsAggregationOptions = {}
 ): Promise<CueStatsAggregation> {
 	const windowEndMs = Date.now();
 	const windowStartMs = getTimeRangeStart(timeRange);
@@ -365,9 +393,12 @@ export async function getCueStatsAggregation(
 
 		applyEvent(totals, contrib);
 
-		const pipeline = pipelineGroupKey(event);
+		const pipeline = pipelineGroupKey(event, options.subscriptionToPipeline);
+		// `sortLast` flags the synthetic "Unattributed" bucket so it always
+		// renders below real pipelines, regardless of resolution path.
+		const isUnattributed = pipeline.key === UNATTRIBUTED_PIPELINE_KEY;
 		applyEvent(
-			ensureGroup(byPipeline, pipeline.key, pipeline.label, !event.pipelineId).totals,
+			ensureGroup(byPipeline, pipeline.key, pipeline.label, isUnattributed).totals,
 			contrib
 		);
 

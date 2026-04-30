@@ -133,6 +133,31 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showSessionIdPill: {
+		description:
+			'Show the provider session ID pill (short hash, e.g. "B778BF42") in the main header.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	showSessionCostPill: {
+		description: 'Show the per-session running cost pill (e.g. "$21.33") in the main header.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showWorktreePill: {
+		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showWorktreeBranchName: {
+		description: 'Show the branch name beneath worktree child agents in the left panel.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',
