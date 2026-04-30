@@ -114,12 +114,17 @@ describe('session list command', () => {
 
 		await sessionList({});
 
-		// First (and only) line should reference the tab id and agent name.
-		// Asserting on the substring keeps the test stable against future
-		// formatting tweaks (column spacing, additional flags) while still
-		// catching regressions where the entry is dropped entirely.
-		expect(consoleSpy.mock.calls[0][0]).toContain('tab-1');
-		expect(consoleSpy.mock.calls[0][0]).toContain('Backend');
+		// Default text mode includes state, star, tabId, agent name+id, and a
+		// relative createdAt column. Asserting each surface independently catches
+		// regressions where any column is dropped without freezing exact spacing.
+		const line = consoleSpy.mock.calls[0][0] as string;
+		expect(line).toContain('tab-1');
+		expect(line).toContain('Backend');
+		expect(line).toContain('busy');
+		expect(line).toContain('★');
+		// createdAt rendered via formatRelativeTime — the exact phrase depends on
+		// `now`, but the column is non-empty for any finite epoch.
+		expect(line.split('  ').filter(Boolean).length).toBeGreaterThanOrEqual(4);
 	});
 
 	it('maps connection errors to MAESTRO_NOT_RUNNING (consistent with dispatch)', async () => {
@@ -161,7 +166,56 @@ describe('session show command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
-	it('sends get_session_history with the tab id and prints the conversation', async () => {
+	it('sends get_session_history with the tab id and prints JSON when --json is set', async () => {
+		const mockSendCommand = vi.fn().mockResolvedValue({
+			type: 'session_history_result',
+			success: true,
+			tabId: 'tab-1',
+			sessionId: 'tab-1',
+			agentId: 'agent-a',
+			agentSessionId: 'claude-uuid-1',
+			messages: [
+				{
+					id: 'log-1',
+					role: 'user',
+					source: 'user',
+					content: 'Hello',
+					timestamp: '2026-04-28T10:00:00.000Z',
+				},
+				{
+					id: 'log-2',
+					role: 'assistant',
+					source: 'ai',
+					content: 'Hi there',
+					timestamp: '2026-04-28T10:00:01.000Z',
+				},
+			],
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = { sendCommand: mockSendCommand };
+			return action(mockClient as never);
+		});
+
+		await sessionShow('tab-1', { json: true });
+
+		expect(mockSendCommand).toHaveBeenCalledWith(
+			{ type: 'get_session_history', tabId: 'tab-1' },
+			'session_history_result'
+		);
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(true);
+		expect(output.tabId).toBe('tab-1');
+		expect(output.messages).toHaveLength(2);
+		expect(output.messages[0].role).toBe('user');
+		expect(output.messages[1].role).toBe('assistant');
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('renders a formatted transcript by default (no --json flag)', async () => {
+		// Default text mode prints a header line followed by one block per
+		// message. ISO timestamps are emitted verbatim so callers can feed them
+		// back into `--since` without re-parsing.
 		const mockSendCommand = vi.fn().mockResolvedValue({
 			type: 'session_history_result',
 			success: true,
@@ -193,18 +247,43 @@ describe('session show command', () => {
 
 		await sessionShow('tab-1', {});
 
-		expect(mockSendCommand).toHaveBeenCalledWith(
-			{ type: 'get_session_history', tabId: 'tab-1' },
-			'session_history_result'
-		);
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output.success).toBe(true);
-		expect(output.tabId).toBe('tab-1');
-		expect(output.messages).toHaveLength(2);
-		expect(output.messages[0].role).toBe('user');
-		expect(output.messages[1].role).toBe('assistant');
+		const lines = consoleSpy.mock.calls.map((c) => c[0] as string);
+		const joined = lines.join('\n');
+		// Header
+		expect(joined).toContain('Tab: tab-1');
+		expect(joined).toContain('Agent: agent-a');
+		expect(joined).toContain('Session: claude-uuid-1');
+		expect(joined).toContain('Messages: 2');
+		// Per-message blocks with verbatim ISO timestamps + roles + content
+		expect(joined).toContain('[2026-04-28T10:00:00.000Z] user');
+		expect(joined).toContain('Hello');
+		expect(joined).toContain('[2026-04-28T10:00:01.000Z] assistant');
+		expect(joined).toContain('Hi there');
+		// Should not be a single JSON blob
+		expect(() => JSON.parse(lines[0])).toThrow();
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('prints a friendly placeholder when the conversation is empty (text mode)', async () => {
+		const mockSendCommand = vi.fn().mockResolvedValue({
+			type: 'session_history_result',
+			success: true,
+			tabId: 'tab-1',
+			sessionId: 'tab-1',
+			agentId: 'agent-a',
+			agentSessionId: null,
+			messages: [],
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = { sendCommand: mockSendCommand };
+			return action(mockClient as never);
+		});
+
+		await sessionShow('tab-1', {});
+
+		const joined = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+		expect(joined).toContain('Messages: 0');
+		expect(joined).toContain('(no messages)');
 	});
 
 	it('forwards --since as ms epoch when given an ISO timestamp', async () => {

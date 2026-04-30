@@ -206,6 +206,7 @@ session
 		'Only return messages after this timestamp (ISO-8601 or epoch ms/sec)'
 	)
 	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
+	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
 // Open file command - open a file in the Maestro desktop app

@@ -12,6 +12,7 @@
 // silently get back stale data.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { formatRelativeTime } from '../../shared/formatters';
 
 export interface SessionListOptions {
 	json?: boolean;
@@ -20,6 +21,7 @@ export interface SessionListOptions {
 export interface SessionShowOptions {
 	since?: string;
 	tail?: string;
+	json?: boolean;
 }
 
 interface DesktopSessionEntry {
@@ -134,13 +136,16 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 
 		// Compact human-readable view: one tab per line so the output is grep-able
 		// and pipes cleanly into other tools while still being readable for a
-		// quick glance.
+		// quick glance. Columns: state | star | tabId | agent | name | createdAt.
+		// `state` is spelled out (busy/idle) rather than relying on the `*` marker
+		// alone so `grep busy` works without column-counting.
 		for (const s of sessions) {
-			const stateMarker = s.state === 'busy' ? '*' : ' ';
-			const starMarker = s.starred ? '★' : ' ';
+			const state = s.state === 'busy' ? 'busy' : 'idle';
+			const star = s.starred ? '★' : ' ';
 			const name = s.name ?? '(unnamed)';
+			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '—';
 			console.log(
-				`${stateMarker} ${starMarker} ${s.tabId}  agent=${s.agentName} (${s.agentId})  ${name}`
+				`${state} ${star} ${s.tabId}  ${s.agentName} (${s.agentId})  ${name}  ${created}`
 			);
 		}
 	} catch (error) {
@@ -224,7 +229,32 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			agentSessionId: result.agentSessionId ?? null,
 			messages: result.messages ?? [],
 		};
-		console.log(JSON.stringify(payload, null, 2));
+
+		if (options.json) {
+			console.log(JSON.stringify(payload, null, 2));
+			return;
+		}
+
+		// Default text mode: header + per-message transcript. ISO timestamps are
+		// preserved verbatim so consumers can round-trip them straight into a
+		// follow-up `session show --since "<timestamp>"` call without having to
+		// re-parse a localized datetime.
+		const headerParts = [`Tab: ${payload.tabId}`, `Agent: ${payload.agentId || '(unknown)'}`];
+		if (payload.agentSessionId) headerParts.push(`Session: ${payload.agentSessionId}`);
+		headerParts.push(`Messages: ${payload.messages.length}`);
+		console.log(headerParts.join('  '));
+
+		if (payload.messages.length === 0) {
+			console.log('(no messages)');
+			return;
+		}
+
+		console.log('');
+		for (const msg of payload.messages) {
+			console.log(`[${msg.timestamp}] ${msg.role}`);
+			console.log(msg.content);
+			console.log('');
+		}
 	} catch (error) {
 		const mapped = mapTransportError(error);
 		if (mapped) {
