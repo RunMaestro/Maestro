@@ -45,6 +45,10 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				const isFirst = idx === 0;
 				const isLast = idx === allSessions.length - 1;
 				const isInBatch = activeBatchSessionIds.includes(s.id);
+				// Hollow "no Claude session bound" only applies when truly idle —
+				// active states surface their color so fresh agents still light up.
+				const isUnboundIdle =
+					s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch && s.state === 'idle';
 
 				return (
 					<div
@@ -54,7 +58,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						aria-label={`Switch to ${s.name}`}
 						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
 						style={{
-							...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
+							...(isUnboundIdle
 								? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: {
 										backgroundColor: isInBatch

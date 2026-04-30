@@ -2569,6 +2569,75 @@ describe('SessionList', () => {
 			const indicator = container.querySelector('[title="No active Claude session"]');
 			expect(indicator).toBeInTheDocument();
 		});
+
+		it('shows working color (not hollow) for busy claude without agentSessionId', () => {
+			// Regression: fresh worktrees that are actively working but haven't bound a
+			// provider session yet should still surface the busy indicator.
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Fresh Worktree',
+					toolType: 'claude-code',
+					agentSessionId: undefined,
+					state: 'busy',
+				}),
+			];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			const { container } = render(<SessionList {...props} />);
+
+			// Hollow "no session" indicator must not be shown while the agent is busy.
+			expect(container.querySelector('[title="No active Claude session"]')).not.toBeInTheDocument();
+			// The colored "thinking" indicator must be present.
+			expect(container.querySelector('[title="Agent is thinking"]')).toBeInTheDocument();
+		});
+
+		it('shows connecting color (not hollow) for connecting claude without agentSessionId', () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Connecting Worktree',
+					toolType: 'claude-code',
+					agentSessionId: undefined,
+					state: 'connecting',
+				}),
+			];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			const { container } = render(<SessionList {...props} />);
+
+			expect(container.querySelector('[title="No active Claude session"]')).not.toBeInTheDocument();
+			expect(
+				container.querySelector('[title="Attempting to establish connection"]')
+			).toBeInTheDocument();
+		});
+
+		it('shows working color in skinny mode for busy claude without agentSessionId', () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Fresh Worktree Skinny',
+					toolType: 'claude-code',
+					agentSessionId: undefined,
+					state: 'busy',
+				}),
+			];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: false });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			const { container } = render(<SessionList {...props} />);
+
+			// In skinny mode the unbound idle dot also must not appear when busy.
+			expect(container.querySelector('[title="No active Claude session"]')).not.toBeInTheDocument();
+		});
 	});
 
 	// ============================================================================

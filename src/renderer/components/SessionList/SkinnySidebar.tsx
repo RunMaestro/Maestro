@@ -42,12 +42,16 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
+				// Hollow "no Claude session bound" dot only applies when truly idle —
+				// active states surface the normal color so fresh agents still light up.
+				const isUnboundIdle =
+					session.toolType === 'claude-code' && !session.agentSessionId && session.state === 'idle';
 				const effectiveStatusColor = isInBatch
 					? theme.colors.warning
-					: session.toolType === 'claude-code' && !session.agentSessionId
+					: isUnboundIdle
 						? undefined
 						: getStatusColor(session.state, theme);
-				const shouldPulse = session.state === 'busy' || isInBatch;
+				const shouldPulse = session.state === 'busy' || session.state === 'connecting' || isInBatch;
 
 				return (
 					<div
@@ -70,7 +74,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
 								style={{
 									opacity: activeSessionId === session.id ? 1 : 0.25,
-									...(session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+									...(isUnboundIdle && !isInBatch
 										? {
 												border: `1.5px solid ${theme.colors.textDim}`,
 												backgroundColor: 'transparent',
@@ -79,11 +83,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 												backgroundColor: effectiveStatusColor,
 											}),
 								}}
-								title={
-									session.toolType === 'claude-code' && !session.agentSessionId
-										? 'No active Claude session'
-										: undefined
-								}
+								title={isUnboundIdle ? 'No active Claude session' : undefined}
 							/>
 							{activeSessionId !== session.id && hasUnreadTabs && (
 								<div
