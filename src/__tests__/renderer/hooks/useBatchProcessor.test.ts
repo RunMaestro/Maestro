@@ -2638,12 +2638,18 @@ describe('useBatchProcessor hook', () => {
 			let doc1Calls = 0;
 			let doc2Calls = 0;
 
-			// Mock readDoc with call-count thresholds that account for the recount-all-documents
-			// logic after each task. For each document, reads happen at:
-			//   doc1: initial count, doc-loop entry, processTask post-read, recount-all
-			//   doc2: initial count, recount-all (after doc1), doc-loop entry, processTask post-read
-			// The "agent completed" transition (unchecked → checked) should happen after processTask,
-			// so doc1 returns checked on call 3+ and doc2 returns checked on call 4+.
+			// Mock readDoc with call-count thresholds that account for the per-task
+			// "baseline read of other docs" plus the recount-all-documents pass after
+			// each task. Per-doc read sequence (loopEnabled=false, single iteration):
+			//   doc1: initial count, doc-loop entry, processTask pre-spawn, processTask
+			//         post-spawn, recount-all (after doc1), baseline (during doc2),
+			//         recount-all (after doc2)
+			//   doc2: initial count, baseline (during doc1), recount-all (after doc1),
+			//         doc-loop entry, processTask pre-spawn, processTask post-spawn,
+			//         recount-all (after doc2)
+			// The "agent completed" transition (unchecked → checked) is simulated by
+			// flipping content on the first read after the doc's processTask is
+			// entered: doc1 flips on call 3+, doc2 flips on call 5+.
 			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
 				readOrder.push(filename);
 
@@ -2654,7 +2660,7 @@ describe('useBatchProcessor hook', () => {
 				}
 				if (filename === 'doc2.md') {
 					doc2Calls++;
-					if (doc2Calls <= 3) return { success: true, content: '- [ ] Doc2 Task' };
+					if (doc2Calls <= 4) return { success: true, content: '- [ ] Doc2 Task' };
 					return { success: true, content: '- [x] Doc2 Task' };
 				}
 				return { success: true, content: '' };
