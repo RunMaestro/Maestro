@@ -152,6 +152,7 @@ import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
 import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
+import { startGhProjectPoller } from './pm-reverse-sync/poller';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -737,6 +738,20 @@ app.whenReady().then(async () => {
 		} catch (err) {
 			logger.warn(
 				`Branch hygiene cron failed to start: ${err instanceof Error ? err.message : String(err)}`,
+				'Startup'
+			);
+		}
+	}
+
+	// Start the GitHub Project v2 reverse-sync poller (#435).
+	// Gated behind the deliveryPlanner Encore Feature — only relevant when
+	// Delivery Planner is enabled and items have been synced to GitHub Projects.
+	if (encoreFeatures.deliveryPlanner) {
+		try {
+			startGhProjectPoller();
+		} catch (err) {
+			logger.warn(
+				`GitHub Project reverse-sync poller failed to start: ${err instanceof Error ? err.message : String(err)}`,
 				'Startup'
 			);
 		}
