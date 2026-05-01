@@ -4,6 +4,41 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
+import type {
+	DeliveryPlannerBugFollowUpRequest,
+	DeliveryPlannerCreatePrdRequest,
+	DeliveryPlannerDecomposeEpicRequest,
+	DeliveryPlannerDecomposePrdRequest,
+	DeliveryPlannerPathResolutionRequest,
+	DeliveryPlannerPathResolutionResult,
+	DeliveryPlannerProgressComment,
+	DeliveryPlannerProgressCommentRequest,
+	DeliveryPlannerProgressEvent,
+	DeliveryPlannerProgressSnapshot,
+	DeliveryPlannerPromoteDocGapRequest,
+	DeliveryPlannerPromoteDocGapResult,
+	DeliveryPlannerSyncRequest,
+} from '../shared/delivery-planner-types';
+import type {
+	AgentReadyWorkFilter,
+	TagDefinition,
+	WorkGraphBroadcastEnvelope,
+	WorkGraphImportInput,
+	WorkGraphImportSummary,
+	WorkGraphListResult,
+	WorkItem,
+	WorkItemClaim,
+	WorkItemClaimCompleteInput,
+	WorkItemClaimInput,
+	WorkItemClaimReleaseInput,
+	WorkItemClaimRenewInput,
+	WorkItemCreateInput,
+	WorkItemEvent,
+	WorkItemFilters,
+	WorkItemSearchFilters,
+	WorkItemUpdateInput,
+} from '../shared/work-graph-types';
+
 // Vite raw imports for .md files
 declare module '*.md?raw' {
 	const content: string;
