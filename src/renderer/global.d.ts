@@ -147,6 +147,40 @@ type WorkGraphBroadcastEnvelope = import('../shared/work-graph-types').WorkGraph
 type AgentDispatchFleetEntry = import('../shared/agent-dispatch-types').AgentDispatchFleetEntry;
 type ManualAssignmentInput = import('../main/agent-dispatch/dispatch-engine').ManualAssignmentInput;
 
+// Delivery Planner types
+type DeliveryPlannerCreatePrdRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerCreatePrdRequest;
+type DeliveryPlannerDecomposePrdRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerDecomposePrdRequest;
+type DeliveryPlannerDecomposeEpicRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerDecomposeEpicRequest;
+type DeliveryPlannerDashboardSnapshot =
+	import('../shared/delivery-planner-types').DeliveryPlannerDashboardSnapshot;
+type DeliveryPlannerSyncRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerSyncRequest;
+type DeliveryPlannerBugFollowUpRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerBugFollowUpRequest;
+type DeliveryPlannerProgressCommentRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressCommentRequest;
+type DeliveryPlannerProgressComment =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressComment;
+type DeliveryPlannerPathResolutionRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerPathResolutionRequest;
+type DeliveryPlannerPathResolutionResult =
+	import('../shared/delivery-planner-types').DeliveryPlannerPathResolutionResult;
+type DeliveryPlannerProgressSnapshot =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressSnapshot;
+type DeliveryPlannerProgressEvent =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressEvent;
+type DeliveryPlannerPromoteDocGapRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerPromoteDocGapRequest;
+type DeliveryPlannerPromoteDocGapResult =
+	import('../shared/delivery-planner-types').DeliveryPlannerPromoteDocGapResult;
+
+// Planning Pipeline types
+type PipelineDashboardResult =
+	import('../main/ipc/handlers/planning-pipeline').PipelineDashboardResult;
+
 type IpcDataResponse<T> = { success: true; data: T } | { success: false; error: string };
 
 /**
@@ -3428,6 +3462,40 @@ interface MaestroAPI {
 			inProgress?: unknown[];
 			error?: string;
 		}>;
+	};
+
+	deliveryPlanner: {
+		createPrd: (input: DeliveryPlannerCreatePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
+		decomposePrd: (input: DeliveryPlannerDecomposePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
+		decomposeEpic: (
+			input: DeliveryPlannerDecomposeEpicRequest
+		) => Promise<IpcDataResponse<unknown>>;
+		dashboard: (filters?: {
+			projectPath?: string;
+			gitPath?: string;
+		}) => Promise<IpcDataResponse<DeliveryPlannerDashboardSnapshot>>;
+		sync: (input: DeliveryPlannerSyncRequest) => Promise<IpcDataResponse<WorkItem>>;
+		createBugFollowUp: (
+			input: DeliveryPlannerBugFollowUpRequest
+		) => Promise<IpcDataResponse<WorkItem>>;
+		addProgressComment: (
+			input: DeliveryPlannerProgressCommentRequest
+		) => Promise<IpcDataResponse<{ item: WorkItem; comment: DeliveryPlannerProgressComment }>>;
+		resolvePaths: (
+			input?: DeliveryPlannerPathResolutionRequest
+		) => Promise<IpcDataResponse<DeliveryPlannerPathResolutionResult>>;
+		getProgress: (
+			id: string
+		) => Promise<IpcDataResponse<DeliveryPlannerProgressSnapshot | undefined>>;
+		listProgress: () => Promise<IpcDataResponse<DeliveryPlannerProgressSnapshot[]>>;
+		promoteDocGap: (
+			input: DeliveryPlannerPromoteDocGapRequest
+		) => Promise<IpcDataResponse<DeliveryPlannerPromoteDocGapResult>>;
+		onProgress: (handler: (event: DeliveryPlannerProgressEvent) => void) => () => void;
+	};
+
+	pipeline: {
+		getDashboard: () => Promise<IpcDataResponse<PipelineDashboardResult>>;
 	};
 }
 

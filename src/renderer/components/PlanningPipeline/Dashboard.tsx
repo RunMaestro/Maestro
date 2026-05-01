@@ -13,14 +13,10 @@
  * runner-active item.
  */
 
-import React, { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
-import {
-	PIPELINE_STAGES,
-	PIPELINE_FAILURE_STAGES,
-	type AnyPipelineStage,
-} from '../../../shared/planning-pipeline-types';
+import { type AnyPipelineStage } from '../../../shared/planning-pipeline-types';
 import { planningPipelineService } from '../../services/planningPipeline';
 import type { WorkItem } from '../../../shared/work-graph-types';
 
