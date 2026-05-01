@@ -80,7 +80,6 @@ import {
 	registerConversationalPrdHandlers,
 	registerPmToolsHandlers,
 	registerPmAuditHandlers,
-	registerPmHeartbeatHandlers,
 	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -153,7 +152,6 @@ import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
 import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
-import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)

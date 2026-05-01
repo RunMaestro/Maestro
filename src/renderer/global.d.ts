@@ -3634,6 +3634,20 @@ interface MaestroAPI {
 			reason: string
 		) => Promise<IpcDataResponse<{ workItemId: string; field: string; value: string }>>;
 	};
+
+	// pm-heartbeat API — agent liveness beat (#435)
+	pmHeartbeat: {
+		/**
+		 * Emit a heartbeat for the agent's currently-claimed work item.
+		 * Call every 60 s while the claim is held. Stop on release.
+		 * Returns success=false once the claim is gone (signal to stop the loop).
+		 *
+		 * @param workItemId - the ID of the claimed work item
+		 */
+		beat: (
+			workItemId: string
+		) => Promise<IpcDataResponse<{ workItemId: string; lastHeartbeat: string }>>;
+	};
 }
 
 declare global {
