@@ -1,5 +1,6 @@
 /**
- * Conversational PRD Planner — barrel re-exports
+ * Conversational PRD Planner — barrel re-exports.
+ * @see CLAUDE-CONVERSATIONAL-PRD.md for architecture, IPC channels, persistence, and validation steps.
  */
 
 export type {

@@ -6,18 +6,22 @@ Essential guidance for working with this codebase. For detailed architecture, se
 
 This guide has been split into focused sub-documents for progressive disclosure:
 
-| Document                             | Description                                                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)  |
-| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                              |
-| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                        |
-| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                            |
-| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                  |
-| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                            |
-| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                    |
-| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                  |
-| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`) |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                             |
+| Document                             | Description                                                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)      |
+| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                                  |
+| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                            |
+| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                                |
+| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                      |
+| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                                |
+| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                        |
+| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                      |
+| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`)     |
+| [[CLAUDE-AGENT-DISPATCH.md]]         | Agent Dispatch: lifecycle (claim/heartbeat/release), IPC namespace, fork-only GitHub assumption, troubleshooting |
+| [[CLAUDE-DELIVERY-PLANNER.md]]       | Delivery Planner: PRD → Epic → Tasks → GitHub sync, CCPM mirror, path resolver, validation commands              |
+| [[CLAUDE-PLANNING-PIPELINE.md]]      | Planning Pipeline epic: stage machine, triggers, supervisor, SLA, file index, how to add a new stage             |
+| [[CLAUDE-CONVERSATIONAL-PRD.md]]     | Conversational PRD Planner: architecture, IPC channels, file index, output contract, persistence, validation     |
+| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                                 |
 
 ---
 

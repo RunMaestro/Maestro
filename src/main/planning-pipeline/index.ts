@@ -3,6 +3,8 @@
  *
  * Barrel re-exports for the Planning Pipeline runtime primitives.
  *
+ * @see CLAUDE-PLANNING-PIPELINE.md for stage machine, triggers, supervisor, SLA, and how to add a new stage.
+ *
  * Public surface:
  *   - PipelineEventBus + PipelineEventHandler + PipelineEventUnsubscribe
  *   - PipelineTriggerRegistry + TriggerHandler + TriggerKey + buildTriggerKey

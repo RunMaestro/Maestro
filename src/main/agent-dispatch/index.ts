@@ -1,3 +1,7 @@
+/**
+ * Agent Dispatch subsystem barrel.
+ * @see CLAUDE-AGENT-DISPATCH.md for architecture, IPC namespace, and lifecycle docs.
+ */
 export {
 	isAgentEligibleForPickup,
 	isWorkItemEligibleForAutoPickup,
