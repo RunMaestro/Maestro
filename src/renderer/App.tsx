@@ -146,6 +146,7 @@ import {
 	updateAiTab,
 } from './stores/sessionStore';
 import { useActiveSession } from './hooks/session/useActiveSession';
+import { useClaimHeartbeat } from './hooks/agentDispatch/useClaimHeartbeat';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
@@ -495,6 +496,46 @@ function MaestroConsoleInner() {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
 	const activeSession = useActiveSession();
+
+	// --- Claim heartbeat loop (#435) ---
+	// Keeps the stale-claim sweeper from auto-releasing our claim while the agent is running.
+	// Looks up the active claimed work item for the current session and pulses every 60 s.
+	const [activeClaimWorkItemId, setActiveClaimWorkItemId] = React.useState<string | null>(null);
+	useEffect(() => {
+		if (!encoreFeatures.deliveryPlanner || !activeSessionId) {
+			setActiveClaimWorkItemId(null);
+			return;
+		}
+		let cancelled = false;
+		const load = async () => {
+			try {
+				const result = await window.maestro.workGraph.listItems({
+					ownerId: activeSessionId,
+					statuses: ['claimed', 'in_progress'],
+				});
+				if (cancelled) return;
+				if (result.success) {
+					const active = result.data.items.find(
+						(item: { claim?: { status: string }; id: string }) => item.claim?.status === 'active'
+					);
+					setActiveClaimWorkItemId(active?.id ?? null);
+				} else {
+					setActiveClaimWorkItemId(null);
+				}
+			} catch {
+				if (!cancelled) setActiveClaimWorkItemId(null);
+			}
+		};
+		void load();
+		const unsubscribe = window.maestro.workGraph.onChanged(() => {
+			void load();
+		});
+		return () => {
+			cancelled = true;
+			unsubscribe?.();
+		};
+	}, [encoreFeatures.deliveryPlanner, activeSessionId]);
+	useClaimHeartbeat(activeClaimWorkItemId);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {

@@ -186,6 +186,17 @@ export function getMigrations(): Migration[] {
 				}
 			},
 		},
+		{
+			version: 8,
+			description: 'Add last_heartbeat column to work_item_claims (#435)',
+			up: (db) => {
+				const columns = db.prepare('PRAGMA table_info(work_item_claims)').all() as Array<{
+					name: string;
+				}>;
+				if (columns.some((column) => column.name === 'last_heartbeat')) return;
+				db.prepare('ALTER TABLE work_item_claims ADD COLUMN last_heartbeat TEXT').run();
+			},
+		},
 	];
 }
 
