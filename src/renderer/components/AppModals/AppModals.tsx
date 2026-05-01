@@ -290,6 +290,12 @@ export interface AppModalsProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Agent Dispatch
+	onOpenAgentDispatch?: () => void;
+	// Delivery Planner
+	onOpenDeliveryPlanner?: () => void;
+	// Planning Pipeline
+	onOpenPlanningPipeline?: () => void;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
 	onFileTabSelect?: (tabId: string) => void;
@@ -686,6 +692,12 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Maestro Cue
 		onOpenMaestroCue,
 		onConfigureCue,
+		// Agent Dispatch
+		onOpenAgentDispatch,
+		// Delivery Planner
+		onOpenDeliveryPlanner,
+		// Planning Pipeline
+		onOpenPlanningPipeline,
 		onCloseTabSwitcher,
 		onTabSelect,
 		onFileTabSelect,
@@ -992,6 +1004,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
 				onConfigureCue={onConfigureCue}
+				onOpenAgentDispatch={onOpenAgentDispatch}
+				onOpenDeliveryPlanner={onOpenDeliveryPlanner}
+				onOpenPlanningPipeline={onOpenPlanningPipeline}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}
 				stagedImages={stagedImages}

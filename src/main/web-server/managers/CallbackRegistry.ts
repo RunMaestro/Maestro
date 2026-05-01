@@ -29,6 +29,8 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	RemoveQueueItemCallback,
+	ReorderQueueCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -113,6 +115,8 @@ export interface WebServerCallbacks {
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	removeQueueItem: RemoveQueueItemCallback | null;
+	reorderQueue: ReorderQueueCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
 	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
@@ -176,6 +180,8 @@ export class CallbackRegistry {
 		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		removeQueueItem: null,
+		reorderQueue: null,
 		getHistory: null,
 		getAutoRunDocs: null,
 		getAutoRunDocContent: null,
@@ -352,6 +358,16 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async removeQueueItem(sessionId: string, itemId: string): Promise<boolean> {
+		if (!this.callbacks.removeQueueItem) return false;
+		return this.callbacks.removeQueueItem(sessionId, itemId);
+	}
+
+	async reorderQueue(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
+		if (!this.callbacks.reorderQueue) return false;
+		return this.callbacks.reorderQueue(sessionId, fromIndex, toIndex);
 	}
 
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
@@ -678,6 +694,14 @@ export class CallbackRegistry {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbacks.removeQueueItem = callback;
+	}
+
+	setReorderQueueCallback(callback: ReorderQueueCallback): void {
+		this.callbacks.reorderQueue = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

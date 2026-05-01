@@ -56,6 +56,11 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createAgentDispatchApi } from './agentDispatch';
+import { createDeliveryPlannerApi } from './deliveryPlanner';
+import { createPlanningPipelineApi } from './planningPipeline';
+import { createConversationalPrdApi } from './conversationalPrd';
+import { createWorkGraphApi } from './workGraph';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -214,6 +219,21 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+
+	// Work Graph API (item store, claims, tags, events)
+	workGraph: createWorkGraphApi(),
+
+	// Agent Dispatch API (fleet, board, assign, release, pause/resume + MCP registry)
+	agentDispatch: createAgentDispatchApi(),
+
+	// Delivery Planner API (PRD/Epic/Task lifecycle, GitHub sync, progress)
+	deliveryPlanner: createDeliveryPlannerApi(),
+
+	// Planning Pipeline API (dashboard snapshot)
+	pipeline: createPlanningPipelineApi(),
+
+	// Conversational PRD Planner API (planning conversations → PRD items)
+	conversationalPrd: createConversationalPrdApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -300,6 +320,16 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// Work Graph
+	createWorkGraphApi,
+	// Agent Dispatch
+	createAgentDispatchApi,
+	// Delivery Planner
+	createDeliveryPlannerApi,
+	// Planning Pipeline
+	createPlanningPipelineApi,
+	// Conversational PRD
+	createConversationalPrdApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -539,3 +569,23 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
+export type {
+	// From workGraph
+	WorkGraphApi,
+} from './workGraph';
+export type {
+	// From agentDispatch
+	AgentDispatchApi,
+} from './agentDispatch';
+export type {
+	// From deliveryPlanner
+	DeliveryPlannerApi,
+} from './deliveryPlanner';
+export type {
+	// From planningPipeline
+	PlanningPipelineApi,
+} from './planningPipeline';
+export type {
+	// From conversationalPrd
+	ConversationalPrdApi,
+} from './conversationalPrd';

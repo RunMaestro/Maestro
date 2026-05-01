@@ -4,6 +4,41 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
+import type {
+	DeliveryPlannerBugFollowUpRequest,
+	DeliveryPlannerCreatePrdRequest,
+	DeliveryPlannerDecomposeEpicRequest,
+	DeliveryPlannerDecomposePrdRequest,
+	DeliveryPlannerPathResolutionRequest,
+	DeliveryPlannerPathResolutionResult,
+	DeliveryPlannerProgressComment,
+	DeliveryPlannerProgressCommentRequest,
+	DeliveryPlannerProgressEvent,
+	DeliveryPlannerProgressSnapshot,
+	DeliveryPlannerPromoteDocGapRequest,
+	DeliveryPlannerPromoteDocGapResult,
+	DeliveryPlannerSyncRequest,
+} from '../shared/delivery-planner-types';
+import type {
+	AgentReadyWorkFilter,
+	TagDefinition,
+	WorkGraphBroadcastEnvelope,
+	WorkGraphImportInput,
+	WorkGraphImportSummary,
+	WorkGraphListResult,
+	WorkItem,
+	WorkItemClaim,
+	WorkItemClaimCompleteInput,
+	WorkItemClaimInput,
+	WorkItemClaimReleaseInput,
+	WorkItemClaimRenewInput,
+	WorkItemCreateInput,
+	WorkItemEvent,
+	WorkItemFilters,
+	WorkItemSearchFilters,
+	WorkItemUpdateInput,
+} from '../shared/work-graph-types';
+
 // Vite raw imports for .md files
 declare module '*.md?raw' {
 	const content: string;
@@ -88,6 +123,82 @@ type ShellInfo = import('../shared/types').ShellInfo;
 type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
+
+// Work Graph types (used by workGraph and agentDispatch namespaces)
+type WorkItemFilters = import('../shared/work-graph-types').WorkItemFilters;
+type WorkItemSearchFilters = import('../shared/work-graph-types').WorkItemSearchFilters;
+type WorkGraphListResult = import('../shared/work-graph-types').WorkGraphListResult;
+type WorkItem = import('../shared/work-graph-types').WorkItem;
+type WorkItemCreateInput = import('../shared/work-graph-types').WorkItemCreateInput;
+type WorkItemUpdateInput = import('../shared/work-graph-types').WorkItemUpdateInput;
+type WorkItemClaim = import('../shared/work-graph-types').WorkItemClaim;
+type WorkItemClaimInput = import('../shared/work-graph-types').WorkItemClaimInput;
+type WorkItemClaimRenewInput = import('../shared/work-graph-types').WorkItemClaimRenewInput;
+type WorkItemClaimReleaseInput = import('../shared/work-graph-types').WorkItemClaimReleaseInput;
+type WorkItemClaimCompleteInput = import('../shared/work-graph-types').WorkItemClaimCompleteInput;
+type WorkItemEvent = import('../shared/work-graph-types').WorkItemEvent;
+type TagDefinition = import('../shared/work-graph-types').TagDefinition;
+type WorkGraphImportInput = import('../shared/work-graph-types').WorkGraphImportInput;
+type WorkGraphImportSummary = import('../shared/work-graph-types').WorkGraphImportSummary;
+type AgentReadyWorkFilter = import('../shared/work-graph-types').AgentReadyWorkFilter;
+type WorkGraphBroadcastEnvelope = import('../shared/work-graph-types').WorkGraphBroadcastEnvelope;
+type WorkGraphActor = import('../shared/work-graph-types').WorkGraphActor;
+
+// Agent Dispatch types
+type AgentDispatchFleetEntry = import('../shared/agent-dispatch-types').AgentDispatchFleetEntry;
+type ManualAssignmentInput = import('../main/agent-dispatch/dispatch-engine').ManualAssignmentInput;
+
+// Delivery Planner types
+type DeliveryPlannerCreatePrdRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerCreatePrdRequest;
+type DeliveryPlannerDecomposePrdRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerDecomposePrdRequest;
+type DeliveryPlannerDecomposeEpicRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerDecomposeEpicRequest;
+type DeliveryPlannerDashboardSnapshot =
+	import('../shared/delivery-planner-types').DeliveryPlannerDashboardSnapshot;
+type DeliveryPlannerSyncRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerSyncRequest;
+type DeliveryPlannerBugFollowUpRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerBugFollowUpRequest;
+type DeliveryPlannerProgressCommentRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressCommentRequest;
+type DeliveryPlannerProgressComment =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressComment;
+type DeliveryPlannerPathResolutionRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerPathResolutionRequest;
+type DeliveryPlannerPathResolutionResult =
+	import('../shared/delivery-planner-types').DeliveryPlannerPathResolutionResult;
+type DeliveryPlannerProgressSnapshot =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressSnapshot;
+type DeliveryPlannerProgressEvent =
+	import('../shared/delivery-planner-types').DeliveryPlannerProgressEvent;
+type DeliveryPlannerPromoteDocGapRequest =
+	import('../shared/delivery-planner-types').DeliveryPlannerPromoteDocGapRequest;
+type DeliveryPlannerPromoteDocGapResult =
+	import('../shared/delivery-planner-types').DeliveryPlannerPromoteDocGapResult;
+
+// Planning Pipeline types
+type PipelineDashboardResult =
+	import('../main/ipc/handlers/planning-pipeline').PipelineDashboardResult;
+
+// Conversational PRD types
+type ConversationalPrdStartRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdStartRequest;
+type ConversationalPrdTurnRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdTurnRequest;
+type ConversationalPrdFinalizeRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdFinalizeRequest;
+type ConversationalPrdStartResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdStartResponse;
+type ConversationalPrdTurnResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdTurnResponse;
+type ConversationalPrdFinalizeResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdFinalizeResponse;
+type ConversationalPrdSession =
+	import('../shared/conversational-prd-types').ConversationalPrdSession;
+
+type IpcDataResponse<T> = { success: true; data: T } | { success: false; error: string };
 
 /**
  * Result type for reading session messages from agent storage.
@@ -459,6 +570,10 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown) => void;
+		onRemoteRemoveQueueItem: (callback: (sessionId: string, itemId: string) => void) => () => void;
+		onRemoteReorderQueue: (
+			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
+		) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
@@ -578,6 +693,16 @@ interface MaestroAPI {
 			}>,
 			activeTabId: string
 		) => Promise<void>;
+		broadcastGitStatus: (sessionId: string, gitStatus: GitStatusData | null) => Promise<boolean>;
+		broadcastExecutionQueue: (
+			sessionId: string,
+			executionQueue: QueuedItemData[]
+		) => Promise<boolean>;
+		broadcastToolExecution: (
+			sessionId: string,
+			tabId: string | undefined,
+			tool: ToolExecutionData
+		) => Promise<boolean>;
 		broadcastSessionState: (
 			sessionId: string,
 			state: string,
@@ -586,6 +711,8 @@ interface MaestroAPI {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				currentCycleTokens?: number;
+				thinkingStartTime?: number;
 			}
 		) => Promise<boolean>;
 	};
@@ -902,6 +1029,22 @@ interface MaestroAPI {
 		}>;
 		get: (agentId: string, sshRemoteId?: string) => Promise<AgentConfig | null>;
 		getCapabilities: (agentId: string) => Promise<AgentCapabilities>;
+		getDispatchSettings: () => Promise<
+			import('../shared/agent-dispatch-types').AgentDispatchSettings
+		>;
+		setDispatchSettings: (
+			settings: import('../shared/agent-dispatch-types').AgentDispatchSettings
+		) => Promise<boolean>;
+		getDispatchProfiles: () => Promise<
+			Record<string, import('../shared/agent-dispatch-types').AgentDispatchProfile>
+		>;
+		getDispatchProfile: (
+			agentId: string
+		) => Promise<import('../shared/agent-dispatch-types').AgentDispatchProfile>;
+		setDispatchProfile: (
+			agentId: string,
+			profile: import('../shared/agent-dispatch-types').AgentDispatchProfile
+		) => Promise<boolean>;
 		getConfig: (agentId: string) => Promise<Record<string, any>>;
 		setConfig: (agentId: string, config: Record<string, any>) => Promise<boolean>;
 		getConfigValue: (agentId: string, key: string) => Promise<any>;
@@ -3268,6 +3411,148 @@ interface MaestroAPI {
 			projectPath: string,
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
+	};
+
+	// Work Graph API
+	workGraph: {
+		listItems: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		searchItems: (filters: WorkItemSearchFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		getItem: (id: string) => Promise<IpcDataResponse<WorkItem | undefined>>;
+		createItem: (input: WorkItemCreateInput) => Promise<IpcDataResponse<WorkItem>>;
+		updateItem: (input: WorkItemUpdateInput) => Promise<IpcDataResponse<WorkItem>>;
+		deleteItem: (id: string) => Promise<IpcDataResponse<boolean>>;
+		claimItem: (input: WorkItemClaimInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		renewClaim: (input: WorkItemClaimRenewInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		releaseClaim: (input: WorkItemClaimReleaseInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		completeClaim: (input: WorkItemClaimCompleteInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		listEvents: (workItemId: string) => Promise<IpcDataResponse<WorkItemEvent[]>>;
+		listTags: () => Promise<IpcDataResponse<TagDefinition[]>>;
+		upsertTag: (definition: TagDefinition) => Promise<IpcDataResponse<TagDefinition>>;
+		importItems: (input: WorkGraphImportInput) => Promise<IpcDataResponse<WorkGraphImportSummary>>;
+		getUnblockedAgentReadyWork: (
+			filters?: AgentReadyWorkFilter
+		) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		onChanged: (handler: (event: WorkGraphBroadcastEnvelope) => void) => () => void;
+	};
+
+	// Agent Dispatch API (fleet, board, assign, release, pause/resume)
+	agentDispatch: {
+		getBoard: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		getFleet: () => Promise<IpcDataResponse<AgentDispatchFleetEntry[]>>;
+		assignManually: (input: ManualAssignmentInput) => Promise<IpcDataResponse<WorkItem>>;
+		releaseClaim: (
+			input: WorkItemClaimReleaseInput
+		) => Promise<IpcDataResponse<WorkItemClaim | undefined>>;
+		pauseAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
+		resumeAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
+		listEligible: () => Promise<
+			IpcDataResponse<
+				Array<{
+					id: string;
+					title: string;
+					status: string;
+					dependsOn: string[];
+					claimedBySessionId?: string;
+					claimedAt?: string;
+					parentId?: string;
+				}>
+			>
+		>;
+		createSubtask: (params: { title: string; parentId: string; dependsOn?: string[] }) => Promise<
+			IpcDataResponse<{
+				id: string;
+				title: string;
+				status: string;
+				dependsOn: string[];
+				parentId?: string;
+			}>
+		>;
+		listAgents: () => Promise<{ success: boolean; agents?: unknown[]; error?: string }>;
+		assign: (params: { itemId: string; sessionId: string }) => Promise<{
+			success: boolean;
+			item?: unknown;
+			error?: string;
+		}>;
+		release: (params: { itemId: string }) => Promise<{
+			success: boolean;
+			item?: unknown;
+			error?: string;
+		}>;
+		pause: (params: { sessionId: string }) => Promise<{
+			success: boolean;
+			agent?: unknown;
+			error?: string;
+		}>;
+		resume: (params: { sessionId: string }) => Promise<{
+			success: boolean;
+			agent?: unknown;
+			error?: string;
+		}>;
+		status: () => Promise<{
+			success: boolean;
+			agents?: unknown[];
+			eligible?: unknown[];
+			inProgress?: unknown[];
+			error?: string;
+		}>;
+	};
+
+	deliveryPlanner: {
+		createPrd: (input: DeliveryPlannerCreatePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
+		decomposePrd: (input: DeliveryPlannerDecomposePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
+		decomposeEpic: (
+			input: DeliveryPlannerDecomposeEpicRequest
+		) => Promise<IpcDataResponse<unknown>>;
+		dashboard: (filters?: {
+			projectPath?: string;
+			gitPath?: string;
+		}) => Promise<IpcDataResponse<DeliveryPlannerDashboardSnapshot>>;
+		sync: (input: DeliveryPlannerSyncRequest) => Promise<IpcDataResponse<WorkItem>>;
+		createBugFollowUp: (
+			input: DeliveryPlannerBugFollowUpRequest
+		) => Promise<IpcDataResponse<WorkItem>>;
+		addProgressComment: (
+			input: DeliveryPlannerProgressCommentRequest
+		) => Promise<IpcDataResponse<{ item: WorkItem; comment: DeliveryPlannerProgressComment }>>;
+		resolvePaths: (
+			input?: DeliveryPlannerPathResolutionRequest
+		) => Promise<IpcDataResponse<DeliveryPlannerPathResolutionResult>>;
+		getProgress: (
+			id: string
+		) => Promise<IpcDataResponse<DeliveryPlannerProgressSnapshot | undefined>>;
+		listProgress: () => Promise<IpcDataResponse<DeliveryPlannerProgressSnapshot[]>>;
+		promoteDocGap: (
+			input: DeliveryPlannerPromoteDocGapRequest
+		) => Promise<IpcDataResponse<DeliveryPlannerPromoteDocGapResult>>;
+		onProgress: (handler: (event: DeliveryPlannerProgressEvent) => void) => () => void;
+	};
+
+	pipeline: {
+		getDashboard: () => Promise<IpcDataResponse<PipelineDashboardResult>>;
+	};
+
+	// Conversational PRD Planner API
+	conversationalPrd: {
+		createSession: (
+			input: ConversationalPrdStartRequest
+		) => Promise<IpcDataResponse<ConversationalPrdStartResponse>>;
+		sendMessage: (
+			input: ConversationalPrdTurnRequest
+		) => Promise<IpcDataResponse<ConversationalPrdTurnResponse>>;
+		getSession: (
+			conversationId: string
+		) => Promise<IpcDataResponse<ConversationalPrdSession | null>>;
+		listSessions: (filters?: {
+			projectPath?: string;
+			includeArchived?: boolean;
+		}) => Promise<IpcDataResponse<ConversationalPrdSession[]>>;
+		archiveSession: (input: {
+			sessionId: string;
+			actor?: WorkGraphActor;
+		}) => Promise<IpcDataResponse<ConversationalPrdSession>>;
+		finalizeSession: (
+			input: ConversationalPrdFinalizeRequest
+		) => Promise<IpcDataResponse<ConversationalPrdFinalizeResponse>>;
 	};
 }
 

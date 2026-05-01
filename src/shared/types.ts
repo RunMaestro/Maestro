@@ -288,14 +288,29 @@ export interface WorktreeConfig {
 	prTargetBranch: string;
 }
 
+// Work Graph metadata attached to an Auto Run dispatch.
+export interface WorkGraphDispatchContext {
+	workItemId: string;
+	claimId?: string;
+	itemTitle?: string;
+	projectPath?: string;
+	gitPath?: string;
+	repository?: string;
+	issueNumber?: number;
+	source?: 'manual' | 'symphony' | 'agent-dispatch' | 'delivery-planner' | 'living-wiki' | 'mcp';
+}
+
 // Target specification for dispatching Auto Run to a worktree agent
 export interface WorktreeRunTarget {
 	mode: 'existing-open' | 'existing-closed' | 'create-new';
+	agentId?: string;
+	/** @deprecated Use agentId. Kept for existing stored configs and callers. */
 	sessionId?: string;
 	worktreePath?: string;
 	baseBranch?: string;
 	newBranchName?: string;
 	createPROnCompletion: boolean;
+	workGraph?: WorkGraphDispatchContext;
 }
 
 // Configuration for starting a batch run
@@ -306,6 +321,7 @@ export interface BatchRunConfig {
 	maxLoops?: number | null;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
+	workGraph?: WorkGraphDispatchContext;
 }
 
 // ============================================================================

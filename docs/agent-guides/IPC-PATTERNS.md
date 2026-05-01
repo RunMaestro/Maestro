@@ -447,3 +447,67 @@ The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `na
 | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` | IPC → blur + dispatch KeyboardEvent                                            |
 | `src/renderer/components/MainPanel/BrowserTabView.tsx`  | Focus-steal guard, scroll injection                                            |
 | `src/renderer/utils/tabHelpers.ts`                      | Tab navigation with browser tab handling                                       |
+
+---
+
+## Encore-gated IPC Handlers
+
+Some features are gated behind "Encore Feature" flags that users toggle in **Settings → Encore**. When a flag is off, the feature's IPC channels must reject calls — even if the renderer's modal is open — so CLI/web/MCP clients cannot bypass the gate.
+
+### Helper: `requireEncoreFeature`
+
+```typescript
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
+```
+
+`requireEncoreFeature(settingsStore, flag)` reads the `encoreFeatures` key from the main-process settings store and returns either `null` (feature enabled, proceed) or a `FeatureDisabledError`:
+
+```typescript
+interface FeatureDisabledError {
+	success: false;
+	code: 'FEATURE_DISABLED';
+	feature: string; // the flag key that was checked
+	error: string; // 'FEATURE_DISABLED' (for IpcResult compat)
+}
+```
+
+### Usage Pattern
+
+Pass `settingsStore` through the handler deps and call `gate()` at the top of each `ipcMain.handle` callback:
+
+```typescript
+export interface MyHandlerDeps {
+  settingsStore: SettingsStoreInterface;
+}
+
+export function registerMyHandlers(deps: MyHandlerDeps): void {
+  const gate = () => requireEncoreFeature(deps.settingsStore, 'myFeature');
+
+  ipcMain.handle('myFeature:doSomething', async (_event, input) => {
+    const gateError = gate();
+    if (gateError) return gateError;
+    // ... real handler logic
+    return createIpcDataHandler(...)(_event, input);
+  });
+}
+```
+
+The `gateError` is returned directly (not thrown) so the caller receives the structured `{ success: false, code: 'FEATURE_DISABLED', feature }` shape rather than a generic error string.
+
+### Gated Channels (as of 2026-05-01)
+
+| Feature flag        | Channels gated                                                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentDispatch`     | `agentDispatch:getBoard`, `getFleet`, `assignManually`, `releaseClaim`, `pauseAgent`, `resumeAgent`, `listAgents`, `listEligible`, `assign`, `release`, `pause`, `resume`, `createSubtask`, `status` |
+| `deliveryPlanner`   | `deliveryPlanner:createPrd`, `decomposePrd`, `decomposeEpic`, `dashboard`, `sync`, `createBugFollowUp`, `addProgressComment`, `resolvePaths`, `getProgress`, `listProgress`, `promoteDocGap`         |
+| `planningPipeline`  | `pipeline:getDashboard`                                                                                                                                                                              |
+| `conversationalPrd` | `conversationalPrd:createSession`, `sendMessage`, `getSession`, `listSessions`, `archiveSession`, `finalizeSession`                                                                                  |
+
+### Adding a New Gated Feature
+
+1. Add the flag key to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
+2. Add a `false` default to `DEFAULT_ENCORE_FEATURES` in `src/renderer/stores/settingsStore.ts`
+3. Add a toggle in `src/renderer/components/Settings/tabs/EncoreTab.tsx`
+4. Pass `settingsStore` through the handler's deps interface
+5. Call `requireEncoreFeature(deps.settingsStore, '<flag>')` at the top of each handler
+6. Register the handler with `settingsStore: deps.settingsStore` in `src/main/ipc/handlers/index.ts`

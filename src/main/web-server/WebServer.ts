@@ -49,6 +49,9 @@ import type {
 	CliActivity,
 	NotificationEvent,
 	SessionBroadcastData,
+	GitStatusData,
+	ToolExecutionData,
+	QueuedItemData,
 	WebClient,
 	WebClientMessage,
 	WebSettings,
@@ -73,6 +76,8 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	RemoveQueueItemCallback,
+	ReorderQueueCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -457,6 +462,14 @@ export class WebServer {
 		this.callbackRegistry.setConfigureAutoRunCallback(callback);
 	}
 
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbackRegistry.setRemoveQueueItemCallback(callback);
+	}
+
+	setReorderQueueCallback(callback: ReorderQueueCallback): void {
+		this.callbackRegistry.setReorderQueueCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -782,6 +795,10 @@ export class WebServer {
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
 			) => this.callbackRegistry.configureAutoRun(sessionId, config),
+			removeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.removeQueueItem(sessionId, itemId),
+			reorderQueue: async (sessionId: string, fromIndex: number, toIndex: number) =>
+				this.callbackRegistry.reorderQueue(sessionId, fromIndex, toIndex),
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getLiveSessionInfo: (sessionId: string) =>
 				this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -884,6 +901,8 @@ export class WebServer {
 			inputMode?: string;
 			cwd?: string;
 			cliActivity?: CliActivity;
+			currentCycleTokens?: number;
+			thinkingStartTime?: number;
 		}
 	): void {
 		this.broadcastService.broadcastSessionStateChange(sessionId, state, additionalData);
@@ -907,6 +926,22 @@ export class WebServer {
 
 	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
 		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+	}
+
+	broadcastGitStatus(sessionId: string, gitStatus: GitStatusData | null): void {
+		this.broadcastService.broadcastGitStatus(sessionId, gitStatus);
+	}
+
+	broadcastExecutionQueue(sessionId: string, executionQueue: QueuedItemData[]): void {
+		this.broadcastService.broadcastExecutionQueue(sessionId, executionQueue);
+	}
+
+	broadcastToolExecution(
+		sessionId: string,
+		tabId: string | undefined,
+		tool: ToolExecutionData
+	): void {
+		this.broadcastService.broadcastToolExecution(sessionId, tabId, tool);
 	}
 
 	broadcastThemeChange(theme: Theme): void {

@@ -83,6 +83,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
+		removeQueueItem: vi.fn().mockResolvedValue(true),
+		reorderQueue: vi.fn().mockResolvedValue(true),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -221,7 +223,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('should reject command when session is busy', () => {
+		it('should forward command when session is busy so desktop can queue it', async () => {
 			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
 
 			handler.handleMessage(client, {
@@ -230,10 +232,19 @@ describe('WebSocketMessageHandler', () => {
 				command: 'test',
 			});
 
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'test',
+					undefined,
+					undefined,
+					false
+				);
+			});
+
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('busy');
-			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
 		});
 
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {

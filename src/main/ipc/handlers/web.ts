@@ -25,7 +25,12 @@
 import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
-import type { AITabData } from '../../web-server/services/broadcastService';
+import type {
+	AITabData,
+	GitStatusData,
+	ToolExecutionData,
+	QueuedItemData,
+} from '../../web-server/types';
 import type { SettingsStoreInterface } from '../../stores/types';
 import { writeCliServerInfo, deleteCliServerInfo } from '../../../shared/cli-server-discovery';
 
@@ -167,6 +172,42 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		}
 	);
 
+	ipcMain.handle(
+		'web:broadcastGitStatus',
+		async (_, sessionId: string, gitStatus: GitStatusData | null) => {
+			const webServer = getWebServer();
+			if (webServer && webServer.getWebClientCount() > 0) {
+				webServer.broadcastGitStatus(sessionId, gitStatus);
+				return true;
+			}
+			return false;
+		}
+	);
+
+	ipcMain.handle(
+		'web:broadcastExecutionQueue',
+		async (_, sessionId: string, executionQueue: QueuedItemData[]) => {
+			const webServer = getWebServer();
+			if (webServer && webServer.getWebClientCount() > 0) {
+				webServer.broadcastExecutionQueue(sessionId, executionQueue);
+				return true;
+			}
+			return false;
+		}
+	);
+
+	ipcMain.handle(
+		'web:broadcastToolExecution',
+		async (_, sessionId: string, tabId: string | undefined, tool: ToolExecutionData) => {
+			const webServer = getWebServer();
+			if (webServer && webServer.getWebClientCount() > 0) {
+				webServer.broadcastToolExecution(sessionId, tabId, tool);
+				return true;
+			}
+			return false;
+		}
+	);
+
 	// Broadcast session state change to web clients (for real-time busy/idle updates)
 	// This is called directly from the renderer to bypass debounced persistence
 	// which resets state to 'idle' before saving
@@ -181,6 +222,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				currentCycleTokens?: number;
+				thinkingStartTime?: number;
 			}
 		) => {
 			const webServer = getWebServer();

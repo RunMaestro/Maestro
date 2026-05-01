@@ -256,6 +256,15 @@ export const MODAL_PRIORITIES = {
 
 	/** File tree filter input */
 	FILE_TREE_FILTER: 30,
+
+	/** Delivery Planner modal */
+	DELIVERY_PLANNER: 709,
+
+	/** Agent Dispatch fleet/kanban modal */
+	AGENT_DISPATCH: 708,
+
+	/** Planning Pipeline dashboard modal */
+	PLANNING_PIPELINE: 707,
 } as const;
 
 /**

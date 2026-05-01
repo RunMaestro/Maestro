@@ -61,6 +61,25 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerAgentDispatchHandlers, AgentDispatchHandlerDependencies } from './agent-dispatch';
+import {
+	registerAgentDispatchMcpHandlers,
+	AgentDispatchMcpHandlerDependencies,
+} from './agent-dispatch-mcp';
+import {
+	registerConversationalPrdHandlers,
+	initConversationalPrdStore,
+	ConversationalPrdHandlerDependencies,
+} from './conversational-prd';
+import {
+	registerDeliveryPlannerHandlers,
+	DeliveryPlannerHandlerDependencies,
+} from './delivery-planner';
+import {
+	registerPlanningPipelineHandlers,
+	PlanningPipelineHandlerDependencies,
+} from './planning-pipeline';
+import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -117,6 +136,16 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerAgentDispatchHandlers };
+export type { AgentDispatchHandlerDependencies };
+export { registerAgentDispatchMcpHandlers };
+export type { AgentDispatchMcpHandlerDependencies };
+export { registerConversationalPrdHandlers, initConversationalPrdStore };
+export type { ConversationalPrdHandlerDependencies };
+export { registerDeliveryPlannerHandlers };
+export type { DeliveryPlannerHandlerDependencies };
+export { registerPlanningPipelineHandlers };
+export type { PlanningPipelineHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -158,6 +187,8 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Agent Dispatch runtime (optional — null if not yet initialized)
+	getAgentDispatchRuntime?: () => AgentDispatchRuntime | null;
 }
 
 /**
@@ -310,6 +341,23 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register Agent Dispatch MCP / slash-command handlers (gated by agentDispatch encore flag)
+	registerAgentDispatchMcpHandlers({ settingsStore: deps.settingsStore });
+	// Register Agent Dispatch runtime handlers (kanban board, fleet view)
+	registerAgentDispatchHandlers({
+		getRuntime: deps.getAgentDispatchRuntime ?? (() => null),
+		settingsStore: deps.settingsStore,
+	});
+	// Register Delivery Planner handlers; returns the service for re-use by Conv-PRD
+	const plannerService = registerDeliveryPlannerHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
+	// Register Conversational PRD handlers (optional plannerService injection)
+	void initConversationalPrdStore().catch(() => {});
+	registerConversationalPrdHandlers({ plannerService, settingsStore: deps.settingsStore });
+	// Register Planning Pipeline handlers (gated by planningPipeline encore flag)
+	registerPlanningPipelineHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

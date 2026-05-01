@@ -15,6 +15,13 @@ import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/c
 import { webLogger } from '../utils/logger';
 
 /**
+ * Cap on the dedup cache for session_output messages. The previous
+ * implementation grew to 1000 entries then rebuilt a smaller Set; switching
+ * to a bounded Map keeps memory flat and eviction O(1).
+ */
+const MAX_SEEN_MSG_IDS = 500;
+
+/**
  * WebSocket connection states
  */
 export type WebSocketState =
@@ -28,6 +35,51 @@ export type WebSocketState =
  * Usage stats for session cost/token tracking (all fields optional in web context)
  */
 export type UsageStats = Partial<BaseUsageStats>;
+
+export interface QueuedItemData {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: 'message' | 'command';
+	text?: string;
+	images?: string[];
+	command?: string;
+	commandArgs?: string;
+	commandDescription?: string;
+	tabName?: string;
+	readOnlyMode?: boolean;
+}
+
+export interface GitFileChangeData {
+	path: string;
+	status: string;
+	additions: number;
+	deletions: number;
+	modified: boolean;
+}
+
+export interface GitStatusData {
+	fileCount: number;
+	branch?: string;
+	remote?: string;
+	behind: number;
+	ahead: number;
+	fileChanges?: GitFileChangeData[];
+	totalAdditions: number;
+	totalDeletions: number;
+	modifiedCount: number;
+	lastUpdated: number;
+}
+
+export interface ToolExecutionData {
+	toolName: string;
+	state?: {
+		status?: 'running' | 'completed' | 'error';
+		input?: unknown;
+		output?: unknown;
+	};
+	timestamp: number;
+}
 
 /**
  * AI Tab data for multi-tab support within a Maestro session
@@ -76,6 +128,10 @@ export interface SessionData {
 	aiTabs?: AITabData[];
 	activeTabId?: string;
 	bookmarked?: boolean; // Whether session is bookmarked (shows in Bookmarks group)
+	currentCycleTokens?: number;
+	executionQueue?: QueuedItemData[];
+	isGitRepo?: boolean;
+	gitStatus?: GitStatusData | null;
 	// Worktree subagent support
 	parentSessionId?: string | null; // If this is a worktree child, links to parent session
 	worktreeBranch?: string | null; // Git branch for this worktree child
@@ -133,6 +189,9 @@ export type ServerMessageType =
 	| 'tool_event'
 	| 'terminal_data'
 	| 'terminal_ready'
+	| 'git_status_changed'
+	| 'execution_queue_changed'
+	| 'tool_execution'
 	| 'pong'
 	| 'subscribed'
 	| 'echo'
@@ -202,6 +261,8 @@ export interface SessionStateChangeMessage extends ServerMessage {
 	toolType?: string;
 	inputMode?: string;
 	cwd?: string;
+	currentCycleTokens?: number;
+	thinkingStartTime?: number;
 }
 
 /**
@@ -391,6 +452,25 @@ export interface TabsChangedMessage extends ServerMessage {
 	activeTabId: string;
 }
 
+export interface GitStatusChangedMessage extends ServerMessage {
+	type: 'git_status_changed';
+	sessionId: string;
+	gitStatus: GitStatusData | null;
+}
+
+export interface ExecutionQueueChangedMessage extends ServerMessage {
+	type: 'execution_queue_changed';
+	sessionId: string;
+	executionQueue: QueuedItemData[];
+}
+
+export interface ToolExecutionMessage extends ServerMessage {
+	type: 'tool_execution';
+	sessionId: string;
+	tabId?: string;
+	tool: ToolExecutionData;
+}
+
 /**
  * Group chat message data
  */
@@ -491,6 +571,9 @@ export type TypedServerMessage =
 	| GroupChatMessageBroadcast
 	| GroupChatStateChangeBroadcast
 	| ToolEventMessage
+	| GitStatusChangedMessage
+	| ExecutionQueueChangedMessage
+	| ToolExecutionMessage
 	| ErrorMessage
 	| ServerMessage;
 
@@ -554,6 +637,9 @@ export interface WebSocketEventHandlers {
 	onGroupChatMessage?: (chatId: string, message: GroupChatMessage) => void;
 	/** Called when group chat state changes */
 	onGroupChatStateChange?: (chatId: string, state: Partial<GroupChatState>) => void;
+	onGitStatusChanged?: (sessionId: string, gitStatus: GitStatusData | null) => void;
+	onExecutionQueueChanged?: (sessionId: string, executionQueue: QueuedItemData[]) => void;
+	onToolExecution?: (sessionId: string, tabId: string | undefined, tool: ToolExecutionData) => void;
 	/** Called when connection state changes */
 	onConnectionChange?: (state: WebSocketState) => void;
 	/** Called when an error occurs */
@@ -692,8 +778,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 	// Connection ID to handle StrictMode double-mounting - each mount gets unique ID
 	const connectionIdRef = useRef<number>(0);
 	const mountIdRef = useRef<number>(0);
-	// Track seen message IDs to dedupe duplicate broadcasts
-	const seenMsgIdsRef = useRef<Set<string>>(new Set());
+	// Track seen message IDs to dedupe duplicate broadcasts.
+	// A Map gives us insertion-ordered iteration, so capping the size and
+	// dropping the oldest entry is O(1) — no Set rebuilds on every batch.
+	const seenMsgIdsRef = useRef<Map<string, true>>(new Map());
 	// Ref for handleMessage to avoid stale closure issues
 	const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
 	// Pending request-response map for sendRequest correlation
@@ -824,6 +912,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 								toolType: stateChangeMsg.toolType,
 								inputMode: stateChangeMsg.inputMode,
 								cwd: stateChangeMsg.cwd,
+								currentCycleTokens: stateChangeMsg.currentCycleTokens,
+								thinkingStartTime: stateChangeMsg.thinkingStartTime,
 							}
 						);
 						break;
@@ -852,17 +942,23 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						// Dedupe using message ID if available
 						if (outputMsg.msgId) {
 							if (seenMsgIdsRef.current.has(outputMsg.msgId)) {
+								// Refresh recency before skipping so eviction is LRU-on-access.
+								seenMsgIdsRef.current.delete(outputMsg.msgId);
+								seenMsgIdsRef.current.set(outputMsg.msgId, true);
 								webLogger.debug(
 									`DEDUPE: Skipping duplicate session_output msgId=${outputMsg.msgId}`,
 									'WebSocket'
 								);
 								break;
 							}
-							seenMsgIdsRef.current.add(outputMsg.msgId);
-							// Limit set size to prevent memory leaks (keep last 1000 IDs)
-							if (seenMsgIdsRef.current.size > 1000) {
-								const idsArray = Array.from(seenMsgIdsRef.current);
-								seenMsgIdsRef.current = new Set(idsArray.slice(-500));
+							seenMsgIdsRef.current.set(outputMsg.msgId, true);
+							// Bounded LRU: if we hit the cap, drop the least recently seen ID.
+							// Map iteration is insertion-order so .keys().next() is the oldest.
+							if (seenMsgIdsRef.current.size > MAX_SEEN_MSG_IDS) {
+								const oldest = seenMsgIdsRef.current.keys().next().value;
+								if (oldest !== undefined) {
+									seenMsgIdsRef.current.delete(oldest);
+								}
 							}
 						}
 						webLogger.debug(
@@ -992,6 +1088,27 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 							gcChatId,
 							gcState as Partial<GroupChatState>
 						);
+						break;
+					}
+
+					case 'git_status_changed': {
+						const gitMsg = message as GitStatusChangedMessage;
+						handlersRef.current?.onGitStatusChanged?.(gitMsg.sessionId, gitMsg.gitStatus);
+						break;
+					}
+
+					case 'execution_queue_changed': {
+						const queueMsg = message as ExecutionQueueChangedMessage;
+						handlersRef.current?.onExecutionQueueChanged?.(
+							queueMsg.sessionId,
+							queueMsg.executionQueue
+						);
+						break;
+					}
+
+					case 'tool_execution': {
+						const toolMsg = message as ToolExecutionMessage;
+						handlersRef.current?.onToolExecution?.(toolMsg.sessionId, toolMsg.tabId, toolMsg.tool);
 						break;
 					}
 

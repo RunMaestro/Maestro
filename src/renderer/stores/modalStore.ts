@@ -249,7 +249,13 @@ export type ModalId =
 	| 'directorNotes'
 	// Maestro Cue
 	| 'cueModal'
-	| 'cueYamlEditor';
+	| 'cueYamlEditor'
+	// Agent Dispatch
+	| 'agentDispatch'
+	// Delivery Planner
+	| 'deliveryPlanner'
+	// Planning Pipeline
+	| 'planningPipeline';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -816,6 +822,18 @@ export function getModalActions() {
 			openModal('cueYamlEditor', { sessionId, projectRoot }),
 		closeCueYamlEditor: () => closeModal('cueYamlEditor'),
 
+		// Agent Dispatch Modal
+		setAgentDispatchOpen: (open: boolean) =>
+			open ? openModal('agentDispatch') : closeModal('agentDispatch'),
+
+		// Delivery Planner Modal
+		setDeliveryPlannerOpen: (open: boolean) =>
+			open ? openModal('deliveryPlanner') : closeModal('deliveryPlanner'),
+
+		// Planning Pipeline Modal
+		setPlanningPipelineOpen: (open: boolean) =>
+			open ? openModal('planningPipeline') : closeModal('planningPipeline'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -912,6 +930,9 @@ export function useModalActions() {
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
+	const agentDispatchOpen = useModalStore(selectModalOpen('agentDispatch'));
+	const deliveryPlannerOpen = useModalStore(selectModalOpen('deliveryPlanner'));
+	const planningPipelineOpen = useModalStore(selectModalOpen('planningPipeline'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1096,6 +1117,15 @@ export function useModalActions() {
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId: cueYamlEditorData?.sessionId ?? null,
 		cueYamlEditorProjectRoot: cueYamlEditorData?.projectRoot ?? null,
+
+		// Agent Dispatch Modal
+		agentDispatchOpen,
+
+		// Delivery Planner Modal
+		deliveryPlannerOpen,
+
+		// Planning Pipeline Modal
+		planningPipelineOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

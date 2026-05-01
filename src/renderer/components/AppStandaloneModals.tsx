@@ -58,6 +58,19 @@ const CueModal = lazy(() => import('./CueModal').then((m) => ({ default: m.CueMo
 const CueYamlEditor = lazy(() =>
 	import('./CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
 );
+const AgentDispatchModal = lazy(() =>
+	import('./AgentDispatch/AgentDispatchModal').then((m) => ({ default: m.AgentDispatchModal }))
+);
+const DeliveryPlannerModal = lazy(() =>
+	import('./DeliveryPlanner/DeliveryPlannerModal').then((m) => ({
+		default: m.DeliveryPlannerModal,
+	}))
+);
+const PlanningPipelineModal = lazy(() =>
+	import('./PlanningPipeline/PlanningPipelineModal').then((m) => ({
+		default: m.PlanningPipelineModal,
+	}))
+);
 
 /**
  * Props for the AppStandaloneModals component.
@@ -240,6 +253,12 @@ function AppStandaloneModalsInner({
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
 		closeCueYamlEditor,
+		agentDispatchOpen,
+		setAgentDispatchOpen,
+		deliveryPlannerOpen,
+		setDeliveryPlannerOpen,
+		planningPipelineOpen,
+		setPlanningPipelineOpen,
 		deleteAgentModalOpen,
 		deleteAgentSession,
 		settingsModalOpen,
@@ -395,6 +414,40 @@ function AppStandaloneModalsInner({
 						/>
 					</Suspense>
 				)}
+
+			{/* --- AGENT DISPATCH MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.agentDispatch && agentDispatchOpen && (
+				<Suspense fallback={null}>
+					<AgentDispatchModal
+						theme={theme}
+						isOpen={agentDispatchOpen}
+						onClose={() => setAgentDispatchOpen(false)}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- DELIVERY PLANNER MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.deliveryPlanner && deliveryPlannerOpen && (
+				<Suspense fallback={null}>
+					<DeliveryPlannerModal
+						theme={theme}
+						isOpen={deliveryPlannerOpen}
+						onClose={() => setDeliveryPlannerOpen(false)}
+						activeSession={activeSession}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- PLANNING PIPELINE MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.planningPipeline && planningPipelineOpen && (
+				<Suspense fallback={null}>
+					<PlanningPipelineModal
+						theme={theme}
+						isOpen={planningPipelineOpen}
+						onClose={() => setPlanningPipelineOpen(false)}
+					/>
+				</Suspense>
+			)}
 
 			{/* --- GIST PUBLISH MODAL --- */}
 			{/* Supports both file preview tabs and tab context gist publishing */}

@@ -212,6 +212,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				usageStats: session.usageStats,
 				agentSessionId: session.agentSessionId,
 				isGitRepo: session.isGitRepo,
+				currentCycleTokens: session.currentCycleTokens || 0,
+				executionQueue: session.executionQueue || [],
 				activeTabId: targetTabId,
 			};
 		});
@@ -627,6 +629,38 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			mainWindow.webContents.send('remote:toggleBookmark', sessionId);
 			return true;
 		});
+
+		server.setRemoveQueueItemCallback(async (sessionId: string, itemId: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for removeQueueItem', 'WebServer');
+				return false;
+			}
+
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for removeQueueItem', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:removeQueueItem', sessionId, itemId);
+			return true;
+		});
+
+		server.setReorderQueueCallback(
+			async (sessionId: string, fromIndex: number, toIndex: number) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for reorderQueue', 'WebServer');
+					return false;
+				}
+
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for reorderQueue', 'WebServer');
+					return false;
+				}
+				mainWindow.webContents.send('remote:reorderQueue', sessionId, fromIndex, toIndex);
+				return true;
+			}
+		);
 
 		server.setOpenFileTabCallback(async (sessionId: string, filePath: string) => {
 			const mainWindow = getMainWindow();

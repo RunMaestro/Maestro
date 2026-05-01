@@ -1866,6 +1866,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					? `tool-${toolEvent.toolCallId}`
 					: `tool-${Date.now()}-${toolEvent.toolName}`;
 
+				window.maestro.web
+					.broadcastToolExecution(actualSessionId, tabId, toolEvent)
+					.catch((error) => {
+						console.error('[useAgentListeners] Failed to broadcast tool execution', {
+							error,
+							sessionId: actualSessionId,
+							tabId,
+							toolEvent,
+						});
+					});
+
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;

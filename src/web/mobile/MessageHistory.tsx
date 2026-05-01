@@ -28,7 +28,8 @@ export interface LogEntry {
 		toolState?: {
 			name?: string;
 			status?: 'running' | 'completed' | 'error';
-			input?: Record<string, unknown>;
+			input?: unknown;
+			output?: unknown;
 		};
 	};
 }
