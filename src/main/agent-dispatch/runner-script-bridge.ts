@@ -2,9 +2,10 @@
  * Runner Script Bridge
  *
  * Invokes an external runner script for a dispatched work item. The runner
- * script is looked up from the fleet entry's agent profile (via
- * `runnerScriptPath`) or falls back to the default directory at
- * `/opt/maestro-local-tools/symphony-fork-runner/`.
+ * script path MUST be set via `dispatchProfile.runnerScriptPath` on the fleet
+ * entry's agent profile. There is no default path — omitting the field causes
+ * `invokeRunnerScript` to return a structured `RUNNER_SCRIPT_NOT_CONFIGURED`
+ * failure without executing anything.
  *
  * Execution is always via `execFileNoThrow` — no shell expansion. SSH-remote
  * fleet entries wrap the invocation through `wrapSpawnWithSsh` before calling
@@ -27,7 +28,6 @@ import { createSshRemoteStoreAdapter } from '../utils/ssh-remote-resolver';
 import { logger } from '../utils/logger';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 
-export const DEFAULT_RUNNER_SCRIPT_DIR = '/opt/maestro-local-tools/symphony-fork-runner';
 const DEFAULT_RUNNER_SCRIPT_NAME = 'run.sh';
 const LOG_CONTEXT = '[RunnerScriptBridge]';
 
@@ -60,24 +60,27 @@ export interface RunnerScriptResult {
 /**
  * Resolve the absolute path of the runner script for a fleet entry.
  *
- * Resolution order:
- * 1. `entry.dispatchProfile` extension field `runnerScriptPath` (string).
- * 2. `DEFAULT_RUNNER_SCRIPT_DIR/<DEFAULT_RUNNER_SCRIPT_NAME>`
+ * Returns the configured `dispatchProfile.runnerScriptPath` value, or `null`
+ * when no path has been set. Bare directory paths (no file extension) get the
+ * default script name (`run.sh`) appended automatically.
+ *
+ * Callers MUST handle the `null` case — `invokeRunnerScript` will return a
+ * `RUNNER_SCRIPT_NOT_CONFIGURED` failure result when no path is configured.
  */
-export function resolveRunnerScriptPath(entry: AgentDispatchFleetEntry): string {
+export function resolveRunnerScriptPath(entry: AgentDispatchFleetEntry): string | null {
 	const profile = entry.dispatchProfile as unknown as Record<string, unknown>;
 	const configured =
 		typeof profile.runnerScriptPath === 'string' ? profile.runnerScriptPath : undefined;
 
-	if (configured) {
-		// Allow bare directory paths — append the default script name
-		if (!path.extname(configured)) {
-			return path.join(configured, DEFAULT_RUNNER_SCRIPT_NAME);
-		}
-		return configured;
+	if (!configured) {
+		return null;
 	}
 
-	return path.join(DEFAULT_RUNNER_SCRIPT_DIR, DEFAULT_RUNNER_SCRIPT_NAME);
+	// Allow bare directory paths — append the default script name
+	if (!path.extname(configured)) {
+		return path.join(configured, DEFAULT_RUNNER_SCRIPT_NAME);
+	}
+	return configured;
 }
 
 /**
@@ -93,6 +96,20 @@ export async function invokeRunnerScript(
 	deps: RunnerScriptBridgeDeps = {}
 ): Promise<RunnerScriptResult> {
 	const scriptPath = resolveRunnerScriptPath(entry);
+
+	if (scriptPath === null) {
+		const msg = `No runner script configured for fleet entry ${entry.id} — set dispatchProfile.runnerScriptPath to use external runner execution`;
+		logger.warn(msg, LOG_CONTEXT, { workItemId: workItem.id, agentId: entry.agentId });
+		return {
+			success: false,
+			exitCode: 'RUNNER_SCRIPT_NOT_CONFIGURED',
+			stdout: '',
+			stderr: msg,
+			scriptPath: '',
+			usedSsh: false,
+		};
+	}
+
 	const args = buildRunnerArgs(entry, workItem);
 
 	logger.info('Invoking runner script', LOG_CONTEXT, {

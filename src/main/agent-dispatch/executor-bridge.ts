@@ -10,10 +10,10 @@
  *    playbook trigger.
  *
  * 2. **External runner script** — when the fleet entry's agent profile
- *    specifies a `runnerScriptPath` (or the default
- *    `/opt/maestro-local-tools/symphony-fork-runner/run.sh` is present), the
- *    claim is executed via `invokeRunnerScript`. SSH-remote entries pass the
- *    call through `wrapSpawnWithSsh` automatically.
+ *    specifies a `runnerScriptPath`, the claim is executed via
+ *    `invokeRunnerScript`. SSH-remote entries pass the call through
+ *    `wrapSpawnWithSsh` automatically. If no `runnerScriptPath` is configured
+ *    the bridge returns a `RUNNER_SCRIPT_NOT_CONFIGURED` failure.
  *
  * Worktree ownership is recorded on every claim so that at most one runner
  * owns a given `(workItemId, agentId)` pair at a time. Attempting to execute
@@ -38,11 +38,7 @@
 
 import type { AutoPickupExecution } from './dispatch-engine';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
-import {
-	invokeRunnerScript,
-	resolveRunnerScriptPath,
-	DEFAULT_RUNNER_SCRIPT_DIR,
-} from './runner-script-bridge';
+import { invokeRunnerScript, resolveRunnerScriptPath } from './runner-script-bridge';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
 
@@ -200,7 +196,8 @@ export function createExecutorBridge(deps: ExecutorBridgeDeps = {}): ExecutorBri
 			claimedAt: new Date().toISOString(),
 			executionMode: mode,
 			usedSsh: agent.locality === 'ssh',
-			runnerScriptPath: mode === 'runner-script' ? resolveRunnerScriptPath(agent) : undefined,
+			runnerScriptPath:
+				mode === 'runner-script' ? (resolveRunnerScriptPath(agent) ?? undefined) : undefined,
 		};
 		worktreeOwnership.set(key, record);
 
@@ -319,10 +316,23 @@ async function dispatchRunnerScript(
 	workItem: AutoPickupExecution['claimedItem'],
 	deps: ExecutorBridgeDeps
 ): Promise<ExecutorBridgeResult> {
-	// Validate that the script exists before trying to exec it (local path only;
-	// for SSH we trust the remote path is configured correctly).
+	// Validate that the script is configured and exists before trying to exec it
+	// (local path only; for SSH we trust the remote path is configured correctly).
 	if (agent.locality === 'local') {
 		const scriptPath = resolveRunnerScriptPath(agent);
+		if (scriptPath === null) {
+			const msg = `No runner script configured for fleet entry ${agent.id} — set dispatchProfile.runnerScriptPath to enable external runner execution`;
+			logger.warn(msg, LOG_CONTEXT, {
+				workItemId: workItem.id,
+				agentId: agent.agentId,
+			});
+			return {
+				mode: 'runner-script',
+				success: false,
+				exitCode: 'RUNNER_SCRIPT_NOT_CONFIGURED',
+				message: msg,
+			};
+		}
 		if (!runnerScriptExists(scriptPath)) {
 			const msg = `Runner script not found at ${scriptPath} — no executor available for work item ${workItem.id}`;
 			logger.warn(msg, LOG_CONTEXT, {
@@ -360,6 +370,3 @@ function runnerScriptExists(scriptPath: string): boolean {
 		return false;
 	}
 }
-
-// Re-export for convenience — runtime.ts imports from here
-export { DEFAULT_RUNNER_SCRIPT_DIR };

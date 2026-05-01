@@ -43,7 +43,6 @@ export {
 	getWorktreeOwnership,
 	releaseWorktreeOwnership,
 	listWorktreeOwnerships,
-	DEFAULT_RUNNER_SCRIPT_DIR,
 } from './executor-bridge';
 export type {
 	AutoRunContext,

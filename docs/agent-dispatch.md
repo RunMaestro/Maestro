@@ -199,3 +199,7 @@ Agent pause state is held in-memory by the FleetRegistry and is not persisted to
 ### "Agent Dispatch runtime is not running" error
 
 The dispatch runtime starts automatically when Maestro launches. If IPC calls return this error, restart the Maestro desktop app. If the problem persists, check the System Log Viewer (`View → System Log`) for initialization errors.
+
+### Runner script not configured (`RUNNER_SCRIPT_NOT_CONFIGURED`)
+
+There is no default runner script path. To enable external runner execution, set `dispatchProfile.runnerScriptPath` on the agent's fleet profile to the absolute path of the runner script (e.g. `"/opt/maestro-local-tools/symphony-fork-runner/run.sh"`). Without this setting the executor bridge returns a structured failure instead of executing anything.
