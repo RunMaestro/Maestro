@@ -142,6 +142,7 @@ type WorkGraphImportInput = import('../shared/work-graph-types').WorkGraphImport
 type WorkGraphImportSummary = import('../shared/work-graph-types').WorkGraphImportSummary;
 type AgentReadyWorkFilter = import('../shared/work-graph-types').AgentReadyWorkFilter;
 type WorkGraphBroadcastEnvelope = import('../shared/work-graph-types').WorkGraphBroadcastEnvelope;
+type WorkGraphActor = import('../shared/work-graph-types').WorkGraphActor;
 
 // Agent Dispatch types
 type AgentDispatchFleetEntry = import('../shared/agent-dispatch-types').AgentDispatchFleetEntry;
@@ -180,6 +181,22 @@ type DeliveryPlannerPromoteDocGapResult =
 // Planning Pipeline types
 type PipelineDashboardResult =
 	import('../main/ipc/handlers/planning-pipeline').PipelineDashboardResult;
+
+// Conversational PRD types
+type ConversationalPrdStartRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdStartRequest;
+type ConversationalPrdTurnRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdTurnRequest;
+type ConversationalPrdFinalizeRequest =
+	import('../shared/conversational-prd-types').ConversationalPrdFinalizeRequest;
+type ConversationalPrdStartResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdStartResponse;
+type ConversationalPrdTurnResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdTurnResponse;
+type ConversationalPrdFinalizeResponse =
+	import('../shared/conversational-prd-types').ConversationalPrdFinalizeResponse;
+type ConversationalPrdSession =
+	import('../shared/conversational-prd-types').ConversationalPrdSession;
 
 type IpcDataResponse<T> = { success: true; data: T } | { success: false; error: string };
 
@@ -3496,6 +3513,30 @@ interface MaestroAPI {
 
 	pipeline: {
 		getDashboard: () => Promise<IpcDataResponse<PipelineDashboardResult>>;
+	};
+
+	// Conversational PRD Planner API
+	conversationalPrd: {
+		createSession: (
+			input: ConversationalPrdStartRequest
+		) => Promise<IpcDataResponse<ConversationalPrdStartResponse>>;
+		sendMessage: (
+			input: ConversationalPrdTurnRequest
+		) => Promise<IpcDataResponse<ConversationalPrdTurnResponse>>;
+		getSession: (
+			conversationId: string
+		) => Promise<IpcDataResponse<ConversationalPrdSession | null>>;
+		listSessions: (filters?: {
+			projectPath?: string;
+			includeArchived?: boolean;
+		}) => Promise<IpcDataResponse<ConversationalPrdSession[]>>;
+		archiveSession: (input: {
+			sessionId: string;
+			actor?: WorkGraphActor;
+		}) => Promise<IpcDataResponse<ConversationalPrdSession>>;
+		finalizeSession: (
+			input: ConversationalPrdFinalizeRequest
+		) => Promise<IpcDataResponse<ConversationalPrdFinalizeResponse>>;
 	};
 }
 
