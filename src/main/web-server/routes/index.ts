@@ -33,3 +33,7 @@ export {
 	registerDeliveryPlannerRoutes,
 	DeliveryPlannerRouteDependencies,
 } from './deliveryPlannerRoutes';
+export {
+	registerPlanningPipelineRoutes,
+	PlanningPipelineRouteDependencies,
+} from './planningPipelineRoutes';

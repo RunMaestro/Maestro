@@ -40,8 +40,13 @@ import {
 	WsRoute,
 	registerAgentDispatchRoutes,
 	registerDeliveryPlannerRoutes,
+	registerPlanningPipelineRoutes,
 } from './routes';
-import type { AgentDispatchRouteDependencies, DeliveryPlannerRouteDependencies } from './routes';
+import type {
+	AgentDispatchRouteDependencies,
+	DeliveryPlannerRouteDependencies,
+	PlanningPipelineRouteDependencies,
+} from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -176,6 +181,9 @@ export class WebServer {
 
 	// Optional Delivery Planner route dependencies (set before start())
 	private deliveryPlannerDeps: DeliveryPlannerRouteDependencies | null = null;
+
+	// Optional Planning Pipeline route dependencies (set before start())
+	private planningPipelineDeps: PlanningPipelineRouteDependencies | null = null;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -631,6 +639,10 @@ export class WebServer {
 		this.deliveryPlannerDeps = deps;
 	}
 
+	setPlanningPipelineDeps(deps: PlanningPipelineRouteDependencies): void {
+		this.planningPipelineDeps = deps;
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -742,6 +754,16 @@ export class WebServer {
 				this.securityToken,
 				this.rateLimitConfig,
 				this.deliveryPlannerDeps
+			);
+		}
+
+		// Register Planning Pipeline routes when deps have been supplied
+		if (this.planningPipelineDeps) {
+			registerPlanningPipelineRoutes(
+				this.server,
+				this.securityToken,
+				this.rateLimitConfig,
+				this.planningPipelineDeps
 			);
 		}
 
