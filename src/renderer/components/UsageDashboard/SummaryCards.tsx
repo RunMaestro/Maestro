@@ -49,21 +49,36 @@ type ByDayEntry = StatsAggregation['byDay'][number];
 const SPARKLINE_DAYS = 7;
 
 /**
- * Build a fixed last-7-days window ending at today, indexing the byDay series
- * by its YYYY-MM-DD date string and falling back to zero for absent days. This
- * keeps the sparkline geometrically faithful — sparse byDay rows would
- * otherwise compress gaps and overstate momentum.
+ * Build a fixed last-7-days window indexing the byDay series by its YYYY-MM-DD
+ * date string and falling back to zero for absent days. This keeps the
+ * sparkline geometrically faithful — sparse byDay rows would otherwise compress
+ * gaps and overstate momentum.
+ *
+ * The window ends on the latest date present in byDay (or today if byDay is
+ * empty) so the helper still works on historical / unit-test fixtures that
+ * don't contain today's row.
  */
 function buildLast7DaysWindow(byDay: ByDayEntry[], pick: (entry: ByDayEntry) => number): number[] {
-	const lookup = new Map<string, number>();
-	for (const entry of byDay) {
-		lookup.set(entry.date, pick(entry));
-	}
 	const ymd = (d: Date) =>
 		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-	const values: number[] = [];
-	const cursor = new Date();
+	const parseYmd = (s: string): Date | null => {
+		const parts = s.split('-').map(Number);
+		if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+		return new Date(parts[0], parts[1] - 1, parts[2]);
+	};
+
+	const lookup = new Map<string, number>();
+	let latest: Date | null = null;
+	for (const entry of byDay) {
+		lookup.set(entry.date, pick(entry));
+		const d = parseYmd(entry.date);
+		if (d && (!latest || d > latest)) latest = d;
+	}
+
+	const cursor = latest ?? new Date();
 	cursor.setHours(0, 0, 0, 0);
+
+	const values: number[] = [];
 	for (let i = SPARKLINE_DAYS - 1; i >= 0; i--) {
 		const day = new Date(cursor);
 		day.setDate(cursor.getDate() - i);
