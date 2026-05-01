@@ -9,7 +9,7 @@
  * Full chat UX is a follow-up iteration (#415).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, FileText, Plus, Loader2 } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -28,10 +28,17 @@ export function ConversationalPrdModal({ theme, isOpen, onClose }: Conversationa
 	const [loading, setLoading] = useState(false);
 	const [creating, setCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
 
-	useModalLayer(MODAL_PRIORITIES.CONVERSATIONAL_PRD, 'Conversational PRD', onClose, {
-		enabled: isOpen,
-	});
+	useModalLayer(
+		MODAL_PRIORITIES.CONVERSATIONAL_PRD,
+		'Conversational PRD',
+		() => onCloseRef.current(),
+		{
+			enabled: isOpen,
+		}
+	);
 
 	useEffect(() => {
 		if (!isOpen) return;

@@ -6,7 +6,7 @@
  * Escape-to-close, backdrop click to close.
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Server, LayoutDashboard } from 'lucide-react';
 import type { Theme } from '../../types';
@@ -25,8 +25,10 @@ type Tab = 'fleet' | 'kanban';
 
 export function AgentDispatchModal({ theme, isOpen, onClose }: AgentDispatchModalProps) {
 	const [activeTab, setActiveTab] = useState<Tab>('kanban');
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
 
-	useModalLayer(MODAL_PRIORITIES.AGENT_DISPATCH, 'Agent Dispatch', onClose, {
+	useModalLayer(MODAL_PRIORITIES.AGENT_DISPATCH, 'Agent Dispatch', () => onCloseRef.current(), {
 		enabled: isOpen,
 	});
 

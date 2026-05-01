@@ -7,6 +7,7 @@
  */
 
 import { createPortal } from 'react-dom';
+import { useRef } from 'react';
 import { X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
@@ -20,9 +21,17 @@ export interface PlanningPipelineModalProps {
 }
 
 export function PlanningPipelineModal({ theme, isOpen, onClose }: PlanningPipelineModalProps) {
-	useModalLayer(MODAL_PRIORITIES.PLANNING_PIPELINE, 'Planning Pipeline', onClose, {
-		enabled: isOpen,
-	});
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+
+	useModalLayer(
+		MODAL_PRIORITIES.PLANNING_PIPELINE,
+		'Planning Pipeline',
+		() => onCloseRef.current(),
+		{
+			enabled: isOpen,
+		}
+	);
 
 	if (!isOpen) return null;
 
