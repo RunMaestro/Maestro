@@ -71,6 +71,11 @@ const PlanningPipelineModal = lazy(() =>
 		default: m.PlanningPipelineModal,
 	}))
 );
+const ConversationalPrdModal = lazy(() =>
+	import('./ConversationalPRD/ConversationalPrdModal').then((m) => ({
+		default: m.ConversationalPrdModal,
+	}))
+);
 
 /**
  * Props for the AppStandaloneModals component.
@@ -259,6 +264,8 @@ function AppStandaloneModalsInner({
 		setDeliveryPlannerOpen,
 		planningPipelineOpen,
 		setPlanningPipelineOpen,
+		conversationalPrdOpen,
+		setConversationalPrdOpen,
 		deleteAgentModalOpen,
 		deleteAgentSession,
 		settingsModalOpen,
@@ -445,6 +452,17 @@ function AppStandaloneModalsInner({
 						theme={theme}
 						isOpen={planningPipelineOpen}
 						onClose={() => setPlanningPipelineOpen(false)}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- CONVERSATIONAL PRD MODAL (lazy-loaded, Encore Feature) --- */}
+			{encoreFeatures.conversationalPrd && conversationalPrdOpen && (
+				<Suspense fallback={null}>
+					<ConversationalPrdModal
+						theme={theme}
+						isOpen={conversationalPrdOpen}
+						onClose={() => setConversationalPrdOpen(false)}
 					/>
 				</Suspense>
 			)}

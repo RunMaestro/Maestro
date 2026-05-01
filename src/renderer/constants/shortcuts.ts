@@ -99,6 +99,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Planning Pipeline',
 		keys: ['Alt', 'i'],
 	},
+	openConversationalPrd: {
+		id: 'openConversationalPrd',
+		label: 'Conversational PRD',
+		keys: ['Alt', 'r'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

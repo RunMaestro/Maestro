@@ -255,7 +255,9 @@ export type ModalId =
 	// Delivery Planner
 	| 'deliveryPlanner'
 	// Planning Pipeline
-	| 'planningPipeline';
+	| 'planningPipeline'
+	// Conversational PRD Planner
+	| 'conversationalPrd';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -834,6 +836,10 @@ export function getModalActions() {
 		setPlanningPipelineOpen: (open: boolean) =>
 			open ? openModal('planningPipeline') : closeModal('planningPipeline'),
 
+		// Conversational PRD Planner Modal
+		setConversationalPrdOpen: (open: boolean) =>
+			open ? openModal('conversationalPrd') : closeModal('conversationalPrd'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -933,6 +939,7 @@ export function useModalActions() {
 	const agentDispatchOpen = useModalStore(selectModalOpen('agentDispatch'));
 	const deliveryPlannerOpen = useModalStore(selectModalOpen('deliveryPlanner'));
 	const planningPipelineOpen = useModalStore(selectModalOpen('planningPipeline'));
+	const conversationalPrdOpen = useModalStore(selectModalOpen('conversationalPrd'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1126,6 +1133,9 @@ export function useModalActions() {
 
 		// Planning Pipeline Modal
 		planningPipelineOpen,
+
+		// Conversational PRD Planner Modal
+		conversationalPrdOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

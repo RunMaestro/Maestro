@@ -332,6 +332,8 @@ function MaestroConsoleInner() {
 		setDeliveryPlannerOpen,
 		// Planning Pipeline Modal
 		setPlanningPipelineOpen,
+		// Conversational PRD Planner Modal
+		setConversationalPrdOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -475,6 +477,10 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!encoreFeatures.planningPipeline) setPlanningPipelineOpen(false);
 	}, [encoreFeatures.planningPipeline, setPlanningPipelineOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.conversationalPrd) setConversationalPrdOpen(false);
+	}, [encoreFeatures.conversationalPrd, setConversationalPrdOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
@@ -2146,6 +2152,7 @@ function MaestroConsoleInner() {
 		setAgentDispatchOpen,
 		setDeliveryPlannerOpen,
 		setPlanningPipelineOpen,
+		setConversationalPrdOpen,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -2887,6 +2894,9 @@ function MaestroConsoleInner() {
 					}
 					onOpenPlanningPipeline={
 						encoreFeatures.planningPipeline ? () => setPlanningPipelineOpen(true) : undefined
+					}
+					onOpenConversationalPrd={
+						encoreFeatures.conversationalPrd ? () => setConversationalPrdOpen(true) : undefined
 					}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}

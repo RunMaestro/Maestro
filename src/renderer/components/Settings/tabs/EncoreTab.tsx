@@ -23,6 +23,7 @@ import {
 	Server,
 	ScrollText,
 	GitBranch,
+	FileText,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
@@ -1190,6 +1191,76 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
 							style={{
 								transform: encoreFeatures.planningPipeline ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+			</div>
+
+			{/* Conversational PRD Feature Section */}
+			<div
+				data-setting-id="encore-conversational-prd"
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.conversationalPrd ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.conversationalPrd
+						? `${theme.colors.accent}08`
+						: 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							conversationalPrd: !encoreFeatures.conversationalPrd,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<FileText
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.conversationalPrd
+									? theme.colors.accent
+									: theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Conversational PRD
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Plan features via AI-guided conversation, then commit as a PRD item
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.conversationalPrd ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.conversationalPrd
+								? theme.colors.accent
+								: theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.conversationalPrd
+									? 'translateX(22px)'
+									: 'translateX(2px)',
 							}}
 						/>
 					</div>

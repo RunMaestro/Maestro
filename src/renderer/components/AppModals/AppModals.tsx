@@ -296,6 +296,8 @@ export interface AppModalsProps {
 	onOpenDeliveryPlanner?: () => void;
 	// Planning Pipeline
 	onOpenPlanningPipeline?: () => void;
+	// Conversational PRD Planner
+	onOpenConversationalPrd?: () => void;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
 	onFileTabSelect?: (tabId: string) => void;
@@ -698,6 +700,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenDeliveryPlanner,
 		// Planning Pipeline
 		onOpenPlanningPipeline,
+		// Conversational PRD Planner
+		onOpenConversationalPrd,
 		onCloseTabSwitcher,
 		onTabSelect,
 		onFileTabSelect,
@@ -1007,6 +1011,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenAgentDispatch={onOpenAgentDispatch}
 				onOpenDeliveryPlanner={onOpenDeliveryPlanner}
 				onOpenPlanningPipeline={onOpenPlanningPipeline}
+				onOpenConversationalPrd={onOpenConversationalPrd}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}
 				stagedImages={stagedImages}

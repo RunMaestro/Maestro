@@ -245,6 +245,8 @@ interface QuickActionsModalProps {
 	onOpenDeliveryPlanner?: () => void;
 	// Planning Pipeline
 	onOpenPlanningPipeline?: () => void;
+	// Conversational PRD Planner
+	onOpenConversationalPrd?: () => void;
 }
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
@@ -345,6 +347,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenAgentDispatch,
 		onOpenDeliveryPlanner,
 		onOpenPlanningPipeline,
+		onOpenConversationalPrd,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -1619,6 +1622,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'View planning stage pipeline dashboard',
 						action: () => {
 							onOpenPlanningPipeline();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Conversational PRD Planner
+		...(onOpenConversationalPrd
+			? [
+					{
+						id: 'conversationalPrd',
+						label: 'Conversational PRD',
+						shortcut: shortcuts.openConversationalPrd,
+						subtext: 'Plan a new feature with AI-guided PRD conversation',
+						action: () => {
+							onOpenConversationalPrd();
 							setQuickActionOpen(false);
 						},
 					},

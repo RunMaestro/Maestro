@@ -611,6 +611,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setPlanningPipelineOpen?.(true);
 				trackShortcut('openPlanningPipeline');
+			} else if (
+				ctx.isShortcut(e, 'openConversationalPrd') &&
+				ctx.encoreFeatures?.conversationalPrd
+			) {
+				e.preventDefault();
+				ctx.setConversationalPrdOpen?.(true);
+				trackShortcut('openConversationalPrd');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

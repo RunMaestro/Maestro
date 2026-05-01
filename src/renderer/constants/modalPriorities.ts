@@ -265,6 +265,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Planning Pipeline dashboard modal */
 	PLANNING_PIPELINE: 707,
+
+	/** Conversational PRD Planner modal */
+	CONVERSATIONAL_PRD: 706,
 } as const;
 
 /**
