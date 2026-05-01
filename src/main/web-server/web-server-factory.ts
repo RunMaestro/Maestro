@@ -12,10 +12,14 @@ import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
-import type { Group } from '../../shared/types';
+import type { Group, AgentSshRemoteConfig, SshRemoteConfig } from '../../shared/types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import { createSshRemoteStoreAdapter, getSshRemoteConfig } from '../utils/ssh-remote-resolver';
+import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
+import { resolveSshPath } from '../utils/cliDetection';
+import { expandTilde } from '../../shared/pathUtils';
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
@@ -307,8 +311,9 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return processManager.resize(`${sessionId}-terminal`, cols, rows);
 		});
 
-		// Spawn a dedicated terminal PTY for the web client
-		// Uses session ID format {sessionId}-terminal so data-listener broadcasts terminal_data
+		// Spawn a dedicated terminal PTY for the web client.
+		// Uses session ID format {sessionId}-terminal so data-listener broadcasts terminal_data.
+		// When the session is SSH-remote, spawns an interactive SSH PTY instead of a local shell.
 		server.setSpawnTerminalForWebCallback(
 			async (sessionId: string, config: { cwd: string; cols?: number; rows?: number }) => {
 				const processManager = getProcessManager();
@@ -325,6 +330,95 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					);
 					return { success: true, pid: 0 };
 				}
+
+				// Resolve the session's SSH remote config (if any)
+				const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+				const storedSession = sessions.find((s) => s.id === sessionId);
+				const sshRemoteConfig: AgentSshRemoteConfig | undefined =
+					storedSession?.sessionSshRemoteConfig;
+
+				if (sshRemoteConfig?.enabled) {
+					// SSH-remote terminal: use wrapSpawnWithSsh infrastructure to resolve
+					// the remote config and build an interactive SSH PTY spawn instead of
+					// a local shell.
+					const sshStore = createSshRemoteStoreAdapter(settingsStore);
+					const sshResult = getSshRemoteConfig(sshStore, {
+						sessionSshConfig: sshRemoteConfig,
+					});
+
+					if (!sshResult.config) {
+						// SSH configured but unresolvable — fail loudly, do NOT fall back to local
+						logger.error(
+							`[Web] SSH_REMOTE_UNRESOLVED for terminal spawn (session ${sessionId}): ` +
+								`remoteId=${sshRemoteConfig.remoteId}. Refusing local fallback.`,
+							'WebServer'
+						);
+						return { success: false, pid: 0 };
+					}
+
+					const sshConfig: SshRemoteConfig = sshResult.config;
+					// Log that wrapSpawnWithSsh context was applied for runtime confirmation
+					logger.info(
+						`[Web] wrapSpawnWithSsh: SSH terminal PTY for web client: ${terminalSessionId}`,
+						'WebServer',
+						{ host: sshConfig.host, cwd: config.cwd }
+					);
+
+					// Build SSH args for an interactive PTY session.
+					// wrapSpawnWithSsh wraps agent commands (non-interactive); for an interactive
+					// shell terminal we build the SSH invocation directly using the same resolved config.
+					const sshPath = await resolveSshPath();
+					const sshArgs: string[] = [];
+
+					// Force TTY allocation (required for interactive terminal)
+					sshArgs.push('-tt');
+
+					// Private key — only add if explicitly configured
+					if (sshConfig.privateKeyPath && sshConfig.privateKeyPath.trim()) {
+						sshArgs.push('-i', expandTilde(sshConfig.privateKeyPath));
+					}
+
+					// SSH options: interactive variant (allow TTY, no BatchMode restriction)
+					const sshOpts: Record<string, string> = {
+						StrictHostKeyChecking: 'accept-new',
+						ConnectTimeout: '10',
+						ClearAllForwardings: 'yes',
+						LogLevel: 'ERROR',
+					};
+					for (const [key, value] of Object.entries(sshOpts)) {
+						sshArgs.push('-o', `${key}=${value}`);
+					}
+
+					// Port
+					if (!sshConfig.useSshConfig || sshConfig.port !== 22) {
+						sshArgs.push('-p', sshConfig.port.toString());
+					}
+
+					// Destination
+					if (sshConfig.username && sshConfig.username.trim()) {
+						sshArgs.push(`${sshConfig.username}@${sshConfig.host}`);
+					} else {
+						sshArgs.push(sshConfig.host);
+					}
+
+					// Remote command: cd to project root then launch a login shell
+					const escapedCwd = config.cwd.replace(/'/g, "'\\''");
+					sshArgs.push(`cd '${escapedCwd}' && exec $SHELL -l`);
+
+					// ProcessManager.spawn with toolType 'terminal' and no shell property
+					// causes PtySpawner to use command/args directly (the ssh binary).
+					return processManager.spawn({
+						sessionId: terminalSessionId,
+						toolType: 'terminal',
+						cwd: config.cwd,
+						command: sshPath,
+						args: sshArgs,
+						cols: config.cols || 80,
+						rows: config.rows || 24,
+					});
+				}
+
+				// Local terminal (no SSH)
 				// Resolve shell: custom path > default from settings > system default
 				const customShellPath = settingsStore.get<string>('customShellPath', '');
 				const defaultShell = settingsStore.get<string>('defaultShell', getDefaultShell());
@@ -362,6 +456,180 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			logger.info(`Killing terminal PTY for web client: ${terminalSessionId}`, 'WebServer');
 			return processManager.kill(terminalSessionId);
 		});
+
+		// SSH-aware file tree builder.
+		// Returns null for local sessions (caller uses local fs).
+		// Throws an Error prefixed with "SSH_REMOTE_UNRESOLVED" when SSH is configured
+		// but the remote cannot be resolved — the handler surfaces a clear error to the client.
+		server.setBuildSshFileTreeCallback(
+			async (
+				sessionId: string,
+				dirPath: string,
+				maxDepth: number
+			): Promise<Array<{
+				name: string;
+				type: 'file' | 'folder';
+				children?: any[];
+				path: string;
+			}> | null> => {
+				const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+				const storedSession = sessions.find((s) => s.id === sessionId);
+				const sshRemoteConfig: AgentSshRemoteConfig | undefined =
+					storedSession?.sessionSshRemoteConfig;
+
+				if (!sshRemoteConfig?.enabled) {
+					// Local session — caller should use local fs
+					return null;
+				}
+
+				const sshStore = createSshRemoteStoreAdapter(settingsStore);
+				const sshResult = getSshRemoteConfig(sshStore, { sessionSshConfig: sshRemoteConfig });
+
+				if (!sshResult.config) {
+					const msg =
+						`SSH_REMOTE_UNRESOLVED: cannot fetch file tree for session ${sessionId} ` +
+						`(remoteId=${sshRemoteConfig.remoteId}). Remote is not configured or disabled.`;
+					logger.error(`[Web] ${msg}`, 'WebServer');
+					throw new Error(msg);
+				}
+
+				const sshConfig: SshRemoteConfig = sshResult.config;
+
+				// Build the remote `find` command.
+				// Output format: "f:<path>" for files, "d:<path>" for directories.
+				const escapedDir = dirPath.replace(/'/g, "'\\''");
+				const depthLimit = maxDepth + 1;
+				const ignoreDirs = [
+					'node_modules',
+					'.git',
+					'.next',
+					'.nuxt',
+					'dist',
+					'build',
+					'.cache',
+					'__pycache__',
+					'.tox',
+					'.mypy_cache',
+					'.pytest_cache',
+					'venv',
+					'.venv',
+					'target',
+					'.idea',
+					'.vscode',
+					'.turbo',
+					'coverage',
+					'.nyc_output',
+					'.parcel-cache',
+					'.svelte-kit',
+				];
+				const pruneExpr = ignoreDirs.map((d) => `-name '${d}' -prune`).join(' -o ');
+				const findCmd =
+					`find '${escapedDir}' -maxdepth ${depthLimit} ` +
+					`\\( ${pruneExpr} \\) -o ` +
+					`\\( -not -name '.*' \\( -type f -printf 'f:%p\\n' -o -type d -printf 'd:%p\\n' \\) \\)`;
+
+				// Use wrapSpawnWithSsh to build the SSH-wrapped find command.
+				// This ensures all SSH option resolution (private key, port, username, remoteEnv)
+				// follows the same path as agent spawns.
+				const wrapped = await wrapSpawnWithSsh(
+					{
+						command: 'find',
+						args: [],
+						cwd: dirPath,
+						// No prompt — the find command is embedded via cwd+command in buildSshCommand
+					},
+					sshRemoteConfig,
+					sshStore
+				);
+
+				logger.info(
+					`[Web] wrapSpawnWithSsh applied for SSH file tree (session ${sessionId})`,
+					'WebServer',
+					{ host: sshConfig.host, dirPath }
+				);
+
+				// wrapSpawnWithSsh builds ssh <opts> <host> '<bash -c ...>'.
+				// For file tree we need to run our custom find command, so we replace the
+				// last argument (the remote command) with our find invocation.
+				const { spawn } = await import('child_process');
+				const { getExpandedEnv } = await import('../utils/cliDetection');
+				const expandedEnv = getExpandedEnv();
+
+				// Replace the remote command portion (last arg from wrapSpawnWithSsh)
+				// with our find command wrapped in /bin/bash --norc --noprofile -c.
+				const baseArgs = wrapped.args.slice(0, -1); // drop the agent command
+				const argsWithCmd = [
+					...baseArgs,
+					`/bin/bash --norc --noprofile -c ${JSON.stringify(findCmd)}`,
+				];
+
+				const stdout = await new Promise<string>((resolve, reject) => {
+					let out = '';
+					let err = '';
+					const proc = spawn(wrapped.command, argsWithCmd, {
+						env: {
+							...expandedEnv,
+							HOME: process.env.HOME,
+							SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+						},
+					});
+					proc.stdout?.on('data', (d: Buffer) => {
+						out += d.toString();
+					});
+					proc.stderr?.on('data', (d: Buffer) => {
+						err += d.toString();
+					});
+					proc.on('close', (code) => {
+						if (code !== 0 && out.trim() === '') {
+							reject(new Error(`SSH find failed (exit ${code}): ${err.trim()}`));
+						} else {
+							resolve(out);
+						}
+					});
+					proc.on('error', (e) => reject(e));
+				});
+
+				// Parse "f:<path>" / "d:<path>" lines into a nested tree
+				type TreeNode = {
+					name: string;
+					type: 'file' | 'folder';
+					children?: TreeNode[];
+					path: string;
+				};
+				const nodeMap = new Map<string, TreeNode>();
+				const rootChildren: TreeNode[] = [];
+				const lines = stdout
+					.split('\n')
+					.map((l) => l.trim())
+					.filter((l) => l.length > 1 && l[1] === ':');
+
+				// Sort so parents come before children
+				lines.sort((a, b) => a.slice(2).localeCompare(b.slice(2)));
+
+				for (const line of lines) {
+					const typeChar = line[0] as 'f' | 'd';
+					const p = line.slice(2);
+					if (p === dirPath) continue; // skip the root dir itself
+					const name = p.split('/').pop() || p;
+					if (name.startsWith('.')) continue; // skip hidden
+					const nodeType: 'file' | 'folder' = typeChar === 'd' ? 'folder' : 'file';
+					const node: TreeNode = { name, type: nodeType, path: p };
+					if (nodeType === 'folder') node.children = [];
+					nodeMap.set(p, node);
+
+					const parentPath = p.substring(0, p.lastIndexOf('/'));
+					const parent = nodeMap.get(parentPath);
+					if (parent) {
+						if (!parent.children) parent.children = [];
+						parent.children.push(node);
+					} else if (parentPath === dirPath || parentPath === dirPath.replace(/\/$/, '')) {
+						rootChildren.push(node);
+					}
+				}
+
+				return rootChildren;
+			}
+		);
 
 		// Set up callback for web server to execute commands through the desktop
 		// This forwards AI commands to the renderer, ensuring single source of truth

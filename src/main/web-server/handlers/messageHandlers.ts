@@ -275,6 +275,23 @@ export interface MessageHandlerCallbacks {
 		config: { cwd: string; cols?: number; rows?: number }
 	) => Promise<{ success: boolean; pid: number }>;
 	killTerminalForWeb: (sessionId: string) => boolean;
+	/**
+	 * Build a file tree for a session, routing to SSH when the session is SSH-remote.
+	 * Returns the tree array when the session is SSH-remote (runs `find` on the remote),
+	 * or `null` when the session is local (handler falls back to local fs).
+	 * Throws an Error with message starting with "SSH_REMOTE_UNRESOLVED" when SSH is
+	 * configured but the remote cannot be resolved — the handler will surface a clear error.
+	 */
+	buildSshFileTree: (
+		sessionId: string,
+		dirPath: string,
+		maxDepth: number
+	) => Promise<Array<{
+		name: string;
+		type: 'file' | 'folder';
+		children?: any[];
+		path: string;
+	}> | null>;
 	notifyToast: (params: NotifyToastParams) => Promise<boolean>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
 }
@@ -1197,8 +1214,10 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle get_file_tree message - read directory tree for file explorer
-	 * Uses Node.js fs directly (no IPC to renderer needed)
+	 * Handle get_file_tree message - read directory tree for file explorer.
+	 * For SSH-remote sessions, delegates to the buildSshFileTree callback which
+	 * runs `find` on the remote host instead of reading the local filesystem.
+	 * For local sessions, uses Node.js fs directly (no IPC to renderer needed).
 	 */
 	private handleGetFileTree(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -1223,14 +1242,36 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		this.buildFileTree(dirPath, maxDepth)
-			.then((tree) => {
-				this.send(client, {
-					type: 'file_tree_data',
-					sessionId,
-					tree,
-					path: dirPath,
-					requestId: message.requestId,
+		// Attempt SSH-aware file tree first.  The callback returns:
+		//   - Array  → session is SSH-remote; use the returned tree directly.
+		//   - null   → session is local; fall through to local fs.
+		//   - throws → SSH was configured but unresolvable; propagate the error.
+		const sshTreePromise = this.callbacks.buildSshFileTree
+			? this.callbacks.buildSshFileTree(sessionId, dirPath, maxDepth)
+			: Promise.resolve(null);
+
+		sshTreePromise
+			.then((sshTree) => {
+				if (sshTree !== null) {
+					// SSH path taken — tree already built remotely
+					this.send(client, {
+						type: 'file_tree_data',
+						sessionId,
+						tree: sshTree,
+						path: dirPath,
+						requestId: message.requestId,
+					});
+					return;
+				}
+				// Local path — build tree from local filesystem
+				return this.buildFileTree(dirPath, maxDepth).then((tree) => {
+					this.send(client, {
+						type: 'file_tree_data',
+						sessionId,
+						tree,
+						path: dirPath,
+						requestId: message.requestId,
+					});
 				});
 			})
 			.catch((error) => {
