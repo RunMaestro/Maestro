@@ -34,7 +34,8 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { ApiRoutes, StaticRoutes, WsRoute, registerAgentDispatchRoutes } from './routes';
+import type { AgentDispatchRouteDependencies } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -163,6 +164,9 @@ export class WebServer {
 	private apiRoutes: ApiRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
+
+	// Optional Agent Dispatch route dependencies (set before start())
+	private agentDispatchDeps: AgentDispatchRouteDependencies | null = null;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -610,6 +614,10 @@ export class WebServer {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
 
+	setAgentDispatchDeps(deps: AgentDispatchRouteDependencies): void {
+		this.agentDispatchDeps = deps;
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -703,6 +711,16 @@ export class WebServer {
 			isSessionLive: (sessionId) => this.liveSessionManager.isSessionLive(sessionId),
 		});
 		this.apiRoutes.registerRoutes(this.server);
+
+		// Register Agent Dispatch routes when deps have been supplied
+		if (this.agentDispatchDeps) {
+			registerAgentDispatchRoutes(
+				this.server,
+				this.securityToken,
+				this.rateLimitConfig,
+				this.agentDispatchDeps
+			);
+		}
 
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({

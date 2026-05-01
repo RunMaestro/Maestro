@@ -27,3 +27,5 @@ export {
 	LiveSessionInfo as WsLiveSessionInfo,
 	CustomAICommand as WsCustomAICommand,
 } from './wsRoute';
+
+export { registerAgentDispatchRoutes, AgentDispatchRouteDependencies } from './agentDispatchRoutes';
