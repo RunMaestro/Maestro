@@ -115,6 +115,10 @@
 					]
 				},
 				{
+					"from": "src/prompts/pm",
+					"to": "prompts/core/pm"
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -158,6 +162,10 @@
 					]
 				},
 				{
+					"from": "src/prompts/pm",
+					"to": "prompts/core/pm"
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -191,6 +199,10 @@
 					"filter": [
 						"*.md"
 					]
+				},
+				{
+					"from": "src/prompts/pm",
+					"to": "prompts/core/pm"
 				},
 				{
 					"from": "src/prompts/speckit",
