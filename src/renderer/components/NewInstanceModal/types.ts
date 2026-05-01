@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { AgentConfig, Session, ToolType, Theme } from '../../types';
+import type { AgentConfig, AgentDispatchProfile, Session, ToolType, Theme } from '../../types';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -70,7 +70,8 @@ export interface EditAgentModalProps {
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
 		customContextWindow?: number,
-		sessionSshRemoteConfig?: SessionSshRemoteConfig
+		sessionSshRemoteConfig?: SessionSshRemoteConfig,
+		dispatchProfile?: AgentDispatchProfile
 	) => void;
 	theme: Theme;
 	session: Session | null;

@@ -83,6 +83,7 @@ export type {
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
+import type { AgentDispatchProfile } from '../../shared/agent-dispatch-types';
 
 // Import for extension in this file
 import type {
@@ -837,6 +838,10 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	// Per-session Agent Dispatch profile overrides
+	// fleetEnabled controls whether this agent is eligible for fleet dispatch
+	dispatchProfile?: AgentDispatchProfile;
 }
 
 // AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above

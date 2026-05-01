@@ -17,6 +17,7 @@ import { RemotePathStatus } from './RemotePathStatus';
 import type { EditAgentModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { logger } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -51,6 +52,9 @@ export function EditAgentModal({
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
 	const [copiedId, setCopiedId] = useState(false);
+	// Agent Dispatch fleet membership toggle
+	const [fleetEnabled, setFleetEnabled] = useState(false);
+	const agentDispatchEnabled = useSettingsStore((s) => s.encoreFeatures?.agentDispatch ?? false);
 	// Provider change state
 	const [selectedToolType, setSelectedToolType] = useState<ToolType>(
 		session?.toolType ?? 'claude-code'
@@ -240,6 +244,7 @@ export function EditAgentModal({
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
+			setFleetEnabled(session.dispatchProfile?.fleetEnabled ?? false);
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -315,7 +320,20 @@ export function EditAgentModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
-		// Save with per-session config fields including model, contextWindow, and SSH config
+		// Build dispatch profile only when Agent Dispatch feature is enabled
+		const dispatchProfile = agentDispatchEnabled
+			? {
+					autoPickupEnabled: session.dispatchProfile?.autoPickupEnabled ?? false,
+					capabilityTags: session.dispatchProfile?.capabilityTags ?? [],
+					maxConcurrentClaims: session.dispatchProfile?.maxConcurrentClaims ?? 1,
+					fleetEnabled,
+					...(session.dispatchProfile?.suggestedDefaults
+						? { suggestedDefaults: session.dispatchProfile.suggestedDefaults }
+						: {}),
+				}
+			: session.dispatchProfile;
+
+		// Save with per-session config fields including model, contextWindow, SSH config, and dispatch profile
 		onSave(
 			session.id,
 			name,
@@ -327,7 +345,8 @@ export function EditAgentModal({
 			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
 			modelValue,
 			contextWindowValue,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			dispatchProfile
 		);
 		onClose();
 	}, [
@@ -345,6 +364,8 @@ export function EditAgentModal({
 		onSave,
 		onClose,
 		existingSessions,
+		fleetEnabled,
+		agentDispatchEnabled,
 	]);
 
 	// Refresh available models
@@ -637,6 +658,50 @@ export function EditAgentModal({
 							showBuiltInEnvVars
 							isSshEnabled={isSshEnabled}
 						/>
+					</div>
+				)}
+
+				{/* Dispatch — only shown when Agent Dispatch encore feature is enabled */}
+				{agentDispatchEnabled && (
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Dispatch
+						</div>
+						<label className="flex items-center gap-3 cursor-pointer">
+							<div className="relative">
+								<input
+									type="checkbox"
+									className="sr-only"
+									checked={fleetEnabled}
+									onChange={(e) => setFleetEnabled(e.target.checked)}
+									id="dispatch-fleet-enabled"
+								/>
+								<div
+									className="w-9 h-5 rounded-full transition-colors"
+									style={{
+										backgroundColor: fleetEnabled ? theme.colors.accent : theme.colors.border,
+									}}
+								/>
+								<div
+									className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+									style={{
+										transform: fleetEnabled ? 'translateX(16px)' : 'translateX(0)',
+									}}
+								/>
+							</div>
+							<div>
+								<div className="text-sm" style={{ color: theme.colors.textMain }}>
+									Fleet member
+								</div>
+								<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+									When enabled, this agent is eligible to receive work items from the dispatch
+									fleet.
+								</div>
+							</div>
+						</label>
 					</div>
 				)}
 

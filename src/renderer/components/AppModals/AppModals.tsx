@@ -16,6 +16,7 @@ import type {
 	SettingsTab,
 	BatchRunConfig,
 	AgentError,
+	AgentDispatchProfile,
 	ToolType,
 	LeaderboardRegistration,
 	ThinkingMode,
@@ -125,7 +126,8 @@ export interface AppModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		dispatchProfile?: AgentDispatchProfile
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;

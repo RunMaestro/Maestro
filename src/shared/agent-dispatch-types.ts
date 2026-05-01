@@ -54,6 +54,8 @@ export interface AgentDispatchProfile {
 	autoPickupEnabled: boolean;
 	capabilityTags: string[];
 	maxConcurrentClaims: number;
+	/** Whether this agent is eligible to appear in the fleet (dispatch-eligible). */
+	fleetEnabled?: boolean;
 	suggestedDefaults?: AgentDispatchSuggestedDefaults;
 }
 

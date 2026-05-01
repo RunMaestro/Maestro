@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { Session, AITab } from '../../types';
+import type { Session, AITab, AgentDispatchProfile } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
@@ -50,7 +50,7 @@ export interface SessionLifecycleDeps {
 // ============================================================================
 
 export interface SessionLifecycleReturn {
-	/** Save agent configuration changes (name, nudge, custom path/args/env, SSH config) */
+	/** Save agent configuration changes (name, nudge, custom path/args/env, SSH config, dispatch profile) */
 	handleSaveEditAgent: (
 		sessionId: string,
 		name: string,
@@ -68,7 +68,8 @@ export interface SessionLifecycleReturn {
 			workingDirOverride?: string;
 			syncHistory?: boolean;
 			shareHistoryToProjectDir?: boolean;
-		}
+		},
+		dispatchProfile?: AgentDispatchProfile
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -133,7 +134,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				workingDirOverride?: string;
 				syncHistory?: boolean;
 				shareHistoryToProjectDir?: boolean;
-			}
+			},
+			dispatchProfile?: AgentDispatchProfile
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -149,6 +151,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customContextWindow,
 						sessionSshRemoteConfig,
+						dispatchProfile,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
