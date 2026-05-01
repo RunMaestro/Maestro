@@ -4,7 +4,7 @@
  * Provides the window.maestro.deliveryPlanner namespace for:
  * - PRD creation and decomposition (createPrd, decomposePrd, decomposeEpic)
  * - Dashboard snapshot (dashboard)
- * - GitHub/CCPM sync (sync)
+ * - GitHub/external mirror sync (sync)
  * - Bug follow-up and progress comments
  * - Path resolution and progress tracking
  * - Doc gap promotion
@@ -28,7 +28,7 @@ export function createDeliveryPlannerApi() {
 		dashboard: (filters?: { projectPath?: string; gitPath?: string }) =>
 			ipcRenderer.invoke('deliveryPlanner:dashboard', filters),
 
-		/** Sync a work item to GitHub and/or CCPM mirror. */
+		/** Sync a work item to GitHub and/or external mirror. */
 		sync: (input: unknown) => ipcRenderer.invoke('deliveryPlanner:sync', input),
 
 		/** Create a bug follow-up work item. */

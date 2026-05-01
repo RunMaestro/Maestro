@@ -1,6 +1,6 @@
 /**
  * Delivery Planner subsystem barrel.
- * @see CLAUDE-DELIVERY-PLANNER.md for architecture, IPC channels, CCPM mirror, and validation steps.
+ * @see CLAUDE-DELIVERY-PLANNER.md for architecture, IPC channels, external mirror, and validation steps.
  */
 export * from './dashboard-queries';
 export * from './decomposer';

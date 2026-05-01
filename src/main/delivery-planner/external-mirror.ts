@@ -9,37 +9,37 @@ import {
 	serializeMarkdown,
 } from './frontmatter';
 import {
-	type CcpmArtifactKind,
-	type CcpmPathResolverConfig,
-	resolveCcpmArtifactPath,
-	slugifyCcpmSegment,
+	type ExternalMirrorArtifactKind,
+	type ExternalMirrorPathResolverConfig,
+	resolveExternalMirrorArtifactPath,
+	slugifyMirrorSegment,
 } from './path-resolver';
 
-export type CcpmMirrorStatus = 'created' | 'updated' | 'unchanged' | 'conflict';
+export type ExternalMirrorStatus = 'created' | 'updated' | 'unchanged' | 'conflict';
 
-export interface CcpmMirrorWriteInput {
+export interface ExternalMirrorWriteInput {
 	item: WorkItem;
-	kind: CcpmArtifactKind;
+	kind: ExternalMirrorArtifactKind;
 	projectPath?: string;
 	slug?: string;
 	taskId?: string | number;
 	bugId?: string | number;
 	body?: string;
 	frontmatter?: FrontmatterRecord;
-	config?: CcpmPathResolverConfig;
+	config?: ExternalMirrorPathResolverConfig;
 	expectedMirrorHash?: string;
 	allowOverwrite?: boolean;
 }
 
-export interface CcpmMirrorResult {
-	status: CcpmMirrorStatus;
+export interface ExternalMirrorResult {
+	status: ExternalMirrorStatus;
 	filePath: string;
 	mirrorHash?: string;
 	existingMirrorHash?: string;
 	error?: PlannerMirrorConflictError;
 }
 
-export interface ImportedCcpmMirror {
+export interface ImportedExternalMirror {
 	filePath: string;
 	mirrorHash: string;
 	frontmatter: FrontmatterRecord;
@@ -61,8 +61,10 @@ export class PlannerMirrorConflictError extends Error {
 	}
 }
 
-export async function writeCcpmMirror(input: CcpmMirrorWriteInput): Promise<CcpmMirrorResult> {
-	const markdown = renderCcpmMarkdown(input);
+export async function writeExternalMirror(
+	input: ExternalMirrorWriteInput
+): Promise<ExternalMirrorResult> {
+	const markdown = renderExternalMirrorMarkdown(input);
 	const mirrorHash = markdownMirrorHash(markdown);
 	const filePath = resolveMirrorPath(input);
 	const existing = await readOptionalFile(filePath);
@@ -82,7 +84,7 @@ export async function writeCcpmMirror(input: CcpmMirrorWriteInput): Promise<Ccpm
 
 		if (expectedMirrorHash && existingMirrorHash !== expectedMirrorHash && !input.allowOverwrite) {
 			const error = new PlannerMirrorConflictError(
-				`CCPM mirror changed on disk: ${filePath}`,
+				`External mirror changed on disk: ${filePath}`,
 				filePath,
 				expectedMirrorHash,
 				existingMirrorHash
@@ -109,7 +111,7 @@ export async function writeCcpmMirror(input: CcpmMirrorWriteInput): Promise<Ccpm
 	};
 }
 
-export async function importCcpmMirror(filePath: string): Promise<ImportedCcpmMirror> {
+export async function importExternalMirror(filePath: string): Promise<ImportedExternalMirror> {
 	const markdown = await fs.readFile(filePath, 'utf8');
 	const parsed = parseMarkdownFrontmatter(markdown);
 
@@ -121,13 +123,16 @@ export async function importCcpmMirror(filePath: string): Promise<ImportedCcpmMi
 	};
 }
 
-export function renderCcpmMarkdown(input: CcpmMirrorWriteInput): string {
-	return serializeMarkdown(buildCcpmFrontmatter(input), input.body ?? input.item.description ?? '');
+export function renderExternalMirrorMarkdown(input: ExternalMirrorWriteInput): string {
+	return serializeMarkdown(
+		buildExternalMirrorFrontmatter(input),
+		input.body ?? input.item.description ?? ''
+	);
 }
 
-export function buildCcpmFrontmatter(input: CcpmMirrorWriteInput): FrontmatterRecord {
+export function buildExternalMirrorFrontmatter(input: ExternalMirrorWriteInput): FrontmatterRecord {
 	const item = input.item;
-	const titleSlug = slugifyCcpmSegment(item.title);
+	const titleSlug = slugifyMirrorSegment(item.title);
 	const frontmatter: FrontmatterRecord = {
 		...(input.frontmatter ?? {}),
 		id: item.id,
@@ -137,7 +142,7 @@ export function buildCcpmFrontmatter(input: CcpmMirrorWriteInput): FrontmatterRe
 		source: item.source,
 		projectPath: input.projectPath ?? item.projectPath,
 		gitPath: item.gitPath,
-		slug: input.slug ? slugifyCcpmSegment(input.slug) : titleSlug,
+		slug: input.slug ? slugifyMirrorSegment(input.slug) : titleSlug,
 		tags: item.tags,
 		created: item.createdAt,
 		updated: item.updatedAt,
@@ -182,27 +187,27 @@ export function buildCcpmFrontmatter(input: CcpmMirrorWriteInput): FrontmatterRe
 	return frontmatter;
 }
 
-function resolveMirrorPath(input: CcpmMirrorWriteInput): string {
+function resolveMirrorPath(input: ExternalMirrorWriteInput): string {
 	const projectPath = input.projectPath ?? input.item.projectPath;
-	const slug = input.slug ?? input.item.metadata?.ccpmSlug;
+	const slug = input.slug ?? input.item.metadata?.mirrorSlug;
 
 	if (typeof slug !== 'string' || !slug.trim()) {
-		return resolveCcpmArtifactPath({
+		return resolveExternalMirrorArtifactPath({
 			projectPath,
 			kind: input.kind,
 			slug: input.item.title,
-			taskId: input.taskId ?? input.item.metadata?.ccpmTaskId?.toString(),
-			bugId: input.bugId ?? input.item.metadata?.ccpmBugId?.toString(),
+			taskId: input.taskId ?? input.item.metadata?.mirrorTaskId?.toString(),
+			bugId: input.bugId ?? input.item.metadata?.mirrorBugId?.toString(),
 			config: input.config,
 		});
 	}
 
-	return resolveCcpmArtifactPath({
+	return resolveExternalMirrorArtifactPath({
 		projectPath,
 		kind: input.kind,
 		slug,
-		taskId: input.taskId ?? input.item.metadata?.ccpmTaskId?.toString(),
-		bugId: input.bugId ?? input.item.metadata?.ccpmBugId?.toString(),
+		taskId: input.taskId ?? input.item.metadata?.mirrorTaskId?.toString(),
+		bugId: input.bugId ?? input.item.metadata?.mirrorBugId?.toString(),
 		config: input.config,
 	});
 }

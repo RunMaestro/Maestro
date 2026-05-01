@@ -121,7 +121,7 @@ describe('DeliveryPlannerService', () => {
 		});
 
 		expect(prd.type).toBe('document');
-		expect(prd.metadata).toMatchObject({ kind: 'prd', ccpmSlug: 'improve-planning' });
+		expect(prd.metadata).toMatchObject({ kind: 'prd', mirrorSlug: 'improve-planning' });
 		expect(prd.tags).toContain('prd');
 		expect(publish).toHaveBeenCalledWith('workGraph.item.created', { item: prd });
 	});
@@ -144,19 +144,19 @@ describe('DeliveryPlannerService', () => {
 		expect(epic.metadata).toMatchObject({
 			kind: 'epic',
 			prdWorkItemId: prd.id,
-			ccpmSlug: 'delivery-planner',
+			mirrorSlug: 'delivery-planner',
 		});
 		expect(dashboard.items).toHaveLength(2);
 		expect(dashboard.readyItems.map((item) => item.id)).toEqual([epic.id]);
 		expect(dashboard.statusCounts.find((count) => count.status === 'ready')?.count).toBe(1);
 	});
 
-	it('generates technical epic content and CCPM slug metadata from PRDs', async () => {
+	it('generates technical epic content and mirror slug metadata from PRDs', async () => {
 		const workGraph = new MemoryWorkGraphStore();
 		const syncEpic = vi.fn().mockResolvedValue({ mirrorHash: 'epic-mirror' });
 		const service = new DeliveryPlannerService({
 			workGraph,
-			ccpmMirror: { syncEpic },
+			externalMirror: { syncEpic },
 		});
 		const prd = await service.createPrd({
 			title: 'Delivery Planner',
@@ -170,13 +170,13 @@ describe('DeliveryPlannerService', () => {
 		expect(epic.metadata).toMatchObject({
 			kind: 'epic',
 			prdWorkItemId: prd.id,
-			ccpmSlug: 'delivery-planner',
+			mirrorSlug: 'delivery-planner',
 		});
 		expect(epic.description).toContain('## Architecture Decisions');
 		expect(epic.description).toContain('## Task Preview');
 		expect(syncEpic).toHaveBeenCalledWith(
 			expect.objectContaining({ id: epic.id }),
-			expect.objectContaining({ type: 'ccpm-sync' })
+			expect.objectContaining({ type: 'external-mirror-sync' })
 		);
 	});
 
@@ -315,7 +315,7 @@ describe('DeliveryPlannerService', () => {
 		const service = new DeliveryPlannerService({
 			workGraph,
 			decomposer,
-			ccpmMirror: { syncTask },
+			externalMirror: { syncTask },
 		});
 		const prd = await service.createPrd({
 			title: 'Delivery Planner',
@@ -332,7 +332,7 @@ describe('DeliveryPlannerService', () => {
 				title: 'Build service',
 				dependencies: [expect.objectContaining({ toWorkItemId: result.tasks[0].id })],
 			}),
-			expect.objectContaining({ type: 'ccpm-sync' })
+			expect.objectContaining({ type: 'external-mirror-sync' })
 		);
 	});
 
@@ -382,8 +382,8 @@ describe('DeliveryPlannerService', () => {
 		]);
 		expect(result.tasks[0].description).toContain('## Acceptance Criteria');
 		expect(result.tasks[0].metadata).toMatchObject({
-			ccpmSlug: 'delivery-planner',
-			ccpmTaskId: 1,
+			mirrorSlug: 'delivery-planner',
+			mirrorTaskId: 1,
 			acceptanceCriteria: ['Model is documented'],
 			filesLikelyTouched: ['src/model.ts'],
 		});
@@ -406,12 +406,12 @@ describe('DeliveryPlannerService', () => {
 		).rejects.toThrow('Parallel task file conflict');
 	});
 
-	it('syncs CCPM mirrors through progress-aware service methods', async () => {
+	it('syncs external mirrors through progress-aware service methods', async () => {
 		const workGraph = new MemoryWorkGraphStore();
 		const syncPrd = vi.fn().mockResolvedValue({ mirrorHash: 'mirror-v1' });
 		const service = new DeliveryPlannerService({
 			workGraph,
-			ccpmMirror: { syncPrd },
+			externalMirror: { syncPrd },
 		});
 		const prd = await service.createPrd({
 			title: 'Delivery Planner',
@@ -419,7 +419,7 @@ describe('DeliveryPlannerService', () => {
 			gitPath: '/project',
 		});
 
-		const synced = await service.syncCcpmMirror(prd.id);
+		const synced = await service.syncExternalMirror(prd.id);
 
 		expect(syncPrd).toHaveBeenCalledTimes(2);
 		expect(synced.mirrorHash).toBe('mirror-v1');

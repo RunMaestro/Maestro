@@ -1,25 +1,25 @@
 import path from 'path';
 
-export type CcpmArtifactKind = 'prd' | 'epic' | 'task' | 'progress' | 'bug';
+export type ExternalMirrorArtifactKind = 'prd' | 'epic' | 'task' | 'progress' | 'bug';
 
-export interface CcpmPathResolverConfig {
-	ccpmRoot?: string;
+export interface ExternalMirrorPathResolverConfig {
+	externalMirrorRoot?: string;
 	prdsDir?: string;
 	epicsDir?: string;
 }
 
-export interface CcpmArtifactPathInput {
+export interface ExternalMirrorArtifactPathInput {
 	projectPath: string;
-	kind: CcpmArtifactKind;
+	kind: ExternalMirrorArtifactKind;
 	slug: string;
 	taskId?: string | number;
 	bugId?: string | number;
-	config?: CcpmPathResolverConfig;
+	config?: ExternalMirrorPathResolverConfig;
 }
 
-export interface CcpmProjectPaths {
+export interface ExternalMirrorProjectPaths {
 	projectRoot: string;
-	ccpmRoot: string;
+	externalMirrorRoot: string;
 	prdsDir: string;
 	epicsDir: string;
 	prdFile: string;
@@ -30,11 +30,11 @@ export interface CcpmProjectPaths {
 	bugsDir: string;
 }
 
-const DEFAULT_CCPM_ROOT = '.claude';
+const DEFAULT_EXTERNAL_MIRROR_ROOT = '.maestro/external-mirror';
 const DEFAULT_PRDS_DIR = 'prds';
 const DEFAULT_EPICS_DIR = 'epics';
 
-export function slugifyCcpmSegment(value: string): string {
+export function slugifyMirrorSegment(value: string): string {
 	const slug = value
 		.trim()
 		.toLowerCase()
@@ -45,27 +45,30 @@ export function slugifyCcpmSegment(value: string): string {
 	return slug || 'untitled';
 }
 
-export function resolveCcpmProjectPaths(
+export function resolveExternalMirrorPaths(
 	projectPath: string,
 	slug: string,
-	config: CcpmPathResolverConfig = {}
-): CcpmProjectPaths {
-	const safeSlug = slugifyCcpmSegment(slug);
+	config: ExternalMirrorPathResolverConfig = {}
+): ExternalMirrorProjectPaths {
+	const safeSlug = slugifyMirrorSegment(slug);
 	const projectRoot = path.resolve(projectPath);
-	const ccpmRoot = resolveInsideProject(projectRoot, config.ccpmRoot ?? DEFAULT_CCPM_ROOT);
+	const externalMirrorRoot = resolveInsideProject(
+		projectRoot,
+		config.externalMirrorRoot ?? DEFAULT_EXTERNAL_MIRROR_ROOT
+	);
 	const prdsDir = resolveInsideProject(
 		projectRoot,
-		path.resolve(ccpmRoot, config.prdsDir ?? DEFAULT_PRDS_DIR)
+		path.resolve(externalMirrorRoot, config.prdsDir ?? DEFAULT_PRDS_DIR)
 	);
 	const epicsDir = resolveInsideProject(
 		projectRoot,
-		path.resolve(ccpmRoot, config.epicsDir ?? DEFAULT_EPICS_DIR)
+		path.resolve(externalMirrorRoot, config.epicsDir ?? DEFAULT_EPICS_DIR)
 	);
 	const epicDir = path.resolve(epicsDir, safeSlug);
 
 	return {
 		projectRoot,
-		ccpmRoot,
+		externalMirrorRoot,
 		prdsDir,
 		epicsDir,
 		prdFile: path.resolve(prdsDir, `${safeSlug}.md`),
@@ -77,8 +80,8 @@ export function resolveCcpmProjectPaths(
 	};
 }
 
-export function resolveCcpmArtifactPath(input: CcpmArtifactPathInput): string {
-	const paths = resolveCcpmProjectPaths(input.projectPath, input.slug, input.config);
+export function resolveExternalMirrorArtifactPath(input: ExternalMirrorArtifactPathInput): string {
+	const paths = resolveExternalMirrorPaths(input.projectPath, input.slug, input.config);
 
 	switch (input.kind) {
 		case 'prd':
@@ -104,7 +107,7 @@ function resolveInsideProject(projectRoot: string, configuredPath: string): stri
 		const relative = path.relative(projectRoot, resolved);
 
 		if (relative.startsWith('..') || path.isAbsolute(relative)) {
-			throw new Error(`CCPM root must be inside the active project: ${configuredPath}`);
+			throw new Error(`External mirror root must be inside the active project: ${configuredPath}`);
 		}
 
 		return resolved;
@@ -119,7 +122,7 @@ function formatNumberedId(value: string | number | undefined, fallback: string):
 	}
 
 	if (typeof value === 'string' && value.trim()) {
-		return slugifyCcpmSegment(value);
+		return slugifyMirrorSegment(value);
 	}
 
 	return fallback;

@@ -179,7 +179,7 @@ export function PlannerShell({ theme, isOpen, onClose, activeSession }: PlannerS
 										className="font-mono text-xs truncate mt-1"
 										style={{ color: theme.colors.textDim }}
 									>
-										{prd.metadata?.ccpmSlug?.toString()}
+										{prd.metadata?.mirrorSlug?.toString()}
 									</div>
 								</button>
 							))}

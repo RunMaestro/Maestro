@@ -55,7 +55,7 @@ const STAGE_PREDECESSOR: Partial<Record<AnyPipelineStage, AnyPipelineStage>> = {
  * Description of an in-flight work item as returned by `listInFlight`.
  *
  * Fields are intentionally minimal.  The consumer builds this from whatever
- * storage backend it uses (Work Graph DB, CCPM mirror, etc.).
+ * storage backend it uses (Work Graph DB, external mirror, etc.).
  */
 export interface InFlightRecoveryItem {
 	/** Work Graph item ID. */

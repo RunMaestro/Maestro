@@ -2,15 +2,17 @@
 
 Architecture and implementation guide for the Delivery Planner feature. For the main guide, see [[CLAUDE.md]].
 
-**Status:** Core modules are merged and tested. The service, CCPM mirror, GitHub sync, IPC handlers, and web routes are all canonical. Desktop UI components (PRD Wizard, Epic View, Dashboard) and web/mobile surfaces remain follow-up work. The epic task graph is in `.claude/epics/delivery-planner/`.
+**Status:** Core modules are merged and tested. The service, external mirror, GitHub sync, IPC handlers, and web routes are all canonical. Desktop UI components (PRD Wizard, Epic View, Dashboard) and web/mobile surfaces remain follow-up work. The epic task graph is in `.claude/epics/delivery-planner/`.
+
+> **Migration note (issue #411):** The mirror subsystem previously targeted `.claude/ccpm/` (a CCPM-compatible path). It has been renamed to `external-mirror` and the default root moved to `.maestro/external-mirror/` to avoid collision with Claude Code's session-storage layout under `.claude/`. All `ccpm-*` identifiers in source (`ccpmSlug`, `ccpmTaskId`, `ccpmBugId`, `CcpmMirrorResult`, etc.) are now `mirror*` / `ExternalMirror*`.
 
 ---
 
 ## Overview
 
-Delivery Planner lifts the CCPM workflow (PRD → Epic → Tasks → GitHub Issues → agent-ready work surface) into Maestro as a first-class UI feature. It is backed by Work Graph and mirrors planning state to CCPM-compatible `.claude/` files.
+Delivery Planner lifts the PRD → Epic → Tasks → GitHub Issues → agent-ready workflow into Maestro as a first-class UI feature. It is backed by Work Graph and mirrors planning state to `.maestro/external-mirror/` files.
 
-The product name is **Delivery Planner**. CCPM is the workflow compatibility layer and file convention; "Delivery Planner" is the user-facing name except where explicitly describing CCPM import/export or slash-command compatibility.
+The product name is **Delivery Planner**. The on-disk mirror is a read-friendly snapshot only; Work Graph is the canonical source of truth.
 
 ### Core Principles
 
@@ -33,9 +35,9 @@ DeliveryPlannerService      ← orchestrates CRUD + sync
       │                     ← uses Work Graph APIs, not disk
       ├─► WorkGraph store   ← source of truth for all item state
       │
-      ├─► path-resolver     ← resolveCcpmProjectPaths, resolveCcpmArtifactPath
+      ├─► path-resolver     ← resolveExternalMirrorPaths, resolveExternalMirrorArtifactPath
       │
-      ├─► ccpm-mirror        ← writeCcpmMirror
+      ├─► external-mirror   ← writeExternalMirror
       │       │
       │       └─► PlannerMirrorConflictError on hash mismatch
       │
@@ -51,17 +53,17 @@ The end-to-end lifecycle for a piece of work:
 ```
 service.createPrd(input)
   → WorkGraph.createItem (type='document', tags=['delivery-planner','prd'])
-  → ccpmMirror.syncPrd (writes .claude/prds/<slug>.md)
+  → externalMirror.syncPrd (writes .maestro/external-mirror/prds/<slug>.md)
 
 service.convertPrdToEpic({ prdId })
   → WorkGraph.createItem (type='feature', tags=['delivery-planner','epic'])
-  → ccpmMirror.syncEpic (writes .claude/epics/<slug>/epic.md)
+  → externalMirror.syncEpic (writes .maestro/external-mirror/epics/<slug>/epic.md)
 
 service.decomposeEpicToTasks({ epicId })
   → DeliveryPlannerDecomposer.draftTasks (AI-assisted)
   → WorkGraph.createItem × N (type='task')
   → createDraftDependencies (WorkGraph.addDependency edges)
-  → ccpmMirror.syncTask × N
+  → externalMirror.syncTask × N (writes .maestro/external-mirror/epics/<slug>/tasks/)
 
 service.syncGithubIssue(id)
   → DeliveryPlannerGithubSync.syncIssue (gh issue create/view)
@@ -94,15 +96,15 @@ PRD (WorkItem type=document, metadata.kind='prd')
 src/main/delivery-planner/
 ├── index.ts                    # Re-exports all modules
 ├── planner-service.ts          # DeliveryPlannerService — orchestrates CRUD, decomposition, sync
-├── path-resolver.ts            # resolveCcpmProjectPaths, resolveCcpmArtifactPath, slugifyCcpmSegment
-├── ccpm-mirror.ts              # writeCcpmMirror, importCcpmMirror, PlannerMirrorConflictError
+├── path-resolver.ts            # resolveExternalMirrorPaths, resolveExternalMirrorArtifactPath, slugifyMirrorSegment
+├── external-mirror.ts          # writeExternalMirror, importExternalMirror, PlannerMirrorConflictError
 ├── frontmatter.ts              # markdownMirrorHash, serializeMarkdown, parseMarkdownFrontmatter
 ├── decomposer.ts               # DeliveryPlannerDecomposer (routes through StructuredDeliveryPlannerDecompositionGateway)
 ├── dashboard-queries.ts        # listDeliveryPlannerDashboard
 ├── progress.ts                 # InMemoryDeliveryPlannerProgressStore, DeliveryPlannerProgressSnapshot
 ├── github-sync.ts              # DeliveryPlannerGithubSync class
 ├── github-safety.ts            # assertDeliveryPlannerGithubRepository, DeliveryPlannerGithubSafetyError
-├── spec-bridge.ts              # indexPlanningArtifacts (CCPM file → Work Graph import)
+├── spec-bridge.ts              # indexPlanningArtifacts (external mirror file → Work Graph import)
 └── structured-output.ts        # StructuredDeliveryPlannerDecompositionGateway
 
 src/main/ipc/handlers/
@@ -114,63 +116,63 @@ src/main/web-server/routes/
 
 ---
 
-## CCPM Path Resolution
+## External Mirror Path Resolution
 
 **File:** `src/main/delivery-planner/path-resolver.ts`
 
-All CCPM artifact paths are resolved through this module to prevent path traversal and ensure cross-platform correctness. Paths must stay inside the project root. No shell expansion; uses `path.resolve` and `path.join` only.
+All external mirror artifact paths are resolved through this module to prevent path traversal and ensure cross-platform correctness. Paths must stay inside the project root. No shell expansion; uses `path.resolve` and `path.join` only.
 
 ### API
 
 ```typescript
 import {
-	resolveCcpmProjectPaths,
-	resolveCcpmArtifactPath,
-	slugifyCcpmSegment,
+	resolveExternalMirrorPaths,
+	resolveExternalMirrorArtifactPath,
+	slugifyMirrorSegment,
 } from '../delivery-planner/path-resolver';
 
-// Slugify any string to a safe CCPM segment
-slugifyCcpmSegment('My Feature!');
+// Slugify any string to a safe mirror segment
+slugifyMirrorSegment('My Feature!');
 // → 'my-feature'
 
 // Get the full directory tree for a project + slug
-const paths = resolveCcpmProjectPaths('/opt/Maestro-fork', 'delivery-planner');
-// paths.prdFile  → /opt/Maestro-fork/.claude/prds/delivery-planner.md
-// paths.epicFile → /opt/Maestro-fork/.claude/epics/delivery-planner/epic.md
-// paths.tasksDir → /opt/Maestro-fork/.claude/epics/delivery-planner/tasks/
-// paths.bugsDir  → /opt/Maestro-fork/.claude/epics/delivery-planner/bugs/
+const paths = resolveExternalMirrorPaths('/opt/Maestro-fork', 'delivery-planner');
+// paths.prdFile  → /opt/Maestro-fork/.maestro/external-mirror/prds/delivery-planner.md
+// paths.epicFile → /opt/Maestro-fork/.maestro/external-mirror/epics/delivery-planner/epic.md
+// paths.tasksDir → /opt/Maestro-fork/.maestro/external-mirror/epics/delivery-planner/tasks/
+// paths.bugsDir  → /opt/Maestro-fork/.maestro/external-mirror/epics/delivery-planner/bugs/
 
 // Resolve a single artifact path by kind
-resolveCcpmArtifactPath({
+resolveExternalMirrorArtifactPath({
 	projectPath: '/opt/Maestro-fork',
 	kind: 'task',
 	slug: 'delivery-planner',
 	taskId: 3,
 });
-// → /opt/Maestro-fork/.claude/epics/delivery-planner/tasks/003.md
+// → /opt/Maestro-fork/.maestro/external-mirror/epics/delivery-planner/tasks/003.md
 ```
 
-Paths that escape the project root throw a plain `Error` with message `CCPM root must be inside the active project`. Never catch it silently — surface it as a planner validation error.
+Paths that escape the project root throw a plain `Error` with message `External mirror root must be inside the active project`. Never catch it silently — surface it as a planner validation error.
 
-### CcpmProjectPaths Shape
+### ExternalMirrorProjectPaths Shape
 
-| Field          | Example                                  |
-| -------------- | ---------------------------------------- |
-| `projectRoot`  | `/opt/Maestro-fork`                      |
-| `ccpmRoot`     | `/opt/Maestro-fork/.claude`              |
-| `prdsDir`      | `/opt/Maestro-fork/.claude/prds`         |
-| `epicsDir`     | `/opt/Maestro-fork/.claude/epics`        |
-| `prdFile`      | `.../prds/delivery-planner.md`           |
-| `epicDir`      | `.../epics/delivery-planner`             |
-| `epicFile`     | `.../epics/delivery-planner/epic.md`     |
-| `tasksDir`     | `.../epics/delivery-planner/tasks`       |
-| `progressFile` | `.../epics/delivery-planner/progress.md` |
-| `bugsDir`      | `.../epics/delivery-planner/bugs`        |
+| Field                | Example                                            |
+| -------------------- | -------------------------------------------------- |
+| `projectRoot`        | `/opt/Maestro-fork`                                |
+| `externalMirrorRoot` | `/opt/Maestro-fork/.maestro/external-mirror`       |
+| `prdsDir`            | `/opt/Maestro-fork/.maestro/external-mirror/prds`  |
+| `epicsDir`           | `/opt/Maestro-fork/.maestro/external-mirror/epics` |
+| `prdFile`            | `.../prds/delivery-planner.md`                     |
+| `epicDir`            | `.../epics/delivery-planner`                       |
+| `epicFile`           | `.../epics/delivery-planner/epic.md`               |
+| `tasksDir`           | `.../epics/delivery-planner/tasks`                 |
+| `progressFile`       | `.../epics/delivery-planner/progress.md`           |
+| `bugsDir`            | `.../epics/delivery-planner/bugs`                  |
 
-### CCPM Directory Layout
+### External Mirror Directory Layout
 
 ```
-.claude/
+.maestro/external-mirror/
 ├── prds/
 │   └── <feature-slug>.md           # PRD with YAML frontmatter
 └── epics/
@@ -183,11 +185,11 @@ Paths that escape the project root throw a plain `Error` with message `CCPM root
 
 ---
 
-## CCPM Mirror
+## External Mirror
 
-**File:** `src/main/delivery-planner/ccpm-mirror.ts`
+**File:** `src/main/delivery-planner/external-mirror.ts`
 
-Writes CCPM-compatible markdown mirror files for Work Graph items. A mirror write is always guarded by a content hash check.
+Writes markdown mirror files for Work Graph items under `.maestro/external-mirror/`. A mirror write is always guarded by a content hash check.
 
 ### Conflict Detection
 
@@ -195,23 +197,23 @@ Every mirror file is identified by the SHA-256 hash of its last-written content 
 
 1. The current on-disk content is read.
 2. Its hash is compared to `expectedMirrorHash`.
-3. If they differ, `writeCcpmMirror` returns `{ status: 'conflict', error: PlannerMirrorConflictError }`.
+3. If they differ, `writeExternalMirror` returns `{ status: 'conflict', error: PlannerMirrorConflictError }`.
 
 Pass `allowOverwrite: true` to bypass the check. Set `expectedMirrorHash: undefined` on first write.
 
 ```typescript
 import {
-	writeCcpmMirror,
-	importCcpmMirror,
+	writeExternalMirror,
+	importExternalMirror,
 	PlannerMirrorConflictError,
-} from '../delivery-planner/ccpm-mirror';
+} from '../delivery-planner/external-mirror';
 
 // Write a PRD mirror
-const result = await writeCcpmMirror({
+const result = await writeExternalMirror({
 	item: prdWorkItem,
 	kind: 'prd',
 	projectPath: prdWorkItem.projectPath,
-	slug: prdWorkItem.metadata?.ccpmSlug?.toString(),
+	slug: prdWorkItem.metadata?.mirrorSlug?.toString(),
 });
 
 if (result.status === 'conflict') {
@@ -226,7 +228,9 @@ if (result.mirrorHash) {
 }
 
 // Read an existing mirror file
-const imported = await importCcpmMirror('/opt/Maestro-fork/.claude/prds/delivery-planner.md');
+const imported = await importExternalMirror(
+	'/opt/Maestro-fork/.maestro/external-mirror/prds/delivery-planner.md'
+);
 // imported.mirrorHash — current hash
 // imported.frontmatter — parsed YAML
 // imported.body — markdown body
@@ -250,7 +254,7 @@ const hash = markdownMirrorHash(markdownString);
 // SHA-256 of the normalized (CRLF→LF) markdown content, hex-encoded
 ```
 
-`markdownMirrorHash` is also re-exported from `ccpm-mirror.ts` via `index.ts`.
+`markdownMirrorHash` is also re-exported from `external-mirror.ts` via `index.ts`.
 
 ---
 
@@ -302,15 +306,15 @@ const bugGithub = await sync.createLinkedBugIssue({ bug: bugItem, related: paren
 
 Synced items set the following fields on `Humpf Tech Maestro Features` (project #7, owner `HumpfTech`):
 
-| Field              | Value source                                            |
-| ------------------ | ------------------------------------------------------- |
-| `Maestro Major`    | `item.metadata.maestroMajor` or tag-derived             |
-| `Work Item Type`   | `prd` / `epic` / `task` / `Bug`                         |
-| `Parent Work Item` | `parentWorkItemId` or related metadata ID               |
-| `CCPM ID`          | e.g. `delivery-planner#task-3`                          |
-| `Agent Pickup`     | `Ready` / `Claimed` / `Not Ready` based on claim + tags |
+| Field                | Value source                                            |
+| -------------------- | ------------------------------------------------------- |
+| `Maestro Major`      | `item.metadata.maestroMajor` or tag-derived             |
+| `Work Item Type`     | `prd` / `epic` / `task` / `Bug`                         |
+| `Parent Work Item`   | `parentWorkItemId` or related metadata ID               |
+| `External Mirror ID` | e.g. `delivery-planner#task-3`                          |
+| `Agent Pickup`       | `Ready` / `Claimed` / `Not Ready` based on claim + tags |
 
-Labels applied: `delivery-planner`, plus any of `ccpm`, `symphony`, `agent-ready` from `WorkItem.tags`. Bug follow-ups also get `bug-follow-up`.
+Labels applied: `delivery-planner`, plus any of `external-mirror`, `symphony`, `agent-ready` from `WorkItem.tags`. Bug follow-ups also get `bug-follow-up`.
 
 ---
 
@@ -324,7 +328,7 @@ All channels are prefixed `deliveryPlanner:`. They are registered in `src/main/i
 | `deliveryPlanner:decomposePrd`       | `DeliveryPlannerDecomposePrdRequest`    | `service.convertPrdToEpic({ prdId, … })`          |
 | `deliveryPlanner:decomposeEpic`      | `DeliveryPlannerDecomposeEpicRequest`   | `service.decomposeEpicToTasks(input)`             |
 | `deliveryPlanner:dashboard`          | `{ projectPath?, gitPath? }`            | `service.listDashboard(filters)` + artifact index |
-| `deliveryPlanner:sync`               | `DeliveryPlannerSyncRequest`            | `service.syncGithubIssue` / `syncCcpmMirror`      |
+| `deliveryPlanner:sync`               | `DeliveryPlannerSyncRequest`            | `service.syncGithubIssue` / `syncExternalMirror`  |
 | `deliveryPlanner:createBugFollowUp`  | `DeliveryPlannerBugFollowUpRequest`     | `service.createBugFollowUp(input)`                |
 | `deliveryPlanner:addProgressComment` | `DeliveryPlannerProgressCommentRequest` | `service.addProgressComment(id, body, actor)`     |
 | `deliveryPlanner:resolvePaths`       | `DeliveryPlannerPathResolutionRequest`  | Returns `{ projectPath, gitPath }` (resolved)     |
@@ -338,8 +342,8 @@ Shared request/response types live in `src/shared/delivery-planner-types.ts`.
 The `deliveryPlanner:sync` channel accepts `{ workItemId, target? }`:
 
 - `target: 'github'` — GitHub sync only (`syncGithubIssue`)
-- `target: 'ccpm'` — CCPM mirror only (`syncCcpmMirror`)
-- `target: 'all'` or omitted — GitHub sync then CCPM mirror
+- `target: 'external-mirror'` — external mirror only (`syncExternalMirror`)
+- `target: 'all'` or omitted — GitHub sync then external mirror
 
 ---
 
@@ -355,7 +359,7 @@ Delivery Planner REST endpoints are integrated into `src/main/web-server/routes/
 | `GET`  | `/<token>/api/delivery-planner/progress`      | List all in-flight operation snapshots                                |
 | `POST` | `/<token>/api/delivery-planner/item/:id/sync` | GitHub sync for a single item; requires `{ confirmed: true }` in body |
 
-The `POST .../sync` endpoint requires `confirmed: true` in the request body. Without it, the server returns `400 Bad Request`. Only `target: 'github'` is accepted; CCPM-only sync is not exposed over web.
+The `POST .../sync` endpoint requires `confirmed: true` in the request body. Without it, the server returns `400 Bad Request`. Only `target: 'github'` is accepted; external-mirror-only sync is not exposed over web.
 
 Web/mobile consumers subscribe to Work Graph broadcast events for live item updates rather than polling.
 
@@ -363,7 +367,7 @@ Web/mobile consumers subscribe to Work Graph broadcast events for live item upda
 
 ## Slash Commands
 
-> **TODO (follow-up):** The `/ccpm` slash command family (`/ccpm prd`, `/ccpm decompose`, `/ccpm sync`, `/ccpm next`, `/ccpm status`, `/ccpm bug`) is planned but not yet wired in `src/renderer/slashCommands.ts` on this branch. The CCPM slash-command registration and `ccpmPromptCommands` prompt templates are tracked as follow-up work.
+> **TODO (follow-up):** The `/ccpm` slash command family (`/ccpm prd`, `/ccpm decompose`, `/ccpm sync`, `/ccpm next`, `/ccpm status`, `/ccpm bug`) is planned but not yet wired in `src/renderer/slashCommands.ts` on this branch. The slash-command registration and prompt templates are tracked as follow-up work. Note: the `/ccpm` prefix is the user-facing slash command name; the underlying mirror subsystem has been renamed `external-mirror` (issue #411).
 
 ---
 
@@ -371,7 +375,7 @@ Web/mobile consumers subscribe to Work Graph broadcast events for live item upda
 
 **File:** `src/main/delivery-planner/progress.ts`
 
-All long-running service operations — decomposition, CCPM sync, GitHub sync — emit progress snapshots through `InMemoryDeliveryPlannerProgressStore`.
+All long-running service operations — decomposition, external mirror sync, GitHub sync — emit progress snapshots through `InMemoryDeliveryPlannerProgressStore`.
 
 ```typescript
 import { InMemoryDeliveryPlannerProgressStore } from '../delivery-planner/progress';
@@ -386,20 +390,20 @@ progress.update(op.id, { message: 'Drafting tasks', completedSteps: 1 });
 progress.complete(op.id, 'Done');
 ```
 
-`DeliveryPlannerProgressSnapshot` fields: `id`, `type` (`'ccpm-sync' | 'decomposition' | 'github-sync'`), `status`, `attempt`, `retryable`, `message?`, `totalSteps?`, `completedSteps`, `startedAt`, `updatedAt`, `completedAt?`, `error?`, `metadata?`.
+`DeliveryPlannerProgressSnapshot` fields: `id`, `type` (`'external-mirror-sync' | 'decomposition' | 'github-sync'`), `status`, `attempt`, `retryable`, `message?`, `totalSteps?`, `completedSteps`, `startedAt`, `updatedAt`, `completedAt?`, `error?`, `metadata?`.
 
 ---
 
 ## Error Classes
 
-| Class                                | File                 | `kind`              | Meaning                                                      |
-| ------------------------------------ | -------------------- | ------------------- | ------------------------------------------------------------ |
-| `DeliveryPlannerValidationError`     | `planner-service.ts` | `'validation'`      | Bad input: missing required field, wrong item type, etc.     |
-| `DeliveryPlannerGithubError`         | `planner-service.ts` | `'github'`          | `gh` CLI failure or network error                            |
-| `DeliveryPlannerMirrorConflictError` | `planner-service.ts` | `'mirror-conflict'` | CCPM mirror sync failed (wraps `PlannerMirrorConflictError`) |
-| `DeliveryPlannerWorkGraphError`      | `planner-service.ts` | `'work-graph'`      | Work Graph store error                                       |
-| `PlannerMirrorConflictError`         | `ccpm-mirror.ts`     | —                   | On-disk hash mismatch; `recoverable = true`                  |
-| `DeliveryPlannerGithubSafetyError`   | `github-safety.ts`   | —                   | Wrong repo target (programming error)                        |
+| Class                                | File                 | `kind`              | Meaning                                                          |
+| ------------------------------------ | -------------------- | ------------------- | ---------------------------------------------------------------- |
+| `DeliveryPlannerValidationError`     | `planner-service.ts` | `'validation'`      | Bad input: missing required field, wrong item type, etc.         |
+| `DeliveryPlannerGithubError`         | `planner-service.ts` | `'github'`          | `gh` CLI failure or network error                                |
+| `DeliveryPlannerMirrorConflictError` | `planner-service.ts` | `'mirror-conflict'` | External mirror sync failed (wraps `PlannerMirrorConflictError`) |
+| `DeliveryPlannerWorkGraphError`      | `planner-service.ts` | `'work-graph'`      | Work Graph store error                                           |
+| `PlannerMirrorConflictError`         | `external-mirror.ts` | —                   | On-disk hash mismatch; `recoverable = true`                      |
+| `DeliveryPlannerGithubSafetyError`   | `github-safety.ts`   | —                   | Wrong repo target (programming error)                            |
 
 All service-level errors extend `DeliveryPlannerError` and carry a `kind` discriminant. Use `normalizePlannerError(error)` to coerce unknown throws into `DeliveryPlannerError`.
 
@@ -407,15 +411,15 @@ All service-level errors extend `DeliveryPlannerError` and carry a `kind` discri
 
 ## Troubleshooting
 
-### `Error: CCPM root must be inside the active project`
+### `Error: External mirror root must be inside the active project`
 
-A slug or config path would resolve outside the project root. Check that `projectPath`, `slug`, or `ccpmRoot` config values are not absolute paths that escape the project directory.
+A slug or config path would resolve outside the project root. Check that `projectPath`, `slug`, or `externalMirrorRoot` config values are not absolute paths that escape the project directory.
 
 ### `PlannerMirrorConflictError`
 
-The on-disk CCPM file has been modified externally (by the CCPM CLI skill or a manual edit) since Delivery Planner last wrote it. `writeCcpmMirror` returns `{ status: 'conflict', error }`. Options:
+The on-disk external mirror file has been modified externally since Delivery Planner last wrote it. `writeExternalMirror` returns `{ status: 'conflict', error }`. Options:
 
-- **Overwrite:** pass `allowOverwrite: true` to `writeCcpmMirror`. Work Graph state takes precedence.
+- **Overwrite:** pass `allowOverwrite: true` to `writeExternalMirror`. Work Graph state takes precedence.
 - **Skip:** leave the disk file as-is; Work Graph remains authoritative.
 - **Merge (manual):** compare disk content with Work Graph state and reconcile by hand.
 
@@ -462,8 +466,8 @@ npm run build
 
 The following must NOT be run during planning. They require a running app shell and are PM-owned:
 
-1. **PRD creation:** open Delivery Planner → New PRD wizard → verify Work Graph item is created and disk mirror appears at `.claude/prds/<slug>.md`.
-2. **Decomposition:** from a PRD, invoke `decomposePrd` → epic is created → invoke `decomposeEpic` → task items appear with `deps[]` populated and CCPM task files written to `.claude/epics/<slug>/tasks/`.
+1. **PRD creation:** open Delivery Planner → New PRD wizard → verify Work Graph item is created and disk mirror appears at `.maestro/external-mirror/prds/<slug>.md`.
+2. **Decomposition:** from a PRD, invoke `decomposePrd` → epic is created → invoke `decomposeEpic` → task items appear with `deps[]` populated and external mirror task files written to `.maestro/external-mirror/epics/<slug>/tasks/`.
 3. **Dashboard refresh:** status changes broadcast via Work Graph events and the dashboard refreshes without polling.
 4. **GitHub sync:** call `syncGithubIssue` on a task → one issue appears on `HumpfTech/Maestro`, `WorkItem.github.issueNumber` is written back, Project fields are populated, no issue appears on `RunMaestro/Maestro`.
 5. **Web sync:** `POST /<token>/api/delivery-planner/item/:id/sync` with `{ confirmed: true }` → item synced, response contains updated `WorkItem`.
@@ -476,7 +480,7 @@ The following must NOT be run during planning. They require a running app shell 
 | Task                                           | GitHub Issue                                          | File                                                            |
 | ---------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------- |
 | 001 — Contract alignment                       | [#60](https://github.com/HumpfTech/Maestro/issues/60) | `.claude/epics/delivery-planner/001-contract-alignment.md`      |
-| 002 — CCPM path resolver + mirror              | [#61](https://github.com/HumpfTech/Maestro/issues/61) | `.claude/epics/delivery-planner/002-ccpm-mirror.md`             |
+| 002 — External mirror path resolver + mirror   | [#61](https://github.com/HumpfTech/Maestro/issues/61) | `.claude/epics/delivery-planner/002-ccpm-mirror.md`             |
 | 003 — Main-process services                    | [#62](https://github.com/HumpfTech/Maestro/issues/62) | `.claude/epics/delivery-planner/003-main-services.md`           |
 | 004 — Desktop IPC + preload                    | [#63](https://github.com/HumpfTech/Maestro/issues/63) | `.claude/epics/delivery-planner/004-desktop-api.md`             |
 | 005 — PRD wizard                               | [#64](https://github.com/HumpfTech/Maestro/issues/64) | `.claude/epics/delivery-planner/005-prd-wizard-desktop.md`      |

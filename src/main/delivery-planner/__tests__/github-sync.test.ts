@@ -28,7 +28,7 @@ describe('DeliveryPlannerGithubSync', () => {
 							textField('Maestro Major', 'field-major'),
 							textField('Work Item Type', 'field-type'),
 							textField('Parent Work Item', 'field-parent'),
-							textField('CCPM ID', 'field-ccpm'),
+							textField('External Mirror ID', 'field-external-mirror'),
 							textField('Agent Pickup', 'field-pickup'),
 						],
 					})
@@ -56,9 +56,9 @@ describe('DeliveryPlannerGithubSync', () => {
 				'delivery-planner',
 			])
 		);
-		expect(calls.some((args) => args.includes('--field-id') && args.includes('field-ccpm'))).toBe(
-			true
-		);
+		expect(
+			calls.some((args) => args.includes('--field-id') && args.includes('field-external-mirror'))
+		).toBe(true);
 		expect(calls.every((args) => args[args.indexOf('-R') + 1] !== 'RunMaestro/Maestro')).toBe(true);
 	});
 
@@ -82,7 +82,7 @@ describe('DeliveryPlannerGithubSync', () => {
 							textField('Maestro Major', 'field-major'),
 							textField('Work Item Type', 'field-type'),
 							textField('Parent Work Item', 'field-parent'),
-							textField('CCPM ID', 'field-ccpm'),
+							textField('External Mirror ID', 'field-external-mirror'),
 							textField('Agent Pickup', 'field-pickup'),
 						],
 					})
@@ -176,13 +176,13 @@ function makeWorkItem(overrides: Partial<WorkItem> = {}): WorkItem {
 		gitPath: '/project',
 		source: 'delivery-planner',
 		readonly: false,
-		tags: ['delivery-planner', 'ccpm'],
+		tags: ['delivery-planner', 'external-mirror'],
 		createdAt: timestamp,
 		updatedAt: timestamp,
 		metadata: {
 			kind: 'task',
-			ccpmSlug: 'delivery-planner',
-			ccpmTaskId: 8,
+			mirrorSlug: 'delivery-planner',
+			mirrorTaskId: 8,
 			parentWorkItemId: 'epic-1',
 		},
 		...overrides,

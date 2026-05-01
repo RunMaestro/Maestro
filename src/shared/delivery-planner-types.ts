@@ -213,7 +213,7 @@ export interface DeliveryPlannerDashboardSnapshot {
 	readyTag: typeof WORK_GRAPH_READY_TAG;
 }
 
-export type DeliveryPlannerOperationType = 'ccpm-sync' | 'decomposition' | 'github-sync';
+export type DeliveryPlannerOperationType = 'external-mirror-sync' | 'decomposition' | 'github-sync';
 export type DeliveryPlannerOperationStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export interface DeliveryPlannerProgressSnapshot {
@@ -258,7 +258,7 @@ export interface DeliveryPlannerDecomposeEpicRequest {
 
 export interface DeliveryPlannerSyncRequest {
 	workItemId: WorkItem['id'];
-	target?: 'ccpm' | 'github' | 'all';
+	target?: 'external-mirror' | 'github' | 'all';
 }
 
 export interface DeliveryPlannerBugFollowUpRequest {

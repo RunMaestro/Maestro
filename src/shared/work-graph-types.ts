@@ -98,7 +98,7 @@ export interface WorkItemGithubReference {
 		maestroMajor?: string;
 		workItemType?: string;
 		parentWorkItem?: string;
-		ccpmId?: string;
+		externalMirrorId?: string;
 		agentPickup?: string;
 	};
 }

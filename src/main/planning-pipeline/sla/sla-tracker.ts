@@ -12,7 +12,7 @@
  *
  * Design decisions:
  *   - All state is in-memory.  A consumer that wants durability should persist
- *     duration records to the CCPM mirror and call `hydrate()` on startup.
+ *     duration records to the external mirror and call `hydrate()` on startup.
  *   - An item can accumulate multiple `StageDuration` records if it re-enters a
  *     stage (e.g. via the failure loop).  `recordEntry` always appends.
  *   - `recordExit` closes the MOST RECENT open duration for the item regardless

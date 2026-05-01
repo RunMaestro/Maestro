@@ -1,10 +1,12 @@
 ---
 title: Delivery Planner
-description: Turn a PRD into tracked GitHub issues and agent-ready tasks using the PRD wizard, decomposition flow, and CCPM mirror.
+description: Turn a PRD into tracked GitHub issues and agent-ready tasks using the PRD wizard, decomposition flow, and external mirror.
 icon: map
 ---
 
-Delivery Planner lifts the CCPM workflow into Maestro as a first-class feature. Write a Product Requirements Document in the PRD Wizard, decompose it into an epic and tasks, sync each task to GitHub, and watch the dashboard update in real time as agents pick up and complete work.
+Delivery Planner turns a Product Requirements Document into tracked GitHub issues and agent-ready tasks. Write a PRD in the wizard, decompose it into an epic and tasks, sync each task to GitHub, and watch the dashboard update in real time as agents pick up and complete work.
+
+> **Note (issue #411 — migration):** Mirror files were previously written to `.claude/ccpm/` (a CCPM-compatible path, which collided with Claude Code's own session-storage directory). The default mirror root has moved to `.maestro/external-mirror/` and the underlying code identifiers have been renamed from `ccpm*` to `externalMirror*` / `mirror*`. Slash commands remain `/ccpm …` by user-facing convention.
 
 ## Opening Delivery Planner
 
@@ -29,7 +31,7 @@ The PRD Wizard guides you through capturing a product idea as a structured docum
    - **Out of Scope** — explicit exclusions to prevent scope creep
 3. Click **Create PRD** to save.
 
-Maestro creates a Work Graph `document` item tagged `delivery-planner` and `prd`, then writes a mirror file to `.claude/prds/<slug>.md` inside your project root.
+Maestro creates a Work Graph `document` item tagged `delivery-planner` and `prd`, then writes a mirror file to `.maestro/external-mirror/prds/<slug>.md` inside your project root.
 
 ### Editing a PRD
 
@@ -53,7 +55,7 @@ Once a PRD is approved, convert it to a planning epic.
 
 1. Open the PRD detail view.
 2. Click **Decompose → Create Epic**.
-3. Confirm the epic title and scope. Maestro links the new epic to the PRD and writes `.claude/epics/<slug>/epic.md`.
+3. Confirm the epic title and scope. Maestro links the new epic to the PRD and writes `.maestro/external-mirror/epics/<slug>/epic.md`.
 
 ### From an AI Terminal
 
@@ -79,7 +81,7 @@ With an epic created, break it into concrete, agent-ready tasks.
 
 Each confirmed task becomes a Work Graph `task` item. When a task has a title, description, acceptance criteria, and capability hints, Maestro marks it `agent-ready` and it appears in the Agent Dispatch kanban board.
 
-Task files are written to `.claude/epics/<slug>/tasks/001.md`, `002.md`, and so on.
+Task files are written to `.maestro/external-mirror/epics/<slug>/tasks/001.md`, `002.md`, and so on.
 
 ### Dependency Graph
 
@@ -97,12 +99,12 @@ Sync any Work Graph item to a GitHub issue in one click.
 2. Click **Sync to GitHub**.
 3. Maestro creates or updates a GitHub issue, writes back the `issueNumber` and URL to the Work Graph item, and sets the following project fields:
 
-| Field              | Value                             |
-| ------------------ | --------------------------------- |
-| `Work Item Type`   | `task`                            |
-| `CCPM ID`          | e.g. `delivery-planner#task-3`    |
-| `Agent Pickup`     | `Ready` / `Claimed` / `Not Ready` |
-| `Parent Work Item` | Epic work item ID                 |
+| Field                | Value                             |
+| -------------------- | --------------------------------- |
+| `Work Item Type`     | `task`                            |
+| `External Mirror ID` | e.g. `delivery-planner#task-3`    |
+| `Agent Pickup`       | `Ready` / `Claimed` / `Not Ready` |
+| `Parent Work Item`   | Epic work item ID                 |
 
 Labels `delivery-planner` and `agent-ready` are applied automatically when the task is marked agent-ready.
 
@@ -169,14 +171,16 @@ The dashboard subscribes to Work Graph broadcast events. Status changes made by 
 
 ---
 
-## CCPM Mirror
+## External Mirror
 
-Delivery Planner maintains a mirror of Work Graph state in CCPM-compatible Markdown files. The mirror is human-readable and compatible with the Maestro CLI's CCPM skill.
+Delivery Planner maintains a mirror of Work Graph state in Markdown files under `.maestro/external-mirror/`. The mirror is human-readable and git-diffable.
+
+> **Migration note:** Prior to issue #411, mirror files were written to `.claude/ccpm/`. The default root is now `.maestro/external-mirror/` to avoid collision with Claude Code's own `.claude/` session storage. Existing `.claude/ccpm/` files can be imported (see below).
 
 ### File Layout
 
 ```
-.claude/
+.maestro/external-mirror/
 ├── prds/
 │   └── <feature-slug>.md
 └── epics/
@@ -191,15 +195,15 @@ Delivery Planner maintains a mirror of Work Graph state in CCPM-compatible Markd
 
 ### Mirror vs. Work Graph
 
-The Work Graph is the source of truth. Mirror files are kept in sync on every write but are treated as read-friendly artifacts, not editable inputs. If you edit a mirror file externally (e.g., with the CCPM CLI skill), the next Delivery Planner write will detect the hash mismatch and offer three options:
+The Work Graph is the source of truth. Mirror files are kept in sync on every write but are treated as read-friendly artifacts, not editable inputs. If you edit a mirror file externally, the next Delivery Planner write will detect the hash mismatch and offer three options:
 
 - **Overwrite** — replace the file with Work Graph state
 - **Skip** — leave the disk file as-is for this operation
 - **Merge** — open a diff view to reconcile manually
 
-### CCPM Compatibility
+### Importing Existing Mirror Files
 
-Existing `.claude/` files written by the CCPM CLI skill can be imported into the Work Graph via **Settings → Delivery Planner → Import CCPM Files**. Imported items appear in the dashboard alongside natively-created items.
+Existing mirror files (from `.claude/ccpm/` or any configured path) can be imported into the Work Graph via **Settings → Delivery Planner → Import Mirror Files**. Imported items appear in the dashboard alongside natively-created items.
 
 ---
 
@@ -211,7 +215,7 @@ All Delivery Planner slash commands are available in the AI input area in AI mod
 | ----------------- | -------------------------------------------------------------------- |
 | `/ccpm prd`       | Draft a new PRD from the current agent conversation                  |
 | `/ccpm decompose` | Decompose the active PRD or epic into tasks                          |
-| `/ccpm sync`      | Sync all unsynchronized items to CCPM mirror files and GitHub        |
+| `/ccpm sync`      | Sync all unsynchronized items to the external mirror and GitHub      |
 | `/ccpm next`      | Show the next agent-ready task for the current project               |
 | `/ccpm status`    | Show Delivery Planner status: item counts, sync state, blocked tasks |
 | `/ccpm bug`       | Draft a bug follow-up linked to the current task                     |
@@ -228,15 +232,15 @@ The Delivery Planner dashboard and sync controls are available in the Maestro we
 
 ### Dashboard shows no items
 
-The dashboard reads from the Work Graph. Items appear after you create a PRD via the wizard or import existing CCPM files. If you created items through an agent using `/ccpm prd` but they don't appear, run `/ccpm sync` to push the mirror state back to the Work Graph.
+The dashboard reads from the Work Graph. Items appear after you create a PRD via the wizard or import existing mirror files. If you created items through an agent using `/ccpm prd` but they don't appear, run `/ccpm sync` to push the mirror state back to the Work Graph.
 
-### "CCPM root must be inside the active project" error
+### "External mirror root must be inside the active project" error
 
 A path slug contains an absolute path or `..` segments that would resolve outside the project root. Check that your PRD and epic slugs don't start with `/` and don't contain relative traversal sequences.
 
 ### Mirror conflict after external edit
 
-If the on-disk CCPM file was modified after the last Delivery Planner write, you'll see a **Mirror Conflict** notice in the task detail view. Choose **Overwrite**, **Skip**, or open the diff view to merge. Work Graph state is always preserved regardless of which option you pick.
+If the on-disk external mirror file was modified after the last Delivery Planner write, you'll see a **Mirror Conflict** notice in the task detail view. Choose **Overwrite**, **Skip**, or open the diff view to merge. Work Graph state is always preserved regardless of which option you pick.
 
 ### GitHub sync creates duplicate issues
 

@@ -98,15 +98,15 @@ Detects worktree contamination before merge. Injectable `runGit` dep; accepts st
 
 Thin wrapper around `src/shared/fork-only-github.ts`. Provides `assertForkOnlyOperation({ repo })` and `assertForkOnlyOperation({ ghArgs })` call forms. Any pipeline operation that pushes, opens a PR, or comments on a remote MUST call this guard first.
 
-### CCPM stage mirror
+### External mirror stage audit
 
-| Component        | File                                                           | Task |
-| ---------------- | -------------------------------------------------------------- | ---- |
-| Mirror types     | `src/main/planning-pipeline/ccpm-mirror/stage-mirror-types.ts` | #256 |
-| Mirror functions | `src/main/planning-pipeline/ccpm-mirror/stage-mirror.ts`       | #256 |
-| Barrel           | `src/main/planning-pipeline/ccpm-mirror/index.ts`              | #256 |
+| Component        | File                                                               | Task |
+| ---------------- | ------------------------------------------------------------------ | ---- |
+| Mirror types     | `src/main/planning-pipeline/external-mirror/stage-mirror-types.ts` | #256 |
+| Mirror functions | `src/main/planning-pipeline/external-mirror/stage-mirror.ts`       | #256 |
+| Barrel           | `src/main/planning-pipeline/external-mirror/index.ts`              | #256 |
 
-`appendStageTransition()` and `appendRetryEvent()` write audit entries to the CCPM mirror. Both accept a `StageMirrorDeps` injection so they can be tested without a real DB.
+`appendStageTransition()` and `appendRetryEvent()` write audit entries to the external mirror. Both accept a `StageMirrorDeps` injection so they can be tested without a real DB. The directory was renamed from `ccpm-mirror/` to `external-mirror/` in issue #411.
 
 ### SLA tracking + notifications + restart recovery
 
@@ -159,7 +159,7 @@ src/main/planning-pipeline/
   safety/
     fork-only-guard.ts             assertForkOnlyOperation({ repo | ghArgs })
 
-  ccpm-mirror/
+  external-mirror/
     stage-mirror-types.ts          StageTransitionEntry, StageTransitionActor
     stage-mirror.ts                appendStageTransition(), appendRetryEvent()
     index.ts                       Barrel
@@ -194,7 +194,7 @@ src/__tests__/
       stray-file-detector.test.ts
     safety/
       fork-only-guard.test.ts
-    ccpm-mirror/
+    external-mirror/
       stage-mirror.test.ts
     sla/
       sla-tracker.test.ts

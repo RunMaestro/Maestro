@@ -25,7 +25,7 @@ interface PRDDetailProps {
 export function PRDDetail({ theme, prd, onEdit, onConvert, converting }: PRDDetailProps) {
 	const fields = prd.metadata?.prdFields as DeliveryPlannerPrdFields | undefined;
 	const valid = Boolean(
-		fields && prd.metadata?.ccpmSlug && FIELD_LABELS.every(({ key }) => fields[key]?.trim())
+		fields && prd.metadata?.mirrorSlug && FIELD_LABELS.every(({ key }) => fields[key]?.trim())
 	);
 
 	return (
@@ -36,7 +36,8 @@ export function PRDDetail({ theme, prd, onEdit, onConvert, converting }: PRDDeta
 						{prd.title}
 					</h3>
 					<div className="text-xs font-mono mt-1" style={{ color: theme.colors.textDim }}>
-						.claude/prds/{prd.metadata?.ccpmSlug?.toString() || 'missing-slug'}.md
+						.maestro/external-mirror/prds/{prd.metadata?.mirrorSlug?.toString() || 'missing-slug'}
+						.md
 					</div>
 				</div>
 				<div className="flex gap-2">

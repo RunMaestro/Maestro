@@ -1,4 +1,4 @@
-export type DeliveryPlannerOperationType = 'ccpm-sync' | 'decomposition' | 'github-sync';
+export type DeliveryPlannerOperationType = 'external-mirror-sync' | 'decomposition' | 'github-sync';
 export type DeliveryPlannerOperationStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 export interface DeliveryPlannerProgressSnapshot {

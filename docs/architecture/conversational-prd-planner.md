@@ -26,10 +26,10 @@ The goal of the Conversational PRD Planner is to replace (or augment) that one-s
 
 The delivery-planner subsystem is a pure domain service:
 
-- `DeliveryPlannerService` holds no long-lived stateful conversations — its only in-memory state is `InMemoryDeliveryPlannerProgressStore`, which tracks short-lived operations (ccpm-sync, decomposition, github-sync) keyed by auto-incrementing IDs.
+- `DeliveryPlannerService` holds no long-lived stateful conversations — its only in-memory state is `InMemoryDeliveryPlannerProgressStore`, which tracks short-lived operations (external-mirror-sync, decomposition, github-sync) keyed by auto-incrementing IDs.
 - The decomposition gateway (`DeliveryPlannerDecompositionGateway`) is a **single-call interface**: one request in, one structured-output result out. There is no streaming, no session resumption, and no turn count.
 - All IPC channels (`deliveryPlanner:createPrd`, `deliveryPlanner:decomposePrd`, etc.) are stateless request-response.
-- State durability is delegated to Work Graph (SQLite via `WorkGraphStorage`) and CCPM mirror files.
+- State durability is delegated to Work Graph (SQLite via `WorkGraphStorage`) and external mirror files.
 
 The agent runtime (sessions, process-manager, agent-dispatch) already manages long-lived conversational sessions with PTY processes, output parsers, session storage, group-chat multi-agent orchestration, crash recovery (`session-recovery.ts`), and SSH remote execution. It exposes a rich IPC namespace (`window.maestro.symphony.*`, process events, Auto Run triggers).
 

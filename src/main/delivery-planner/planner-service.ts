@@ -15,7 +15,7 @@ import type {
 import { WORK_GRAPH_READY_TAG } from '../../shared/work-graph-types';
 import { listDeliveryPlannerDashboard, type DeliveryPlannerDashboard } from './dashboard-queries';
 import type { DeliveryPlannerDecomposer } from './decomposer';
-import { slugifyCcpmSegment } from './path-resolver';
+import { slugifyMirrorSegment } from './path-resolver';
 import {
 	InMemoryDeliveryPlannerProgressStore,
 	type DeliveryPlannerProgressSnapshot,
@@ -77,7 +77,7 @@ export interface DeliveryPlannerEventBus {
 	publish(operation: WorkGraphBroadcastOperation, payload: unknown): void | Promise<void>;
 }
 
-export interface DeliveryPlannerCcpmMirror {
+export interface DeliveryPlannerExternalMirror {
 	syncPrd?(
 		item: WorkItem,
 		operation: DeliveryPlannerProgressSnapshot
@@ -150,7 +150,7 @@ export interface DeliveryPlannerServiceOptions {
 	events?: DeliveryPlannerEventBus;
 	decomposer?: DeliveryPlannerDecomposer;
 	progress?: DeliveryPlannerProgressStore;
-	ccpmMirror?: DeliveryPlannerCcpmMirror;
+	externalMirror?: DeliveryPlannerExternalMirror;
 	githubSync?: DeliveryPlannerGithubSyncAdapter;
 }
 
@@ -161,7 +161,7 @@ export class DeliveryPlannerService {
 	private readonly events?: DeliveryPlannerEventBus;
 	private readonly decomposer?: DeliveryPlannerDecomposer;
 	private readonly progress: DeliveryPlannerProgressStore;
-	private readonly ccpmMirror?: DeliveryPlannerCcpmMirror;
+	private readonly externalMirror?: DeliveryPlannerExternalMirror;
 	private readonly githubSync?: DeliveryPlannerGithubSyncAdapter;
 
 	constructor(options: DeliveryPlannerServiceOptions) {
@@ -169,7 +169,7 @@ export class DeliveryPlannerService {
 		this.events = options.events;
 		this.decomposer = options.decomposer;
 		this.progress = options.progress ?? new InMemoryDeliveryPlannerProgressStore();
-		this.ccpmMirror = options.ccpmMirror;
+		this.externalMirror = options.externalMirror;
 		this.githubSync = options.githubSync;
 	}
 
@@ -192,10 +192,10 @@ export class DeliveryPlannerService {
 				metadata: {
 					...(input.metadata ?? {}),
 					kind: 'prd',
-					ccpmSlug:
-						typeof input.metadata?.ccpmSlug === 'string' && input.metadata.ccpmSlug.trim()
-							? input.metadata.ccpmSlug
-							: slugifyCcpmSegment(input.title),
+					mirrorSlug:
+						typeof input.metadata?.mirrorSlug === 'string' && input.metadata.mirrorSlug.trim()
+							? input.metadata.mirrorSlug
+							: slugifyMirrorSegment(input.title),
 				},
 			},
 			input.actor
@@ -250,7 +250,7 @@ export class DeliveryPlannerService {
 				metadata: {
 					kind: 'epic',
 					prdWorkItemId: prd.id,
-					ccpmSlug: slugifyCcpmSegment(input.title?.trim() || prd.title),
+					mirrorSlug: slugifyMirrorSegment(input.title?.trim() || prd.title),
 				},
 			},
 			input.actor
@@ -341,7 +341,7 @@ export class DeliveryPlannerService {
 		return listDeliveryPlannerDashboard(this.workGraph, filters);
 	}
 
-	async syncCcpmMirror(id: string): Promise<WorkItem> {
+	async syncExternalMirror(id: string): Promise<WorkItem> {
 		const item = await this.requireItem(id);
 		return this.syncMirror(item, inferPlannerItemKind(item));
 	}
@@ -629,18 +629,18 @@ export class DeliveryPlannerService {
 
 	private async syncMirror(item: WorkItem, kind: 'prd' | 'epic' | 'task'): Promise<WorkItem> {
 		const sync = {
-			prd: this.ccpmMirror?.syncPrd,
-			epic: this.ccpmMirror?.syncEpic,
-			task: this.ccpmMirror?.syncTask,
+			prd: this.externalMirror?.syncPrd,
+			epic: this.externalMirror?.syncEpic,
+			task: this.externalMirror?.syncTask,
 		}[kind];
 
 		if (!sync) {
 			return item;
 		}
 
-		const operation = this.progress.start('ccpm-sync', { workItemId: item.id, kind }, 1);
+		const operation = this.progress.start('external-mirror-sync', { workItemId: item.id, kind }, 1);
 		try {
-			const result = await sync.call(this.ccpmMirror, item, operation);
+			const result = await sync.call(this.externalMirror, item, operation);
 			let syncedItem = item;
 			if (result.mirrorHash && result.mirrorHash !== item.mirrorHash) {
 				syncedItem = await this.updateWorkItem({
@@ -648,14 +648,14 @@ export class DeliveryPlannerService {
 					patch: { mirrorHash: result.mirrorHash },
 				});
 			}
-			this.progress.complete(operation.id, 'CCPM mirror sync completed');
+			this.progress.complete(operation.id, 'External mirror sync completed');
 			return syncedItem;
 		} catch (error) {
 			this.progress.fail(operation.id, error instanceof Error ? error : String(error), true);
 			if (error instanceof DeliveryPlannerMirrorConflictError) {
 				throw error;
 			}
-			throw new DeliveryPlannerMirrorConflictError('CCPM mirror sync failed', error);
+			throw new DeliveryPlannerMirrorConflictError('External mirror sync failed', error);
 		}
 	}
 
@@ -932,7 +932,7 @@ function renderEpicDescription(input: { title: string; description?: string }): 
 		source,
 		'## Architecture Decisions',
 		'- Preserve existing Work Graph item semantics and store Delivery Planner details in metadata.',
-		'- Mirror PRDs, epics, and tasks to CCPM-compatible markdown paths under the project root.',
+		'- Mirror PRDs, epics, and tasks to `.maestro/external-mirror/` markdown paths under the project root.',
 		'## Implementation Strategy',
 		'- Decompose work into dependency-ordered tasks with acceptance criteria and risk notes.',
 		'- Validate dependencies before persisting graph edges so previews remain deterministic.',
@@ -940,7 +940,7 @@ function renderEpicDescription(input: { title: string; description?: string }): 
 		'- Tasks generated from this epic must not introduce circular dependencies.',
 		'## Task Preview',
 		'- Design the workflow and dependency boundaries.',
-		'- Implement the scoped Work Graph and CCPM mirror changes.',
+		'- Implement the scoped Work Graph and external mirror changes.',
 		'- Validate generated tasks and dependency previews.',
 	].join('\n\n');
 }

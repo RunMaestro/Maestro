@@ -1,6 +1,6 @@
 import type { WorkItemCreateInput } from '../../shared/work-graph-types';
 import { DeliveryPlannerValidationError } from './planner-service';
-import { slugifyCcpmSegment } from './path-resolver';
+import { slugifyMirrorSegment } from './path-resolver';
 import {
 	parseDeliveryPlannerStructuredOutput,
 	type DeliveryPlannerStructuredDecomposition,
@@ -46,7 +46,7 @@ export class DeliveryPlannerDecomposer {
 			throw new DeliveryPlannerValidationError('Epic decomposition must return at least one task');
 		}
 
-		const epicSlug = slugifyCcpmSegment(request.epicTitle);
+		const epicSlug = slugifyMirrorSegment(request.epicTitle);
 		const titleToTempId = new Map<string, string>();
 		result.tasks.forEach((task, index) => {
 			const title = task.title?.trim();
@@ -75,8 +75,8 @@ export class DeliveryPlannerDecomposer {
 			metadata: {
 				parentWorkItemId: request.parentWorkItemId,
 				kind: 'task',
-				ccpmSlug: epicSlug,
-				ccpmTaskId: index + 1,
+				mirrorSlug: epicSlug,
+				mirrorTaskId: index + 1,
 				acceptanceCriteria: task.acceptanceCriteria ?? [],
 				filesLikelyTouched: task.filesLikelyTouched ?? [],
 				integrationRisks: task.integrationRisks ?? [],
@@ -199,7 +199,7 @@ function buildDeterministicDecomposition(
 					'Finalize architecture decisions, dependency boundaries, and implementation strategy.',
 				acceptanceCriteria: [
 					'Architecture decisions and sequencing are documented.',
-					'Work Graph dependencies and CCPM mirror expectations are confirmed.',
+					'Work Graph dependencies and external mirror expectations are confirmed.',
 				],
 				filesLikelyTouched,
 				integrationRisks: ['Incorrect sequencing can create blocked downstream tasks.'],
@@ -212,7 +212,7 @@ function buildDeterministicDecomposition(
 				description: 'Build the scoped workflow changes and persist concrete task metadata.',
 				acceptanceCriteria: [
 					'Implementation creates concrete Work Graph items with dependency metadata.',
-					'Generated CCPM mirrors include task acceptance criteria and risk notes.',
+					'Generated external mirror files include task acceptance criteria and risk notes.',
 				],
 				dependsOnTaskTitles: [`Design ${request.epicTitle}`],
 				integrationRisks: ['Generated tasks must remain parseable and deterministic.'],

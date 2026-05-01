@@ -21,7 +21,7 @@ type ProjectFieldName =
 	| 'Maestro Major'
 	| 'Work Item Type'
 	| 'Parent Work Item'
-	| 'CCPM ID'
+	| 'External Mirror ID'
 	| 'Agent Pickup';
 
 const CLOSED_STATUSES: WorkItemStatus[] = ['done', 'canceled'];
@@ -253,8 +253,8 @@ export class DeliveryPlannerGithubSync {
 			project.id,
 			projectItemId,
 			fields,
-			'CCPM ID',
-			ccpmIdForProject(item)
+			'External Mirror ID',
+			externalMirrorIdForProject(item)
 		);
 		await this.setProjectField(
 			project.id,
@@ -404,7 +404,7 @@ function parseIssueNumberFromUrl(url: string): number {
 function routingLabelsForItem(item: WorkItem, extraLabels: string[]): string[] {
 	return [
 		'delivery-planner',
-		...item.tags.filter((tag) => ['ccpm', 'symphony', 'agent-ready'].includes(tag)),
+		...item.tags.filter((tag) => ['external-mirror', 'symphony', 'agent-ready'].includes(tag)),
 		...extraLabels,
 	];
 }
@@ -418,7 +418,7 @@ function renderIssueBody(
 		'',
 		'---',
 		`Work Graph item: ${item.id}`,
-		`CCPM ID: ${ccpmIdForProject(item)}`,
+		`External Mirror ID: ${externalMirrorIdForProject(item)}`,
 		`Work Item Type: ${workItemTypeForProject(item)}`,
 	];
 	if (options.linkedIssueNumber) {
@@ -462,10 +462,10 @@ function parentForProject(item: WorkItem): string {
 	return parent ?? '';
 }
 
-function ccpmIdForProject(item: WorkItem): string {
-	const taskId = item.metadata?.ccpmTaskId;
-	const bugId = item.metadata?.ccpmBugId;
-	const slug = item.metadata?.ccpmSlug;
+function externalMirrorIdForProject(item: WorkItem): string {
+	const taskId = item.metadata?.mirrorTaskId;
+	const bugId = item.metadata?.mirrorBugId;
+	const slug = item.metadata?.mirrorSlug;
 	if (bugId !== undefined) {
 		return `${slug ?? item.id}#bug-${bugId}`;
 	}

@@ -18,7 +18,7 @@ This guide has been split into focused sub-documents for progressive disclosure:
 | [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                      |
 | [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`)     |
 | [[CLAUDE-AGENT-DISPATCH.md]]         | Agent Dispatch: lifecycle (claim/heartbeat/release), IPC namespace, fork-only GitHub assumption, troubleshooting |
-| [[CLAUDE-DELIVERY-PLANNER.md]]       | Delivery Planner: PRD → Epic → Tasks → GitHub sync, CCPM mirror, path resolver, validation commands              |
+| [[CLAUDE-DELIVERY-PLANNER.md]]       | Delivery Planner: PRD → Epic → Tasks → GitHub sync, external mirror, path resolver, validation commands          |
 | [[CLAUDE-PLANNING-PIPELINE.md]]      | Planning Pipeline epic: stage machine, triggers, supervisor, SLA, file index, how to add a new stage             |
 | [[CLAUDE-CONVERSATIONAL-PRD.md]]     | Conversational PRD Planner: architecture, IPC channels, file index, output contract, persistence, validation     |
 | [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                                 |

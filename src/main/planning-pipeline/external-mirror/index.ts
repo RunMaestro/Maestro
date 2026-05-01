@@ -1,7 +1,7 @@
 /**
  * index.ts
  *
- * Barrel re-exports for the planning-pipeline CCPM mirror module.
+ * Barrel re-exports for the planning-pipeline external mirror module.
  *
  * Public surface:
  *   - StageTransitionEntry, StageTransitionActor — audit-entry types

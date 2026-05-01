@@ -1,7 +1,7 @@
 /**
  * stage-mirror.ts
  *
- * CCPM mirror extension — appends pipeline stage-transition and retry audit
+ * External mirror extension — appends pipeline stage-transition and retry audit
  * lines to an existing work-item markdown mirror file.
  *
  * ## Design goals
@@ -26,7 +26,7 @@
  *   `- 2026-04-30T18:42:01Z — system:planning-pipeline RETRY attempt=2 reason: "claim expired"`
  *
  * @see stage-mirror-types.ts — StageTransitionEntry
- * @see src/main/delivery-planner/ccpm-mirror.ts — full-rewrite mirror (writeCcpmMirror)
+ * @see src/main/delivery-planner/external-mirror.ts — full-rewrite mirror (writeExternalMirror)
  */
 
 import type { StageTransitionEntry } from './stage-mirror-types';

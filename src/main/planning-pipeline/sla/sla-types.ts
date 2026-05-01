@@ -4,7 +4,7 @@
  * Type contracts for the SLA tracking subsystem of the Planning Pipeline.
  *
  * These types are intentionally minimal and storage-agnostic.  The SlaTracker
- * keeps durations in memory; a future task can hydrate from the CCPM mirror.
+ * keeps durations in memory; a future task can hydrate from the external mirror.
  *
  * @see sla-tracker.ts        — in-memory SLA tracking implementation
  * @see notification-emitter.ts — breach → notification bridge

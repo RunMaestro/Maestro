@@ -49,7 +49,7 @@ export function PRDWizard({
 	const editingFields = editingPrd?.metadata?.prdFields as DeliveryPlannerPrdFields | undefined;
 	const [title, setTitle] = useState(editingPrd?.title ?? '');
 	const [slug, setSlug] = useState(
-		editingPrd?.metadata?.ccpmSlug?.toString() ?? slugify(editingPrd?.title ?? '')
+		editingPrd?.metadata?.mirrorSlug?.toString() ?? slugify(editingPrd?.title ?? '')
 	);
 	const [fields, setFields] = useState<DeliveryPlannerPrdFields>(editingFields ?? EMPTY_FIELDS);
 	const [tags, setTags] = useState(
@@ -65,7 +65,7 @@ export function PRDWizard({
 		const duplicate = existingPrds.find(
 			(item) =>
 				item.id !== editingPrd?.id &&
-				(item.title.trim().toLowerCase() === normalizedTitle || item.metadata?.ccpmSlug === slug)
+				(item.title.trim().toLowerCase() === normalizedTitle || item.metadata?.mirrorSlug === slug)
 		);
 		if (duplicate) return 'A PRD with that name or slug already exists';
 		const missing = FIELD_LABELS.find(({ key }) => !fields[key].trim());

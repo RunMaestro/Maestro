@@ -24,9 +24,9 @@ import {
 } from '../../delivery-planner';
 import {
 	PlannerMirrorConflictError,
-	writeCcpmMirror,
-	type CcpmMirrorResult,
-} from '../../delivery-planner/ccpm-mirror';
+	writeExternalMirror,
+	type ExternalMirrorResult,
+} from '../../delivery-planner/external-mirror';
 import { InMemoryDeliveryPlannerProgressStore } from '../../delivery-planner/progress';
 import { createIpcDataHandler } from '../../utils/ipcHandler';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
@@ -133,10 +133,10 @@ export function registerDeliveryPlannerHandlers(
 				let item =
 					target === 'github'
 						? await service.syncGithubIssue(i.workItemId)
-						: await service.syncCcpmMirror(i.workItemId);
+						: await service.syncExternalMirror(i.workItemId);
 				if (target === 'all') {
 					item = await service.syncGithubIssue(item.id);
-					item = await service.syncCcpmMirror(item.id);
+					item = await service.syncExternalMirror(item.id);
 				}
 				return item;
 			}
@@ -237,10 +237,10 @@ function createDeliveryPlannerService(
 		decomposer: new DeliveryPlannerDecomposer(new StructuredDeliveryPlannerDecompositionGateway()),
 		progress,
 		githubSync: new DeliveryPlannerGithubSync(),
-		ccpmMirror: {
-			syncPrd: (item) => syncCcpmItem(item, 'prd'),
-			syncEpic: (item) => syncCcpmItem(item, 'epic'),
-			syncTask: (item) => syncCcpmItem(item, 'task'),
+		externalMirror: {
+			syncPrd: (item) => syncExternalMirrorItem(item, 'prd'),
+			syncEpic: (item) => syncExternalMirrorItem(item, 'epic'),
+			syncTask: (item) => syncExternalMirrorItem(item, 'task'),
 		},
 		events: {
 			publish: (operation, payload) => {
@@ -250,21 +250,21 @@ function createDeliveryPlannerService(
 	});
 }
 
-async function syncCcpmItem(
+async function syncExternalMirrorItem(
 	item: WorkItem,
 	kind: 'prd' | 'epic' | 'task'
 ): Promise<{ mirrorHash?: string }> {
-	const result = await writeCcpmMirror({
+	const result = await writeExternalMirror({
 		item,
 		kind,
 		projectPath: item.projectPath,
-		slug: item.metadata?.ccpmSlug?.toString(),
+		slug: item.metadata?.mirrorSlug?.toString(),
 	});
 	throwIfMirrorConflict(result);
 	return { mirrorHash: result.mirrorHash };
 }
 
-function throwIfMirrorConflict(result: CcpmMirrorResult): void {
+function throwIfMirrorConflict(result: ExternalMirrorResult): void {
 	if (result.status !== 'conflict' || !result.error) {
 		return;
 	}

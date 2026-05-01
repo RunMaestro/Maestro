@@ -50,7 +50,7 @@ export const deliveryPlannerService = {
 		const tags = uniqueTags(['delivery-planner', 'prd', ...(request.tags ?? [])]);
 		const metadata = {
 			kind: 'prd',
-			ccpmSlug: request.slug,
+			mirrorSlug: request.slug,
 			deliveryPlannerConcept: 'prd',
 			prdFields: request.fields,
 		};

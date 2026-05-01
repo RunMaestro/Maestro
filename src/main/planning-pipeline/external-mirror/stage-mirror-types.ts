@@ -1,16 +1,16 @@
 /**
  * stage-mirror-types.ts
  *
- * Type contracts for the CCPM stage-transition mirror module.
+ * Type contracts for the external mirror stage-transition module.
  *
  * Every time a work item moves between pipeline stages — or is retried /
- * dead-lettered — a single audit line is appended to the item's existing CCPM
- * markdown mirror file under a `## Stage transitions` section.  This gives the
- * file-level git history a complete, chronological pipeline trail for the item
- * without rewriting the whole document.
+ * dead-lettered — a single audit line is appended to the item's existing
+ * external markdown mirror file under a `## Stage transitions` section.  This
+ * gives the file-level git history a complete, chronological pipeline trail for
+ * the item without rewriting the whole document.
  *
  * @see stage-mirror.ts          — appendStageTransition / appendRetryEvent impl
- * @see src/main/delivery-planner/ccpm-mirror.ts — the full-rewrite mirror path
+ * @see src/main/delivery-planner/external-mirror.ts — the full-rewrite mirror path
  * @see src/shared/planning-pipeline-types.ts   — AnyPipelineStage vocabulary
  */
 
@@ -40,7 +40,7 @@ export interface StageTransitionActor {
 // ---------------------------------------------------------------------------
 
 /**
- * Data required to record a single pipeline stage transition in the CCPM mirror.
+ * Data required to record a single pipeline stage transition in the external mirror.
  */
 export interface StageTransitionEntry {
 	/** Work Graph item ID whose stage changed. */

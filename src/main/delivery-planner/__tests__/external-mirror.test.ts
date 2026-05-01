@@ -5,9 +5,9 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { WorkItem } from '../../../shared/work-graph-types';
-import { importCcpmMirror, writeCcpmMirror } from '../ccpm-mirror';
+import { importExternalMirror, writeExternalMirror } from '../external-mirror';
 import { markdownMirrorHash } from '../frontmatter';
-import { resolveCcpmProjectPaths, slugifyCcpmSegment } from '../path-resolver';
+import { resolveExternalMirrorPaths, slugifyMirrorSegment } from '../path-resolver';
 
 const tempDirs: string[] = [];
 
@@ -15,21 +15,23 @@ afterEach(async () => {
 	await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
-describe('CCPM mirror', () => {
-	it('resolves project-local CCPM artifact paths', async () => {
+describe('External mirror (renamed from ccpm-mirror)', () => {
+	it('resolves project-local external mirror artifact paths', async () => {
 		const projectPath = await makeTempProject();
-		const paths = resolveCcpmProjectPaths(projectPath, 'Delivery Planner');
+		const paths = resolveExternalMirrorPaths(projectPath, 'Delivery Planner');
 
-		expect(paths.prdFile).toBe(path.join(projectPath, '.claude', 'prds', 'delivery-planner.md'));
+		expect(paths.prdFile).toBe(
+			path.join(projectPath, '.maestro', 'external-mirror', 'prds', 'delivery-planner.md')
+		);
 		expect(paths.epicFile).toBe(
-			path.join(projectPath, '.claude', 'epics', 'delivery-planner', 'epic.md')
+			path.join(projectPath, '.maestro', 'external-mirror', 'epics', 'delivery-planner', 'epic.md')
 		);
 		expect(paths.tasksDir).toBe(
-			path.join(projectPath, '.claude', 'epics', 'delivery-planner', 'tasks')
+			path.join(projectPath, '.maestro', 'external-mirror', 'epics', 'delivery-planner', 'tasks')
 		);
 	});
 
-	it('writes CCPM markdown with frontmatter and imports it back', async () => {
+	it('writes external mirror markdown with frontmatter and imports it back', async () => {
 		const projectPath = await makeTempProject();
 		const item = makeWorkItem(projectPath, {
 			id: 'prd-1',
@@ -37,10 +39,10 @@ describe('CCPM mirror', () => {
 			type: 'feature',
 			status: 'planned',
 			description: 'Build Delivery Planner.',
-			tags: ['delivery-planner', 'ccpm'],
+			tags: ['delivery-planner', 'external-mirror'],
 		});
 
-		const result = await writeCcpmMirror({
+		const result = await writeExternalMirror({
 			item,
 			kind: 'prd',
 			slug: 'delivery-planner',
@@ -49,7 +51,7 @@ describe('CCPM mirror', () => {
 		expect(result.status).toBe('created');
 		expect(result.mirrorHash).toBeDefined();
 
-		const imported = await importCcpmMirror(result.filePath);
+		const imported = await importExternalMirror(result.filePath);
 
 		expect(imported.frontmatter).toMatchObject({
 			id: 'prd-1',
@@ -58,7 +60,7 @@ describe('CCPM mirror', () => {
 			status: 'planned',
 			source: 'delivery-planner',
 		});
-		expect(imported.frontmatter.tags).toEqual(['delivery-planner', 'ccpm']);
+		expect(imported.frontmatter.tags).toEqual(['delivery-planner', 'external-mirror']);
 		expect(imported.body).toContain('Build Delivery Planner.');
 		expect(imported.mirrorHash).toBe(result.mirrorHash);
 	});
@@ -79,14 +81,14 @@ describe('CCPM mirror', () => {
 			},
 		});
 
-		const result = await writeCcpmMirror({
+		const result = await writeExternalMirror({
 			item,
 			kind: 'bug',
 			slug: 'delivery-planner',
 			bugId: 'issue-61-regression',
 		});
 		const raw = await fs.readFile(result.filePath, 'utf8');
-		const imported = await importCcpmMirror(result.filePath);
+		const imported = await importExternalMirror(result.filePath);
 
 		expect(raw).toContain('github:\n  owner: HumpfTech\n  repo: Maestro\n');
 		expect(imported.frontmatter.github).toMatchObject({
@@ -107,7 +109,7 @@ describe('CCPM mirror', () => {
 			mirrorHash: markdownMirrorHash('older mirror'),
 		});
 
-		const first = await writeCcpmMirror({
+		const first = await writeExternalMirror({
 			item: {
 				...item,
 				mirrorHash: undefined,
@@ -118,7 +120,7 @@ describe('CCPM mirror', () => {
 		});
 		await fs.appendFile(first.filePath, '\nLocal edit.\n', 'utf8');
 
-		const conflict = await writeCcpmMirror({
+		const conflict = await writeExternalMirror({
 			item,
 			kind: 'task',
 			slug: 'delivery-planner',
@@ -140,13 +142,13 @@ describe('CCPM mirror', () => {
 			description: 'Keep hashes stable.',
 		});
 
-		const first = await writeCcpmMirror({
+		const first = await writeExternalMirror({
 			item,
 			kind: 'task',
 			slug: 'delivery-planner',
 			taskId: 3,
 		});
-		const second = await writeCcpmMirror({
+		const second = await writeExternalMirror({
 			item: {
 				...item,
 				mirrorHash: first.mirrorHash,
@@ -160,34 +162,34 @@ describe('CCPM mirror', () => {
 		expect(second.mirrorHash).toBe(first.mirrorHash);
 	});
 
-	it('allows configured project-local CCPM roots but rejects paths outside the project', async () => {
+	it('allows configured project-local external mirror roots but rejects paths outside the project', async () => {
 		const projectPath = await makeTempProject();
-		const configured = resolveCcpmProjectPaths(projectPath, 'Custom Root', {
-			ccpmRoot: 'planning/.ccpm',
+		const configured = resolveExternalMirrorPaths(projectPath, 'Custom Root', {
+			externalMirrorRoot: 'planning/.external-mirror',
 		});
 
 		expect(configured.prdFile).toBe(
-			path.join(projectPath, 'planning', '.ccpm', 'prds', 'custom-root.md')
+			path.join(projectPath, 'planning', '.external-mirror', 'prds', 'custom-root.md')
 		);
 		expect(() =>
-			resolveCcpmProjectPaths(projectPath, 'Outside', {
-				ccpmRoot: path.dirname(projectPath),
+			resolveExternalMirrorPaths(projectPath, 'Outside', {
+				externalMirrorRoot: path.dirname(projectPath),
 			})
-		).toThrow('CCPM root must be inside the active project');
+		).toThrow('External mirror root must be inside the active project');
 		expect(() =>
-			resolveCcpmProjectPaths(projectPath, 'Outside', {
+			resolveExternalMirrorPaths(projectPath, 'Outside', {
 				prdsDir: path.dirname(projectPath),
 			})
-		).toThrow('CCPM root must be inside the active project');
+		).toThrow('External mirror root must be inside the active project');
 	});
 
 	it('normalizes empty slugs safely', () => {
-		expect(slugifyCcpmSegment('  !!!  ')).toBe('untitled');
+		expect(slugifyMirrorSegment('  !!!  ')).toBe('untitled');
 	});
 });
 
 async function makeTempProject(): Promise<string> {
-	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-ccpm-mirror-'));
+	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-external-mirror-'));
 	tempDirs.push(dir);
 	return dir;
 }

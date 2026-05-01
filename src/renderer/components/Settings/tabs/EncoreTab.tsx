@@ -1109,7 +1109,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								</span>
 							</div>
 							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-								PRD → Epic → Tasks → GitHub sync with CCPM planning
+								PRD → Epic → Tasks → GitHub sync with external mirror
 							</div>
 						</div>
 					</div>
