@@ -51,8 +51,8 @@ export interface SessionItemProps {
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
-	dispatchRole?: DispatchRole; // Current pipeline role assigned to this agent (#426)
-	dispatchActive?: boolean; // Whether this agent currently holds an active dispatch claim (#442)
+	dispatchRoles?: DispatchRole[]; // Roles this agent is configured for in the active project's slots (#426/#442)
+	dispatchActiveRoles?: Set<DispatchRole>; // Subset of roles currently holding an active claim
 
 	// Handlers
 	onSelect: () => void;
@@ -95,8 +95,8 @@ export const SessionItem = memo(function SessionItem({
 	jumpNumber,
 	cueSubscriptionCount,
 	cueActiveRun,
-	dispatchRole,
-	dispatchActive,
+	dispatchRoles,
+	dispatchActiveRoles,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -190,35 +190,53 @@ export const SessionItem = memo(function SessionItem({
 							<Zap className="w-3 h-3" style={{ color: '#2dd4bf' }} fill="#2dd4bf" />
 						</span>
 					)}
-					{dispatchRole != null && (
+					{dispatchRoles && dispatchRoles.length > 0 && (
 						<span
-							className={`shrink-0 flex items-center${dispatchActive && !cueActiveRun ? ' animate-pulse' : ''}`}
-							title={`Dispatch role: ${dispatchRole}${dispatchActive ? ' (active claim)' : ''}`}
+							className="shrink-0 flex items-center gap-0.5"
+							title={`Dev Crew: ${dispatchRoles.join(', ')}`}
 						>
-							{dispatchRole === 'runner' && (
-								<Hammer
-									className="w-3 h-3"
-									style={{ color: '#a78bfa', opacity: dispatchActive ? 1 : 0.5 }}
-								/>
-							)}
-							{dispatchRole === 'fixer' && (
-								<Wrench
-									className="w-3 h-3"
-									style={{ color: '#f59e0b', opacity: dispatchActive ? 1 : 0.5 }}
-								/>
-							)}
-							{dispatchRole === 'reviewer' && (
-								<Eye
-									className="w-3 h-3"
-									style={{ color: '#38bdf8', opacity: dispatchActive ? 1 : 0.5 }}
-								/>
-							)}
-							{dispatchRole === 'merger' && (
-								<GitMerge
-									className="w-3 h-3"
-									style={{ color: '#34d399', opacity: dispatchActive ? 1 : 0.5 }}
-								/>
-							)}
+							{dispatchRoles.map((role) => {
+								const isActive = dispatchActiveRoles?.has(role) ?? false;
+								const pulse = isActive && !cueActiveRun ? ' animate-pulse' : '';
+								const opacity = isActive ? 1 : 0.7;
+								if (role === 'runner') {
+									return (
+										<Hammer
+											key={role}
+											className={`w-3.5 h-3.5${pulse}`}
+											style={{ color: '#c084fc', opacity }}
+										/>
+									);
+								}
+								if (role === 'fixer') {
+									return (
+										<Wrench
+											key={role}
+											className={`w-3.5 h-3.5${pulse}`}
+											style={{ color: '#fb923c', opacity }}
+										/>
+									);
+								}
+								if (role === 'reviewer') {
+									return (
+										<Eye
+											key={role}
+											className={`w-3.5 h-3.5${pulse}`}
+											style={{ color: '#22d3ee', opacity }}
+										/>
+									);
+								}
+								if (role === 'merger') {
+									return (
+										<GitMerge
+											key={role}
+											className={`w-3.5 h-3.5${pulse}`}
+											style={{ color: '#4ade80', opacity }}
+										/>
+									);
+								}
+								return null;
+							})}
 						</span>
 					)}
 				</div>

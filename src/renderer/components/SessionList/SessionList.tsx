@@ -284,21 +284,22 @@ function SessionListInner(props: SessionListProps) {
 	}, []);
 
 	const dispatchSessionMap = useMemo(() => {
-		const map = new Map<string, { role: DispatchRole; active: boolean }>();
+		const map = new Map<string, { roles: DispatchRole[]; activeRoles: Set<DispatchRole> }>();
 		const roles: DispatchRole[] = ['runner', 'fixer', 'reviewer', 'merger'];
 		for (const session of sessions) {
 			if (!session.projectRoot) continue;
 			const slots = allSlots.get(session.projectRoot);
 			if (!slots) continue;
+			const matched: DispatchRole[] = [];
+			const active = new Set<DispatchRole>();
 			for (const role of roles) {
 				if (slots[role]?.agentId === session.id) {
-					// Check if there's an active claim for this project+role pointing to this session
+					matched.push(role);
 					const claimAgentId = activeClaimsByProject.get(session.projectRoot)?.get(role);
-					const active = claimAgentId === session.id;
-					map.set(session.id, { role, active });
-					break;
+					if (claimAgentId === session.id) active.add(role);
 				}
 			}
+			if (matched.length > 0) map.set(session.id, { roles: matched, activeRoles: active });
 		}
 		return map;
 	}, [sessions, allSlots, activeClaimsByProject]);
@@ -689,8 +690,8 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
-					dispatchRole={dispatchSessionMap.get(session.id)?.role}
-					dispatchActive={dispatchSessionMap.get(session.id)?.active}
+					dispatchRoles={dispatchSessionMap.get(session.id)?.roles}
+					dispatchActiveRoles={dispatchSessionMap.get(session.id)?.activeRoles}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -760,8 +761,8 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
-										dispatchRole={dispatchSessionMap.get(child.id)?.role}
-										dispatchActive={dispatchSessionMap.get(child.id)?.active}
+										dispatchRoles={dispatchSessionMap.get(child.id)?.roles}
+										dispatchActiveRoles={dispatchSessionMap.get(child.id)?.activeRoles}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
