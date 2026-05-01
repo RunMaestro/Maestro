@@ -195,43 +195,48 @@ function SessionListInner(props: SessionListProps) {
 	}, [sessions.length]);
 
 	// Dispatch slot icons: maps session ID → { role, active } for sidebar role icons (#442).
-	// Reads projectRoleSlots from the active session's project root and finds which role
-	// (runner/fixer/reviewer/merger) each agent is configured for. Active state is false
-	// for now until claim-state events from #444 land in renderer.
-	const activeSession = sessions.find((s) => s.id === activeSessionId);
-	const projectPath = activeSession?.projectRoot;
-	const [projectRoleSlots, setProjectRoleSlots] = useState<Record<
-		string,
-		{ agentId?: string }
-	> | null>(null);
+	// Reads projectRoleSlots for EVERY unique project root across all sessions so icons
+	// render on agents in any configured project, not just the active one.
+	const projectPaths = useMemo(() => {
+		const seen = new Set<string>();
+		for (const s of sessions) if (s.projectRoot) seen.add(s.projectRoot);
+		return Array.from(seen);
+	}, [sessions]);
+	const [allSlots, setAllSlots] = useState<
+		Map<string, Record<string, { agentId?: string }>>
+	>(new Map());
 	useEffect(() => {
-		if (!projectPath) {
-			setProjectRoleSlots(null);
-			return;
-		}
 		let cancelled = false;
+		const api = (window as unknown as { maestro?: { projectRoles?: { get?: (p: string) => Promise<unknown> } } }).maestro?.projectRoles;
+		if (!api?.get) return;
 		(async () => {
-			try {
-				const api = (window as unknown as { maestro?: { projectRoles?: { get?: (p: string) => Promise<unknown> } } }).maestro?.projectRoles;
-				if (!api?.get) return;
-				const slots = (await api.get(projectPath)) as Record<string, { agentId?: string }> | null;
-				if (!cancelled) setProjectRoleSlots(slots ?? {});
-			} catch {
-				if (!cancelled) setProjectRoleSlots({});
+			const m = new Map<string, Record<string, { agentId?: string }>>();
+			for (const path of projectPaths) {
+				try {
+					const slots = (await api.get!(path)) as Record<string, { agentId?: string }> | null;
+					if (slots) m.set(path, slots);
+				} catch {
+					// ignore — leave path out of map
+				}
 			}
+			if (!cancelled) setAllSlots(m);
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [projectPath]);
+	}, [projectPaths]);
 	const dispatchSessionMap = useMemo(() => {
 		const map = new Map<string, { role: DispatchRole; active: boolean }>();
-		if (!projectRoleSlots) return map;
 		const roles: DispatchRole[] = ['runner', 'fixer', 'reviewer', 'merger'];
-		for (const role of roles) {
-			const slot = projectRoleSlots[role];
-			if (slot?.agentId) {
-				map.set(slot.agentId, { role, active: false });
+		for (const session of sessions) {
+			if (!session.projectRoot) continue;
+			const slots = allSlots.get(session.projectRoot);
+			if (!slots) continue;
+			for (const role of roles) {
+				if (slots[role]?.agentId === session.id) {
+					map.set(session.id, { role, active: false });
+					break;
+				}
 			}
 		}
 		return map;
