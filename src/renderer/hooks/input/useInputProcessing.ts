@@ -16,6 +16,7 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
+import { notifyToast } from '../../stores/notificationStore';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -269,6 +270,51 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					onSkillsCommand().catch((error) => {
 						logger.error('[processInput] /skills command failed:', undefined, error);
 					});
+					return;
+				}
+
+				// Handle /PM-init (#445) — must appear before the generic /PM block
+				// because /PM-init starts with the /PM prefix.
+				if (!isTerminalMode && commandText.startsWith('/PM-init')) {
+					const repoArg = commandText.slice('/PM-init'.length).trim() || undefined;
+					setInputValue('');
+					setSlashCommandOpen(false);
+					syncAiInputToSession('');
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+
+					notifyToast({ color: 'theme', title: '/PM-init', message: 'Initializing Project Meta fields…' });
+
+					window.maestro.pmInit
+						.initRepo({ repo: repoArg })
+						.then((res) => {
+							const { created, existing, errors } = res;
+							if (errors.length > 0) {
+								notifyToast({
+									color: 'red',
+									title: '/PM-init failed',
+									message: errors.join('; '),
+									dismissible: true,
+								});
+								return;
+							}
+							const parts: string[] = [];
+							if (created.length > 0) parts.push(`Created ${created.length} field${created.length !== 1 ? 's' : ''}`);
+							if (existing.length > 0) parts.push(`${existing.length} already existed`);
+							notifyToast({
+								color: 'green',
+								title: '/PM-init complete',
+								message: parts.join(', ') || 'No fields needed',
+							});
+						})
+						.catch((err: unknown) => {
+							notifyToast({
+								color: 'red',
+								title: '/PM-init error',
+								message: err instanceof Error ? err.message : String(err),
+								dismissible: true,
+							});
+						});
+
 					return;
 				}
 
