@@ -614,6 +614,90 @@ describe('persistence IPC handlers', () => {
 			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalled();
 		});
 
+		// Characterization tests for cliActivity diff semantics. PR-A commit 2 will
+		// swap the JSON.stringify comparison for a shallow field compare; these
+		// tests pin down the exact (prev, curr) pairs that must continue to
+		// broadcast (or stay silent) so the swap is verifiable.
+		describe('cliActivity diff (lock-in for shallow-compare swap)', () => {
+			const baseSession = {
+				id: 'session-1',
+				name: 'Session 1',
+				cwd: '/test',
+				state: 'idle' as const,
+				inputMode: 'ai' as const,
+				toolType: 'claude-code',
+			};
+			const playbookA = { playbookId: 'pb-a', playbookName: 'Build', startedAt: 1000 };
+			const playbookB = { playbookId: 'pb-b', playbookName: 'Test', startedAt: 2000 };
+
+			beforeEach(() => {
+				mockWebServer.getWebClientCount.mockReturnValue(2);
+			});
+
+			it('does not broadcast when both prev and curr have no cliActivity', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession }]);
+				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+			});
+
+			it('broadcasts when cliActivity goes from undefined to playbook', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession, cliActivity: playbookA }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when cliActivity goes from playbook to undefined', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when playbookId changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, playbookId: 'pb-c' } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when playbookName changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, playbookName: 'NewName' } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when startedAt changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, startedAt: 9999 } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not broadcast when cliActivity reference changes but fields match', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				// New object, same field values — should be treated as unchanged.
+				await handler!({} as any, [{ ...baseSession, cliActivity: { ...playbookA } }]);
+				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+			});
+
+			it('broadcasts when entire playbook is swapped', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession, cliActivity: playbookB }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+		});
+
 		it('should not broadcast when no web clients connected', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(0);
 			const sessions = [
