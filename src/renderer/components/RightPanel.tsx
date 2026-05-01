@@ -15,6 +15,7 @@ import {
 	AlertTriangle,
 	Play,
 	XCircle,
+	Users,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
@@ -461,18 +462,21 @@ export const RightPanel = memo(
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
+							className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold border-b-2 transition-colors px-2"
 							style={{
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
 								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun'
-								? 'Auto Run'
-								: tab === 'roles'
-									? 'Dev Crew'
-									: tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'roles' && <Users className="w-3 h-3" />}
+							<span>
+								{tab === 'autorun'
+									? 'Auto Run'
+									: tab === 'roles'
+										? 'Dev Crew'
+										: tab.charAt(0).toUpperCase() + tab.slice(1)}
+							</span>
 						</button>
 					))}
 
