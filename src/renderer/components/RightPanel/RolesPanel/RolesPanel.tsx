@@ -1,18 +1,23 @@
 /**
- * RolesPanel — per-project fleet roster tab (#429).
+ * RolesPanel — per-project fleet roster tab (#429, #441).
  *
  * Shows exactly 4 slot cards (runner / fixer / reviewer / merger).
  * Persists via projectRoles:get / projectRoles:set IPC channels.
  * Polls agentDispatch:getBoard every 10 s to show busy state.
+ *
+ * #441: slots now use ephemeral spawn (RoleSlotConfig) rather than pointing
+ * at existing Left Bar agents.  The panel no longer needs to pass a sessions
+ * list to SlotCard — provider discovery is handled inside the card via the
+ * useProviderModelOptions hook.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../types';
-import type { Session } from '../../../types';
 import type {
 	DispatchRole,
 	ProjectRoleSlots,
-	RoleSlotAssignment,
+	RoleSlotConfig,
+	AnyRoleSlot,
 } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLES } from '../../../../shared/project-roles-types';
 import type { WorkItem } from '../../../../shared/work-graph-types';
@@ -21,10 +26,9 @@ import { SlotCard } from './SlotCard';
 interface RolesPanelProps {
 	theme: Theme;
 	projectPath: string | null;
-	sessions: Session[];
 }
 
-export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
+export function RolesPanel({ theme, projectPath }: RolesPanelProps) {
 	const [slots, setSlots] = useState<ProjectRoleSlots>({});
 	const [busyItems, setBusyItems] = useState<WorkItem[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -40,7 +44,8 @@ export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
 			.get(projectPath)
 			.then((res) => {
 				if (res.success) {
-					setSlots(res.data);
+					// Cast: the store may hold legacy or current slot shapes — SlotCard handles both
+					setSlots(res.data as ProjectRoleSlots);
 				}
 			})
 			.catch(() => {})
@@ -71,7 +76,7 @@ export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
 	}, []);
 
 	const handleAssignmentChange = useCallback(
-		(role: DispatchRole, assignment: RoleSlotAssignment | undefined) => {
+		(role: DispatchRole, assignment: RoleSlotConfig | undefined) => {
 			if (!projectPath) return;
 			const next: ProjectRoleSlots = { ...slots };
 			if (assignment) {
@@ -95,15 +100,19 @@ export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
 		[projectPath, slots]
 	);
 
+	/**
+	 * Find the busy work item for a role slot.
+	 * #441: slots no longer carry agentId — busy state is matched by role via
+	 * pipeline.currentRole on the work item instead.
+	 */
 	function busyItemForRole(role: DispatchRole): WorkItem | undefined {
-		const assignment = slots[role];
-		if (!assignment) return undefined;
-		const { agentId } = assignment;
+		const slotVal = slots[role] as AnyRoleSlot | undefined;
+		if (!slotVal) return undefined;
+
+		// New shape: match by pipeline role
 		return busyItems.find(
 			(item) =>
-				item.claim != null &&
-				item.claim.status === 'active' &&
-				(item.owner?.id === agentId || item.claim.owner?.id === agentId)
+				item.claim != null && item.claim.status === 'active' && item.pipeline?.currentRole === role
 		);
 	}
 
@@ -146,8 +155,7 @@ export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
 				<SlotCard
 					key={role}
 					role={role}
-					assignment={slots[role]}
-					sessions={sessions}
+					assignment={slots[role] as AnyRoleSlot | undefined}
 					busyWorkItem={busyItemForRole(role)}
 					theme={theme}
 					onAssignmentChange={handleAssignmentChange}

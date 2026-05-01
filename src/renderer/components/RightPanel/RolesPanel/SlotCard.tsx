@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import type { Theme } from '../../../types';
-import type { DispatchRole, RoleSlotAssignment } from '../../../../shared/project-roles-types';
-import { DISPATCH_ROLE_LABELS } from '../../../../shared/project-roles-types';
-import type { Session } from '../../../types';
+import type {
+	DispatchRole,
+	RoleSlotConfig,
+	AnyRoleSlot,
+} from '../../../../shared/project-roles-types';
+import { DISPATCH_ROLE_LABELS, isLegacySlot } from '../../../../shared/project-roles-types';
 import type { WorkItem } from '../../../../shared/work-graph-types';
+import type { AgentId } from '../../../../shared/agentIds';
+import { useProviderModelOptions } from '../../../hooks/agentCreation/useProviderModelOptions';
 
 // Role icon characters
 const ROLE_ICONS: Record<DispatchRole, string> = {
@@ -15,121 +20,113 @@ const ROLE_ICONS: Record<DispatchRole, string> = {
 
 export interface SlotCardProps {
 	role: DispatchRole;
-	assignment: RoleSlotAssignment | undefined;
-	sessions: Session[];
+	/**
+	 * The stored slot value — may be the new RoleSlotConfig shape OR the
+	 * legacy RoleSlotAssignment shape (with `agentId`).  SlotCard renders a
+	 * migration banner when it detects the legacy shape.
+	 */
+	assignment: AnyRoleSlot | undefined;
 	busyWorkItem?: WorkItem;
 	theme: Theme;
-	onAssignmentChange: (role: DispatchRole, assignment: RoleSlotAssignment | undefined) => void;
+	onAssignmentChange: (role: DispatchRole, assignment: RoleSlotConfig | undefined) => void;
 }
 
 export function SlotCard({
 	role,
 	assignment,
-	sessions,
 	busyWorkItem,
 	theme,
 	onAssignmentChange,
 }: SlotCardProps) {
-	const [availableModels, setAvailableModels] = useState<string[]>([]);
-	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
+	// Detect legacy slot — show migration banner, don't try to render the new dropdowns
+	const legacy = isLegacySlot(assignment);
+	const config: RoleSlotConfig | undefined = legacy
+		? undefined
+		: (assignment as RoleSlotConfig | undefined);
 
-	const assignedSession = assignment
-		? sessions.find((s) => s.id === assignment.agentId)
-		: undefined;
+	const {
+		availableProviders,
+		loadingProviders,
+		providerError,
+		availableModels,
+		loadingModels,
+		availableEfforts,
+		loadingEfforts,
+		refreshProviders,
+	} = useProviderModelOptions({
+		enabled: !legacy,
+		// Host is always local from the UI's perspective — actual spawn host is
+		// derived from WorkItem.projectPath at dispatch time (#441 final spec).
+		host: { kind: 'local' },
+		selectedProvider: config?.agentProvider ?? null,
+	});
 
-	useEffect(() => {
-		if (!assignedSession?.toolType) {
-			setAvailableModels([]);
-			setAvailableEfforts([]);
-			return;
-		}
-		let stale = false;
-		const agentId = assignedSession.toolType;
+	// enabled defaults to true when absent
+	const slotEnabled = config ? config.enabled !== false : true;
 
-		window.maestro.agents
-			.getModels(agentId)
-			.then((models) => {
-				if (!stale) setAvailableModels(models ?? []);
-			})
-			.catch(() => {
-				if (!stale) setAvailableModels([]);
-			});
+	// -----------------------------------------------------------------------
+	// Handlers — each emits a fresh RoleSlotConfig
+	// -----------------------------------------------------------------------
 
-		Promise.all([
-			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
-			window.maestro.agents
-				.getConfigOptions(agentId, 'reasoningEffort')
-				.catch(() => [] as string[]),
-		])
-			.then(([effortOpts, reasoningOpts]) => {
-				if (!stale) {
-					setAvailableEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-				}
-			})
-			.catch(() => {
-				if (!stale) setAvailableEfforts([]);
-			});
-
-		return () => {
-			stale = true;
-		};
-	}, [assignedSession?.toolType]);
-
-	const handleAgentChange = useCallback(
-		(agentId: string) => {
-			if (!agentId) {
+	const handleProviderChange = useCallback(
+		(providerId: string) => {
+			if (!providerId) {
 				onAssignmentChange(role, undefined);
 				return;
 			}
 			onAssignmentChange(role, {
-				agentId,
-				modelOverride: assignment?.modelOverride,
-				effortOverride: assignment?.effortOverride,
+				agentProvider: providerId as AgentId,
+				// reset derived fields when provider changes
+				model: undefined,
+				effort: undefined,
+				enabled: config?.enabled,
 			});
 		},
-		[role, assignment, onAssignmentChange]
+		[role, config, onAssignmentChange]
 	);
 
 	const handleModelChange = useCallback(
 		(model: string) => {
-			if (!assignment) return;
-			onAssignmentChange(role, { ...assignment, modelOverride: model || undefined });
+			if (!config) return;
+			onAssignmentChange(role, { ...config, model: model || undefined });
 		},
-		[role, assignment, onAssignmentChange]
+		[role, config, onAssignmentChange]
 	);
 
 	const handleEffortChange = useCallback(
 		(effort: string) => {
-			if (!assignment) return;
-			onAssignmentChange(role, { ...assignment, effortOverride: effort || undefined });
+			if (!config) return;
+			onAssignmentChange(role, {
+				...config,
+				effort: (effort || undefined) as RoleSlotConfig['effort'],
+			});
 		},
-		[role, assignment, onAssignmentChange]
+		[role, config, onAssignmentChange]
 	);
 
 	const handleToggleEnabled = useCallback(() => {
-		if (!assignment) return;
+		if (!config) return;
 		onAssignmentChange(role, {
-			...assignment,
-			enabled: assignment.enabled === false ? true : false,
+			...config,
+			enabled: config.enabled === false ? true : false,
 		});
-	}, [role, assignment, onAssignmentChange]);
+	}, [role, config, onAssignmentChange]);
 
-	// enabled defaults to true when absent
-	const slotEnabled = assignment ? assignment.enabled !== false : true;
+	const handleDismissLegacy = useCallback(() => {
+		// User acknowledges the migration banner — clears the legacy slot so
+		// they can configure fresh ephemeral settings.
+		onAssignmentChange(role, undefined);
+	}, [role, onAssignmentChange]);
 
+	// -----------------------------------------------------------------------
+	// Status badge
+	// -----------------------------------------------------------------------
 	const githubNumber = busyWorkItem?.github?.issueNumber;
 	const githubUrl = busyWorkItem?.github?.url;
 	const workItemDisplayId = githubNumber ? `#${githubNumber}` : busyWorkItem?.id;
 
-	/**
-	 * Status badge text (#437 drain-mode spec):
-	 *   On  + no busy item  → "On (Available)"
-	 *   On  + busy item     → "On (Busy: #1234)"
-	 *   Off + busy item     → "Off (Draining: #1234)"
-	 *   Off + no busy item  → "Off (Idle)"
-	 */
 	type StatusVariant = 'on-available' | 'on-busy' | 'off-draining' | 'off-idle';
-	const statusVariant: StatusVariant | null = assignment
+	const statusVariant: StatusVariant | null = config
 		? slotEnabled
 			? busyWorkItem
 				? 'on-busy'
@@ -145,6 +142,9 @@ export function SlotCard({
 		}
 	}, [githubUrl]);
 
+	// -----------------------------------------------------------------------
+	// Shared styles
+	// -----------------------------------------------------------------------
 	const selectStyle: React.CSSProperties = {
 		backgroundColor: theme.colors.bgSidebar,
 		color: theme.colors.textMain,
@@ -160,13 +160,13 @@ export function SlotCard({
 	const statusBadgeColor = (v: StatusVariant) => {
 		if (v === 'on-busy' || v === 'off-draining') return theme.colors.warning;
 		if (v === 'on-available') return theme.colors.accent;
-		return theme.colors.textDim; // off-idle
+		return theme.colors.textDim;
 	};
 
 	const statusBadgeBg = (v: StatusVariant) => {
 		if (v === 'on-busy' || v === 'off-draining') return `${theme.colors.warning}25`;
 		if (v === 'on-available') return `${theme.colors.accent}20`;
-		return `${theme.colors.textDim}20`; // off-idle
+		return `${theme.colors.textDim}20`;
 	};
 
 	return (
@@ -180,6 +180,7 @@ export function SlotCard({
 				backgroundColor: theme.colors.bgActivity,
 			}}
 		>
+			{/* Header row */}
 			<div className="flex items-center justify-between mb-2">
 				<div className="flex items-center gap-1.5">
 					<span style={{ fontSize: '13px' }}>{ROLE_ICONS[role]}</span>
@@ -237,7 +238,7 @@ export function SlotCard({
 						</span>
 					)}
 
-					{assignment && (
+					{config && (
 						<button
 							onClick={handleToggleEnabled}
 							className="text-[10px] px-1.5 py-0.5 rounded font-medium border"
@@ -261,103 +262,154 @@ export function SlotCard({
 				</div>
 			</div>
 
-			<div className="mb-2">
-				<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
-					Agent
-				</label>
-				{role === 'runner' ? (
-					<>
-						<select
-							value={assignment?.agentId ?? ''}
-							onChange={(e) => handleAgentChange(e.target.value)}
-							style={selectStyle}
-							title="Agent assigned to this role slot"
-						>
-							<option value="">Select agent for {DISPATCH_ROLE_LABELS[role]}</option>
-							{sessions.filter((s) => !s.sessionSshRemoteConfig?.enabled).length === 0 ? (
-								<option value="" disabled>
-									No local agents available — runner role requires local execution.
-								</option>
-							) : (
-								sessions.map((s) => {
-									const isRemote = s.sessionSshRemoteConfig?.enabled === true;
-									if (isRemote) return null;
-									return (
-										<option key={s.id} value={s.id}>
-											{s.name || s.id}
-										</option>
-									);
-								})
-							)}
-						</select>
-						{sessions.some((s) => s.sessionSshRemoteConfig?.enabled) && (
-							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
-								SSH-remote agents are hidden — runners must be local.
+			{/* ----------------------------------------------------------------
+			  Legacy migration banner (#441)
+			  ---------------------------------------------------------------- */}
+			{legacy && (
+				<div
+					className="mb-2 p-2 rounded text-[10px]"
+					style={{
+						backgroundColor: `${theme.colors.warning}18`,
+						border: `1px solid ${theme.colors.warning}55`,
+						color: theme.colors.warning,
+					}}
+				>
+					<p className="font-medium mb-1">Reconfigure: ephemeral mode (#441)</p>
+					<p style={{ color: theme.colors.textDim }}>
+						This slot was previously tied to a Left Bar agent. Dev Crew slots now spawn ephemeral
+						agents per-claim. Click Clear to configure fresh settings.
+					</p>
+					<button
+						onClick={handleDismissLegacy}
+						className="mt-1.5 px-2 py-0.5 rounded text-[10px] font-medium border"
+						style={{
+							borderColor: theme.colors.warning,
+							color: theme.colors.warning,
+							cursor: 'pointer',
+							backgroundColor: 'transparent',
+						}}
+					>
+						Clear &amp; reconfigure
+					</button>
+				</div>
+			)}
+
+			{/* ----------------------------------------------------------------
+			  3 cascading dropdowns: Provider → Model → Effort
+			  (only shown for non-legacy slots)
+			  Host is implicit: derived from WorkItem.projectPath at dispatch time.
+			  ---------------------------------------------------------------- */}
+			{!legacy && (
+				<>
+					{/* 1. Agent Provider dropdown */}
+					<div className="mb-2">
+						<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
+							Agent Provider
+						</label>
+						{providerError ? (
+							<div className="flex items-center gap-1">
+								<p className="text-[10px]" style={{ color: theme.colors.error }}>
+									{providerError}
+								</p>
+								<button
+									onClick={refreshProviders}
+									className="text-[10px] underline"
+									style={{
+										color: theme.colors.accent,
+										cursor: 'pointer',
+										background: 'none',
+										border: 'none',
+									}}
+								>
+									retry
+								</button>
+							</div>
+						) : loadingProviders ? (
+							<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								Detecting providers…
 							</p>
+						) : (
+							<select
+								value={config?.agentProvider ?? ''}
+								onChange={(e) => handleProviderChange(e.target.value)}
+								style={selectStyle}
+								title="AI provider for ephemeral spawn"
+							>
+								<option value="">Select provider…</option>
+								{availableProviders.map((a) => (
+									<option key={a.id} value={a.id}>
+										{a.name ?? a.id}
+									</option>
+								))}
+								{availableProviders.length === 0 && (
+									<option value="" disabled>
+										No providers found on this host
+									</option>
+								)}
+							</select>
 						)}
-					</>
-				) : (
-					<select
-						value={assignment?.agentId ?? ''}
-						onChange={(e) => handleAgentChange(e.target.value)}
-						style={selectStyle}
-						title="Agent assigned to this role slot"
-					>
-						<option value="">Select agent for {DISPATCH_ROLE_LABELS[role]}</option>
-						{sessions.map((s) => (
-							<option key={s.id} value={s.id}>
-								{s.name || s.id}
-							</option>
-						))}
-					</select>
-				)}
-			</div>
+					</div>
 
-			{assignment && availableModels.length > 0 && (
-				<div className="mb-2">
-					<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
-						Model
-					</label>
-					<select
-						value={assignment.modelOverride ?? ''}
-						onChange={(e) => handleModelChange(e.target.value)}
-						style={selectStyle}
-						title="Used when this agent claims a task in this role"
-					>
-						<option value="">Agent default</option>
-						{availableModels.map((m) => (
-							<option key={m} value={m}>
-								{m}
-							</option>
-						))}
-					</select>
-				</div>
+					{/* 2. Model dropdown (shown when provider selected + has models) */}
+					{config?.agentProvider && (
+						<div className="mb-2">
+							<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
+								Model
+							</label>
+							{loadingModels ? (
+								<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									Loading models…
+								</p>
+							) : availableModels.length > 0 ? (
+								<select
+									value={config.model ?? ''}
+									onChange={(e) => handleModelChange(e.target.value)}
+									style={selectStyle}
+									title="Model used when this slot claims a task"
+								>
+									<option value="">Provider default</option>
+									{availableModels.map((m) => (
+										<option key={m} value={m}>
+											{m}
+										</option>
+									))}
+								</select>
+							) : (
+								<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									No models available — provider default will be used.
+								</p>
+							)}
+						</div>
+					)}
+
+					{/* 3. Effort dropdown (shown when provider selected + has efforts) */}
+					{config?.agentProvider && !loadingEfforts && availableEfforts.length > 0 && (
+						<div className="mb-2">
+							<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
+								Effort
+							</label>
+							<select
+								value={config.effort ?? ''}
+								onChange={(e) => handleEffortChange(e.target.value)}
+								style={selectStyle}
+								title="Effort level for this slot's claims"
+							>
+								<option value="">Provider default</option>
+								{availableEfforts.map((e) => (
+									<option key={e} value={e}>
+										{e}
+									</option>
+								))}
+							</select>
+						</div>
+					)}
+				</>
 			)}
 
-			{assignment && availableEfforts.length > 0 && (
-				<div>
-					<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
-						Effort
-					</label>
-					<select
-						value={assignment.effortOverride ?? ''}
-						onChange={(e) => handleEffortChange(e.target.value)}
-						style={selectStyle}
-						title="Used when this agent claims a task in this role"
-					>
-						<option value="">Agent default</option>
-						{availableEfforts.map((e) => (
-							<option key={e} value={e}>
-								{e}
-							</option>
-						))}
-					</select>
-				</div>
-			)}
-
-			{!assignment && (
+			{/* Empty state hint */}
+			{!config && !legacy && (
 				<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
-					No agent assigned — pick one above to fill this slot.
+					Select a provider above to fill this slot.
 				</p>
 			)}
 		</div>
