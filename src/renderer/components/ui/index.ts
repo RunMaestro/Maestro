@@ -31,3 +31,6 @@ export type { EmptyStatePlaceholderProps } from './EmptyStatePlaceholder';
 
 export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
+
+export { EmptyState } from './EmptyState';
+export { InlineHelp } from './InlineHelp';
