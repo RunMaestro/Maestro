@@ -73,6 +73,13 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerAgentDispatchHandlers,
+	registerAgentDispatchSlashCommandHandlers,
+	registerAgentDispatchMcpHandlers,
+	registerDeliveryPlannerHandlers,
+	registerPlanningPipelineHandlers,
+	registerConversationalPrdHandlers,
+	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -1155,6 +1162,30 @@ function setupIpcHandlers() {
 			bootstrapStore,
 		},
 	});
+
+	// ===== Project Meta priority feature handlers =====
+	// Agent Dispatch — fleet registry + work-graph claim/release lifecycle
+	registerAgentDispatchHandlers({
+		getRuntime: () => null,
+		settingsStore: store,
+	});
+	registerAgentDispatchSlashCommandHandlers({ settingsStore: store });
+	registerAgentDispatchMcpHandlers({ settingsStore: store });
+
+	// Delivery Planner — PRD/Epic/Tasks; returns service used by Conv-PRD finalize
+	const plannerService = registerDeliveryPlannerHandlers({
+		getMainWindow: () => mainWindow,
+		settingsStore: store,
+	});
+
+	// Conversational PRD — chat-driven PRD authoring + handoff to planner
+	initConversationalPrdStore().catch((err) =>
+		console.error('[ConversationalPrd] init failed:', err)
+	);
+	registerConversationalPrdHandlers({ plannerService, settingsStore: store });
+
+	// Planning Pipeline — stage machine dashboard
+	registerPlanningPipelineHandlers({ settingsStore: store });
 }
 
 // Handle process output streaming (set up after initialization)
