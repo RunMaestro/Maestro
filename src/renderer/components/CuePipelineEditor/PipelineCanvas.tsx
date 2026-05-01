@@ -8,6 +8,7 @@
 import React from 'react';
 import ReactFlow, {
 	Background,
+	ConnectionLineType,
 	ConnectionMode,
 	Controls,
 	MiniMap,
@@ -29,6 +30,7 @@ import type {
 	CuePipelineSessionInfo as SessionInfo,
 	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
+import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import type { CueSettings } from '../../../shared/cue';
 import { Hand, MousePointer2 } from 'lucide-react';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
@@ -235,6 +237,19 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 		[theme.colors.bgActivity, theme.colors.border]
 	);
 	const miniMapMaskColor = React.useMemo(() => `${theme.colors.bgMain}cc`, [theme.colors.bgMain]);
+	// Drag-preview line shown while connecting one handle to another. Without
+	// an explicit style, ReactFlow uses its default `stroke: #b1b1b7` at 1px
+	// — invisible against most theme backgrounds. Match the committed-edge
+	// look (CUE_COLOR, 2px, dashed) so the user sees a clear preview while
+	// dragging and a smooth visual transition into the final edge on release.
+	const connectionLineStyle = React.useMemo(
+		() => ({
+			stroke: CUE_COLOR,
+			strokeWidth: 2,
+			strokeDasharray: '6 3',
+		}),
+		[]
+	);
 	const miniMapNodeColor = React.useCallback(
 		(node: Node) => {
 			if (node.type === 'trigger') {
@@ -299,6 +314,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				onDragOver={onDragOver}
 				onDrop={onDrop}
 				connectionMode={ConnectionMode.Loose}
+				connectionLineType={ConnectionLineType.Bezier}
+				connectionLineStyle={connectionLineStyle}
 				minZoom={0.1}
 				maxZoom={2}
 				// All Pipelines view is read-only. These ReactFlow props are the
