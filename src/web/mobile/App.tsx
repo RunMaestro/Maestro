@@ -1070,6 +1070,48 @@ function GroupChatListSheet({ chats, onSelectChat, onNewChat, onClose }: GroupCh
 }
 
 /**
+ * Build the tooltip for the in-cycle "Thinking N tokens" indicator.
+ * Adds the lifetime input/output/cache/reasoning breakdown when available so
+ * the mobile surface reaches parity with the desktop usage display. Reasoning
+ * tokens are reported separately by some agents but are already rolled into
+ * outputTokens upstream — they show as a labeled breakdown line, never added
+ * to the total again.
+ */
+function buildTokenTooltip(
+	currentCycleTokens: number,
+	usageStats?: Partial<import('../../shared/types').UsageStats> | null
+): string {
+	const cycleLine = `${currentCycleTokens.toLocaleString('en-US')} tokens this cycle`;
+	if (!usageStats) return cycleLine;
+
+	const inputTokens = usageStats.inputTokens ?? 0;
+	const outputTokens = usageStats.outputTokens ?? 0;
+	const reasoningTokens = usageStats.reasoningTokens ?? 0;
+	const cacheReadTokens = usageStats.cacheReadInputTokens ?? 0;
+	const cacheCreationTokens = usageStats.cacheCreationInputTokens ?? 0;
+	const totalTokens = inputTokens + outputTokens;
+
+	if (totalTokens === 0) return cycleLine;
+
+	const parts: string[] = [
+		cycleLine,
+		`Input: ${inputTokens.toLocaleString('en-US')}`,
+		`Output: ${outputTokens.toLocaleString('en-US')}`,
+	];
+	if (cacheReadTokens > 0) {
+		parts.push(`Cache read: ${cacheReadTokens.toLocaleString('en-US')}`);
+	}
+	if (cacheCreationTokens > 0) {
+		parts.push(`Cache create: ${cacheCreationTokens.toLocaleString('en-US')}`);
+	}
+	if (reasoningTokens > 0) {
+		parts.push(`Reasoning (in output): ${reasoningTokens.toLocaleString('en-US')}`);
+	}
+	parts.push(`Total: ${totalTokens.toLocaleString('en-US')} tokens`);
+	return parts.join(' | ');
+}
+
+/**
  * Main mobile app component with WebSocket connection management
  */
 export default function MobileApp() {
@@ -2130,6 +2172,51 @@ export default function MobileApp() {
 		[settingsHook.settings?.shortcuts]
 	);
 
+	const handleRemoveQueueItem = useCallback(
+		(itemId: string) => {
+			if (!activeSessionId) return;
+			send({ type: 'remove_queue_item', sessionId: activeSessionId, itemId });
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === activeSessionId
+						? {
+								...s,
+								executionQueue: (s.executionQueue || []).filter((item) => item.id !== itemId),
+							}
+						: s
+				)
+			);
+		},
+		[activeSessionId, send, setSessions]
+	);
+
+	const handleReorderQueueItem = useCallback(
+		(fromIndex: number, toIndex: number) => {
+			if (!activeSessionId) return;
+			const queueLength = activeSession?.executionQueue?.length ?? 0;
+			if (
+				fromIndex === toIndex ||
+				fromIndex < 0 ||
+				fromIndex >= queueLength ||
+				toIndex < 0 ||
+				toIndex >= queueLength
+			) {
+				return;
+			}
+			send({ type: 'reorder_queue', sessionId: activeSessionId, fromIndex, toIndex });
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					const executionQueue = [...(s.executionQueue || [])];
+					const [movedItem] = executionQueue.splice(fromIndex, 1);
+					executionQueue.splice(toIndex, 0, movedItem);
+					return { ...s, executionQueue };
+				})
+			);
+		},
+		[activeSession?.executionQueue?.length, activeSessionId, send, setSessions]
+	);
+
 	useMobileKeyboardHandler({
 		shortcuts: resolvedShortcuts,
 		activeSession,
@@ -2910,6 +2997,8 @@ export default function MobileApp() {
 		// Get logs based on current input mode
 		const currentLogs =
 			activeSession.inputMode === 'ai' ? sessionLogs.aiLogs : sessionLogs.shellLogs;
+		const queue = activeSession.executionQueue || [];
+		const currentCycleTokens = activeSession.currentCycleTokens || 0;
 
 		// Show message history
 		return (
@@ -2926,6 +3015,114 @@ export default function MobileApp() {
 					overflow: 'hidden', // Contain MessageHistory's scroll
 				}}
 			>
+				{(queue.length > 0 || currentCycleTokens > 0) && (
+					<div
+						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '6px',
+							padding: '8px 10px',
+							backgroundColor: colors.bgSidebar,
+							border: `1px solid ${colors.border}`,
+							borderRadius: '6px',
+							fontSize: '12px',
+						}}
+					>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								flexWrap: 'wrap',
+								color: colors.textDim,
+							}}
+						>
+							{currentCycleTokens > 0 && (
+								<span title={buildTokenTooltip(currentCycleTokens, activeSession.usageStats)}>
+									Thinking {currentCycleTokens.toLocaleString('en-US')} tokens
+								</span>
+							)}
+							{queue.length > 0 && <span>{queue.length} queued</span>}
+						</div>
+						{queue.length > 0 && (
+							<div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+								{queue.map((item, index) => (
+									<div
+										key={item.id}
+										style={{
+											display: 'grid',
+											gridTemplateColumns: '1fr auto auto auto',
+											alignItems: 'center',
+											gap: '6px',
+											minHeight: '28px',
+										}}
+									>
+										<span
+											style={{
+												overflow: 'hidden',
+												textOverflow: 'ellipsis',
+												whiteSpace: 'nowrap',
+												color: colors.textMain,
+											}}
+											title={item.text || item.command || item.commandDescription || item.type}
+										>
+											{item.command || item.text || item.commandDescription || item.type}
+										</span>
+										<button
+											type="button"
+											onClick={() => handleReorderQueueItem(index, index - 1)}
+											disabled={index === 0}
+											aria-disabled={index === 0}
+											style={{
+												width: '28px',
+												height: '28px',
+												borderRadius: '4px',
+												border: `1px solid ${colors.border}`,
+												backgroundColor: colors.bgMain,
+												color: index === 0 ? colors.textDim : colors.textMain,
+											}}
+											title="Move queued item up"
+										>
+											↑
+										</button>
+										<button
+											type="button"
+											onClick={() => handleReorderQueueItem(index, index + 1)}
+											disabled={index === queue.length - 1}
+											aria-disabled={index === queue.length - 1}
+											style={{
+												width: '28px',
+												height: '28px',
+												borderRadius: '4px',
+												border: `1px solid ${colors.border}`,
+												backgroundColor: colors.bgMain,
+												color: index === queue.length - 1 ? colors.textDim : colors.textMain,
+											}}
+											title="Move queued item down"
+										>
+											↓
+										</button>
+										<button
+											type="button"
+											onClick={() => handleRemoveQueueItem(item.id)}
+											style={{
+												width: '28px',
+												height: '28px',
+												borderRadius: '4px',
+												border: `1px solid ${colors.border}`,
+												backgroundColor: colors.bgMain,
+												color: colors.error,
+											}}
+											title="Remove queued item"
+										>
+											×
+										</button>
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+				)}
 				{currentInputMode === 'terminal' ? (
 					<WebTerminal
 						key={`terminal-${activeSessionId}`}

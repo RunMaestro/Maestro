@@ -28,7 +28,8 @@ export interface LogEntry {
 		toolState?: {
 			name?: string;
 			status?: 'running' | 'completed' | 'error';
-			input?: Record<string, unknown>;
+			input?: unknown;
+			output?: unknown;
 		};
 	};
 }
@@ -532,6 +533,79 @@ export function MessageHistory({
 						</span>
 					)}
 				</button>
+			)}
+		</div>
+	);
+}
+
+function getToolDetail(input: unknown): string | null {
+	if (!input || typeof input !== 'object') return null;
+	const value = input as Record<string, unknown>;
+	const candidates = [
+		value.command,
+		value.pattern,
+		value.file_path,
+		value.filePath,
+		value.query,
+		value.description,
+		value.prompt,
+		value.task_id,
+		value.path,
+		value.cmd,
+		value.code,
+	];
+	for (const candidate of candidates) {
+		if (typeof candidate === 'string' && candidate.trim()) {
+			return candidate.length > 160 ? `${candidate.slice(0, 157)}...` : candidate;
+		}
+	}
+	return null;
+}
+
+function ToolCard({ entry }: { entry: LogEntry }) {
+	const colors = useThemeColors();
+	const state = entry.metadata?.toolState;
+	const detail = getToolDetail(state?.input);
+	const status = state?.status;
+	const statusColor =
+		status === 'completed' ? colors.success : status === 'error' ? colors.error : colors.warning;
+
+	return (
+		<div
+			style={{
+				display: 'flex',
+				flexDirection: 'column',
+				gap: '6px',
+				fontFamily: 'ui-monospace, monospace',
+				fontSize: '12px',
+				lineHeight: 1.4,
+			}}
+		>
+			<div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+				<span style={{ color: statusColor, flexShrink: 0 }}>
+					{status === 'completed' ? '✓' : status === 'error' ? '!' : '●'}
+				</span>
+				<span
+					style={{
+						color: colors.textMain,
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+						whiteSpace: 'nowrap',
+					}}
+				>
+					{entry.text || entry.content || 'Tool'}
+				</span>
+			</div>
+			{detail && (
+				<div
+					style={{
+						color: colors.textDim,
+						whiteSpace: 'pre-wrap',
+						wordBreak: 'break-word',
+					}}
+				>
+					{detail}
+				</div>
 			)}
 		</div>
 	);

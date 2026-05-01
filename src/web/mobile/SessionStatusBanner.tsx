@@ -281,6 +281,9 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 
 	const inputTokens = usageStats.inputTokens ?? 0;
 	const outputTokens = usageStats.outputTokens ?? 0;
+	// Reasoning tokens are reported separately by certain agents, but they are
+	// already included in outputTokens. Keep them as a tooltip breakdown only.
+	const reasoningTokens = usageStats.reasoningTokens ?? 0;
 	const totalTokens = inputTokens + outputTokens;
 
 	// Don't show if no tokens yet
@@ -299,6 +302,26 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 		return count.toString();
 	};
 
+	// Cache token counts come through for Claude/Codex; desktop's usage
+	// breakdown surfaces them, mobile previously did not.
+	const cacheReadTokens = usageStats.cacheReadInputTokens ?? 0;
+	const cacheCreationTokens = usageStats.cacheCreationInputTokens ?? 0;
+
+	const tooltipParts = [
+		`Input: ${inputTokens.toLocaleString('en-US')}`,
+		`Output: ${outputTokens.toLocaleString('en-US')}`,
+	];
+	if (cacheReadTokens > 0) {
+		tooltipParts.push(`Cache read: ${cacheReadTokens.toLocaleString('en-US')}`);
+	}
+	if (cacheCreationTokens > 0) {
+		tooltipParts.push(`Cache create: ${cacheCreationTokens.toLocaleString('en-US')}`);
+	}
+	if (reasoningTokens > 0) {
+		tooltipParts.push(`Reasoning (in output): ${reasoningTokens.toLocaleString('en-US')}`);
+	}
+	tooltipParts.push(`Total: ${totalTokens.toLocaleString('en-US')} tokens`);
+
 	return (
 		<span
 			style={{
@@ -314,7 +337,7 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 				lineHeight: 1,
 				flexShrink: 0,
 			}}
-			title={`Input: ${inputTokens.toLocaleString('en-US')} | Output: ${outputTokens.toLocaleString('en-US')} | Total: ${totalTokens.toLocaleString('en-US')} tokens`}
+			title={tooltipParts.join(' | ')}
 			aria-label={`${totalTokens.toLocaleString('en-US')} tokens used`}
 		>
 			<span style={{ fontSize: '10px' }}>📊</span>

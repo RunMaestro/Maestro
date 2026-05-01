@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useMemo, ReactNode } from 'react';
 import {
 	useGitStatusPolling,
 	type GitStatusData,
@@ -114,6 +114,37 @@ export function GitStatusProvider({
 		...options,
 		activeSessionId,
 	});
+	const prevBroadcastHashRef = useRef<Map<string, string>>(new Map());
+
+	useEffect(() => {
+		void (async () => {
+			for (const [sessionId, status] of gitStatusMap) {
+				const statusHash = JSON.stringify(status);
+				if (prevBroadcastHashRef.current.get(sessionId) === statusHash) continue;
+
+				try {
+					await window.maestro.web.broadcastGitStatus(sessionId, status);
+					prevBroadcastHashRef.current.set(sessionId, statusHash);
+				} catch (error) {
+					console.error(
+						`[GitStatusProvider] Failed to broadcast git status for ${sessionId}:`,
+						error
+					);
+				}
+			}
+
+			for (const sessionId of Array.from(prevBroadcastHashRef.current.keys())) {
+				if (gitStatusMap.has(sessionId)) continue;
+
+				try {
+					await window.maestro.web.broadcastGitStatus(sessionId, null);
+					prevBroadcastHashRef.current.delete(sessionId);
+				} catch (error) {
+					console.error(`[GitStatusProvider] Failed to clear git status for ${sessionId}:`, error);
+				}
+			}
+		})();
+	}, [gitStatusMap]);
 
 	// ============================================================================
 	// BRANCH CONTEXT VALUE (rarely changes)

@@ -28,6 +28,8 @@
  * - stop_auto_run: Stop an active auto-run for a session
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
+ * - remove_queue_item: Remove a queued session item
+ * - reorder_queue: Reorder queued session items
  */
 
 import path from 'path';
@@ -204,6 +206,8 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	removeQueueItem: (sessionId: string, itemId: string) => Promise<boolean>;
+	reorderQueue: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -551,6 +555,14 @@ export class WebSocketMessageHandler {
 				this.handleNotifyCenterFlash(client, message);
 				break;
 
+			case 'remove_queue_item':
+				this.handleRemoveQueueItem(client, message);
+				break;
+
+			case 'reorder_queue':
+				this.handleReorderQueue(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
@@ -615,23 +627,9 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Check if session is busy - prevent race conditions between desktop and web.
-		// `force: true` opts out of this guard (see `maestro-cli send --live --force`).
-		if (sessionDetail.state === 'busy' && !force) {
-			this.sendError(
-				client,
-				'Session is busy - please wait for the current operation to complete',
-				{
-					sessionId,
-				}
-			);
-			logger.debug(`Command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
-			return;
-		}
 		if (sessionDetail.state === 'busy' && force) {
 			logger.info(`[Web Command] Force-dispatching to busy session ${sessionId}`, LOG_CONTEXT);
 		}
-
 		// Use client's inputMode if provided, otherwise fall back to server state
 		const effectiveMode = clientInputMode || sessionDetail.inputMode;
 		const isAiMode = effectiveMode === 'ai';
@@ -858,6 +856,55 @@ export class WebSocketMessageHandler {
 			});
 			this.send(client, { type: 'sessions_list', sessions: sessionsWithLiveInfo });
 		}
+	}
+
+	private handleRemoveQueueItem(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const itemId = message.itemId as string;
+
+		if (!sessionId || !itemId) {
+			this.sendError(client, 'Missing sessionId or itemId');
+			return;
+		}
+
+		if (!this.callbacks.removeQueueItem) {
+			this.sendError(client, 'Queue removal not configured');
+			return;
+		}
+
+		this.callbacks
+			.removeQueueItem(sessionId, itemId)
+			.then((success) => {
+				this.send(client, { type: 'remove_queue_item_result', success, sessionId, itemId });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to remove queue item: ${error.message}`);
+			});
+	}
+
+	private handleReorderQueue(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const fromIndex = Number(message.fromIndex);
+		const toIndex = Number(message.toIndex);
+
+		if (!sessionId || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) {
+			this.sendError(client, 'Missing sessionId, fromIndex, or toIndex');
+			return;
+		}
+
+		if (!this.callbacks.reorderQueue) {
+			this.sendError(client, 'Queue reorder not configured');
+			return;
+		}
+
+		this.callbacks
+			.reorderQueue(sessionId, fromIndex, toIndex)
+			.then((success) => {
+				this.send(client, { type: 'reorder_queue_result', success, sessionId, fromIndex, toIndex });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to reorder queue: ${error.message}`);
+			});
 	}
 
 	/**

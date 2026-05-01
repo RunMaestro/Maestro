@@ -38,6 +38,9 @@ import type {
 	GroupChatState,
 	CueActivityEntry,
 	CueSubscriptionInfo,
+	GitStatusData,
+	ToolExecutionData,
+	QueuedItemData,
 } from '../types';
 
 // Re-export types for backwards compatibility
@@ -135,6 +138,8 @@ export class BroadcastService {
 			inputMode?: string;
 			cwd?: string;
 			cliActivity?: CliActivity;
+			currentCycleTokens?: number;
+			thinkingStartTime?: number;
 		}
 	): void {
 		this.broadcastToAll({
@@ -221,6 +226,47 @@ export class BroadcastService {
 			sessionId,
 			aiTabs,
 			activeTabId,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast git status changes to all connected web clients.
+	 */
+	broadcastGitStatus(sessionId: string, gitStatus: GitStatusData | null): void {
+		this.broadcastToAll({
+			type: 'git_status_changed',
+			sessionId,
+			gitStatus,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast execution queue changes to all connected web clients.
+	 */
+	broadcastExecutionQueue(sessionId: string, executionQueue: QueuedItemData[]): void {
+		this.broadcastToAll({
+			type: 'execution_queue_changed',
+			sessionId,
+			executionQueue,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast structured tool execution events to clients subscribed to the session.
+	 */
+	broadcastToolExecution(
+		sessionId: string,
+		tabId: string | undefined,
+		tool: ToolExecutionData
+	): void {
+		this.broadcastToSession(sessionId, {
+			type: 'tool_execution',
+			sessionId,
+			tabId,
+			tool,
 			timestamp: Date.now(),
 		});
 	}

@@ -49,6 +49,10 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string) => void)
 		| undefined;
+	let onRemoteRemoveQueueItemHandler: ((sessionId: string, itemId: string) => void) | undefined;
+	let onRemoteReorderQueueHandler:
+		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -120,6 +124,14 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteRemoveQueueItem: vi.fn().mockImplementation((handler) => {
+			onRemoteRemoveQueueItemHandler = handler;
+			return () => {};
+		}),
+		onRemoteReorderQueue: vi.fn().mockImplementation((handler) => {
+			onRemoteReorderQueueHandler = handler;
 			return () => {};
 		}),
 		sendRemoteNewTabResponse: vi.fn(),
@@ -202,6 +214,7 @@ describe('useRemoteIntegration', () => {
 		...window.maestro.web,
 		broadcastTabsChange: vi.fn(),
 		broadcastSessionState: vi.fn(),
+		broadcastExecutionQueue: vi.fn(),
 	};
 
 	const mockClaude = {
@@ -239,6 +252,8 @@ describe('useRemoteIntegration', () => {
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
 		onRemoteNewAITabWithPromptHandler = undefined;
+		onRemoteRemoveQueueItemHandler = undefined;
+		onRemoteReorderQueueHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -371,7 +386,7 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
-		it('ignores command when session is busy', () => {
+		it('forwards command when session is busy so it can be queued', () => {
 			const session = createMockSession({ id: 'session-1', state: 'busy' });
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
@@ -382,8 +397,17 @@ describe('useRemoteIntegration', () => {
 				onRemoteCommandHandler?.('session-1', 'test command', 'ai');
 			});
 
-			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
-			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						sessionId: 'session-1',
+						command: 'test command',
+						inputMode: 'ai',
+					}),
+				})
+			);
 
 			dispatchEventSpy.mockRestore();
 		});

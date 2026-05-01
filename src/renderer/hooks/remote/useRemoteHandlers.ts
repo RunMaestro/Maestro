@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useCallback } from 'react';
-import type { Session, SessionState, LogEntry, CustomAICommand } from '../../types';
+import type { Session, SessionState, LogEntry, CustomAICommand, QueuedItem } from '../../types';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -249,12 +249,33 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard — without that escape hatch, the renderer would
-			// silently drop forced dispatches and the server-side allow-list
-			// would be moot.
+			// Check if session is busy. `force: true` bypasses queueing so
+			// `dispatch --force` can land immediately on a busy tab.
 			if (session.state === 'busy' && !force) {
-				logger.info('[Remote] Session is busy, cannot process command');
+				const targetTab = getActiveTab(session);
+				if (!targetTab) {
+					logger.info('[Remote] Session is busy and has no active tab, cannot queue command');
+					return;
+				}
+
+				const queuedItem: QueuedItem = {
+					id: generateId(),
+					timestamp: Date.now(),
+					tabId: targetTab.id,
+					type: command.trim().startsWith('/') ? 'command' : 'message',
+					...(command.trim().startsWith('/') ? { command: command.trim() } : { text: command }),
+					tabName: targetTab.name || undefined,
+					readOnlyMode: targetTab.readOnlyMode,
+				};
+
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, executionQueue: [...(s.executionQueue ?? []), queuedItem] }
+							: s
+					)
+				);
+				logger.info('[Remote] Session is busy, queued command instead');
 				return;
 			}
 

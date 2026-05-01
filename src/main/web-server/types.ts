@@ -24,6 +24,50 @@ export interface SessionUsageStats {
 	cacheCreationInputTokens?: number;
 	totalCostUsd?: number;
 	contextWindow?: number;
+	reasoningTokens?: number;
+}
+
+export type QueuedItemType = 'message' | 'command';
+
+export interface QueuedItemData {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: QueuedItemType;
+	text?: string;
+	images?: string[];
+	command?: string;
+	commandArgs?: string;
+	commandDescription?: string;
+	tabName?: string;
+	readOnlyMode?: boolean;
+}
+
+export interface GitFileChangeData {
+	path: string;
+	status: string;
+	additions: number;
+	deletions: number;
+	modified: boolean;
+}
+
+export interface GitStatusData {
+	fileCount: number;
+	branch?: string;
+	remote?: string;
+	behind: number;
+	ahead: number;
+	fileChanges?: GitFileChangeData[];
+	totalAdditions: number;
+	totalDeletions: number;
+	modifiedCount: number;
+	lastUpdated: number;
+}
+
+export interface ToolExecutionData {
+	toolName: string;
+	state?: unknown;
+	timestamp: number;
 }
 
 /**
@@ -109,6 +153,10 @@ export interface SessionData {
 	agentSessionId?: string | null;
 	/** Timestamp when AI started thinking (for elapsed time display) */
 	thinkingStartTime?: number | null;
+	currentCycleTokens?: number;
+	executionQueue?: QueuedItemData[];
+	isGitRepo?: boolean;
+	gitStatus?: GitStatusData | null;
 	aiTabs?: AITabData[];
 	activeTabId?: string;
 	/** Whether session is bookmarked (shows in Bookmarks group) */
@@ -153,6 +201,10 @@ export interface SessionBroadcastData {
 	/** Worktree subagent support */
 	parentSessionId?: string | null;
 	worktreeBranch?: string | null;
+	currentCycleTokens?: number;
+	executionQueue?: QueuedItemData[];
+	isGitRepo?: boolean;
+	gitStatus?: GitStatusData | null;
 }
 
 // =============================================================================
@@ -421,6 +473,12 @@ export type ConfigureAutoRunCallback = (
 		};
 	}
 ) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+export type RemoveQueueItemCallback = (sessionId: string, itemId: string) => Promise<boolean>;
+export type ReorderQueueCallback = (
+	sessionId: string,
+	fromIndex: number,
+	toIndex: number
+) => Promise<boolean>;
 
 /**
  * Callback type for fetching current theme.

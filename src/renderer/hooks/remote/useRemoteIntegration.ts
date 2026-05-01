@@ -118,17 +118,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server,
-				// but double-check). `force: true` (from `dispatch --force`) opts
-				// out of the guard so a queued follow-up can land on a busy tab.
-				if (targetSession.state === 'busy' && !force) {
-					logger.warn(
-						'[useRemoteIntegration] Session is busy, dropping command. State:',
-						undefined,
-						targetSession.state
-					);
-					return;
-				}
 				logger.info(
 					'[useRemoteIntegration] Session state check passed:',
 					undefined,
@@ -546,6 +535,46 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
+			(sessionId: string, itemId: string) => {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? {
+									...s,
+									executionQueue: (s.executionQueue ?? []).filter((item) => item.id !== itemId),
+								}
+							: s
+					)
+				);
+			}
+		);
+
+		const unsubscribeReorderQueue = window.maestro.process.onRemoteReorderQueue(
+			(sessionId: string, fromIndex: number, toIndex: number) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						const currentQueue = s.executionQueue ?? [];
+						const len = currentQueue.length;
+						if (
+							fromIndex === toIndex ||
+							fromIndex < 0 ||
+							fromIndex >= len ||
+							toIndex < 0 ||
+							toIndex >= len
+						) {
+							return s;
+						}
+						const executionQueue = [...currentQueue];
+						const [movedItem] = executionQueue.splice(fromIndex, 1);
+						executionQueue.splice(toIndex, 0, movedItem);
+						return { ...s, executionQueue };
+					})
+				);
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -556,6 +585,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
+			unsubscribeRemoveQueueItem();
+			unsubscribeReorderQueue();
 		};
 	}, [
 		sessionsRef,
@@ -1038,7 +1069,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Track previous session states for broadcasting state changes to web clients
 	// This is separate from tab changes because session state (busy/idle) changes need
 	// to be broadcast immediately for proper UI feedback on the web interface
-	const prevSessionStatesRef = useRef<Map<string, string>>(new Map());
+	const prevSessionStateHashesRef = useRef<Map<string, string>>(new Map());
+	const prevQueueHashesRef = useRef<Map<string, string>>(new Map());
 
 	// Only set up the interval when live mode is active
 	useEffect(() => {
@@ -1053,15 +1085,26 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			sessions.forEach((session) => {
 				// Broadcast session state changes (busy/idle) to web clients
 				// This bypasses the debounced persistence which resets state to 'idle' before saving
-				const prevState = prevSessionStatesRef.current.get(session.id);
-				if (prevState !== session.state) {
+				const stateHash = `${session.state}:${session.currentCycleTokens || 0}:${session.thinkingStartTime || ''}`;
+				if (prevSessionStateHashesRef.current.get(session.id) !== stateHash) {
 					window.maestro.web.broadcastSessionState(session.id, session.state, {
 						name: session.name,
 						toolType: session.toolType,
 						inputMode: session.inputMode,
 						cwd: session.cwd,
+						currentCycleTokens: session.currentCycleTokens || 0,
+						thinkingStartTime: session.thinkingStartTime,
 					});
-					prevSessionStatesRef.current.set(session.id, session.state);
+					prevSessionStateHashesRef.current.set(session.id, stateHash);
+				}
+
+				const executionQueue = session.executionQueue ?? [];
+				const queueHash = executionQueue
+					.map((item) => `${item.id}:${item.tabId}:${item.type}:${item.text || item.command || ''}`)
+					.join('|');
+				if (prevQueueHashesRef.current.get(session.id) !== queueHash) {
+					window.maestro.web.broadcastExecutionQueue(session.id, executionQueue);
+					prevQueueHashesRef.current.set(session.id, queueHash);
 				}
 
 				if (!session.aiTabs || session.aiTabs.length === 0) return;

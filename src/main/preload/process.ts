@@ -1323,6 +1323,30 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote execution queue item removal from web interface
+		 */
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string) =>
+				callback(sessionId, itemId);
+			ipcRenderer.on('remote:removeQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:removeQueueItem', handler);
+		},
+
+		/**
+		 * Subscribe to remote execution queue reorder from web interface
+		 */
+		onRemoteReorderQueue: (
+			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, fromIndex: number, toIndex: number) =>
+				callback(sessionId, fromIndex, toIndex);
+			ipcRenderer.on('remote:reorderQueue', handler);
+			return () => ipcRenderer.removeListener('remote:reorderQueue', handler);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {

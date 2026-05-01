@@ -228,6 +228,44 @@ function SessionPill({ session, isActive, onSelect, onLongPress }: SessionPillPr
 				{session.name}
 			</span>
 
+			{/* Worktree branch badge — only for sessions that are worktree
+			 * children (parentSessionId is set), so we don't double-decorate
+			 * the parent session itself. Mirrors the desktop sidebar's branch
+			 * affordance for worktree subagents. */}
+			{session.parentSessionId && session.worktreeBranch && (
+				<span
+					title={`Worktree branch: ${session.worktreeBranch}`}
+					aria-label={`Worktree branch ${session.worktreeBranch}`}
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: '2px',
+						fontSize: '10px',
+						fontWeight: 500,
+						color: colors.textDim,
+						backgroundColor: `${colors.textDim}15`,
+						padding: '2px 5px',
+						borderRadius: '3px',
+						lineHeight: 1,
+						maxWidth: '90px',
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+						whiteSpace: 'nowrap',
+					}}
+				>
+					<span aria-hidden="true">⎇</span>
+					<span
+						style={{
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							minWidth: 0,
+						}}
+					>
+						{session.worktreeBranch}
+					</span>
+				</span>
+			)}
+
 			{/* Mode icon */}
 			{renderModeIcon()}
 		</button>

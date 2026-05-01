@@ -518,6 +518,10 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown) => void;
+		onRemoteRemoveQueueItem: (callback: (sessionId: string, itemId: string) => void) => () => void;
+		onRemoteReorderQueue: (
+			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
+		) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
@@ -637,6 +641,16 @@ interface MaestroAPI {
 			}>,
 			activeTabId: string
 		) => Promise<void>;
+		broadcastGitStatus: (sessionId: string, gitStatus: GitStatusData | null) => Promise<boolean>;
+		broadcastExecutionQueue: (
+			sessionId: string,
+			executionQueue: QueuedItemData[]
+		) => Promise<boolean>;
+		broadcastToolExecution: (
+			sessionId: string,
+			tabId: string | undefined,
+			tool: ToolExecutionData
+		) => Promise<boolean>;
 		broadcastSessionState: (
 			sessionId: string,
 			state: string,
@@ -645,6 +659,8 @@ interface MaestroAPI {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				currentCycleTokens?: number;
+				thinkingStartTime?: number;
 			}
 		) => Promise<boolean>;
 	};
