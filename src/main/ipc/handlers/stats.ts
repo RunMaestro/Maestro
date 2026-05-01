@@ -12,10 +12,11 @@
  * - CSV export for data analysis
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getStatsDB } from '../../stats';
+import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
 import {
 	QueryEvent,
 	AutoRunSession,
@@ -77,24 +78,44 @@ function broadcastStatsUpdate(getMainWindow: () => BrowserWindow | null): void {
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
 
-	// Record a query event (interactive conversation turn)
+	// PR-B 1.5: flush any buffered query events synchronously before the app
+	// exits so we don't drop them. The handler is fire-and-forget — if it
+	// throws (e.g. DB already closed) the buffer module logs it; we don't
+	// want to block quit on stats persistence.
+	app.on('before-quit', () => {
+		try {
+			flushQueryEventsSync();
+		} catch (err) {
+			logger.warn('Failed to flush query event buffer on quit', LOG_CONTEXT, err);
+		}
+	});
+
+	// Record a query event (interactive conversation turn).
+	//
+	// PR-B 1.5: events are buffered and flushed in a single transaction every
+	// 500ms or every 50 events (whichever first). This collapses many
+	// per-turn fsyncs into one, on the streaming hot path. The buffered
+	// id is generated synchronously and returned — callers don't need to
+	// wait for the actual write.
 	ipcMain.handle(
 		'stats:record-query',
 		withIpcErrorLogging(handlerOpts('recordQuery'), async (event: Omit<QueryEvent, 'id'>) => {
-			// Check if stats collection is enabled
 			if (!isStatsCollectionEnabled(settingsStore)) {
 				logger.debug('Stats collection disabled, skipping query event', LOG_CONTEXT);
 				return null;
 			}
 
 			const db = getStatsDB();
-			const id = db.insertQueryEvent(event);
-			logger.debug(`Recorded query event: ${id}`, LOG_CONTEXT, {
+			const id = enqueueQueryEvent(db.database, event);
+			logger.debug(`Buffered query event: ${id}`, LOG_CONTEXT, {
 				sessionId: event.sessionId,
 				agentType: event.agentType,
 				source: event.source,
 				duration: event.duration,
 			});
+			// Notify renderer that stats may have changed soon. The actual
+			// write happens asynchronously; the dashboard is best-effort
+			// realtime, so a small lag (≤500ms) is acceptable.
 			broadcastStatsUpdate(getMainWindow);
 			return id;
 		})

@@ -11,13 +11,19 @@ import { registerStatsHandlers } from '../../../../main/ipc/handlers/stats';
 import * as statsDbModule from '../../../../main/stats';
 import type { StatsDB } from '../../../../main/stats';
 
-// Mock electron's ipcMain and BrowserWindow
+// Mock electron's ipcMain, BrowserWindow, and app
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
 	},
 	BrowserWindow: vi.fn(),
+	app: {
+		// Stats handler now registers a before-quit hook to flush the
+		// query-events buffer; tests don't exercise the hook so a noop is fine.
+		on: vi.fn(),
+		getPath: vi.fn().mockReturnValue('/mock/user/data'),
+	},
 }));
 
 // Mock the stats-db module
@@ -25,6 +31,16 @@ vi.mock('../../../../main/stats', () => ({
 	getStatsDB: vi.fn(),
 	getInitializationResult: vi.fn(),
 	clearInitializationResult: vi.fn(),
+}));
+
+// Mock the query-events buffer so tests can verify it's called without
+// needing a real SQLite DB. PR-B 1.5: the IPC handler now enqueues into
+// this buffer instead of calling db.insertQueryEvent directly.
+const mockEnqueueQueryEvent = vi.fn(() => 'buffered-query-event-id');
+const mockFlushQueryEventsSync = vi.fn();
+vi.mock('../../../../main/stats/query-events-buffer', () => ({
+	enqueueQueryEvent: (...args: unknown[]) => mockEnqueueQueryEvent(...args),
+	flushQueryEventsSync: () => mockFlushQueryEventsSync(),
 }));
 
 // Mock the logger
@@ -52,6 +68,10 @@ describe('stats IPC handlers', () => {
 
 		// Create mock stats database
 		mockStatsDB = {
+			// PR-B 1.5: the record-query handler no longer calls insertQueryEvent;
+			// it enqueues into query-events-buffer instead. Other paths (auto-run,
+			// session-lifecycle) still call the direct DB methods.
+			database: {} as never,
 			insertQueryEvent: vi.fn().mockReturnValue('query-event-id'),
 			insertAutoRunSession: vi.fn().mockReturnValue('autorun-session-id'),
 			updateAutoRunSession: vi.fn().mockReturnValue(true),
@@ -151,7 +171,8 @@ describe('stats IPC handlers', () => {
 
 				await handler!({} as any, queryEvent);
 
-				expect(mockStatsDB.insertQueryEvent).toHaveBeenCalledWith(queryEvent);
+				// PR-B 1.5: enqueueQueryEvent is called instead of insertQueryEvent
+				expect(mockEnqueueQueryEvent).toHaveBeenCalledWith(mockStatsDB.database, queryEvent);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
@@ -176,7 +197,7 @@ describe('stats IPC handlers', () => {
 				await handler!({} as any, queryEvent);
 
 				// No error should be thrown, and no send should happen
-				expect(mockStatsDB.insertQueryEvent).toHaveBeenCalled();
+				expect(mockEnqueueQueryEvent).toHaveBeenCalled();
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
 
@@ -194,7 +215,7 @@ describe('stats IPC handlers', () => {
 
 				await handler!({} as any, queryEvent);
 
-				expect(mockStatsDB.insertQueryEvent).toHaveBeenCalled();
+				expect(mockEnqueueQueryEvent).toHaveBeenCalled();
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});
 		});
@@ -331,12 +352,12 @@ describe('stats IPC handlers', () => {
 	});
 
 	describe('broadcast timing', () => {
-		it('should broadcast after database write completes', async () => {
+		it('should broadcast after enqueueing the query event', async () => {
 			const executionOrder: string[] = [];
 
-			vi.mocked(mockStatsDB.insertQueryEvent).mockImplementation(() => {
-				executionOrder.push('db-write');
-				return 'query-event-id';
+			mockEnqueueQueryEvent.mockImplementation(() => {
+				executionOrder.push('enqueue');
+				return 'buffered-id';
 			});
 
 			mockMainWindow.webContents.send = vi.fn().mockImplementation(() => {
@@ -352,7 +373,8 @@ describe('stats IPC handlers', () => {
 				duration: 5000,
 			});
 
-			expect(executionOrder).toEqual(['db-write', 'broadcast']);
+			// PR-B 1.5: enqueue is sync (no DB write yet); broadcast follows.
+			expect(executionOrder).toEqual(['enqueue', 'broadcast']);
 		});
 	});
 
