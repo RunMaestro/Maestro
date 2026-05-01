@@ -58,3 +58,5 @@ export type {
 } from './executor-bridge';
 export { invokeRunnerScript, resolveRunnerScriptPath } from './runner-script-bridge';
 export type { RunnerScriptBridgeDeps, RunnerScriptResult } from './runner-script-bridge';
+export { startDispatchPoller, stopDispatchPoller } from './dispatch-poller';
+export type { DispatchPollerDeps } from './dispatch-poller';

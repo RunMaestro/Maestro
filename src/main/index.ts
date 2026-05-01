@@ -155,6 +155,7 @@ import type { TemplateContext } from '../shared/templateVariables';
 import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
 import { startGhProjectPoller } from './pm-reverse-sync/poller';
 import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
+import { startDispatchPoller, stopDispatchPoller } from './agent-dispatch/dispatch-poller';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -309,6 +310,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let dispatchPollerTimer: NodeJS.Timeout | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -745,6 +747,44 @@ app.whenReady().then(async () => {
 		}
 	}
 
+	// Start dispatch poller (#443): periodic auto-pickup safety net for all projects
+	// with active role slots.  Gated behind the agentDispatch Encore Feature.
+	if (encoreFeatures.agentDispatch) {
+		try {
+			dispatchPollerTimer = startDispatchPoller({
+				isEncoreEnabled: () => {
+					const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+					return ef.agentDispatch === true;
+				},
+				getProjectsWithActiveDispatch: () => {
+					const slotsMap = store.get('projectRoleSlots', {}) as Record<string, unknown>;
+					return Object.keys(slotsMap).map((projectPath) => ({ projectPath }));
+				},
+				runAutoPickup: async (_projectPath: string) => {
+					// The AgentDispatchRuntime is not yet wired to a live runtime in this
+					// branch (getRuntime returns null in registerAgentDispatchHandlers).
+					// When the runtime is wired up, replace the body with:
+					//   await runtime?.engine.runAutoPickup('poller');
+					// For now the poller tick is a no-op so the interval + gating logic
+					// can be validated independently of the runtime wiring.
+				},
+				logger: {
+					info: (msg) => logger.info(msg, 'Startup'),
+					warn: (msg, err) =>
+						logger.warn(
+							`${msg}${err ? `: ${err instanceof Error ? err.message : String(err)}` : ''}`,
+							'Startup'
+						),
+				},
+			});
+		} catch (err) {
+			logger.warn(
+				`Dispatch poller failed to start: ${err instanceof Error ? err.message : String(err)}`,
+				'Startup'
+			);
+		}
+	}
+
 	// Start the GitHub Project v2 reverse-sync poller (#435).
 	// Gated behind the deliveryPlanner Encore Feature — only relevant when
 	// Delivery Planner is enabled and items have been synced to GitHub Projects.
@@ -903,6 +943,11 @@ const quitHandler = createQuitHandler({
 		// Stop Cue engine on app quit
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();
+		}
+		// Stop dispatch poller on app quit (#443)
+		if (dispatchPollerTimer !== null) {
+			stopDispatchPoller(dispatchPollerTimer);
+			dispatchPollerTimer = null;
 		}
 	},
 	stopSettingsWatcher: () => settingsWatcher.stop(),
