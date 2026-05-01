@@ -28,6 +28,32 @@ import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '.
 import type { Group } from '../../../shared/types';
 
 /**
+ * Shallow-compare cliActivity for the diff broadcast.
+ *
+ * Replaces a previous `JSON.stringify(prev) !== JSON.stringify(curr)` per
+ * session per persistence flush, which was 2× O(stringify) per call. The
+ * cliActivity producer (`useCliActivityMonitoring`) only ever sets the field
+ * to `undefined` or to `{ playbookId, playbookName, startedAt }`, so a 4-step
+ * primitive comparison is equivalent at all real call sites and an order of
+ * magnitude cheaper.
+ */
+function cliActivityChanged(
+	prev: { playbookId?: string; playbookName?: string; startedAt?: number } | null | undefined,
+	curr: { playbookId?: string; playbookName?: string; startedAt?: number } | null | undefined
+): boolean {
+	// Existence change (one is null/undefined, the other isn't) — broadcast.
+	if (!prev !== !curr) return true;
+	// Both are nullish — no change.
+	if (!prev || !curr) return false;
+	// Both present — compare known fields.
+	return (
+		prev.playbookId !== curr.playbookId ||
+		prev.playbookName !== curr.playbookName ||
+		prev.startedAt !== curr.startedAt
+	);
+}
+
+/**
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
@@ -167,7 +193,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 						prevSession.inputMode !== session.inputMode ||
 						prevSession.name !== session.name ||
 						prevSession.cwd !== session.cwd ||
-						JSON.stringify(prevSession.cliActivity) !== JSON.stringify(session.cliActivity)
+						cliActivityChanged(prevSession.cliActivity, session.cliActivity)
 					) {
 						webServer.broadcastSessionStateChange(session.id, session.state, {
 							name: session.name,
