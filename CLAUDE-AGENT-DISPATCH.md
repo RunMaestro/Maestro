@@ -225,6 +225,14 @@ The `onStatusChange` callback calls happen synchronously as each git step starts
 
 ---
 
+## UI Surface Decisions
+
+**Agent Dispatch lives behind a modal (Alt+D + command palette + encore-gated). Sidebar promotion is tracked for a future PR pending usage data — see #408.**
+
+Rationale: the modal is already fully wired and works; promoting it to a permanent sidebar tab would impose a constant screen-real-estate cost that is only justified if users are actively dispatching at all times. The same reasoning applies to Delivery Planner and Planning Pipeline — all three stay as modals for v1. Promotion can be revisited once we have real usage data to justify the trade-off.
+
+---
+
 ## Validation Tasks
 
 Run these commands after any change to the agent-dispatch/Symphony layer:
