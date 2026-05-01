@@ -25,14 +25,25 @@ Main process — IPC handlers (src/main/ipc/handlers/symphony.ts)
 
 ### Key source files
 
-| File                                   | Role                                                               |
-| -------------------------------------- | ------------------------------------------------------------------ |
-| `src/main/ipc/handlers/symphony.ts`    | All IPC handler registration; state read/write helpers; validation |
-| `src/main/services/symphony-runner.ts` | Git + GitHub CLI operations (clone, branch, PR)                    |
-| `src/main/utils/symphony-fork.ts`      | Fork detection and remote-reconfiguration                          |
-| `src/main/preload/symphony.ts`         | `window.maestro.symphony` bridge                                   |
-| `src/shared/symphony-types.ts`         | All type definitions                                               |
-| `src/shared/symphony-constants.ts`     | TTL values, URL constants, regex patterns                          |
+| File                                                     | Role                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| `src/main/ipc/handlers/symphony.ts`                      | All IPC handler registration; state read/write helpers; validation |
+| `src/main/services/symphony-runner.ts`                   | Git + GitHub CLI operations (clone, branch, PR)                    |
+| `src/main/utils/symphony-fork.ts`                        | Fork detection and remote-reconfiguration                          |
+| `src/main/preload/symphony.ts`                           | `window.maestro.symphony` bridge                                   |
+| `src/shared/symphony-types.ts`                           | All type definitions                                               |
+| `src/shared/symphony-constants.ts`                       | TTL values, URL constants, regex patterns                          |
+| `src/main/ipc/handlers/agent-dispatch-slash-commands.ts` | Eight `agentDispatch:*` IPC channels for slash-command operations  |
+| `src/main/ipc/handlers/agent-dispatch.ts`                | Agent Dispatch runtime IPC handlers (kanban, fleet view)           |
+| `src/main/utils/requireEncoreFeature.ts`                 | Gate helper — returns `FEATURE_DISABLED` error when flag is off    |
+
+> **Naming note:** `agent-dispatch-slash-commands.ts` was previously named
+> `agent-dispatch-mcp.ts`. That name was misleading — it registers plain
+> Electron `ipcMain.handle(...)` channels, **not** MCP tools. Maestro's actual
+> MCP tool surface lives in `src/main/mcp/` (currently `work-graph-tools.ts`);
+> a `grep agentDispatch src/main/mcp/*.ts` returns zero hits. If/when
+> agent-dispatch MCP tools are added to `src/main/mcp/`, they must be gated by
+> `encoreFeatures.agentDispatch` there as well.
 
 ---
 

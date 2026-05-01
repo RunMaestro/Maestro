@@ -1,10 +1,17 @@
 /**
- * Agent Dispatch MCP / Slash-command IPC Handlers
+ * Agent Dispatch Slash-command IPC Handlers
+ *
+ * NOTE: Despite the historical "-mcp" suffix on the old filename, this file
+ * does NOT register tools with Maestro's MCP server (`src/main/mcp/`).  It
+ * registers plain Electron IPC channels (`ipcMain.handle(...)`) that serve
+ * renderer slash-command operations.  If/when real agent-dispatch MCP tools
+ * are added to `src/main/mcp/`, they must live in a separate file and be
+ * gated by `encoreFeatures.agentDispatch` there too.
  *
  * Exposes an in-memory dispatch registry to the renderer for slash-command
- * and MCP-friendly operations. This layer maintains its own lightweight
- * registry (separate from the full AgentDispatchRuntime) so it is available
- * immediately at app start without waiting for the runtime to initialise.
+ * operations. This layer maintains its own lightweight registry (separate from
+ * the full AgentDispatchRuntime) so it is available immediately at app start
+ * without waiting for the runtime to initialise.
  *
  * Channels registered:
  *   agentDispatch:listAgents    — list registered agents
@@ -14,7 +21,11 @@
  *   agentDispatch:pause         — mark an agent as offline (paused)
  *   agentDispatch:resume        — restore an offline agent to idle
  *   agentDispatch:createSubtask — create a subtask under an existing work item
- *   agentDispatch:status        — combined snapshot for slash commands / MCP
+ *   agentDispatch:status        — combined snapshot for slash commands
+ *
+ * All eight channels are gated by the `agentDispatch` encore feature flag via
+ * `requireEncoreFeature()`.  When the flag is off, callers receive:
+ *   { success: false, code: 'FEATURE_DISABLED', feature: 'agentDispatch' }
  */
 
 import { ipcMain } from 'electron';
@@ -28,7 +39,7 @@ import { logger } from '../../utils/logger';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
 
-const LOG_CONTEXT = '[AgentDispatch:MCP]';
+const LOG_CONTEXT = '[AgentDispatch:SlashCommands]';
 
 // ---------------------------------------------------------------------------
 // In-memory registry
@@ -83,11 +94,16 @@ function err(message: string): { success: false; error: string } {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-export interface AgentDispatchMcpHandlerDependencies {
+/** @deprecated Use `AgentDispatchSlashCommandHandlerDependencies` — the "Mcp" name was historical. */
+export type AgentDispatchMcpHandlerDependencies = AgentDispatchSlashCommandHandlerDependencies;
+
+export interface AgentDispatchSlashCommandHandlerDependencies {
 	settingsStore: SettingsStoreInterface;
 }
 
-export function registerAgentDispatchMcpHandlers(deps?: AgentDispatchMcpHandlerDependencies): void {
+export function registerAgentDispatchSlashCommandHandlers(
+	deps?: AgentDispatchSlashCommandHandlerDependencies
+): void {
 	/** Check the agentDispatch encore feature flag. Returns structured error or null. */
 	const gate = () => (deps ? requireEncoreFeature(deps.settingsStore, 'agentDispatch') : null);
 
@@ -291,12 +307,15 @@ export function registerAgentDispatchMcpHandlers(deps?: AgentDispatchMcpHandlerD
 		return ok({ agents, eligible, inProgress });
 	});
 
-	logger.info('Agent Dispatch MCP IPC handlers registered', LOG_CONTEXT);
+	logger.info('Agent Dispatch slash-command IPC handlers registered', LOG_CONTEXT);
 }
 
 /**
- * Alias exported so tests can import this file using the same name as the
- * production registration call without referencing the -mcp suffix.
- * @internal
+ * Backward-compat alias — the old export name had "Mcp" in it which was
+ * misleading (this file registers IPC channels, not MCP tools).
+ * @deprecated Import `registerAgentDispatchSlashCommandHandlers` directly.
  */
-export { registerAgentDispatchMcpHandlers as registerAgentDispatchHandlers };
+export {
+	registerAgentDispatchSlashCommandHandlers as registerAgentDispatchMcpHandlers,
+	registerAgentDispatchSlashCommandHandlers as registerAgentDispatchHandlers,
+};

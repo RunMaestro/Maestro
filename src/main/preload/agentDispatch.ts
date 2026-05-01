@@ -35,7 +35,8 @@ export function createAgentDispatchApi() {
 		resumeAgent: (agentId: string) => ipcRenderer.invoke('agentDispatch:resumeAgent', agentId),
 
 		// -----------------------------------------------------------------------
-		// MCP / slash-command handlers (agent-dispatch-mcp.ts)
+		// Slash-command IPC handlers (agent-dispatch-slash-commands.ts).
+		// NOTE: despite the old "-mcp" filename, these are plain Electron IPC channels, not MCP tools.
 		// -----------------------------------------------------------------------
 
 		/** List all registered agents from the in-memory dispatch registry. */

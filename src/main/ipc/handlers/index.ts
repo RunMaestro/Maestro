@@ -62,9 +62,11 @@ import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
 import { registerAgentDispatchHandlers, AgentDispatchHandlerDependencies } from './agent-dispatch';
 import {
+	registerAgentDispatchSlashCommandHandlers,
 	registerAgentDispatchMcpHandlers,
+	AgentDispatchSlashCommandHandlerDependencies,
 	AgentDispatchMcpHandlerDependencies,
-} from './agent-dispatch-mcp';
+} from './agent-dispatch-slash-commands';
 import {
 	registerConversationalPrdHandlers,
 	initConversationalPrdStore,
@@ -135,8 +137,8 @@ export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerAgentDispatchHandlers };
 export type { AgentDispatchHandlerDependencies };
-export { registerAgentDispatchMcpHandlers };
-export type { AgentDispatchMcpHandlerDependencies };
+export { registerAgentDispatchSlashCommandHandlers, registerAgentDispatchMcpHandlers };
+export type { AgentDispatchSlashCommandHandlerDependencies, AgentDispatchMcpHandlerDependencies };
 export { registerConversationalPrdHandlers, initConversationalPrdStore };
 export type { ConversationalPrdHandlerDependencies };
 export { registerDeliveryPlannerHandlers };
@@ -334,8 +336,9 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
-	// Register Agent Dispatch MCP / slash-command handlers (gated by agentDispatch encore flag)
-	registerAgentDispatchMcpHandlers({ settingsStore: deps.settingsStore });
+	// Register Agent Dispatch slash-command IPC handlers (gated by agentDispatch encore flag).
+	// NOTE: despite the old "-mcp" name, this registers plain ipcMain.handle channels, not MCP tools.
+	registerAgentDispatchSlashCommandHandlers({ settingsStore: deps.settingsStore });
 	// Register Agent Dispatch runtime handlers (kanban board, fleet view)
 	registerAgentDispatchHandlers({
 		getRuntime: deps.getAgentDispatchRuntime ?? (() => null),
