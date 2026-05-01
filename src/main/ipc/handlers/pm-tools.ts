@@ -269,6 +269,7 @@ interface PmEventInput {
 /**
  * Records an audit log entry in the work-graph event log (Track C).
  * Maps to WorkItemEvent type 'updated' with before/after reflecting the field change.
+ * Populates rich audit fields (#435): priorState, newState, reason.
  */
 async function recordPmEvent(
 	workGraph: ReturnType<typeof getWorkGraphItemStore>,
@@ -284,6 +285,9 @@ async function recordPmEvent(
 		message: input.reason
 			? `pm:${input.field.toLowerCase()} → ${input.newState} (reason: ${input.reason})`
 			: `pm:${input.field.toLowerCase()} → ${input.newState}`,
+		priorState: input.priorState ? { [input.field]: input.priorState } : undefined,
+		newState: { [input.field]: input.newState },
+		reason: input.reason,
 	});
 }
 

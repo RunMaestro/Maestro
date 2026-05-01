@@ -163,6 +163,29 @@ export function getMigrations(): Migration[] {
 				).run();
 			},
 		},
+		{
+			version: 7,
+			description: 'Add rich audit fields to work_item_events (#435)',
+			up: (db) => {
+				const columns = db.prepare('PRAGMA table_info(work_item_events)').all() as Array<{
+					name: string;
+				}>;
+				const existing = new Set(columns.map((c) => c.name));
+
+				if (!existing.has('prior_state_json')) {
+					db.prepare('ALTER TABLE work_item_events ADD COLUMN prior_state_json TEXT').run();
+				}
+				if (!existing.has('new_state_json')) {
+					db.prepare('ALTER TABLE work_item_events ADD COLUMN new_state_json TEXT').run();
+				}
+				if (!existing.has('reason')) {
+					db.prepare('ALTER TABLE work_item_events ADD COLUMN reason TEXT').run();
+				}
+				if (!existing.has('artifact_link')) {
+					db.prepare('ALTER TABLE work_item_events ADD COLUMN artifact_link TEXT').run();
+				}
+			},
+		},
 	];
 }
 

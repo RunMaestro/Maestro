@@ -518,6 +518,8 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 				timestamp,
 				after: { claim: { id: claimId } as WorkItemClaim },
 				message: input.note,
+				newState: { claimId, claimStatus: 'active', claimSource: input.source ?? 'manual' },
+				reason: input.note,
 			});
 
 			const row = db
@@ -602,6 +604,9 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 				timestamp,
 				before: { claim: mapWorkItemClaimRow(claim) },
 				message: note,
+				priorState: { claimId: claim.id, claimStatus: 'active' },
+				newState: { claimStatus: 'released', revertStatusTo: options.revertStatusTo ?? 'ready' },
+				reason: note,
 			});
 
 			const updated = db
@@ -1074,15 +1079,20 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 			before: params.before,
 			after: params.after,
 			message: params.message,
+			priorState: params.priorState,
+			newState: params.newState,
+			reason: params.reason,
+			artifactLink: params.artifactLink,
 		};
 
 		this.getDb()
 			.prepare(
 				`
 					INSERT INTO work_item_events (
-						id, work_item_id, type, actor_json, timestamp, before_json, after_json, message
+						id, work_item_id, type, actor_json, timestamp, before_json, after_json, message,
+						prior_state_json, new_state_json, reason, artifact_link
 					)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				`
 			)
 			.run(
@@ -1093,7 +1103,11 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 				event.timestamp,
 				toJson(event.before),
 				toJson(event.after),
-				event.message ?? null
+				event.message ?? null,
+				toJson(event.priorState),
+				toJson(event.newState),
+				event.reason ?? null,
+				event.artifactLink ?? null
 			);
 		return event;
 	}

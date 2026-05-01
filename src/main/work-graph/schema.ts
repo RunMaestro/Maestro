@@ -54,6 +54,7 @@ export const WORK_GRAPH_SCHEMA_SQL = [
 			due_at TEXT,
 			completed_at TEXT,
 			metadata_json TEXT,
+			version INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			tracker_backend_id TEXT,
@@ -130,7 +131,11 @@ export const WORK_GRAPH_SCHEMA_SQL = [
 			timestamp TEXT NOT NULL,
 			before_json TEXT,
 			after_json TEXT,
-			message TEXT
+			message TEXT,
+			prior_state_json TEXT,
+			new_state_json TEXT,
+			reason TEXT,
+			artifact_link TEXT
 		)
 	`,
 	`

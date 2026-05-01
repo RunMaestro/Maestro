@@ -31,6 +31,7 @@ export interface WorkItemRow {
 	due_at: string | null;
 	completed_at: string | null;
 	metadata_json: string | null;
+	version: number;
 	created_at: string;
 	updated_at: string;
 	tracker_backend_id: string | null;
@@ -74,6 +75,10 @@ export interface WorkItemEventRow {
 	before_json: string | null;
 	after_json: string | null;
 	message: string | null;
+	prior_state_json: string | null;
+	new_state_json: string | null;
+	reason: string | null;
+	artifact_link: string | null;
 }
 
 export interface TagDefinitionRow {
@@ -163,6 +168,7 @@ export function mapWorkItemRow(row: WorkItemRow, relations: WorkItemRelations = 
 		github: parseOptionalObject<WorkItemGithubReference>(row.github_json, 'work_items.github_json'),
 		capabilities: parseStringArray(row.capabilities_json, 'work_items.capabilities_json'),
 		priority: row.priority ?? undefined,
+		version: row.version ?? 0,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 		dueAt: row.due_at ?? undefined,
@@ -221,6 +227,16 @@ export function mapWorkItemEventRow(row: WorkItemEventRow): WorkItemEvent {
 		before: parseOptionalObject<Partial<WorkItem>>(row.before_json, 'work_item_events.before_json'),
 		after: parseOptionalObject<Partial<WorkItem>>(row.after_json, 'work_item_events.after_json'),
 		message: row.message ?? undefined,
+		priorState: parseOptionalObject<Record<string, unknown>>(
+			row.prior_state_json,
+			'work_item_events.prior_state_json'
+		),
+		newState: parseOptionalObject<Record<string, unknown>>(
+			row.new_state_json,
+			'work_item_events.new_state_json'
+		),
+		reason: row.reason ?? undefined,
+		artifactLink: row.artifact_link ?? undefined,
 	};
 }
 

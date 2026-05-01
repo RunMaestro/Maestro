@@ -164,6 +164,8 @@ export interface WorkItem {
 	github?: WorkItemGithubReference;
 	capabilities?: string[];
 	priority?: number;
+	/** Optimistic-lock counter. Incremented on every update. Default 0. (#435) */
+	version: number;
 	createdAt: string;
 	updatedAt: string;
 	dueAt?: string;
@@ -205,6 +207,14 @@ export interface WorkItemEvent {
 	before?: Partial<WorkItem>;
 	after?: Partial<WorkItem>;
 	message?: string;
+	/** Prior state snapshot for status/role changes (#435 audit richness). */
+	priorState?: Record<string, unknown>;
+	/** New state snapshot for status/role changes (#435 audit richness). */
+	newState?: Record<string, unknown>;
+	/** Reason for the state change, if available (#435 audit richness). */
+	reason?: string;
+	/** External artifact link (PR/commit/doc URL) for traceability (#435 audit richness). */
+	artifactLink?: string;
 }
 
 export interface WorkItemEventCreateInput {
@@ -215,6 +225,14 @@ export interface WorkItemEventCreateInput {
 	before?: Partial<WorkItem>;
 	after?: Partial<WorkItem>;
 	message?: string;
+	/** Prior state snapshot for status/role changes (#435 audit richness). */
+	priorState?: Record<string, unknown>;
+	/** New state snapshot for status/role changes (#435 audit richness). */
+	newState?: Record<string, unknown>;
+	/** Reason for the state change, if available (#435 audit richness). */
+	reason?: string;
+	/** External artifact link (PR/commit/doc URL) for traceability (#435 audit richness). */
+	artifactLink?: string;
 }
 
 export interface TagDefinition {
