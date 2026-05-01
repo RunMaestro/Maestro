@@ -48,7 +48,6 @@ import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
-import { useAgentDispatchFleet } from '../../hooks/useAgentDispatchFleet';
 import type { DispatchRole } from '../../../shared/agent-dispatch-types';
 
 // ============================================================================
@@ -195,21 +194,48 @@ function SessionListInner(props: SessionListProps) {
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
 	}, [sessions.length]);
 
-	// Dispatch fleet: maps session ID → { role, active } for sidebar role icons (#442).
-	// The fleet registry tracks which sessions are registered as dispatch agents and
-	// whether they currently hold active work-item claims.
-	const { fleet } = useAgentDispatchFleet();
+	// Dispatch slot icons: maps session ID → { role, active } for sidebar role icons (#442).
+	// Reads projectRoleSlots from the active session's project root and finds which role
+	// (runner/fixer/reviewer/merger) each agent is configured for. Active state is false
+	// for now until claim-state events from #444 land in renderer.
+	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	const projectPath = activeSession?.projectRoot;
+	const [projectRoleSlots, setProjectRoleSlots] = useState<Record<
+		string,
+		{ agentId?: string }
+	> | null>(null);
+	useEffect(() => {
+		if (!projectPath) {
+			setProjectRoleSlots(null);
+			return;
+		}
+		let cancelled = false;
+		(async () => {
+			try {
+				const api = (window as unknown as { maestro?: { projectRoles?: { get?: (p: string) => Promise<unknown> } } }).maestro?.projectRoles;
+				if (!api?.get) return;
+				const slots = (await api.get(projectPath)) as Record<string, { agentId?: string }> | null;
+				if (!cancelled) setProjectRoleSlots(slots ?? {});
+			} catch {
+				if (!cancelled) setProjectRoleSlots({});
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectPath]);
 	const dispatchSessionMap = useMemo(() => {
 		const map = new Map<string, { role: DispatchRole; active: boolean }>();
-		for (const entry of fleet) {
-			if (!entry.sessionId) continue;
-			const firstRole = entry.dispatchProfile?.roles?.[0];
-			if (!firstRole) continue;
-			const active = entry.currentClaims.some((c) => c.status === 'active');
-			map.set(entry.sessionId, { role: firstRole, active });
+		if (!projectRoleSlots) return map;
+		const roles: DispatchRole[] = ['runner', 'fixer', 'reviewer', 'merger'];
+		for (const role of roles) {
+			const slot = projectRoleSlots[role];
+			if (slot?.agentId) {
+				map.set(slot.agentId, { role, active: false });
+			}
 		}
 		return map;
-	}, [fleet]);
+	}, [projectRoleSlots]);
 
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
