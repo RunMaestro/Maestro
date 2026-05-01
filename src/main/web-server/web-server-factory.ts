@@ -2515,6 +2515,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
+		// Inject encore feature flags so /api/slash-commands can filter by encoreFlag
+		server.setGetEncoreFeaturesCallback(() => {
+			return settingsStore.get<Record<string, boolean>>('encoreFeatures', {});
+		});
+
 		return server;
 	};
 }

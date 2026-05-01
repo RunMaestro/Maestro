@@ -88,6 +88,8 @@ import { registerPmToolsHandlers, PmToolsHandlerDependencies } from './pm-tools'
 // pm-audit — rule-based in-flight work sweep (#434)
 import { registerPmAuditHandlers, PmAuditHandlerDependencies } from './pm-audit';
 import { registerPmHeartbeatHandlers, PmHeartbeatHandlerDependencies } from './pm-heartbeat';
+// pm-init — /PM-init idempotent field bootstrap (#445)
+import { registerPmInitHandlers, PmInitHandlerDependencies } from './pm-init';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -160,6 +162,8 @@ export { registerPmAuditHandlers };
 export type { PmAuditHandlerDependencies };
 export { registerPmHeartbeatHandlers };
 export { registerPmOrchestratorHandlers };
+export { registerPmInitHandlers };
+export type { PmInitHandlerDependencies };
 export type { PmHeartbeatHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
@@ -383,6 +387,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmAuditHandlers({ settingsStore: deps.settingsStore });
 	// Register PM Heartbeat handlers (#435): pm:heartbeat agent liveness signal
 	registerPmHeartbeatHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Init handlers (#445): pm:initRepo idempotent field bootstrap
+	registerPmInitHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

@@ -190,6 +190,9 @@ export class WebServer {
 	// Optional Conversational PRD route dependencies (set before start())
 	private conversationalPrdDeps: ConversationalPrdRouteDependencies | null = null;
 
+	// Callback for reading current encore feature flags (injected by web-server-factory)
+	private getEncoreFeaturesCallback: (() => Record<string, boolean>) | null = null;
+
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
 		this.port = port;
@@ -679,6 +682,14 @@ export class WebServer {
 		this.conversationalPrdDeps = deps;
 	}
 
+	/**
+	 * Inject a callback for reading the current encore feature flags.
+	 * Used by /api/slash-commands to filter commands by their encoreFlag.
+	 */
+	setGetEncoreFeaturesCallback(callback: () => Record<string, boolean>): void {
+		this.getEncoreFeaturesCallback = callback;
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -770,6 +781,8 @@ export class WebServer {
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
 			isSessionLive: (sessionId) => this.liveSessionManager.isSessionLive(sessionId),
+			getEncoreFeatures: () =>
+				this.getEncoreFeaturesCallback ? this.getEncoreFeaturesCallback() : {},
 		});
 		this.apiRoutes.registerRoutes(this.server);
 

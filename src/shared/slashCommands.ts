@@ -216,6 +216,17 @@ export const SLASH_COMMAND_REGISTRY: SlashCommandDefinition[] = [
 		handler: 'ipc:pm:epic-start',
 	},
 
+	// Repo bootstrap verb (#445)
+	{
+		verb: '/PM-init',
+		description: 'Bootstrap GitHub Projects v2 AI custom fields for this repo (idempotent)',
+		args: '[owner/repo]',
+		surfaces: ['desktop'],
+		aiOnly: true,
+		encoreFlag: 'pmSuite',
+		handler: 'ipc:pm:initRepo',
+	},
+
 	// Issue / task verbs (#436)
 	{
 		verb: '/PM issue-start',

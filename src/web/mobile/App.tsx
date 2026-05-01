@@ -1172,6 +1172,11 @@ export default function MobileApp() {
 	// Custom slash commands from desktop
 	const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
 
+	// Slash commands fetched from the server registry (surface=web, encore-filtered)
+	const [registrySlashCommands, setRegistrySlashCommands] = useState<SlashCommand[]>([]);
+	// Timestamp of last successful registry fetch (for 60s TTL cache)
+	const registryFetchedAtRef = useRef<number>(0);
+
 	// AutoRun state per session (batch processing on desktop)
 	const [autoRunStates, setAutoRunStates] = useState<Record<string, AutoRunState | null>>({});
 
@@ -1659,6 +1664,37 @@ export default function MobileApp() {
 	// Cue automation hook — uses WebSocket for Cue subscription/activity management
 	const cue = useCue(sendRequest, send, isActuallyConnected);
 
+	// Fetch slash command registry from server (surface=web, encore-filtered).
+	// Cached for 60 s — re-fetches when connection is (re)established.
+	useEffect(() => {
+		if (!isActuallyConnected) return;
+
+		const CACHE_TTL_MS = 60_000;
+		const now = Date.now();
+		if (now - registryFetchedAtRef.current < CACHE_TTL_MS) return;
+
+		const url = buildApiUrl('/slash-commands?surface=web');
+		fetch(url)
+			.then((res) => (res.ok ? res.json() : null))
+			.then(
+				(
+					data: { commands?: Array<{ verb: string; description: string; aiOnly?: boolean }> } | null
+				) => {
+					if (!data?.commands) return;
+					const mapped: SlashCommand[] = data.commands.map((cmd) => ({
+						command: cmd.verb,
+						description: cmd.description,
+						aiOnly: cmd.aiOnly ?? false,
+					}));
+					setRegistrySlashCommands(mapped);
+					registryFetchedAtRef.current = Date.now();
+				}
+			)
+			.catch(() => {
+				// Graceful degradation: registry unavailable → keep previous/defaults
+			});
+	}, [isActuallyConnected]);
+
 	// Keep settings changed ref in sync
 	useEffect(() => {
 		settingsChangedRef.current = settingsHook.handleSettingsChanged;
@@ -2099,7 +2135,7 @@ export default function MobileApp() {
 		}
 	}, [activeSessionId]);
 
-	// Combined slash commands (default + custom from desktop)
+	// Combined slash commands (registry from server > static defaults + custom from desktop)
 	const allSlashCommands = useMemo((): SlashCommand[] => {
 		// Convert custom commands to SlashCommand format
 		const customSlashCommands: SlashCommand[] = customCommands.map((cmd) => ({
@@ -2107,9 +2143,14 @@ export default function MobileApp() {
 			description: cmd.description,
 			aiOnly: true, // Custom commands are AI-only
 		}));
-		// Combine defaults with custom commands
-		return [...DEFAULT_SLASH_COMMANDS, ...customSlashCommands];
-	}, [customCommands]);
+		// Use server registry when available (encore-filtered, surface=web).
+		// Fall back to static DEFAULT_SLASH_COMMANDS when not yet fetched.
+		const base = registrySlashCommands.length > 0 ? registrySlashCommands : DEFAULT_SLASH_COMMANDS;
+		// Append custom commands, deduplicating by command string
+		const baseVerbs = new Set(base.map((c) => c.command));
+		const uniqueCustom = customSlashCommands.filter((c) => !baseVerbs.has(c.command));
+		return [...base, ...uniqueCustom];
+	}, [customCommands, registrySlashCommands]);
 
 	// Collect all responses from sessions for navigation
 	const allResponses = useMemo((): ResponseItem[] => {

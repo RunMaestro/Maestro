@@ -224,6 +224,46 @@ export class DeliveryPlannerGithubSync {
 		return project.id;
 	}
 
+	/**
+	 * Public entry-point for /PM-init (#445).
+	 *
+	 * Idempotently ensures all REQUIRED_PROJECT_FIELDS exist on the project.
+	 * Returns a structured report suitable for the pm:initRepo IPC response.
+	 */
+	async initProjectFields(): Promise<{ created: string[]; existing: string[]; errors: string[] }> {
+		const created: string[] = [];
+		const existing: string[] = [];
+		const errors: string[] = [];
+
+		const project = await this.readProject();
+		const currentFields = await this.readProjectFields();
+		const existingNames = new Set(currentFields.map((f) => f.name));
+
+		for (const [fieldName, options] of Object.entries(REQUIRED_PROJECT_FIELDS)) {
+			if (existingNames.has(fieldName)) {
+				existing.push(fieldName);
+				continue;
+			}
+			try {
+				if (options !== null) {
+					const singleSelectOptionsJson = JSON.stringify(
+						options.map((name) => ({ name, color: 'GRAY', description: '' }))
+					);
+					const mutation = `mutation { createProjectV2Field(input: { projectId: "${project.id}", dataType: SINGLE_SELECT, name: "${fieldName}", singleSelectOptions: ${singleSelectOptionsJson} }) { projectV2Field { ... on ProjectV2SingleSelectField { id name } } } }`;
+					await this.runGhGraphql(mutation);
+				} else {
+					const mutation = `mutation { createProjectV2Field(input: { projectId: "${project.id}", dataType: TEXT, name: "${fieldName}" }) { projectV2Field { ... on ProjectV2Field { id name } } } }`;
+					await this.runGhGraphql(mutation);
+				}
+				created.push(fieldName);
+			} catch (err) {
+				errors.push(`${fieldName}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+
+		return { created, existing, errors };
+	}
+
 	async createLinkedBugIssue(input: {
 		bug: WorkItem;
 		related?: WorkItem;

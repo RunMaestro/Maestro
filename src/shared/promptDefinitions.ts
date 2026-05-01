@@ -338,6 +338,12 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'pm',
 	},
 	{
+		id: 'pm-init',
+		filename: 'pm/pm-init.md',
+		description: '/PM-init idempotent field bootstrap prompt',
+		category: 'pm',
+	},
+	{
 		id: 'pm-next',
 		filename: 'pm/pm-next.md',
 		description: '/PM next eligible work item prompt',
@@ -412,6 +418,7 @@ export const PROMPT_IDS = {
 	PM_ISSUE_SHOW: 'pm-issue-show',
 	PM_ISSUE_STATUS: 'pm-issue-status',
 	PM_ISSUE_SYNC: 'pm-issue-sync',
+	PM_INIT: 'pm-init',
 	PM_NEXT: 'pm-next',
 	PM_STATUS: 'pm-status',
 	PM_STANDUP: 'pm-standup',

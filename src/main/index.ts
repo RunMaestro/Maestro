@@ -81,6 +81,7 @@ import {
 	registerPmToolsHandlers,
 	registerPmAuditHandlers,
 	registerPmHeartbeatHandlers,
+	registerPmInitHandlers,
 	registerProjectRolesHandlers,
 	registerPmOrchestratorHandlers,
 	initConversationalPrdStore,
@@ -1293,6 +1294,8 @@ function setupIpcHandlers() {
 
 	// pm-heartbeat — agent liveness signal for stale-claim sweeper (#435)
 	registerPmHeartbeatHandlers({ settingsStore: store });
+	// pm-init — /PM-init idempotent field bootstrap (#445)
+	registerPmInitHandlers({ settingsStore: store });
 	registerProjectRolesHandlers(store as never);
 }
 

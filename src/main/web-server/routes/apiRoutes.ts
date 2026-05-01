@@ -17,6 +17,11 @@ import { FastifyInstance } from 'fastify';
 import { HistoryEntry } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
+import {
+	getCommandsForSurface,
+	type SlashCommandDefinition,
+	type SlashCommandSurface,
+} from '../../../shared/slashCommands';
 
 // Re-export types for backwards compatibility
 export type {
@@ -45,6 +50,8 @@ export interface ApiRouteCallbacks {
 	getHistory: (projectPath?: string, sessionId?: string) => HistoryEntry[];
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
+	/** Return active encore feature flags (key → enabled). Used to filter slash commands. */
+	getEncoreFeatures: () => Record<string, boolean>;
 }
 
 /**
@@ -337,6 +344,50 @@ export class ApiRoutes {
 						timestamp: Date.now(),
 					});
 				}
+			}
+		);
+
+		// Slash commands registry — filtered to the requested surface and encore flags
+		// GET /api/slash-commands?surface=web
+		server.get(
+			`/${token}/api/slash-commands`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { surface } = request.query as { surface?: string };
+
+				// Validate surface param — default to 'web'
+				const validSurfaces: SlashCommandSurface[] = ['desktop', 'web'];
+				const resolvedSurface: SlashCommandSurface = validSurfaces.includes(
+					surface as SlashCommandSurface
+				)
+					? (surface as SlashCommandSurface)
+					: 'web';
+
+				// Get encore feature flags (gracefully degrade if callback absent)
+				const encoreFeatures: Record<string, boolean> = this.callbacks.getEncoreFeatures
+					? this.callbacks.getEncoreFeatures()
+					: {};
+
+				// Filter by surface first, then by encore flag
+				const commands: SlashCommandDefinition[] = getCommandsForSurface(resolvedSurface).filter(
+					(cmd) => {
+						if (!cmd.encoreFlag) return true;
+						return Boolean(encoreFeatures[cmd.encoreFlag]);
+					}
+				);
+
+				return reply.send({
+					commands,
+					surface: resolvedSurface,
+					timestamp: Date.now(),
+				});
 			}
 		);
 

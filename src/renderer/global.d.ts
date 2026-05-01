@@ -3735,6 +3735,22 @@ interface MaestroAPI {
 			| { success: false; error: string }
 		>;
 	};
+
+	// pm-init API — /PM-init idempotent field bootstrap (#445)
+	pmInit: {
+		/**
+		 * Idempotently ensure all AI-prefixed Projects v2 custom fields exist.
+		 * Gated by the `deliveryPlanner` encore feature flag.
+		 *
+		 * @param input - Optional { repo } override (reserved for future use).
+		 * @returns { created, existing, errors }
+		 */
+		initRepo: (input?: { repo?: string }) => Promise<{
+			created: string[];
+			existing: string[];
+			errors: string[];
+		}>;
+	};
 }
 
 declare global {
