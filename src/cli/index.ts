@@ -42,6 +42,13 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import {
+	plannerDashboard,
+	plannerPrdCreate,
+	plannerPrdDecompose,
+	plannerEpicDecompose,
+	plannerSync,
+} from './commands/planner';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -522,6 +529,68 @@ notify
 	.option('-d, --duration <ms>', 'Auto-dismiss after N ms (range: (0, 5000]; default 1500)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+// Planner commands — Delivery Planner (PRD → epic → tasks → GitHub sync).
+// Requires the running Maestro desktop app with the Delivery Planner encore feature on.
+const planner = program
+	.command('planner')
+	.description('Manage Delivery Planner work items (PRDs, epics, tasks)');
+
+planner
+	.command('dashboard')
+	.description('Show all work items in the Delivery Planner dashboard')
+	.option('-p, --project <path>', 'Project root path (defaults to current directory)')
+	.option('--git-path <path>', 'Git repository root (defaults to --project)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) =>
+		plannerDashboard({ project: options.project, gitPath: options.gitPath, json: options.json })
+	);
+
+const prd = planner.command('prd').description('Manage PRDs (Product Requirement Documents)');
+
+prd
+	.command('create')
+	.description('Create a new PRD')
+	.requiredOption('-t, --title <title>', 'PRD title')
+	.option('-p, --project <path>', 'Project root path (defaults to current directory)')
+	.option('--git-path <path>', 'Git repository root (defaults to --project)')
+	.option('-d, --description <text>', 'Optional PRD description / problem statement')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) =>
+		plannerPrdCreate({
+			title: options.title,
+			project: options.project,
+			gitPath: options.gitPath,
+			description: options.description,
+			json: options.json,
+		})
+	);
+
+prd
+	.command('decompose <id>')
+	.description('Decompose a PRD into an epic and tasks')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => plannerPrdDecompose(id, { json: options.json }));
+
+const epic = planner.command('epic').description('Manage epics');
+
+epic
+	.command('decompose <id>')
+	.description('Decompose an epic into tasks')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => plannerEpicDecompose(id, { json: options.json }));
+
+planner
+	.command('sync <id>')
+	.description('Sync a work item to external systems')
+	.option('--target <target>', 'Sync target: github | mirror | all (default: all)', 'all')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) =>
+		plannerSync(id, {
+			target: options.target as 'github' | 'mirror' | 'all',
+			json: options.json,
+		})
+	);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
