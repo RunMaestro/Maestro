@@ -1,0 +1,276 @@
+/**
+ * pm-tools IPC handlers — agent-callable project management tools (#430).
+ *
+ * Exposes three channels that agents call at workflow transitions to self-update
+ * their claimed work item in the Projects v2 custom fields:
+ *
+ *   pm:setStatus  → updates Status field for the agent's claimed item
+ *   pm:setRole    → updates Role field for the agent's claimed item
+ *   pm:setBlocked → sets Status=Blocked + posts a comment with the reason
+ *
+ * Each handler:
+ *  1. Resolves the calling agent's currently-claimed work item (via work-graph).
+ *  2. Enforces ownership — agents cannot update items they don't own.
+ *  3. Persists the new field value to the Projects v2 via GraphQL.
+ *  4. Records an audit event in the work-graph event log (Track C).
+ *
+ * Gated by the `deliveryPlanner` encore feature flag (same gate as delivery-planner handlers).
+ */
+
+import { ipcMain } from 'electron';
+import { getWorkGraphItemStore } from '../../work-graph';
+import { DeliveryPlannerGithubSync } from '../../delivery-planner/github-sync';
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
+import type { SettingsStoreInterface } from '../../stores/types';
+import type { WorkItem, WorkGraphActor, WorkItemStatus } from '../../../shared/work-graph-types';
+
+const LOG_CONTEXT = '[PmTools]';
+
+export interface PmToolsSetStatusInput {
+	/** The agent's own session ID — used to look up its current claim. */
+	agentSessionId: string;
+	/** Target status value — must match a Status field option name. */
+	status: string;
+}
+
+export interface PmToolsSetRoleInput {
+	agentSessionId: string;
+	/** Target role value — must match a Role field option name. */
+	role: string;
+}
+
+export interface PmToolsSetBlockedInput {
+	agentSessionId: string;
+	/** Human-readable reason posted as a GitHub comment and recorded in the event log. */
+	reason: string;
+}
+
+export interface PmToolsResult {
+	workItemId: string;
+	field: string;
+	value: string;
+}
+
+export interface PmToolsHandlerDependencies {
+	settingsStore: SettingsStoreInterface;
+}
+
+export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void {
+	const workGraph = getWorkGraphItemStore();
+
+	/** Returns structured error if deliveryPlanner encore flag is off. */
+	const gate = () => requireEncoreFeature(deps.settingsStore, 'deliveryPlanner');
+
+	// ── pm:setStatus ──────────────────────────────────────────────────────────
+	ipcMain.handle('pm:setStatus', async (_event, input: PmToolsSetStatusInput) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+
+		try {
+			const { workItemId, projectId, projectItemId } = await resolveClaimedItem(
+				workGraph,
+				input.agentSessionId
+			);
+
+			const githubSync = new DeliveryPlannerGithubSync();
+			await githubSync.updateStatusField(projectId, projectItemId, input.status);
+
+			const actor = actorForSession(input.agentSessionId);
+			await recordPmEvent(workGraph, {
+				workItemId,
+				actor,
+				field: 'Status',
+				priorState: undefined,
+				newState: input.status,
+			});
+
+			console.log(`${LOG_CONTEXT} pm:setStatus workItem=${workItemId} status=${input.status}`);
+			return {
+				success: true,
+				data: { workItemId, field: 'Status', value: input.status } satisfies PmToolsResult,
+			};
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`${LOG_CONTEXT} pm:setStatus failed:`, message);
+			return { success: false, error: message };
+		}
+	});
+
+	// ── pm:setRole ────────────────────────────────────────────────────────────
+	ipcMain.handle('pm:setRole', async (_event, input: PmToolsSetRoleInput) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+
+		try {
+			const { workItemId, projectId, projectItemId } = await resolveClaimedItem(
+				workGraph,
+				input.agentSessionId
+			);
+
+			const githubSync = new DeliveryPlannerGithubSync();
+			await githubSync.updateRoleField(projectId, projectItemId, input.role);
+
+			const actor = actorForSession(input.agentSessionId);
+			await recordPmEvent(workGraph, {
+				workItemId,
+				actor,
+				field: 'Role',
+				priorState: undefined,
+				newState: input.role,
+			});
+
+			console.log(`${LOG_CONTEXT} pm:setRole workItem=${workItemId} role=${input.role}`);
+			return {
+				success: true,
+				data: { workItemId, field: 'Role', value: input.role } satisfies PmToolsResult,
+			};
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`${LOG_CONTEXT} pm:setRole failed:`, message);
+			return { success: false, error: message };
+		}
+	});
+
+	// ── pm:setBlocked ─────────────────────────────────────────────────────────
+	ipcMain.handle('pm:setBlocked', async (_event, input: PmToolsSetBlockedInput) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+
+		try {
+			const { workItemId, projectId, projectItemId, workItem } = await resolveClaimedItem(
+				workGraph,
+				input.agentSessionId
+			);
+
+			const githubSync = new DeliveryPlannerGithubSync();
+
+			// 1. Set Projects v2 Status → Blocked.
+			await githubSync.updateStatusField(projectId, projectItemId, 'Blocked');
+
+			// 2. Post a comment on the GitHub issue if one exists.
+			if (workItem.github?.issueNumber) {
+				await githubSync.addProgressComment(workItem, `**Blocked** — ${input.reason}`);
+			}
+
+			// 3. Patch work-graph status to reflect the blocked state.
+			const actor = actorForSession(input.agentSessionId);
+			await workGraph.updateItem({
+				id: workItemId,
+				patch: { status: 'blocked' as WorkItemStatus },
+				actor,
+			});
+
+			await recordPmEvent(workGraph, {
+				workItemId,
+				actor,
+				field: 'Status',
+				priorState: workItem.status,
+				newState: 'Blocked',
+				reason: input.reason,
+			});
+
+			console.log(`${LOG_CONTEXT} pm:setBlocked workItem=${workItemId} reason="${input.reason}"`);
+			return {
+				success: true,
+				data: { workItemId, field: 'Status', value: 'Blocked' } satisfies PmToolsResult,
+			};
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`${LOG_CONTEXT} pm:setBlocked failed:`, message);
+			return { success: false, error: message };
+		}
+	});
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+interface ClaimedItemResolution {
+	workItemId: string;
+	projectId: string;
+	projectItemId: string;
+	workItem: WorkItem;
+}
+
+/**
+ * Finds the work item currently claimed by the given agent session.
+ * Throws if the agent has no active claim or the item isn't synced to a project.
+ */
+async function resolveClaimedItem(
+	workGraph: ReturnType<typeof getWorkGraphItemStore>,
+	agentSessionId: string
+): Promise<ClaimedItemResolution> {
+	// List items where the owner matches this session and the claim is active.
+	const result = await workGraph.listItems({
+		ownerId: agentSessionId,
+		statuses: ['claimed', 'in_progress', 'blocked', 'review'],
+	});
+
+	const claimedItem = result.items.find(
+		(item) =>
+			item.claim?.status === 'active' &&
+			(item.claim.owner.id === agentSessionId ||
+				item.claim.owner.providerSessionId === agentSessionId)
+	);
+
+	if (!claimedItem) {
+		throw new Error(
+			`Agent session "${agentSessionId}" has no active claim — cannot update project fields`
+		);
+	}
+
+	const projectItemId = claimedItem.github?.projectItemId;
+	if (!projectItemId) {
+		throw new Error(
+			`Work item "${claimedItem.id}" is not synced to a GitHub Project — run sync first`
+		);
+	}
+
+	// Read the project ID via a fresh project view.
+	const githubSync = new DeliveryPlannerGithubSync();
+	const projectId = await githubSync.readProjectId();
+
+	return {
+		workItemId: claimedItem.id,
+		projectId,
+		projectItemId,
+		workItem: claimedItem,
+	};
+}
+
+function actorForSession(agentSessionId: string): WorkGraphActor {
+	return {
+		type: 'agent',
+		id: agentSessionId,
+		providerSessionId: agentSessionId,
+	};
+}
+
+interface PmEventInput {
+	workItemId: string;
+	actor: WorkGraphActor;
+	field: string;
+	priorState: string | undefined;
+	newState: string;
+	reason?: string;
+}
+
+/**
+ * Records an audit log entry in the work-graph event log (Track C).
+ * Maps to WorkItemEvent type 'updated' with before/after reflecting the field change.
+ */
+async function recordPmEvent(
+	workGraph: ReturnType<typeof getWorkGraphItemStore>,
+	input: PmEventInput
+): Promise<void> {
+	await workGraph.recordEvent({
+		workItemId: input.workItemId,
+		type: 'updated',
+		actor: input.actor,
+		before:
+			input.priorState !== undefined ? { status: input.priorState as WorkItemStatus } : undefined,
+		after: { status: input.newState as WorkItemStatus },
+		message: input.reason
+			? `pm:${input.field.toLowerCase()} → ${input.newState} (reason: ${input.reason})`
+			: `pm:${input.field.toLowerCase()} → ${input.newState}`,
+	});
+}

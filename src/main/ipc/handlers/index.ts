@@ -60,6 +60,7 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerProjectRolesHandlers } from './project-roles';
 import { registerAgentDispatchHandlers, AgentDispatchHandlerDependencies } from './agent-dispatch';
 import {
 	registerAgentDispatchSlashCommandHandlers,
@@ -80,6 +81,10 @@ import {
 	registerPlanningPipelineHandlers,
 	PlanningPipelineHandlerDependencies,
 } from './planning-pipeline';
+// PM Orchestrator — /PM slash-command handlers (pm:orchestrate, pm:prd-new, etc.)
+import { registerPmOrchestratorHandlers } from '../../pm-orchestrator';
+// pm-tools — agent-callable pm:setStatus / pm:setRole / pm:setBlocked (#430)
+import { registerPmToolsHandlers, PmToolsHandlerDependencies } from './pm-tools';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -135,6 +140,7 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerProjectRolesHandlers };
 export { registerAgentDispatchHandlers };
 export type { AgentDispatchHandlerDependencies };
 export { registerAgentDispatchSlashCommandHandlers, registerAgentDispatchMcpHandlers };
@@ -145,6 +151,8 @@ export { registerDeliveryPlannerHandlers };
 export type { DeliveryPlannerHandlerDependencies };
 export { registerPlanningPipelineHandlers };
 export type { PlanningPipelineHandlerDependencies };
+export { registerPmToolsHandlers };
+export type { PmToolsHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -336,6 +344,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register per-project role slot roster handlers (#429)
+	registerProjectRolesHandlers(deps.settingsStore as unknown as Store);
 	// Register Agent Dispatch slash-command IPC handlers (gated by agentDispatch encore flag).
 	// NOTE: despite the old "-mcp" name, this registers plain ipcMain.handle channels, not MCP tools.
 	registerAgentDispatchSlashCommandHandlers({ settingsStore: deps.settingsStore });
@@ -354,6 +364,14 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerConversationalPrdHandlers({ plannerService, settingsStore: deps.settingsStore });
 	// Register Planning Pipeline handlers (gated by planningPipeline encore flag)
 	registerPlanningPipelineHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Orchestrator handlers (/PM slash-command suite, gated by conversationalPrd flag)
+	registerPmOrchestratorHandlers({
+		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
+		resolveProjectPaths: () => null,
+	});
+	// Register pm-tools IPC handlers (#430): pm:setStatus, pm:setRole, pm:setBlocked
+	registerPmToolsHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

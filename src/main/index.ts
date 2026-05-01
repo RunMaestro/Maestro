@@ -78,6 +78,7 @@ import {
 	registerDeliveryPlannerHandlers,
 	registerPlanningPipelineHandlers,
 	registerConversationalPrdHandlers,
+	registerPmToolsHandlers,
 	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -1184,6 +1185,9 @@ function setupIpcHandlers() {
 
 	// Planning Pipeline — stage machine dashboard
 	registerPlanningPipelineHandlers({ settingsStore: store });
+
+	// pm-tools — agent-callable pm:setStatus / pm:setRole / pm:setBlocked (#430)
+	registerPmToolsHandlers({ settingsStore: store });
 }
 
 // Handle process output streaming (set up after initialization)

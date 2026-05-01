@@ -22,6 +22,7 @@ import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
+import { RolesPanel } from './RightPanel/RolesPanel/RolesPanel';
 import { AutoRunExpandedModal } from './AutoRun/AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
@@ -124,6 +125,7 @@ export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
 		// === State from stores (direct subscriptions — no prop drilling) ===
 		const session = useSessionStore(selectActiveSession);
+		const allSessions = useSessionStore((s) => s.sessions);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -139,6 +141,7 @@ export const RightPanel = memo(
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 		const autoRunDisabled = useSettingsStore((s) => s.autoRunDisabled);
+		const agentDispatchEnabled = useSettingsStore((s) => s.encoreFeatures?.agentDispatch ?? false);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
@@ -447,10 +450,17 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
+					{(
+						[
+							'files',
+							'history',
+							...(autoRunDisabled ? [] : ['autorun']),
+							...(agentDispatchEnabled ? ['roles'] : []),
+						] as RightPanelTab[]
+					).map((tab) => (
 						<button
 							key={tab}
-							onClick={() => setActiveRightTab(tab as RightPanelTab)}
+							onClick={() => setActiveRightTab(tab)}
 							className="flex-1 text-xs font-bold border-b-2 transition-colors"
 							style={{
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
@@ -557,6 +567,16 @@ export const RightPanel = memo(
 					{activeRightTab === 'autorun' && !autoRunDisabled && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
+						</div>
+					)}
+
+					{activeRightTab === 'roles' && agentDispatchEnabled && (
+						<div data-tour="roles-panel" className="h-full">
+							<RolesPanel
+								theme={theme}
+								projectPath={session.projectRoot ?? null}
+								sessions={allSessions}
+							/>
 						</div>
 					)}
 				</div>

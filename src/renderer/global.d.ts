@@ -200,6 +200,34 @@ type ConversationalPrdSession =
 
 type IpcDataResponse<T> = { success: true; data: T } | { success: false; error: string };
 
+// PM slash-command request/response types
+interface PmCommandRequest {
+	args?: string;
+	projectPath?: string;
+	gitPath?: string;
+	actor?: { sessionId?: string; name?: string };
+}
+
+interface PmCommandResponse {
+	success: boolean;
+	message?: string;
+	data?: unknown;
+	error?: string;
+	code?: string;
+}
+
+interface PmOpenConvPrdEvent {
+	conversationId?: string;
+	startRequest: {
+		projectPath: string;
+		gitPath: string;
+		greeting?: string;
+		actor?: unknown;
+	};
+	idea?: string;
+	autoDecompose?: boolean;
+}
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -3481,6 +3509,20 @@ interface MaestroAPI {
 		}>;
 	};
 
+	/** Per-project role slot roster (#429). */
+	projectRoles: {
+		get: (
+			projectPath: string
+		) => Promise<
+			| { success: true; data: import('../shared/project-roles-types').ProjectRoleSlots }
+			| { success: false; error: string }
+		>;
+		set: (
+			projectPath: string,
+			slots: import('../shared/project-roles-types').ProjectRoleSlots
+		) => Promise<{ success: true } | { success: false; error: string }>;
+	};
+
 	deliveryPlanner: {
 		createPrd: (input: DeliveryPlannerCreatePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
 		decomposePrd: (input: DeliveryPlannerDecomposePrdRequest) => Promise<IpcDataResponse<WorkItem>>;
@@ -3537,6 +3579,60 @@ interface MaestroAPI {
 		finalizeSession: (
 			input: ConversationalPrdFinalizeRequest
 		) => Promise<IpcDataResponse<ConversationalPrdFinalizeResponse>>;
+	};
+
+	// PM slash-command suite (/PM orchestrate, prd-new, prd-list, next, status, standup)
+	pm: {
+		/** /PM <idea> — full orchestration pipeline: Conv-PRD → Epic → Tasks → GitHub */
+		orchestrate: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM prd-new <name> — open Conv-PRD modal seeded with a name */
+		prdNew: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM prd-list — list PRDs for the current project */
+		prdList: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM next — next eligible work item */
+		next: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM status — board snapshot */
+		status: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM standup — standup summary */
+		standup: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/**
+		 * Listen for main-process push events requesting the Conv-PRD modal to open.
+		 * Returns an unsubscribe function.
+		 */
+		onOpenConvPrd: (handler: (event: PmOpenConvPrdEvent) => void) => () => void;
+	};
+
+	// pm-tools API — agent-callable project management tools (#430)
+	pmTools: {
+		/**
+		 * Update the Projects v2 Status field for the agent's currently-claimed work item.
+		 * Scoped to the calling agent's own claim — cannot update items it doesn't own.
+		 * @param agentSessionId - the calling agent's session ID
+		 * @param status - one of: Idea | PRD Draft | Refinement | Tasks Ready | In Progress | In Review | Blocked | Done
+		 */
+		setStatus: (
+			agentSessionId: string,
+			status: string
+		) => Promise<IpcDataResponse<{ workItemId: string; field: string; value: string }>>;
+		/**
+		 * Update the Projects v2 Role field for the agent's currently-claimed work item.
+		 * @param agentSessionId - the calling agent's session ID
+		 * @param role - one of: runner | fixer | reviewer | merger
+		 */
+		setRole: (
+			agentSessionId: string,
+			role: string
+		) => Promise<IpcDataResponse<{ workItemId: string; field: string; value: string }>>;
+		/**
+		 * Set the work item to Blocked status, update the Projects v2 Status field,
+		 * and post a GitHub comment with the reason.
+		 * @param agentSessionId - the calling agent's session ID
+		 * @param reason - human-readable explanation (posted as a GitHub comment)
+		 */
+		setBlocked: (
+			agentSessionId: string,
+			reason: string
+		) => Promise<IpcDataResponse<{ workItemId: string; field: string; value: string }>>;
 	};
 }
 

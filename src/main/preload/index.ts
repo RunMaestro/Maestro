@@ -56,10 +56,12 @@ import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
 import { createAgentDispatchApi } from './agentDispatch';
+import { createProjectRolesApi } from './projectRoles';
 import { createDeliveryPlannerApi } from './deliveryPlanner';
 import { createPlanningPipelineApi } from './planningPipeline';
 import { createConversationalPrdApi } from './conversationalPrd';
 import { createWorkGraphApi } from './workGraph';
+import { createPmToolsApi } from './pmTools';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -222,6 +224,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Agent Dispatch API (fleet, board, assign, release, pause/resume + MCP registry)
 	agentDispatch: createAgentDispatchApi(),
 
+	// Per-project role slot roster API (#429)
+	projectRoles: createProjectRolesApi(),
+
 	// Delivery Planner API (PRD/Epic/Task lifecycle, GitHub sync, progress)
 	deliveryPlanner: createDeliveryPlannerApi(),
 
@@ -230,6 +235,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Conversational PRD Planner API (planning conversations → PRD items)
 	conversationalPrd: createConversationalPrdApi(),
+
+	// pm-tools API (agent-callable status/role/blocked field updates, #430)
+	pmTools: createPmToolsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -318,12 +326,16 @@ export {
 	createWorkGraphApi,
 	// Agent Dispatch
 	createAgentDispatchApi,
+	// Project Roles
+	createProjectRolesApi,
 	// Delivery Planner
 	createDeliveryPlannerApi,
 	// Planning Pipeline
 	createPlanningPipelineApi,
 	// Conversational PRD
 	createConversationalPrdApi,
+	// pm-tools
+	createPmToolsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -577,3 +589,7 @@ export type {
 	// From conversationalPrd
 	ConversationalPrdApi,
 } from './conversationalPrd';
+export type {
+	// From pmTools
+	PmToolsApi,
+} from './pmTools';

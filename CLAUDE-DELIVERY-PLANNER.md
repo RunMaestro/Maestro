@@ -318,6 +318,73 @@ Labels applied: `delivery-planner`, plus any of `external-mirror`, `symphony`, `
 
 ---
 
+## GitHub State Model (#430)
+
+> **Status is NOT in labels — status IS in Projects v2 custom fields.**
+
+Starting with issue #430, work item state is tracked exclusively in GitHub Projects v2 custom fields, **not** in labels. This section documents the authoritative state model.
+
+### Custom Fields (Projects v2)
+
+On first sync to project #7, `DeliveryPlannerGithubSync.ensureProjectFields()` idempotently creates these five fields via the `createProjectV2Field` GraphQL mutation if they do not already exist:
+
+| Field                | Type            | Options                                                                                         |
+| -------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `Status`             | `SINGLE_SELECT` | `Idea`, `PRD Draft`, `Refinement`, `Tasks Ready`, `In Progress`, `In Review`, `Blocked`, `Done` |
+| `Role`               | `SINGLE_SELECT` | `runner`, `fixer`, `reviewer`, `merger`                                                         |
+| `Stage`              | `SINGLE_SELECT` | `prd`, `epic`, `task`                                                                           |
+| `Priority`           | `SINGLE_SELECT` | `P0`, `P1`, `P2`, `P3`                                                                          |
+| `External Mirror ID` | `TEXT`          | (free-form, e.g. `delivery-planner#task-3`)                                                     |
+
+Field updates use the `updateProjectV2ItemFieldValue` GraphQL mutation (via `gh project item-edit --single-select-option-id` for single-select fields, or `--text` for text fields).
+
+### Status Mapping (WorkItemStatus → Status field)
+
+| `WorkItem.status` | Projects v2 `Status` field |
+| ----------------- | -------------------------- |
+| `discovered`      | `Idea`                     |
+| `planned`         | `PRD Draft`                |
+| `ready`           | `Tasks Ready`              |
+| `claimed`         | `In Progress`              |
+| `in_progress`     | `In Progress`              |
+| `blocked`         | `Blocked`                  |
+| `review`          | `In Review`                |
+| `done`            | `Done`                     |
+
+### Agent-Callable pm-tools Channels
+
+Agents update their own work item fields mid-workflow using three IPC channels (Track B, #430):
+
+| Channel         | Renderer API                                                | Effect                                                       |
+| --------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
+| `pm:setStatus`  | `window.maestro.pmTools.setStatus(agentSessionId, status)`  | Updates Status field for the agent's claimed item            |
+| `pm:setRole`    | `window.maestro.pmTools.setRole(agentSessionId, role)`      | Updates Role field for the agent's claimed item              |
+| `pm:setBlocked` | `window.maestro.pmTools.setBlocked(agentSessionId, reason)` | Sets Status=Blocked + posts a GitHub comment with the reason |
+
+**Ownership enforcement:** each channel resolves the calling agent's active claim via `workGraph.listItems({ ownerId: agentSessionId })` and throws if no active claim is found. Agents cannot update items they don't own.
+
+**Audit log:** every state change is recorded as a `WorkItemEvent` (`type: 'updated'`) in the work-graph event store via `workGraph.recordEvent(...)`.
+
+Implementation files:
+
+- `src/main/ipc/handlers/pm-tools.ts` — IPC handler registration
+- `src/main/preload/pmTools.ts` — preload bridge (`createPmToolsApi`)
+
+**DO NOT** wire slash commands here — that is #428's job.
+
+### Legacy Label Migration (Track D)
+
+When a project with legacy `status:*` labels is synced for the first time after #430 ships, `migrateStatusLabels()` runs automatically (no flag needed):
+
+1. Reads the issue's current labels.
+2. Finds any `status:*` label (e.g. `status:in-progress` → `In Progress`).
+3. Calls `gh project item-edit --single-select-option-id` to set the Status field.
+4. Removes only the legacy state labels; user-defined labels are untouched.
+
+Recognized legacy labels: `status:idea`, `status:prd-draft`, `status:refinement`, `status:tasks-ready`, `status:in-progress`, `status:in-review`, `status:blocked`, `status:done`.
+
+---
+
 ## IPC Channels
 
 All channels are prefixed `deliveryPlanner:`. They are registered in `src/main/ipc/handlers/delivery-planner.ts` by `registerDeliveryPlannerHandlers` and exposed on the renderer via `window.maestro.deliveryPlanner.*`.
