@@ -10,9 +10,15 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { GitStatusPanel } from './GitStatusPanel';
 import { FilesTabContent, HistoryTabContent, AutoRunTabContent } from './RightDrawer';
+import { DevCrewPanel } from './DevCrewPanel';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
+import type {
+	AutoRunState,
+	UseWebSocketReturn,
+	AgentDispatchClaimStartedMessage,
+	AgentDispatchClaimEndedMessage,
+} from '../hooks/useWebSocket';
 import type { UseGitStatusReturn } from '../hooks/useGitStatus';
 import type { RightDrawerTab } from './RightDrawer';
 
@@ -34,9 +40,13 @@ export interface RightPanelProps {
 	onResizeStart?: (e: React.MouseEvent) => void;
 	/** When true, renders as a full-screen overlay (mobile) instead of an inline side panel */
 	isFullScreen?: boolean;
+	/** When true, the Dev Crew tab is shown (Encore: agentDispatch). */
+	devCrewEnabled?: boolean;
+	/** Latest claim event message forwarded from the WebSocket hook. */
+	lastClaimMessage?: AgentDispatchClaimStartedMessage | AgentDispatchClaimEndedMessage | null;
 }
 
-const TABS: { id: RightDrawerTab; label: string }[] = [
+const BASE_TABS: { id: RightDrawerTab; label: string }[] = [
 	{ id: 'files', label: 'Files' },
 	{ id: 'history', label: 'History' },
 	{ id: 'autorun', label: 'Auto Run' },
@@ -63,9 +73,16 @@ export function RightPanel({
 	width,
 	onResizeStart,
 	isFullScreen,
+	devCrewEnabled = false,
+	lastClaimMessage,
 }: RightPanelProps) {
 	const colors = useThemeColors();
 	const [currentTab, setCurrentTab] = useState<RightDrawerTab>(activeTab);
+
+	// Build tab list: include Dev Crew when Encore flag is on.
+	const tabs = devCrewEnabled
+		? [...BASE_TABS, { id: 'dev-crew' as RightDrawerTab, label: 'Dev Crew' }]
+		: BASE_TABS;
 
 	// Slide-in animation state (full-screen overlay mode only)
 	const [isOpen, setIsOpen] = useState(false);
@@ -189,7 +206,7 @@ export function RightPanel({
 						flexShrink: 0,
 					}}
 				>
-					{TABS.map((tab) => {
+					{tabs.map((tab) => {
 						const isActive = currentTab === tab.id;
 						return (
 							<button
@@ -284,6 +301,9 @@ export function RightPanel({
 					)}
 					{currentTab === 'git' && (
 						<GitStatusPanel sessionId={sessionId} gitStatus={gitStatus} onViewDiff={onViewDiff} />
+					)}
+					{currentTab === 'dev-crew' && (
+						<DevCrewPanel projectPath={projectPath} lastMessage={lastClaimMessage} />
 					)}
 				</div>
 			</div>

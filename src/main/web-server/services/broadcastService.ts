@@ -545,4 +545,33 @@ export class BroadcastService {
 			timestamp: Date.now(),
 		});
 	}
+
+	/**
+	 * Broadcast an agentDispatch claim-started event to all web clients (#448).
+	 * Mirrors the Electron IPC event so mobile Dev Crew panel stays live.
+	 */
+	broadcastClaimStarted(event: {
+		projectPath: string;
+		role: string;
+		issueNumber?: number;
+		issueTitle?: string;
+		claimedAt: string;
+	}): void {
+		this.broadcastToAll({
+			type: 'agent_dispatch_claim_started',
+			...event,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast an agentDispatch claim-ended event to all web clients (#448).
+	 */
+	broadcastClaimEnded(event: { projectPath: string; role: string }): void {
+		this.broadcastToAll({
+			type: 'agent_dispatch_claim_ended',
+			...event,
+			timestamp: Date.now(),
+		});
+	}
 }

@@ -42,12 +42,14 @@ import {
 	registerDeliveryPlannerRoutes,
 	registerPlanningPipelineRoutes,
 	registerConversationalPrdRoutes,
+	registerProjectRolesRoutes,
 } from './routes';
 import type {
 	AgentDispatchRouteDependencies,
 	DeliveryPlannerRouteDependencies,
 	PlanningPipelineRouteDependencies,
 	ConversationalPrdRouteDependencies,
+	ProjectRolesRouteDependencies,
 } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
@@ -189,6 +191,9 @@ export class WebServer {
 
 	// Optional Conversational PRD route dependencies (set before start())
 	private conversationalPrdDeps: ConversationalPrdRouteDependencies | null = null;
+
+	// Optional Project Roles route dependencies (set before start())
+	private projectRolesDeps: ProjectRolesRouteDependencies | null = null;
 
 	// Callback for reading current encore feature flags (injected by web-server-factory)
 	private getEncoreFeaturesCallback: (() => Record<string, boolean>) | null = null;
@@ -682,6 +687,10 @@ export class WebServer {
 		this.conversationalPrdDeps = deps;
 	}
 
+	setProjectRolesDeps(deps: ProjectRolesRouteDependencies): void {
+		this.projectRolesDeps = deps;
+	}
+
 	/**
 	 * Inject a callback for reading the current encore feature flags.
 	 * Used by /api/slash-commands to filter commands by their encoreFlag.
@@ -692,6 +701,22 @@ export class WebServer {
 
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
+	}
+
+	/** Broadcast agentDispatch claim-started to all web clients (#448). */
+	broadcastClaimStarted(event: {
+		projectPath: string;
+		role: string;
+		issueNumber?: number;
+		issueTitle?: string;
+		claimedAt: string;
+	}): void {
+		this.broadcastService.broadcastClaimStarted(event);
+	}
+
+	/** Broadcast agentDispatch claim-ended to all web clients (#448). */
+	broadcastClaimEnded(event: { projectPath: string; role: string }): void {
+		this.broadcastService.broadcastClaimEnded(event);
 	}
 
 	// ============ Rate Limiting ============
@@ -823,6 +848,16 @@ export class WebServer {
 				this.securityToken,
 				this.rateLimitConfig,
 				this.conversationalPrdDeps
+			);
+		}
+
+		// Register Project Roles routes when deps have been supplied (#448)
+		if (this.projectRolesDeps) {
+			registerProjectRolesRoutes(
+				this.server,
+				this.securityToken,
+				this.rateLimitConfig,
+				this.projectRolesDeps
 			);
 		}
 

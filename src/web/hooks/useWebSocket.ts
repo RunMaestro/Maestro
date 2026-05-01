@@ -192,6 +192,8 @@ export type ServerMessageType =
 	| 'git_status_changed'
 	| 'execution_queue_changed'
 	| 'tool_execution'
+	| 'agent_dispatch_claim_started'
+	| 'agent_dispatch_claim_ended'
 	| 'pong'
 	| 'subscribed'
 	| 'echo'
@@ -544,6 +546,28 @@ export interface ErrorMessage extends ServerMessage {
 }
 
 /**
+ * Agent Dispatch claim-started broadcast (#448)
+ * Mirrors the Electron IPC event for web/mobile clients.
+ */
+export interface AgentDispatchClaimStartedMessage extends ServerMessage {
+	type: 'agent_dispatch_claim_started';
+	projectPath: string;
+	role: string;
+	issueNumber?: number;
+	issueTitle?: string;
+	claimedAt: string;
+}
+
+/**
+ * Agent Dispatch claim-ended broadcast (#448)
+ */
+export interface AgentDispatchClaimEndedMessage extends ServerMessage {
+	type: 'agent_dispatch_claim_ended';
+	projectPath: string;
+	role: string;
+}
+
+/**
  * Union type of all possible server messages
  */
 export type TypedServerMessage =
@@ -575,6 +599,8 @@ export type TypedServerMessage =
 	| ExecutionQueueChangedMessage
 	| ToolExecutionMessage
 	| ErrorMessage
+	| AgentDispatchClaimStartedMessage
+	| AgentDispatchClaimEndedMessage
 	| ServerMessage;
 
 /**
@@ -644,6 +670,10 @@ export interface WebSocketEventHandlers {
 	onConnectionChange?: (state: WebSocketState) => void;
 	/** Called when an error occurs */
 	onError?: (error: string) => void;
+	/** Called when an agentDispatch claim starts (#448 Dev Crew web parity). */
+	onAgentDispatchClaimStarted?: (msg: AgentDispatchClaimStartedMessage) => void;
+	/** Called when an agentDispatch claim ends (#448 Dev Crew web parity). */
+	onAgentDispatchClaimEnded?: (msg: AgentDispatchClaimEndedMessage) => void;
 	/** Called for any message (for debugging or custom handling) */
 	onMessage?: (message: TypedServerMessage) => void;
 }
@@ -1116,6 +1146,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						const errorMsg = message as ErrorMessage;
 						setError(errorMsg.message);
 						handlersRef.current?.onError?.(errorMsg.message);
+						break;
+					}
+
+					case 'agent_dispatch_claim_started': {
+						const claimStartMsg = message as AgentDispatchClaimStartedMessage;
+						handlersRef.current?.onAgentDispatchClaimStarted?.(claimStartMsg);
+						break;
+					}
+
+					case 'agent_dispatch_claim_ended': {
+						const claimEndMsg = message as AgentDispatchClaimEndedMessage;
+						handlersRef.current?.onAgentDispatchClaimEnded?.(claimEndMsg);
 						break;
 					}
 

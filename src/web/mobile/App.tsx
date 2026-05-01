@@ -1159,6 +1159,12 @@ export default function MobileApp() {
 	const [showUnreadAgentsOnly, setShowUnreadAgentsOnly] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
+	// Latest claim lifecycle message forwarded to DevCrewPanel for live updates (#448).
+	const [lastClaimMessage, setLastClaimMessage] = useState<
+		| import('../hooks/useWebSocket').AgentDispatchClaimStartedMessage
+		| import('../hooks/useWebSocket').AgentDispatchClaimEndedMessage
+		| null
+	>(null);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [thinkingMode, setThinkingMode] = useState<ThinkingMode>('off');
 	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
@@ -1487,6 +1493,9 @@ export default function MobileApp() {
 			onGroupChatStateChange: (chatId, state) => {
 				groupChatStateChangeRef.current?.(chatId, state);
 			},
+			// Dev Crew live updates (#448)
+			onAgentDispatchClaimStarted: (msg) => setLastClaimMessage(msg),
+			onAgentDispatchClaimEnded: (msg) => setLastClaimMessage(msg),
 		},
 	});
 
@@ -3604,6 +3613,8 @@ export default function MobileApp() {
 						panelRef={isMobile ? undefined : rightPanelResize.panelRef}
 						width={isMobile ? undefined : rightPanelResize.width}
 						onResizeStart={isMobile ? undefined : rightPanelResize.onResizeStart}
+						devCrewEnabled={true}
+						lastClaimMessage={lastClaimMessage}
 					/>
 				)}
 			</div>

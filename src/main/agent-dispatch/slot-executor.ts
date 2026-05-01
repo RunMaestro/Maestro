@@ -33,6 +33,45 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 const LOG_CONTEXT = '[SlotExecutor]';
 
 // ---------------------------------------------------------------------------
+// Web client broadcast hook (#448)
+//
+// Optional callbacks injected by the web-server-factory so claim lifecycle
+// events are forwarded to connected web/mobile clients without pulling a
+// WebServer reference into this module.
+// ---------------------------------------------------------------------------
+
+let _onClaimStarted:
+	| ((e: {
+			projectPath: string;
+			role: string;
+			issueNumber?: number;
+			issueTitle?: string;
+			claimedAt: string;
+	  }) => void)
+	| null = null;
+
+let _onClaimEnded: ((e: { projectPath: string; role: string }) => void) | null = null;
+
+/**
+ * Register callbacks that are fired alongside the Electron IPC events so
+ * the web-server layer can broadcast to connected web/mobile clients.
+ * Call this once from web-server-factory after the WebServer is running.
+ */
+export function setSlotExecutorWebBroadcasts(
+	onClaimStarted: (e: {
+		projectPath: string;
+		role: string;
+		issueNumber?: number;
+		issueTitle?: string;
+		claimedAt: string;
+	}) => void,
+	onClaimEnded: (e: { projectPath: string; role: string }) => void
+): void {
+	_onClaimStarted = onClaimStarted;
+	_onClaimEnded = onClaimEnded;
+}
+
+// ---------------------------------------------------------------------------
 // IPC event helpers — push claim lifecycle to renderer
 // ---------------------------------------------------------------------------
 
@@ -304,11 +343,20 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 	// 4. Spawn — emit claimStarted before spawning so the renderer shows the
 	//    active state even while the process is initialising.
 	const claimedAt = new Date().toISOString();
-	safeSendToRenderer('agentDispatch:claimStarted', {
+	const claimStartedPayload = {
 		projectPath: workItem.projectPath,
 		role,
 		agentId,
 		sessionId: dispatchSessionId,
+		issueNumber: workItem.github?.issueNumber,
+		issueTitle: workItem.title,
+		claimedAt,
+	};
+	safeSendToRenderer('agentDispatch:claimStarted', claimStartedPayload);
+	// Also push to web/mobile clients (#448).
+	_onClaimStarted?.({
+		projectPath: workItem.projectPath,
+		role,
 		issueNumber: workItem.github?.issueNumber,
 		issueTitle: workItem.title,
 		claimedAt,
@@ -465,6 +513,8 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 		sessionId: dispatchSessionId,
 		exitCode: spawnSuccess ? 0 : 1,
 	});
+	// Also push to web/mobile clients (#448).
+	_onClaimEnded?.({ projectPath: workItem.projectPath, role });
 
 	return { success: spawnSuccess, error: spawnError };
 }

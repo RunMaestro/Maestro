@@ -13,6 +13,8 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group, AgentSshRemoteConfig, SshRemoteConfig } from '../../shared/types';
+import { setSlotExecutorWebBroadcasts } from '../agent-dispatch/slot-executor';
+import { getClaimTracker } from '../agent-dispatch/claim-tracker';
 import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
@@ -2519,6 +2521,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setGetEncoreFeaturesCallback(() => {
 			return settingsStore.get<Record<string, boolean>>('encoreFeatures', {});
 		});
+
+		// Wire project-roles HTTP route (#448)
+		server.setProjectRolesDeps({
+			settingsStore,
+			getActiveClaims: () => getClaimTracker().getAll(),
+		});
+
+		// Bridge SlotExecutor claim lifecycle events to web/mobile clients (#448).
+		// Called once per factory invocation — safe to call multiple times (last
+		// registration wins, which is fine since only one WebServer is active).
+		setSlotExecutorWebBroadcasts(
+			(event) => server.broadcastClaimStarted(event),
+			(event) => server.broadcastClaimEnded(event)
+		);
 
 		return server;
 	};

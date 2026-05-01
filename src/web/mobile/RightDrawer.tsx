@@ -12,14 +12,20 @@ import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { GitStatusPanel } from './GitStatusPanel';
 import { DocumentCard } from './AutoRunDocumentCard';
+import { DevCrewPanel } from './DevCrewPanel';
 import { useAutoRun } from '../hooks/useAutoRun';
-import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
+import type {
+	AutoRunState,
+	UseWebSocketReturn,
+	AgentDispatchClaimStartedMessage,
+	AgentDispatchClaimEndedMessage,
+} from '../hooks/useWebSocket';
 import type { UseGitStatusReturn } from '../hooks/useGitStatus';
 
 /**
  * Tab identifiers for the drawer
  */
-export type RightDrawerTab = 'files' | 'history' | 'autorun' | 'git';
+export type RightDrawerTab = 'files' | 'history' | 'autorun' | 'git' | 'dev-crew';
 
 /**
  * Props for RightDrawer component
@@ -40,12 +46,16 @@ export interface RightDrawerProps {
 	send: UseWebSocketReturn['send'];
 	/** Callback when a git file is tapped for diff viewing */
 	onViewDiff?: (filePath: string) => void;
+	/** When true, the Dev Crew tab is shown (Encore: agentDispatch). */
+	devCrewEnabled?: boolean;
+	/** Latest claim event message forwarded from the WebSocket hook. */
+	lastClaimMessage?: AgentDispatchClaimStartedMessage | AgentDispatchClaimEndedMessage | null;
 }
 
 /**
- * Tab configuration
+ * Base tab configuration (always visible)
  */
-const TABS: { id: RightDrawerTab; label: string }[] = [
+const BASE_TABS: { id: RightDrawerTab; label: string }[] = [
 	{ id: 'files', label: 'Files' },
 	{ id: 'history', label: 'History' },
 	{ id: 'autorun', label: 'Auto Run' },
@@ -70,9 +80,16 @@ export function RightDrawer({
 	sendRequest,
 	send,
 	onViewDiff,
+	devCrewEnabled = false,
+	lastClaimMessage,
 }: RightDrawerProps) {
 	const colors = useThemeColors();
 	const [currentTab, setCurrentTab] = useState<RightDrawerTab>(activeTab);
+
+	// Build tab list: include Dev Crew when Encore flag is on.
+	const tabs = devCrewEnabled
+		? [...BASE_TABS, { id: 'dev-crew' as RightDrawerTab, label: 'Dev Crew' }]
+		: BASE_TABS;
 	const [isOpen, setIsOpen] = useState(false);
 	const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -189,7 +206,7 @@ export function RightDrawer({
 						WebkitOverflowScrolling: 'touch',
 					}}
 				>
-					{TABS.map((tab) => {
+					{tabs.map((tab) => {
 						const isActive = currentTab === tab.id;
 						return (
 							<button
@@ -252,6 +269,9 @@ export function RightDrawer({
 					)}
 					{currentTab === 'git' && (
 						<GitStatusPanel sessionId={sessionId} gitStatus={gitStatus} onViewDiff={onViewDiff} />
+					)}
+					{currentTab === 'dev-crew' && (
+						<DevCrewPanel projectPath={projectPath} lastMessage={lastClaimMessage} />
 					)}
 				</div>
 			</div>
