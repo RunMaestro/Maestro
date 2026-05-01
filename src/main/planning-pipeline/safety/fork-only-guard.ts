@@ -1,24 +1,29 @@
 /**
  * fork-only-guard.ts
  *
- * Planning-pipeline-specific wrapper around the shared `fork-only-github`
- * guard.  Any pipeline operation that is about to push, open a PR, or
- * comment on a remote MUST call `assertForkOnlyOperation` before proceeding.
+ * Planning-pipeline-specific guard that prevents pipeline operations (push,
+ * PR creation, comments) from accidentally targeting a protected upstream
+ * repository.
+ *
+ * The protected upstream is user-configurable via the `deliveryPlannerGithub`
+ * key in the settings store (`upstream` field).  When no upstream is
+ * configured the guard becomes a no-op — the protection is opt-in, not
+ * hard-wired to any specific organization.
  *
  * ## Two calling conventions
  *
  * 1. **Slug form** — caller already has an `owner/repo` string (e.g. from a
  *    config value or a GitHub API response):
  *    ```ts
- *    assertForkOnlyOperation({ repo: 'HumpfTech/Maestro' });
+ *    assertForkOnlyOperation({ repo: 'your-org/your-repo' }, settingsStore);
  *    ```
  *
  * 2. **gh-args form** — caller is about to invoke the `gh` CLI and can pass
  *    the raw args array.  The guard scans for the `-R` / `--repo` flag and
- *    validates its value.  If the flag is absent the guard throws because
- *    we cannot prove the invocation targets the fork:
+ *    validates its value.  If the flag is absent and an upstream is configured,
+ *    the guard throws because we cannot prove the invocation targets the fork:
  *    ```ts
- *    assertForkOnlyOperation({ ghArgs: ['pr', 'create', '-R', 'HumpfTech/Maestro', ...] });
+ *    assertForkOnlyOperation({ ghArgs: ['pr', 'create', '-R', 'your-org/your-repo', ...] }, settingsStore);
  *    ```
  *
  * ## Allowlist convention in audit script
@@ -32,11 +37,30 @@
  * @see GitHub issue #255
  */
 
-import {
-	assertForkRepository,
-	ForkOnlyViolationError,
-	FORK_GITHUB_REPOSITORY,
-} from '../../../shared/fork-only-github';
+import { ForkOnlyViolationError } from '../../../shared/fork-only-github';
+import type { SettingsStoreInterface } from '../../stores/types';
+
+// ---------------------------------------------------------------------------
+// Config lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the user-configured protected upstream slug (e.g. `'RunMaestro/Maestro'`),
+ * or `null` when the user has not set one.
+ *
+ * When `null` is returned the fork-only guard becomes a no-op: there is no
+ * upstream to protect against.
+ */
+export function getProtectedUpstreamRepo(settingsStore: SettingsStoreInterface): string | null {
+	const raw = settingsStore.get<{ upstream?: { owner: string; repo: string } } | null>(
+		'deliveryPlannerGithub',
+		null
+	);
+	if (!raw?.upstream?.owner || !raw?.upstream?.repo) {
+		return null;
+	}
+	return `${raw.upstream.owner}/${raw.upstream.repo}`;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,14 +75,15 @@ import {
 export interface ForkOnlyGuardArgs {
 	/**
 	 * An `owner/repo` slug to validate directly.
-	 * If provided, the slug is passed to `assertForkRepository`.
+	 * If provided, and an upstream is configured, the slug must not equal the
+	 * protected upstream repository.
 	 */
 	repo?: string;
 	/**
 	 * The raw argument array that will be passed to the `gh` CLI binary.
 	 * The guard scans for the `-R` / `--repo` flag and validates its value.
-	 * A missing flag is treated as a violation because the target repo cannot
-	 * be determined statically without it.
+	 * A missing flag is treated as a violation when an upstream is configured,
+	 * because the target repo cannot be determined statically without it.
 	 */
 	ghArgs?: ReadonlyArray<string>;
 }
@@ -68,17 +93,25 @@ export interface ForkOnlyGuardArgs {
 // ---------------------------------------------------------------------------
 
 /**
- * Assert that the planned operation targets `HumpfTech/Maestro`.
+ * Assert that the planned operation does not target the configured protected
+ * upstream repository.
+ *
+ * When no upstream is configured in the settings store (`deliveryPlannerGithub.upstream`)
+ * the function returns immediately without performing any check — the guard is
+ * opt-in for installations that want to prevent accidental upstream writes.
  *
  * Accepts two forms — see module docblock for examples.
  *
- * @throws {ForkOnlyViolationError} if the repo slug is not
- *   `HumpfTech/Maestro`, if `ghArgs` lacks `-R` / `--repo`, or if the flag
- *   value is not the fork.
+ * @throws {ForkOnlyViolationError} if the repo slug matches the protected
+ *   upstream, if `ghArgs` lacks `-R` / `--repo` when an upstream is configured,
+ *   or if the flag value matches the protected upstream.
  * @throws {Error} if neither `repo` nor `ghArgs` is provided (programming
  *   error — caller must specify at least one).
  */
-export function assertForkOnlyOperation(args: ForkOnlyGuardArgs): void {
+export function assertForkOnlyOperation(
+	args: ForkOnlyGuardArgs,
+	settingsStore: SettingsStoreInterface
+): void {
 	const { repo, ghArgs } = args;
 
 	if (repo === undefined && ghArgs === undefined) {
@@ -87,36 +120,42 @@ export function assertForkOnlyOperation(args: ForkOnlyGuardArgs): void {
 		);
 	}
 
+	const protectedUpstream = getProtectedUpstreamRepo(settingsStore);
+
+	// No upstream configured → guard is a no-op for this installation.
+	if (!protectedUpstream) {
+		return;
+	}
+
 	// Validate the explicit repo slug when provided.
 	if (repo !== undefined) {
-		assertForkRepository(repo);
+		assertNotProtectedUpstream(repo, protectedUpstream);
 	}
 
 	// Validate the gh CLI args when provided.
 	if (ghArgs !== undefined) {
-		validateGhArgs(ghArgs);
+		validateGhArgs(ghArgs, protectedUpstream);
 	}
 }
 
 /**
  * Scan a `gh` CLI argument array for a `-R` / `--repo` flag and validate the
- * target repository.
+ * target repository against the protected upstream.
  *
  * @throws {ForkOnlyViolationError} if the flag is absent, has no value, or
- *   its value is not `HumpfTech/Maestro`.
+ *   its value matches the protected upstream.
  */
-function validateGhArgs(ghArgs: ReadonlyArray<string>): void {
+function validateGhArgs(ghArgs: ReadonlyArray<string>, protectedUpstream: string): void {
 	const repoFlagIndex = ghArgs.findIndex((arg) => arg === '-R' || arg === '--repo');
 
 	if (repoFlagIndex === -1 || ghArgs[repoFlagIndex + 1] === undefined) {
 		// No -R flag (or flag without a subsequent value) — cannot prove the
-		// invocation targets the fork, so reject loudly.
+		// invocation does not target the protected upstream, so reject loudly.
 		const err = new ForkOnlyViolationError('(missing)', '(missing)');
-		// Override with a more actionable message.
 		Object.defineProperty(err, 'message', {
 			value:
-				`gh invocation missing -R ${FORK_GITHUB_REPOSITORY}: cannot prove fork-only target. ` +
-				`Add -R ${FORK_GITHUB_REPOSITORY} to every gh write invocation, or annotate ` +
+				`gh invocation missing -R <repo>: cannot verify the target is not protected upstream ` +
+				`${protectedUpstream}. Add -R <repo> to every gh write invocation, or annotate ` +
 				`with // fork-only-audit:allow if the line is intentionally un-guarded.`,
 			writable: true,
 			configurable: true,
@@ -125,7 +164,21 @@ function validateGhArgs(ghArgs: ReadonlyArray<string>): void {
 	}
 
 	// The flag is present — validate its value.
-	assertForkRepository(ghArgs[repoFlagIndex + 1]);
+	assertNotProtectedUpstream(ghArgs[repoFlagIndex + 1], protectedUpstream);
+}
+
+/**
+ * Assert that `repository` is not the protected upstream slug.
+ *
+ * @throws {ForkOnlyViolationError} if they match.
+ */
+function assertNotProtectedUpstream(repository: string, protectedUpstream: string): void {
+	if (repository === protectedUpstream) {
+		const slashIndex = repository.indexOf('/');
+		const owner = slashIndex > 0 ? repository.slice(0, slashIndex) : repository;
+		const repo = slashIndex > 0 ? repository.slice(slashIndex + 1) : '';
+		throw new ForkOnlyViolationError(owner, repo);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -135,16 +188,20 @@ function validateGhArgs(ghArgs: ReadonlyArray<string>): void {
 /**
  * Non-throwing convenience wrapper around `assertForkOnlyOperation`.
  *
- * Returns `true` only when the operation passes all fork-only checks.
+ * Returns `true` only when the operation passes all fork-only checks (or when
+ * no upstream is configured, in which case all operations are permitted).
  * Returns `false` for any violation or programming error.
  *
  * Prefer `assertForkOnlyOperation` at actual guard call sites so violations
  * are never silently swallowed.  Use this function only for conditional logic
  * (e.g. feature-flag checks, dashboard status indicators).
  */
-export function isForkOnlyOperation(args: ForkOnlyGuardArgs): boolean {
+export function isForkOnlyOperation(
+	args: ForkOnlyGuardArgs,
+	settingsStore: SettingsStoreInterface
+): boolean {
 	try {
-		assertForkOnlyOperation(args);
+		assertForkOnlyOperation(args, settingsStore);
 		return true;
 	} catch {
 		return false;

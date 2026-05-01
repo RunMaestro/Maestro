@@ -472,7 +472,7 @@ export class AgentDispatchEngine {
 	 * Validates runner-role constraints (#440):
 	 * 1. Agent must be local (not SSH-remote).
 	 * 2. git remote get-url origin in workItem.projectPath must match
-	 *    workItem.github.repo (HumpfTech/Maestro fork-only assumption).
+	 *    workItem.github.owner/workItem.github.repo (project safety check).
 	 *
 	 * Returns a structured error if any constraint is violated, or null when
 	 * all constraints pass.
@@ -495,9 +495,11 @@ export class AgentDispatchEngine {
 		}
 
 		// 2. Git-remote guard — origin must match the GitHub repo on the work item.
+		//    Uses owner/repo from the work item itself rather than any hardcoded value,
+		//    so this check works for any project's fork/repo combination.
 		const expectedProjectPath = workItem.projectPath;
-		if (workItem.github?.repo && expectedProjectPath) {
-			const expectedRemote = `HumpfTech/${workItem.github.repo}`;
+		if (workItem.github?.owner && workItem.github?.repo && expectedProjectPath) {
+			const expectedRemote = `${workItem.github.owner}/${workItem.github.repo}`;
 			let actualRemote: string | undefined;
 			try {
 				const { stdout } = await execFile('git', [
@@ -522,7 +524,7 @@ export class AgentDispatchEngine {
 			}
 
 			// Normalize both sides: strip trailing .git and protocol prefix so
-			// "https://github.com/HumpfTech/Maestro.git" == "HumpfTech/Maestro".
+			// "https://github.com/owner/repo.git" == "owner/repo".
 			const normalizedActual = normalizeGitRemote(actualRemote);
 			const normalizedExpected = normalizeGitRemote(expectedRemote);
 			if (normalizedActual !== normalizedExpected) {
@@ -609,8 +611,8 @@ function uniqueSorted(values: string[]): string[] {
 
 /**
  * Strips protocol, host, and .git suffix from a git remote URL so that
- * "https://github.com/HumpfTech/Maestro.git", "git@github.com:HumpfTech/Maestro.git",
- * and "HumpfTech/Maestro" all normalize to "HumpfTech/Maestro".
+ * "https://github.com/owner/repo.git", "git@github.com:owner/repo.git",
+ * and "owner/repo" all normalize to "owner/repo".
  */
 function normalizeGitRemote(remote: string): string {
 	return remote
