@@ -26,7 +26,12 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock fs module
+// Mock fs module. PR-C 1.6 — history-manager now uses fs/promises, but the
+// existing assertions are written against the sync mocks. We bridge the
+// async API to the sync mocks below so the test surface stays compact:
+// existing setup (mockExistsSync.mockImplementation(...), etc.) keeps
+// driving behavior, and assertions on mockReadFileSync / mockWriteFileSync /
+// mockMkdirSync / mockUnlinkSync / mockReaddirSync continue to fire.
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	mkdirSync: vi.fn(),
@@ -35,7 +40,41 @@ vi.mock('fs', () => ({
 	readdirSync: vi.fn(),
 	unlinkSync: vi.fn(),
 	watch: vi.fn(),
+	constants: { F_OK: 0 },
 }));
+
+// Bridge fs/promises to the sync mocks above so test setup like
+// `mockReadFileSync.mockReturnValue(...)` still drives the async code path
+// in history-manager.
+vi.mock('fs/promises', async () => {
+	const fs = await import('fs');
+	return {
+		access: vi.fn(async (p: string) => {
+			if (!(fs as { existsSync: (p: string) => boolean }).existsSync(p)) {
+				const err = new Error('ENOENT') as NodeJS.ErrnoException;
+				err.code = 'ENOENT';
+				throw err;
+			}
+		}),
+		mkdir: vi.fn(async (p: string, opts?: { recursive?: boolean }) =>
+			(fs as { mkdirSync: (p: string, o?: unknown) => void }).mkdirSync(p, opts)
+		),
+		readFile: vi.fn(async (p: string, enc?: string) =>
+			(fs as { readFileSync: (p: string, e?: string) => string }).readFileSync(p, enc)
+		),
+		writeFile: vi.fn(async (p: string, data: string, enc?: string) =>
+			(fs as { writeFileSync: (p: string, d: string, e?: string) => void }).writeFileSync(
+				p,
+				data,
+				enc
+			)
+		),
+		readdir: vi.fn(async (p: string) =>
+			(fs as { readdirSync: (p: string) => string[] }).readdirSync(p)
+		),
+		unlink: vi.fn(async (p: string) => (fs as { unlinkSync: (p: string) => void }).unlinkSync(p)),
+	};
+});
 
 import * as fs from 'fs';
 import { app } from 'electron';
@@ -91,6 +130,10 @@ describe('HistoryManager', () => {
 		vi.resetAllMocks();
 		// Default: nothing exists
 		mockExistsSync.mockReturnValue(false);
+		// Default: empty directory (was implicitly handled by existsSync=false
+		// in the sync code, but the async path now calls fsp.readdir directly
+		// and the bridge mock would otherwise return undefined here).
+		mockReaddirSync.mockReturnValue([]);
 		manager = new HistoryManager();
 	});
 
@@ -102,7 +145,7 @@ describe('HistoryManager', () => {
 	// Constructor
 	// ----------------------------------------------------------------
 	describe('constructor', () => {
-		it('should set up paths based on app.getPath("userData")', () => {
+		it('should set up paths based on app.getPath("userData")', async () => {
 			expect(app.getPath).toHaveBeenCalledWith('userData');
 			expect(manager.getHistoryDir()).toBe(path.join('/mock/userData', 'history'));
 			expect(manager.getLegacyFilePath()).toBe(path.join('/mock/userData', 'maestro-history.json'));
@@ -122,8 +165,11 @@ describe('HistoryManager', () => {
 			});
 		});
 
-		it('should not recreate history directory if it already exists', async () => {
-			// history dir exists, marker exists (no migration)
+		it('uses recursive mkdir (idempotent — safe even when dir exists)', async () => {
+			// PR-C 1.6: the existsSync-then-mkdirSync guard was redundant —
+			// fsp.mkdir({ recursive: true }) is itself idempotent and trivially
+			// fast. The new code calls it unconditionally and lets the OS
+			// no-op when the dir already exists.
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				const s = p.toString();
 				if (s.endsWith('history')) return true;
@@ -132,7 +178,9 @@ describe('HistoryManager', () => {
 			});
 
 			await manager.initialize();
-			expect(mockMkdirSync).not.toHaveBeenCalled();
+			expect(mockMkdirSync).toHaveBeenCalledWith(path.join('/mock/userData', 'history'), {
+				recursive: true,
+			});
 		});
 
 		it('should run migration if needed', async () => {
@@ -245,16 +293,16 @@ describe('HistoryManager', () => {
 	// hasMigrated()
 	// ----------------------------------------------------------------
 	describe('hasMigrated()', () => {
-		it('should return true when migration marker exists', () => {
+		it('should return true when migration marker exists', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				return p.toString().endsWith('history-migrated.json');
 			});
-			expect(manager.hasMigrated()).toBe(true);
+			expect(await manager.hasMigrated()).toBe(true);
 		});
 
-		it('should return false when migration marker does not exist', () => {
+		it('should return false when migration marker does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.hasMigrated()).toBe(false);
+			expect(await manager.hasMigrated()).toBe(false);
 		});
 	});
 
@@ -412,7 +460,7 @@ describe('HistoryManager', () => {
 	// getEntries(sessionId)
 	// ----------------------------------------------------------------
 	describe('getEntries()', () => {
-		it('should return entries from session file', () => {
+		it('should return entries from session file', async () => {
 			const entries = [createMockEntry({ id: 'e1' }), createMockEntry({ id: 'e2' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -423,18 +471,18 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			const result = manager.getEntries('session-1');
+			const result = await manager.getEntries('session-1');
 			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe('e1');
 		});
 
-		it('should return empty array if session file does not exist', () => {
+		it('should return empty array if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			const result = manager.getEntries('nonexistent');
+			const result = await manager.getEntries('nonexistent');
 			expect(result).toEqual([]);
 		});
 
-		it('should return empty array on read error', () => {
+		it('should return empty array on read error', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -445,12 +493,12 @@ describe('HistoryManager', () => {
 				throw new Error('Read error');
 			});
 
-			const result = manager.getEntries('session-1');
+			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
 			expect(vi.mocked(logger.warn)).toHaveBeenCalled();
 		});
 
-		it('should return empty array when file contains malformed JSON', () => {
+		it('should return empty array when file contains malformed JSON', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -459,7 +507,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue('not valid json');
 
-			const result = manager.getEntries('session-1');
+			const result = await manager.getEntries('session-1');
 			expect(result).toEqual([]);
 		});
 	});
@@ -468,11 +516,11 @@ describe('HistoryManager', () => {
 	// addEntry(sessionId, projectPath, entry)
 	// ----------------------------------------------------------------
 	describe('addEntry()', () => {
-		it('should create a new file when session does not exist', () => {
+		it('should create a new file when session does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
 			const entry = createMockEntry({ id: 'new-entry' });
 
-			manager.addEntry('session-1', '/test/project', entry);
+			await manager.addEntry('session-1', '/test/project', entry);
 
 			expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
@@ -483,7 +531,7 @@ describe('HistoryManager', () => {
 			expect(written.version).toBe(HISTORY_VERSION);
 		});
 
-		it('should prepend entry to beginning of existing file', () => {
+		it('should prepend entry to beginning of existing file', async () => {
 			const existingEntry = createMockEntry({ id: 'old' });
 			const filePath = path.join(
 				'/mock/userData',
@@ -495,7 +543,7 @@ describe('HistoryManager', () => {
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', [existingEntry]));
 
 			const newEntry = createMockEntry({ id: 'new' });
-			manager.addEntry('session-1', '/test/project', newEntry);
+			await manager.addEntry('session-1', '/test/project', newEntry);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
 			expect(written.entries).toHaveLength(2);
@@ -503,7 +551,7 @@ describe('HistoryManager', () => {
 			expect(written.entries[1].id).toBe('old');
 		});
 
-		it('should trim to MAX_ENTRIES_PER_SESSION', () => {
+		it('should trim to MAX_ENTRIES_PER_SESSION', async () => {
 			const existingEntries: HistoryEntry[] = [];
 			for (let i = 0; i < MAX_ENTRIES_PER_SESSION; i++) {
 				existingEntries.push(createMockEntry({ id: `e-${i}` }));
@@ -518,14 +566,14 @@ describe('HistoryManager', () => {
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', existingEntries));
 
 			const newEntry = createMockEntry({ id: 'overflow' });
-			manager.addEntry('session-1', '/test/project', newEntry);
+			await manager.addEntry('session-1', '/test/project', newEntry);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
 			expect(written.entries).toHaveLength(MAX_ENTRIES_PER_SESSION);
 			expect(written.entries[0].id).toBe('overflow');
 		});
 
-		it('should update projectPath on existing file', () => {
+		it('should update projectPath on existing file', async () => {
 			const existingEntry = createMockEntry({ id: 'e1' });
 			const filePath = path.join(
 				'/mock/userData',
@@ -539,13 +587,13 @@ describe('HistoryManager', () => {
 			);
 
 			const newEntry = createMockEntry({ id: 'e2' });
-			manager.addEntry('session-1', '/new/path', newEntry);
+			await manager.addEntry('session-1', '/new/path', newEntry);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
 			expect(written.projectPath).toBe('/new/path');
 		});
 
-		it('should create fresh data when existing file is corrupted', () => {
+		it('should create fresh data when existing file is corrupted', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -555,14 +603,14 @@ describe('HistoryManager', () => {
 			mockReadFileSync.mockReturnValue('corrupted-json{{{');
 
 			const entry = createMockEntry({ id: 'new-entry' });
-			manager.addEntry('session-1', '/test/project', entry);
+			await manager.addEntry('session-1', '/test/project', entry);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
 			expect(written.entries).toHaveLength(1);
 			expect(written.entries[0].id).toBe('new-entry');
 		});
 
-		it('should log error on write failure', () => {
+		it('should log error on write failure', async () => {
 			mockExistsSync.mockReturnValue(false);
 			mockWriteFileSync.mockImplementation(() => {
 				throw new Error('Write error');
@@ -570,7 +618,7 @@ describe('HistoryManager', () => {
 
 			const entry = createMockEntry({ id: 'e1' });
 			// Should not throw
-			manager.addEntry('session-1', '/test/project', entry);
+			await manager.addEntry('session-1', '/test/project', entry);
 
 			expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to write history'),
@@ -583,7 +631,7 @@ describe('HistoryManager', () => {
 	// deleteEntry(sessionId, entryId)
 	// ----------------------------------------------------------------
 	describe('deleteEntry()', () => {
-		it('should remove an entry by id and return true', () => {
+		it('should remove an entry by id and return true', async () => {
 			const entries = [createMockEntry({ id: 'e1' }), createMockEntry({ id: 'e2' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -594,7 +642,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			const result = manager.deleteEntry('session-1', 'e1');
+			const result = await manager.deleteEntry('session-1', 'e1');
 			expect(result).toBe(true);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
@@ -602,12 +650,12 @@ describe('HistoryManager', () => {
 			expect(written.entries[0].id).toBe('e2');
 		});
 
-		it('should return false if session file does not exist', () => {
+		it('should return false if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.deleteEntry('nonexistent', 'e1')).toBe(false);
+			expect(await manager.deleteEntry('nonexistent', 'e1')).toBe(false);
 		});
 
-		it('should return false if entry is not found', () => {
+		it('should return false if entry is not found', async () => {
 			const entries = [createMockEntry({ id: 'e1' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -618,11 +666,11 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			expect(manager.deleteEntry('session-1', 'nonexistent')).toBe(false);
+			expect(await manager.deleteEntry('session-1', 'nonexistent')).toBe(false);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
-		it('should return false on read error (parse failure)', () => {
+		it('should return false on read error (parse failure)', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -631,10 +679,10 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue('bad json');
 
-			expect(manager.deleteEntry('session-1', 'e1')).toBe(false);
+			expect(await manager.deleteEntry('session-1', 'e1')).toBe(false);
 		});
 
-		it('should return false on write error', () => {
+		it('should return false on write error', async () => {
 			const entries = [createMockEntry({ id: 'e1' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -648,7 +696,7 @@ describe('HistoryManager', () => {
 				throw new Error('Write error');
 			});
 
-			expect(manager.deleteEntry('session-1', 'e1')).toBe(false);
+			expect(await manager.deleteEntry('session-1', 'e1')).toBe(false);
 			expect(vi.mocked(logger.error)).toHaveBeenCalled();
 		});
 	});
@@ -657,7 +705,7 @@ describe('HistoryManager', () => {
 	// updateEntry(sessionId, entryId, updates)
 	// ----------------------------------------------------------------
 	describe('updateEntry()', () => {
-		it('should update an entry by id and return true', () => {
+		it('should update an entry by id and return true', async () => {
 			const entries = [createMockEntry({ id: 'e1', summary: 'original' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -668,7 +716,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			const result = manager.updateEntry('session-1', 'e1', { summary: 'updated' });
+			const result = await manager.updateEntry('session-1', 'e1', { summary: 'updated' });
 			expect(result).toBe(true);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
@@ -676,12 +724,12 @@ describe('HistoryManager', () => {
 			expect(written.entries[0].id).toBe('e1');
 		});
 
-		it('should return false if session file does not exist', () => {
+		it('should return false if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.updateEntry('nonexistent', 'e1', { summary: 'x' })).toBe(false);
+			expect(await manager.updateEntry('nonexistent', 'e1', { summary: 'x' })).toBe(false);
 		});
 
-		it('should return false if entry is not found', () => {
+		it('should return false if entry is not found', async () => {
 			const entries = [createMockEntry({ id: 'e1' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -692,11 +740,11 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			expect(manager.updateEntry('session-1', 'nonexistent', { summary: 'x' })).toBe(false);
+			expect(await manager.updateEntry('session-1', 'nonexistent', { summary: 'x' })).toBe(false);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
-		it('should return false on parse error', () => {
+		it('should return false on parse error', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -705,10 +753,10 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue('bad json');
 
-			expect(manager.updateEntry('session-1', 'e1', { summary: 'x' })).toBe(false);
+			expect(await manager.updateEntry('session-1', 'e1', { summary: 'x' })).toBe(false);
 		});
 
-		it('should return false on write error', () => {
+		it('should return false on write error', async () => {
 			const entries = [createMockEntry({ id: 'e1' })];
 			const filePath = path.join(
 				'/mock/userData',
@@ -722,7 +770,7 @@ describe('HistoryManager', () => {
 				throw new Error('Write error');
 			});
 
-			expect(manager.updateEntry('session-1', 'e1', { summary: 'x' })).toBe(false);
+			expect(await manager.updateEntry('session-1', 'e1', { summary: 'x' })).toBe(false);
 			expect(vi.mocked(logger.error)).toHaveBeenCalled();
 		});
 	});
@@ -731,7 +779,7 @@ describe('HistoryManager', () => {
 	// clearSession(sessionId)
 	// ----------------------------------------------------------------
 	describe('clearSession()', () => {
-		it('should delete the session file if it exists', () => {
+		it('should delete the session file if it exists', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -739,20 +787,27 @@ describe('HistoryManager', () => {
 			);
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 
-			manager.clearSession('session-1');
+			await manager.clearSession('session-1');
 
 			expect(mockUnlinkSync).toHaveBeenCalledWith(filePath);
 		});
 
-		it('should do nothing if session file does not exist', () => {
+		it('does not throw when session file does not exist (ENOENT swallowed)', async () => {
+			// PR-C 1.6: clearSession previously gated on existsSync. The async
+			// path uses fsp.unlink directly and catches ENOENT, so unlink is
+			// called but throws ENOENT internally. Net behavior (silent no-op
+			// on missing file) is preserved.
 			mockExistsSync.mockReturnValue(false);
+			mockUnlinkSync.mockImplementation(() => {
+				const err = new Error('ENOENT') as NodeJS.ErrnoException;
+				err.code = 'ENOENT';
+				throw err;
+			});
 
-			manager.clearSession('nonexistent');
-
-			expect(mockUnlinkSync).not.toHaveBeenCalled();
+			await expect(manager.clearSession('nonexistent')).resolves.toBeUndefined();
 		});
 
-		it('should log error on delete failure', () => {
+		it('should log error on delete failure', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -763,7 +818,7 @@ describe('HistoryManager', () => {
 				throw new Error('Delete error');
 			});
 
-			manager.clearSession('session-1');
+			await manager.clearSession('session-1');
 
 			expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to clear history'),
@@ -776,7 +831,7 @@ describe('HistoryManager', () => {
 	// listSessionsWithHistory()
 	// ----------------------------------------------------------------
 	describe('listSessionsWithHistory()', () => {
-		it('should return session IDs from .json files in history dir', () => {
+		it('should return session IDs from .json files in history dir', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString().endsWith('history'));
 			mockReaddirSync.mockReturnValue([
 				'session_1.json' as unknown as fs.Dirent,
@@ -784,13 +839,13 @@ describe('HistoryManager', () => {
 				'readme.txt' as unknown as fs.Dirent,
 			]);
 
-			const result = manager.listSessionsWithHistory();
+			const result = await manager.listSessionsWithHistory();
 			expect(result).toEqual(['session_1', 'session_2']);
 		});
 
-		it('should return empty array if history directory does not exist', () => {
+		it('should return empty array if history directory does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.listSessionsWithHistory()).toEqual([]);
+			expect(await manager.listSessionsWithHistory()).toEqual([]);
 		});
 	});
 
@@ -798,7 +853,7 @@ describe('HistoryManager', () => {
 	// getHistoryFilePath(sessionId)
 	// ----------------------------------------------------------------
 	describe('getHistoryFilePath()', () => {
-		it('should return file path if session file exists', () => {
+		it('should return file path if session file exists', async () => {
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -806,12 +861,12 @@ describe('HistoryManager', () => {
 			);
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 
-			expect(manager.getHistoryFilePath('session-1')).toBe(filePath);
+			expect(await manager.getHistoryFilePath('session-1')).toBe(filePath);
 		});
 
-		it('should return null if session file does not exist', () => {
+		it('should return null if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.getHistoryFilePath('nonexistent')).toBeNull();
+			expect(await manager.getHistoryFilePath('nonexistent')).toBeNull();
 		});
 	});
 
@@ -819,7 +874,7 @@ describe('HistoryManager', () => {
 	// getAllEntries(limit?)
 	// ----------------------------------------------------------------
 	describe('getAllEntries()', () => {
-		it('should aggregate entries across all sessions sorted by timestamp', () => {
+		it('should aggregate entries across all sessions sorted by timestamp', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([
 				'sess_a.json' as unknown as fs.Dirent,
@@ -840,14 +895,14 @@ describe('HistoryManager', () => {
 				return '{}';
 			});
 
-			const result = manager.getAllEntries();
+			const result = await manager.getAllEntries();
 			expect(result).toHaveLength(2);
 			// Sorted descending: 200, 100
 			expect(result[0].id).toBe('b1');
 			expect(result[1].id).toBe('a1');
 		});
 
-		it('should respect limit parameter', () => {
+		it('should respect limit parameter', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -858,15 +913,15 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const result = manager.getAllEntries(2);
+			const result = await manager.getAllEntries(2);
 			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe('e1');
 			expect(result[1].id).toBe('e2');
 		});
 
-		it('should return empty array when no sessions exist', () => {
+		it('should return empty array when no sessions exist', async () => {
 			mockExistsSync.mockReturnValue(false);
-			expect(manager.getAllEntries()).toEqual([]);
+			expect(await manager.getAllEntries()).toEqual([]);
 		});
 	});
 
@@ -874,7 +929,7 @@ describe('HistoryManager', () => {
 	// getAllEntriesPaginated(options?)
 	// ----------------------------------------------------------------
 	describe('getAllEntriesPaginated()', () => {
-		it('should return paginated results with metadata', () => {
+		it('should return paginated results with metadata', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -885,7 +940,7 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const result = manager.getAllEntriesPaginated({ limit: 2, offset: 0 });
+			const result = await manager.getAllEntriesPaginated({ limit: 2, offset: 0 });
 			expect(result.entries).toHaveLength(2);
 			expect(result.total).toBe(3);
 			expect(result.limit).toBe(2);
@@ -893,12 +948,12 @@ describe('HistoryManager', () => {
 			expect(result.hasMore).toBe(true);
 		});
 
-		it('should handle offset beyond total entries', () => {
+		it('should handle offset beyond total entries', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [createMockEntry()]));
 
-			const result = manager.getAllEntriesPaginated({ limit: 10, offset: 100 });
+			const result = await manager.getAllEntriesPaginated({ limit: 10, offset: 100 });
 			expect(result.entries).toHaveLength(0);
 			expect(result.total).toBe(1);
 			expect(result.hasMore).toBe(false);
@@ -909,7 +964,7 @@ describe('HistoryManager', () => {
 	// getEntriesByProjectPath(projectPath)
 	// ----------------------------------------------------------------
 	describe('getEntriesByProjectPath()', () => {
-		it('should return entries matching project path', () => {
+		it('should return entries matching project path', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([
 				'sess_a.json' as unknown as fs.Dirent,
@@ -938,19 +993,19 @@ describe('HistoryManager', () => {
 				return '{}';
 			});
 
-			const result = manager.getEntriesByProjectPath('/project/alpha');
+			const result = await manager.getEntriesByProjectPath('/project/alpha');
 			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe('a1');
 		});
 
-		it('should return empty array when no matching sessions exist', () => {
+		it('should return empty array when no matching sessions exist', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entry = createMockEntry({ projectPath: '/other/path' });
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [entry], '/other/path'));
 
-			const result = manager.getEntriesByProjectPath('/no/match');
+			const result = await manager.getEntriesByProjectPath('/no/match');
 			expect(result).toEqual([]);
 		});
 	});
@@ -959,7 +1014,7 @@ describe('HistoryManager', () => {
 	// getEntriesByProjectPathPaginated(projectPath, options?)
 	// ----------------------------------------------------------------
 	describe('getEntriesByProjectPathPaginated()', () => {
-		it('should return paginated results filtered by project path', () => {
+		it('should return paginated results filtered by project path', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -970,7 +1025,7 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries, '/proj'));
 
-			const result = manager.getEntriesByProjectPathPaginated('/proj', {
+			const result = await manager.getEntriesByProjectPathPaginated('/proj', {
 				limit: 2,
 				offset: 0,
 			});
@@ -984,7 +1039,7 @@ describe('HistoryManager', () => {
 	// getEntriesPaginated(sessionId, options?)
 	// ----------------------------------------------------------------
 	describe('getEntriesPaginated()', () => {
-		it('should return paginated results for a single session', () => {
+		it('should return paginated results for a single session', async () => {
 			const entries = [
 				createMockEntry({ id: 'e1' }),
 				createMockEntry({ id: 'e2' }),
@@ -999,17 +1054,17 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
 			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', entries));
 
-			const result = manager.getEntriesPaginated('session-1', { limit: 2, offset: 1 });
+			const result = await manager.getEntriesPaginated('session-1', { limit: 2, offset: 1 });
 			expect(result.entries).toHaveLength(2);
 			expect(result.total).toBe(3);
 			expect(result.offset).toBe(1);
 			expect(result.hasMore).toBe(false);
 		});
 
-		it('should return empty paginated result for nonexistent session', () => {
+		it('should return empty paginated result for nonexistent session', async () => {
 			mockExistsSync.mockReturnValue(false);
 
-			const result = manager.getEntriesPaginated('nonexistent');
+			const result = await manager.getEntriesPaginated('nonexistent');
 			expect(result.entries).toEqual([]);
 			expect(result.total).toBe(0);
 		});
@@ -1019,7 +1074,7 @@ describe('HistoryManager', () => {
 	// updateSessionNameByClaudeSessionId(agentSessionId, sessionName)
 	// ----------------------------------------------------------------
 	describe('updateSessionNameByClaudeSessionId()', () => {
-		it('should update sessionName for matching entries and return count', () => {
+		it('should update sessionName for matching entries and return count', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -1042,7 +1097,7 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
+			const count = await manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
 			expect(count).toBe(2);
 
 			const written = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);
@@ -1051,19 +1106,19 @@ describe('HistoryManager', () => {
 			expect(written.entries[2].sessionName).toBe('other');
 		});
 
-		it('should return 0 when no entries match', () => {
+		it('should return 0 when no entries match', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [createMockEntry({ id: 'e1', agentSessionId: 'agent-999' })];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const count = manager.updateSessionNameByClaudeSessionId('no-match', 'new-name');
+			const count = await manager.updateSessionNameByClaudeSessionId('no-match', 'new-name');
 			expect(count).toBe(0);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
-		it('should not update entries that already have the correct sessionName', () => {
+		it('should not update entries that already have the correct sessionName', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
@@ -1076,19 +1131,22 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'already-correct');
+			const count = await manager.updateSessionNameByClaudeSessionId(
+				'agent-123',
+				'already-correct'
+			);
 			expect(count).toBe(0);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
-		it('should handle read errors gracefully', () => {
+		it('should handle read errors gracefully', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 			mockReadFileSync.mockImplementation(() => {
 				throw new Error('Read error');
 			});
 
-			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
+			const count = await manager.updateSessionNameByClaudeSessionId('agent-123', 'new-name');
 			expect(count).toBe(0);
 			expect(vi.mocked(logger.warn)).toHaveBeenCalled();
 		});
@@ -1098,7 +1156,7 @@ describe('HistoryManager', () => {
 	// clearByProjectPath(projectPath)
 	// ----------------------------------------------------------------
 	describe('clearByProjectPath()', () => {
-		it('should clear sessions matching the project path', () => {
+		it('should clear sessions matching the project path', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([
 				'sess_a.json' as unknown as fs.Dirent,
@@ -1119,21 +1177,21 @@ describe('HistoryManager', () => {
 				return '{}';
 			});
 
-			manager.clearByProjectPath('/target/project');
+			await manager.clearByProjectPath('/target/project');
 
 			// Should only unlink sess_a
 			expect(mockUnlinkSync).toHaveBeenCalledTimes(1);
 			expect(mockUnlinkSync.mock.calls[0][0].toString()).toContain('sess_a.json');
 		});
 
-		it('should do nothing when no sessions match', () => {
+		it('should do nothing when no sessions match', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entry = createMockEntry({ projectPath: '/other' });
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [entry], '/other'));
 
-			manager.clearByProjectPath('/no/match');
+			await manager.clearByProjectPath('/no/match');
 			expect(mockUnlinkSync).not.toHaveBeenCalled();
 		});
 	});
@@ -1142,7 +1200,7 @@ describe('HistoryManager', () => {
 	// clearAll()
 	// ----------------------------------------------------------------
 	describe('clearAll()', () => {
-		it('should clear all session files', () => {
+		it('should clear all session files', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([
 				'sess_a.json' as unknown as fs.Dirent,
@@ -1150,16 +1208,16 @@ describe('HistoryManager', () => {
 				'sess_c.json' as unknown as fs.Dirent,
 			]);
 
-			manager.clearAll();
+			await manager.clearAll();
 
 			expect(mockUnlinkSync).toHaveBeenCalledTimes(3);
 		});
 
-		it('should handle empty history directory', () => {
+		it('should handle empty history directory', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue([]);
 
-			manager.clearAll();
+			await manager.clearAll();
 
 			expect(mockUnlinkSync).not.toHaveBeenCalled();
 		});
@@ -1169,13 +1227,13 @@ describe('HistoryManager', () => {
 	// startWatching / stopWatching
 	// ----------------------------------------------------------------
 	describe('startWatching() / stopWatching()', () => {
-		it('should start watching history directory for changes', () => {
+		it('should start watching history directory for changes', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			manager.startWatching(callback);
+			await manager.startWatching(callback);
 
 			expect(mockWatch).toHaveBeenCalledWith(
 				path.join('/mock/userData', 'history'),
@@ -1183,19 +1241,19 @@ describe('HistoryManager', () => {
 			);
 		});
 
-		it('should create directory if it does not exist before watching', () => {
+		it('should create directory if it does not exist before watching', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(false);
 
-			manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
 
 			expect(mockMkdirSync).toHaveBeenCalledWith(path.join('/mock/userData', 'history'), {
 				recursive: true,
 			});
 		});
 
-		it('should invoke callback when a .json file changes', () => {
+		it('should invoke callback when a .json file changes', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
@@ -1205,7 +1263,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			manager.startWatching(callback);
+			await manager.startWatching(callback);
 
 			// Simulate a file change event
 			watchCallback('change', 'session_1.json');
@@ -1213,7 +1271,7 @@ describe('HistoryManager', () => {
 			expect(callback).toHaveBeenCalledWith('session_1');
 		});
 
-		it('should not invoke callback for non-json files', () => {
+		it('should not invoke callback for non-json files', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
@@ -1223,13 +1281,13 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			manager.startWatching(callback);
+			await manager.startWatching(callback);
 
 			watchCallback('change', 'readme.txt');
 			expect(callback).not.toHaveBeenCalled();
 		});
 
-		it('should not invoke callback when filename is null', () => {
+		it('should not invoke callback when filename is null', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
@@ -1239,48 +1297,48 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			manager.startWatching(callback);
+			await manager.startWatching(callback);
 
 			watchCallback('change', null);
 			expect(callback).not.toHaveBeenCalled();
 		});
 
-		it('should not start watching again if already watching', () => {
+		it('should not start watching again if already watching', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
-			manager.startWatching(vi.fn());
-			manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
 
 			expect(mockWatch).toHaveBeenCalledTimes(1);
 		});
 
-		it('should stop watching and close watcher', () => {
+		it('should stop watching and close watcher', async () => {
 			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
-			manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
 			manager.stopWatching();
 
 			expect(mockWatcher.close).toHaveBeenCalled();
 		});
 
-		it('should allow re-watching after stop', () => {
+		it('should allow re-watching after stop', async () => {
 			const mockWatcher1 = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			const mockWatcher2 = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValueOnce(mockWatcher1).mockReturnValueOnce(mockWatcher2);
 			mockExistsSync.mockReturnValue(true);
 
-			manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
 			manager.stopWatching();
-			manager.startWatching(vi.fn());
+			await manager.startWatching(vi.fn());
 
 			expect(mockWatch).toHaveBeenCalledTimes(2);
 		});
 
-		it('should be safe to call stopWatching when not watching', () => {
+		it('should be safe to call stopWatching when not watching', async () => {
 			// Should not throw
 			expect(() => manager.stopWatching()).not.toThrow();
 		});
@@ -1290,12 +1348,12 @@ describe('HistoryManager', () => {
 	// getHistoryManager() singleton
 	// ----------------------------------------------------------------
 	describe('getHistoryManager()', () => {
-		it('should return a HistoryManager instance', () => {
+		it('should return a HistoryManager instance', async () => {
 			const instance = getHistoryManager();
 			expect(instance).toBeInstanceOf(HistoryManager);
 		});
 
-		it('should return the same instance on subsequent calls', () => {
+		it('should return the same instance on subsequent calls', async () => {
 			const instance1 = getHistoryManager();
 			const instance2 = getHistoryManager();
 			expect(instance1).toBe(instance2);
@@ -1306,11 +1364,11 @@ describe('HistoryManager', () => {
 	// sanitizeSessionId integration (uses real shared function)
 	// ----------------------------------------------------------------
 	describe('session ID sanitization', () => {
-		it('should sanitize session IDs with special characters for file paths', () => {
+		it('should sanitize session IDs with special characters for file paths', async () => {
 			mockExistsSync.mockReturnValue(false);
 
 			const entry = createMockEntry({ id: 'e1' });
-			manager.addEntry('session/with:special.chars!', '/test', entry);
+			await manager.addEntry('session/with:special.chars!', '/test', entry);
 
 			const writtenPath = mockWriteFileSync.mock.calls[0][0] as string;
 			// Should not contain /, :, ., or ! in the filename portion

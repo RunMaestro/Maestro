@@ -574,7 +574,9 @@ app.whenReady().then(async () => {
 								// exist on the remote host.
 							});
 				const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-				historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+				// Fire-and-forget: this is on the Cue execution path; the
+				// caller doesn't need to wait for the disk write to settle.
+				void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
 				return cmdResult;
 			}
 
@@ -642,7 +644,7 @@ app.whenReady().then(async () => {
 				projectRoot,
 				autoRunFolderPath: storedSession.autoRunFolderPath,
 			});
-			historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+			void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
 			return result;
 		},
 		onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
@@ -666,7 +668,7 @@ app.whenReady().then(async () => {
 		await historyManager.initialize();
 		logger.info('History manager initialized', 'Startup');
 		// Start watching history directory for external changes (from CLI, etc.)
-		historyManager.startWatching((sessionId) => {
+		await historyManager.startWatching((sessionId) => {
 			logger.debug(
 				`History file changed for session ${sessionId}, notifying renderer`,
 				'HistoryWatcher'
