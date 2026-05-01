@@ -12,6 +12,8 @@ import ReactFlow, {
 	ConnectionMode,
 	Controls,
 	MiniMap,
+	getBezierPath,
+	type ConnectionLineComponentProps,
 	type Node,
 	type Edge,
 	type OnNodesChange,
@@ -54,6 +56,46 @@ const nodeTypes = {
 	command: CommandNode,
 	error: ErrorNode,
 	'pipeline-group': PipelineGroupNode,
+};
+
+/**
+ * Custom drag-preview component for the connection line.
+ *
+ * ReactFlow's default `<ConnectionLine>` paints `.react-flow__connection-path`
+ * with `stroke: #b1b1b7` at 1px — invisible against our dark theme. Setting
+ * `connectionLineStyle` alone proved insufficient (no visible line during
+ * drag, only the committed edge appearing on release). A custom component
+ * bypasses any styling/specificity issues with the default render path
+ * entirely — we own the `<path>` element and its attributes.
+ *
+ * Visual contract: dashed bezier in CUE_COLOR at 2px, matching the look of
+ * committed edges (which also use bezier + CUE_COLOR via PipelineEdge.tsx)
+ * so the drag → release transition feels continuous.
+ */
+const PipelineConnectionLine = (props: ConnectionLineComponentProps) => {
+	const { fromX, fromY, toX, toY, fromPosition, toPosition } = props;
+	const [path] = getBezierPath({
+		sourceX: fromX,
+		sourceY: fromY,
+		sourcePosition: fromPosition,
+		targetX: toX,
+		targetY: toY,
+		targetPosition: toPosition,
+	});
+	return (
+		<g>
+			<path
+				d={path}
+				fill="none"
+				stroke={CUE_COLOR}
+				strokeWidth={2}
+				strokeDasharray="6 3"
+				strokeLinecap="round"
+				className="react-flow__connection-path"
+			/>
+			<circle cx={toX} cy={toY} r={4} fill={CUE_COLOR} stroke="none" />
+		</g>
+	);
 };
 
 export type CanvasInteractionMode = 'hand' | 'pointer';
@@ -316,6 +358,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				connectionMode={ConnectionMode.Loose}
 				connectionLineType={ConnectionLineType.Bezier}
 				connectionLineStyle={connectionLineStyle}
+				connectionLineComponent={PipelineConnectionLine}
 				minZoom={0.1}
 				maxZoom={2}
 				// All Pipelines view is read-only. These ReactFlow props are the
