@@ -23,6 +23,7 @@ import { DeliveryPlannerGithubSync } from '../../delivery-planner/github-sync';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
 import type { WorkItem, WorkGraphActor, WorkItemStatus } from '../../../shared/work-graph-types';
+import { sweepMergedBranches } from '../../pm-branch-hygiene/branch-cleaner';
 
 const LOG_CONTEXT = '[PmTools]';
 
@@ -67,7 +68,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 		if (gateError) return gateError;
 
 		try {
-			const { workItemId, projectId, projectItemId } = await resolveClaimedItem(
+			const { workItemId, projectId, projectItemId, workItem } = await resolveClaimedItem(
 				workGraph,
 				input.agentSessionId
 			);
@@ -85,6 +86,17 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			});
 
 			console.log(`${LOG_CONTEXT} pm:setStatus workItem=${workItemId} status=${input.status}`);
+
+			// ── Merger-done branch cleanup (#435) ──────────────────────────────
+			// When the merger signals completion, attempt to delete the feature branch
+			// associated with the work item (if one can be inferred).  Uses the same
+			// sweepMergedBranches helper so the grace-period and protection rules are
+			// consistent with the hourly cron.  Failures are logged but do not fail
+			// the status update — branch cleanup is best-effort.
+			if (input.status.toLowerCase() === 'done') {
+				void tryDeleteWorkItemBranch(workItem, workItemId);
+			}
+
 			return {
 				success: true,
 				data: { workItemId, field: 'Status', value: input.status } satisfies PmToolsResult,
@@ -273,4 +285,59 @@ async function recordPmEvent(
 			? `pm:${input.field.toLowerCase()} → ${input.newState} (reason: ${input.reason})`
 			: `pm:${input.field.toLowerCase()} → ${input.newState}`,
 	});
+}
+
+// ── Merger-done branch cleanup helper (#435) ──────────────────────────────────
+
+/**
+ * After a work item transitions to "done", attempt to delete the associated
+ * feature branch.  The branch name is taken from `workItem.github.branch` when
+ * present; if absent the cleanup is silently skipped.
+ *
+ * Uses `sweepMergedBranches` with `graceDays: 0` so the per-item cleanup is
+ * not subject to the 14-day wait — the merger explicitly completed the item, so
+ * waiting is unnecessary.  Protected branches are still honoured.
+ *
+ * The project path is taken from `workItem.projectPath`; if unavailable the
+ * cwd of the current process is used as a fallback.
+ */
+async function tryDeleteWorkItemBranch(workItem: WorkItem, workItemId: string): Promise<void> {
+	const featureBranch = workItem.github?.branch;
+	if (!featureBranch) {
+		console.log(
+			`${LOG_CONTEXT} merger-done: no github.branch on work item ${workItemId} — skipping branch cleanup`
+		);
+		return;
+	}
+
+	const repoPath = workItem.projectPath || process.cwd();
+
+	try {
+		const result = await sweepMergedBranches(repoPath, 'main', {
+			graceDays: 0,
+			dryRun: false,
+		});
+
+		const wasDeleted = result.deleted.includes(featureBranch);
+		const skipEntry = result.skipped.find((s) => s.branch === featureBranch);
+
+		if (wasDeleted) {
+			console.log(
+				`${LOG_CONTEXT} merger-done: deleted merged branch "${featureBranch}" for work item ${workItemId}`
+			);
+		} else if (skipEntry) {
+			console.log(
+				`${LOG_CONTEXT} merger-done: branch "${featureBranch}" skipped (${skipEntry.reason}) for work item ${workItemId}`
+			);
+		} else {
+			// Branch not in merged list — not yet merged; leave it alone.
+			console.log(
+				`${LOG_CONTEXT} merger-done: branch "${featureBranch}" not yet merged — skipping deletion for work item ${workItemId}`
+			);
+		}
+	} catch (err) {
+		console.warn(
+			`${LOG_CONTEXT} merger-done: branch cleanup failed for "${featureBranch}" (work item ${workItemId}): ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
 }

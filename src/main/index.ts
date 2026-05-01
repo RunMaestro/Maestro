@@ -79,6 +79,7 @@ import {
 	registerPlanningPipelineHandlers,
 	registerConversationalPrdHandlers,
 	registerPmToolsHandlers,
+	registerPmAuditHandlers,
 	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -150,6 +151,7 @@ import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
+import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -711,8 +713,36 @@ app.whenReady().then(async () => {
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
 
-	// Start Cue engine if the Encore Feature flag is enabled
+	// Start branch hygiene cron if the agentDispatch Encore Feature is enabled (#435).
+	// Uses the first available session project root as the repo path; if none is
+	// available at startup, the sweep is skipped (it will fire again next hour).
 	const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
+	if (encoreFeatures.agentDispatch) {
+		try {
+			const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+			const firstProjectRoot =
+				storedSessions.length > 0
+					? ((storedSessions[0].projectRoot ||
+							storedSessions[0].cwd ||
+							storedSessions[0].fullPath) as string | undefined)
+					: undefined;
+			if (firstProjectRoot) {
+				startBranchHygieneCron(firstProjectRoot);
+			} else {
+				logger.debug(
+					'Branch hygiene cron skipped at boot — no project root available yet',
+					'Startup'
+				);
+			}
+		} catch (err) {
+			logger.warn(
+				`Branch hygiene cron failed to start: ${err instanceof Error ? err.message : String(err)}`,
+				'Startup'
+			);
+		}
+	}
+
+	// Start Cue engine if the Encore Feature flag is enabled
 	if (encoreFeatures.maestroCue && cueEngine) {
 		logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
 		try {
@@ -1188,6 +1218,9 @@ function setupIpcHandlers() {
 
 	// pm-tools — agent-callable pm:setStatus / pm:setRole / pm:setBlocked (#430)
 	registerPmToolsHandlers({ settingsStore: store });
+
+	// pm-audit — rule-based in-flight work sweep (#434)
+	registerPmAuditHandlers({ settingsStore: store });
 }
 
 // Handle process output streaming (set up after initialization)
