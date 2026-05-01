@@ -29,6 +29,8 @@ import {
 } from '../../conversational-prd/file-store';
 import type { DeliveryPlannerService } from '../../delivery-planner/planner-service';
 import { createIpcDataHandler } from '../../utils/ipcHandler';
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
+import type { SettingsStoreInterface } from '../../stores/types';
 
 const LOG_CONTEXT = '[ConversationalPrd]';
 
@@ -54,6 +56,7 @@ function getService(): ConversationalPrdService {
 
 export interface ConversationalPrdHandlerDependencies {
 	plannerService: DeliveryPlannerService;
+	settingsStore?: SettingsStoreInterface;
 }
 
 /** Must be awaited before the first IPC call reaches the service. */
@@ -66,53 +69,77 @@ export function registerConversationalPrdHandlers(
 ): void {
 	service = new ConversationalPrdService(store, gateway, deps?.plannerService);
 
+	/** Check the conversationalPrd encore feature flag. Returns structured error or null. */
+	const gate = () =>
+		deps?.settingsStore ? requireEncoreFeature(deps.settingsStore, 'conversationalPrd') : null;
+
 	ipcMain.handle(
 		'conversationalPrd:createSession',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'createSession' },
-			(input: ConversationalPrdStartRequest) => getService().createSession(input)
-		)
+		async (_event, input: ConversationalPrdStartRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'createSession' },
+				(i: ConversationalPrdStartRequest) => getService().createSession(i)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'conversationalPrd:sendMessage',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'sendMessage' },
-			(input: ConversationalPrdTurnRequest) => getService().sendMessage(input)
-		)
+		async (_event, input: ConversationalPrdTurnRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'sendMessage' },
+				(i: ConversationalPrdTurnRequest) => getService().sendMessage(i)
+			)(_event, input);
+		}
 	);
 
-	ipcMain.handle(
-		'conversationalPrd:getSession',
-		createIpcDataHandler(
+	ipcMain.handle('conversationalPrd:getSession', async (_event, conversationId: string) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+		return createIpcDataHandler(
 			{ context: LOG_CONTEXT, operation: 'getSession', logSuccess: false },
-			async (conversationId: string) => getService().getSession(conversationId) ?? null
-		)
-	);
+			async (id: string) => getService().getSession(id) ?? null
+		)(_event, conversationId);
+	});
 
 	ipcMain.handle(
 		'conversationalPrd:listSessions',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'listSessions', logSuccess: false },
-			async (filters?: { projectPath?: string; includeArchived?: boolean }) =>
-				getService().listSessions(filters)
-		)
+		async (_event, filters?: { projectPath?: string; includeArchived?: boolean }) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'listSessions', logSuccess: false },
+				async (f?: { projectPath?: string; includeArchived?: boolean }) =>
+					getService().listSessions(f)
+			)(_event, filters);
+		}
 	);
 
 	ipcMain.handle(
 		'conversationalPrd:archiveSession',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'archiveSession' },
-			async (input: { sessionId: string; actor?: WorkGraphActor }) =>
-				getService().archiveSession(input)
-		)
+		async (_event, input: { sessionId: string; actor?: WorkGraphActor }) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'archiveSession' },
+				async (i: { sessionId: string; actor?: WorkGraphActor }) => getService().archiveSession(i)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'conversationalPrd:finalizeSession',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'finalizeSession' },
-			(input: ConversationalPrdFinalizeRequest) => getService().finalizeSession(input)
-		)
+		async (_event, input: ConversationalPrdFinalizeRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'finalizeSession' },
+				(i: ConversationalPrdFinalizeRequest) => getService().finalizeSession(i)
+			)(_event, input);
+		}
 	);
 }

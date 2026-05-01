@@ -25,6 +25,8 @@ import type {
 } from '../../../shared/agent-dispatch-types';
 import { generateUUID } from '../../../shared/uuid';
 import { logger } from '../../utils/logger';
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
+import type { SettingsStoreInterface } from '../../stores/types';
 
 const LOG_CONTEXT = '[AgentDispatch:MCP]';
 
@@ -81,11 +83,20 @@ function err(message: string): { success: false; error: string } {
 // Handler registration
 // ---------------------------------------------------------------------------
 
-export function registerAgentDispatchMcpHandlers(): void {
+export interface AgentDispatchMcpHandlerDependencies {
+	settingsStore: SettingsStoreInterface;
+}
+
+export function registerAgentDispatchMcpHandlers(deps?: AgentDispatchMcpHandlerDependencies): void {
+	/** Check the agentDispatch encore feature flag. Returns structured error or null. */
+	const gate = () => (deps ? requireEncoreFeature(deps.settingsStore, 'agentDispatch') : null);
+
 	// -----------------------------------------------------------------------
 	// agentDispatch:listAgents
 	// -----------------------------------------------------------------------
 	ipcMain.handle('agentDispatch:listAgents', () => {
+		const gateError = gate();
+		if (gateError) return gateError;
 		const agents = [..._dispatchRegistry.agents.values()];
 		return ok({ agents });
 	});
@@ -95,6 +106,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	// Unclaimed, agent-ready items (status === 'agent-ready', no claimedBySessionId)
 	// -----------------------------------------------------------------------
 	ipcMain.handle('agentDispatch:listEligible', () => {
+		const gateError = gate();
+		if (gateError) return gateError;
 		const items = [..._dispatchRegistry.workItems.values()].filter(
 			(item) => item.status === 'agent-ready' && !item.claimedBySessionId
 		);
@@ -111,6 +124,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 			_event,
 			params: { itemId: string; sessionId: string }
 		): IpcResult<{ item: DispatchWorkItem }> => {
+			const gateError = gate();
+			if (gateError) return gateError;
 			const item = _dispatchRegistry.workItems.get(params.itemId);
 			if (!item) {
 				return err(`Work item ${params.itemId} not found`);
@@ -156,6 +171,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	ipcMain.handle(
 		'agentDispatch:release',
 		(_event, params: { itemId: string }): IpcResult<{ item: DispatchWorkItem }> => {
+			const gateError = gate();
+			if (gateError) return gateError;
 			const item = _dispatchRegistry.workItems.get(params.itemId);
 			if (!item) {
 				return err(`Work item ${params.itemId} not found`);
@@ -196,6 +213,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	ipcMain.handle(
 		'agentDispatch:pause',
 		(_event, params: { sessionId: string }): IpcResult<{ agent: DispatchAgent }> => {
+			const gateError = gate();
+			if (gateError) return gateError;
 			const agent = _dispatchRegistry.agents.get(params.sessionId);
 			if (!agent) {
 				return err(`Agent ${params.sessionId} not found`);
@@ -214,6 +233,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	ipcMain.handle(
 		'agentDispatch:resume',
 		(_event, params: { sessionId: string }): IpcResult<{ agent: DispatchAgent }> => {
+			const gateError = gate();
+			if (gateError) return gateError;
 			const agent = _dispatchRegistry.agents.get(params.sessionId);
 			if (!agent) {
 				return err(`Agent ${params.sessionId} not found`);
@@ -235,6 +256,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	ipcMain.handle(
 		'agentDispatch:createSubtask',
 		(_event, params: CreateSubtaskParams): IpcResult<{ item: DispatchWorkItem }> => {
+			const gateError = gate();
+			if (gateError) return gateError;
 			if (!_dispatchRegistry.workItems.has(params.parentId)) {
 				return err(`Parent work item ${params.parentId} not found`);
 			}
@@ -256,6 +279,8 @@ export function registerAgentDispatchMcpHandlers(): void {
 	// Combined snapshot for slash commands and MCP status checks.
 	// -----------------------------------------------------------------------
 	ipcMain.handle('agentDispatch:status', () => {
+		const gateError = gate();
+		if (gateError) return gateError;
 		const agents = [..._dispatchRegistry.agents.values()];
 		const eligible = [..._dispatchRegistry.workItems.values()].filter(
 			(item) => item.status === 'agent-ready' && !item.claimedBySessionId

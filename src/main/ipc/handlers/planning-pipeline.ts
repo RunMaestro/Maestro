@@ -18,6 +18,7 @@
 
 import { ipcMain } from 'electron';
 import { createIpcDataHandler } from '../../utils/ipcHandler';
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import { getWorkGraphItemStore } from '../../work-graph';
 import { detectCurrentStage } from '../../../shared/planning-pipeline-guards';
 import {
@@ -26,6 +27,7 @@ import {
 	type AnyPipelineStage,
 } from '../../../shared/planning-pipeline-types';
 import type { WorkItem } from '../../../shared/work-graph-types';
+import type { SettingsStoreInterface } from '../../stores/types';
 
 // ---------------------------------------------------------------------------
 // Public result type
@@ -56,8 +58,15 @@ export interface PipelineDashboardResult {
 
 const LOG_CONTEXT = '[PlanningPipeline]';
 
-export function registerPlanningPipelineHandlers(): void {
+export interface PlanningPipelineHandlerDependencies {
+	settingsStore: SettingsStoreInterface;
+}
+
+export function registerPlanningPipelineHandlers(deps: PlanningPipelineHandlerDependencies): void {
 	const workGraph = getWorkGraphItemStore();
+
+	/** Check the planningPipeline encore feature flag. Returns structured error or null. */
+	const gate = () => requireEncoreFeature(deps.settingsStore, 'planningPipeline');
 
 	// -------------------------------------------------------------------------
 	// pipeline:getDashboard
@@ -65,9 +74,10 @@ export function registerPlanningPipelineHandlers(): void {
 	// Lists all Work Graph items and classifies each by pipeline stage.
 	// Returns the full PipelineDashboardResult shape.
 	// -------------------------------------------------------------------------
-	ipcMain.handle(
-		'pipeline:getDashboard',
-		createIpcDataHandler(
+	ipcMain.handle('pipeline:getDashboard', async (_event) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+		return createIpcDataHandler(
 			{ context: LOG_CONTEXT, operation: 'getDashboard', logSuccess: false },
 			async (): Promise<PipelineDashboardResult> => {
 				const { items } = await workGraph.listItems({});
@@ -91,6 +101,6 @@ export function registerPlanningPipelineHandlers(): void {
 
 				return { stages, unstaged, total: items.length };
 			}
-		)
-	);
+		)(_event);
+	});
 }

@@ -29,13 +29,16 @@ import {
 } from '../../delivery-planner/ccpm-mirror';
 import { InMemoryDeliveryPlannerProgressStore } from '../../delivery-planner/progress';
 import { createIpcDataHandler } from '../../utils/ipcHandler';
+import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getWorkGraphItemStore, publishWorkGraphEvent } from '../../work-graph';
+import type { SettingsStoreInterface } from '../../stores/types';
 
 const LOG_CONTEXT = '[DeliveryPlanner]';
 
 export interface DeliveryPlannerHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	settingsStore: SettingsStoreInterface;
 }
 
 export function registerDeliveryPlannerHandlers(
@@ -44,138 +47,177 @@ export function registerDeliveryPlannerHandlers(
 	const workGraph = getWorkGraphItemStore();
 	const service = createDeliveryPlannerService(deps, workGraph);
 
+	/** Check the deliveryPlanner encore feature flag. Returns structured error or null. */
+	const gate = () => requireEncoreFeature(deps.settingsStore, 'deliveryPlanner');
+
 	ipcMain.handle(
 		'deliveryPlanner:createPrd',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'createPrd' },
-			(input: DeliveryPlannerCreatePrdRequest) => service.createPrd(input)
-		)
+		async (_event, input: DeliveryPlannerCreatePrdRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'createPrd' },
+				(i: DeliveryPlannerCreatePrdRequest) => service.createPrd(i)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'deliveryPlanner:decomposePrd',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'decomposePrd' },
-			(input: DeliveryPlannerDecomposePrdRequest) =>
-				service.convertPrdToEpic({
-					prdId: input.prdId,
-					title: input.title,
-					description: input.description,
-					actor: input.actor,
-				})
-		)
+		async (_event, input: DeliveryPlannerDecomposePrdRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'decomposePrd' },
+				(i: DeliveryPlannerDecomposePrdRequest) =>
+					service.convertPrdToEpic({
+						prdId: i.prdId,
+						title: i.title,
+						description: i.description,
+						actor: i.actor,
+					})
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'deliveryPlanner:decomposeEpic',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'decomposeEpic' },
-			(input: DeliveryPlannerDecomposeEpicRequest) => service.decomposeEpicToTasks(input)
-		)
+		async (_event, input: DeliveryPlannerDecomposeEpicRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'decomposeEpic' },
+				(i: DeliveryPlannerDecomposeEpicRequest) => service.decomposeEpicToTasks(i)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'deliveryPlanner:dashboard',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'dashboard', logSuccess: false },
-			async (filters: { projectPath?: string; gitPath?: string } = {}) => {
-				if (filters.projectPath) {
-					await indexPlanningArtifacts({
-						workGraph,
-						projectPath: filters.projectPath,
-						gitPath: filters.gitPath,
-						actor: { type: 'system', id: 'delivery-planner', name: 'Delivery Planner' },
-						publish: (operation, payload) => {
-							publishWorkGraphEvent(deps.getMainWindow, operation, payload);
-						},
-					});
+		async (_event, filters: { projectPath?: string; gitPath?: string } = {}) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'dashboard', logSuccess: false },
+				async (f: { projectPath?: string; gitPath?: string } = {}) => {
+					if (f.projectPath) {
+						await indexPlanningArtifacts({
+							workGraph,
+							projectPath: f.projectPath,
+							gitPath: f.gitPath,
+							actor: { type: 'system', id: 'delivery-planner', name: 'Delivery Planner' },
+							publish: (operation, payload) => {
+								publishWorkGraphEvent(deps.getMainWindow, operation, payload);
+							},
+						});
+					}
+					const dashboard = await service.listDashboard(f);
+					return {
+						...dashboard,
+						filters: f,
+						githubSync: undefined,
+						readyTag: WORK_GRAPH_READY_TAG,
+					} satisfies DeliveryPlannerDashboardSnapshot & typeof dashboard;
 				}
-				const dashboard = await service.listDashboard(filters);
-				return {
-					...dashboard,
-					filters,
-					githubSync: undefined,
-					readyTag: WORK_GRAPH_READY_TAG,
-				} satisfies DeliveryPlannerDashboardSnapshot & typeof dashboard;
-			}
-		)
+			)(_event, filters);
+		}
 	);
 
-	ipcMain.handle(
-		'deliveryPlanner:sync',
-		createIpcDataHandler(
+	ipcMain.handle('deliveryPlanner:sync', async (_event, input: DeliveryPlannerSyncRequest) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+		return createIpcDataHandler(
 			{ context: LOG_CONTEXT, operation: 'sync' },
-			async (input: DeliveryPlannerSyncRequest) => {
-				const target = input.target ?? 'all';
+			async (i: DeliveryPlannerSyncRequest) => {
+				const target = i.target ?? 'all';
 				let item =
 					target === 'github'
-						? await service.syncGithubIssue(input.workItemId)
-						: await service.syncCcpmMirror(input.workItemId);
+						? await service.syncGithubIssue(i.workItemId)
+						: await service.syncCcpmMirror(i.workItemId);
 				if (target === 'all') {
 					item = await service.syncGithubIssue(item.id);
 					item = await service.syncCcpmMirror(item.id);
 				}
 				return item;
 			}
-		)
-	);
+		)(_event, input);
+	});
 
 	ipcMain.handle(
 		'deliveryPlanner:createBugFollowUp',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'createBugFollowUp' },
-			(input: DeliveryPlannerBugFollowUpRequest) => service.createBugFollowUp(input)
-		)
+		async (_event, input: DeliveryPlannerBugFollowUpRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'createBugFollowUp' },
+				(i: DeliveryPlannerBugFollowUpRequest) => service.createBugFollowUp(i)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'deliveryPlanner:addProgressComment',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'addProgressComment' },
-			(input: DeliveryPlannerProgressCommentRequest) =>
-				service.addProgressComment(input.workItemId, input.body, input.actor)
-		)
+		async (_event, input: DeliveryPlannerProgressCommentRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'addProgressComment' },
+				(i: DeliveryPlannerProgressCommentRequest) =>
+					service.addProgressComment(i.workItemId, i.body, i.actor)
+			)(_event, input);
+		}
 	);
 
 	ipcMain.handle(
 		'deliveryPlanner:resolvePaths',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'resolvePaths', logSuccess: false },
-			async (
-				input: DeliveryPlannerPathResolutionRequest = {}
-			): Promise<DeliveryPlannerPathResolutionResult> => {
-				const projectPath = path.resolve(input.projectPath ?? process.cwd());
-				return {
-					projectPath,
-					gitPath: path.resolve(input.gitPath ?? projectPath),
-				};
-			}
-		)
+		async (_event, input: DeliveryPlannerPathResolutionRequest = {}) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'resolvePaths', logSuccess: false },
+				async (
+					i: DeliveryPlannerPathResolutionRequest = {}
+				): Promise<DeliveryPlannerPathResolutionResult> => {
+					const projectPath = path.resolve(i.projectPath ?? process.cwd());
+					return {
+						projectPath,
+						gitPath: path.resolve(i.gitPath ?? projectPath),
+					};
+				}
+			)(_event, input);
+		}
 	);
 
-	ipcMain.handle(
-		'deliveryPlanner:getProgress',
-		createIpcDataHandler(
+	ipcMain.handle('deliveryPlanner:getProgress', async (_event, id: string) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+		return createIpcDataHandler(
 			{ context: LOG_CONTEXT, operation: 'getProgress', logSuccess: false },
-			(id: string) => Promise.resolve(service.getProgress(id))
-		)
-	);
+			(i: string) => Promise.resolve(service.getProgress(i))
+		)(_event, id);
+	});
 
-	ipcMain.handle(
-		'deliveryPlanner:listProgress',
-		createIpcDataHandler(
+	ipcMain.handle('deliveryPlanner:listProgress', async (_event) => {
+		const gateError = gate();
+		if (gateError) return gateError;
+		return createIpcDataHandler(
 			{ context: LOG_CONTEXT, operation: 'listProgress', logSuccess: false },
 			() => Promise.resolve(service.listProgress())
-		)
-	);
+		)(_event);
+	});
 
 	ipcMain.handle(
 		'deliveryPlanner:promoteDocGap',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'promoteDocGap' },
-			(input: DeliveryPlannerPromoteDocGapRequest) => service.promoteDocGap(input)
-		)
+		async (_event, input: DeliveryPlannerPromoteDocGapRequest) => {
+			const gateError = gate();
+			if (gateError) return gateError;
+			return createIpcDataHandler(
+				{ context: LOG_CONTEXT, operation: 'promoteDocGap' },
+				(i: DeliveryPlannerPromoteDocGapRequest) => service.promoteDocGap(i)
+			)(_event, input);
+		}
 	);
+
 	return service;
 }
 
