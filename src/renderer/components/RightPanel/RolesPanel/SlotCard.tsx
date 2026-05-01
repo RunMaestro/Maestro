@@ -12,12 +12,14 @@ const ROLE_ICONS: Record<DispatchRole, string> = {
 	merger: '⎇',
 };
 
-/** Active claim info pushed via IPC from DispatchEngine (#444). */
+/** Active claim info pushed via IPC from SlotExecutor (#444). */
 export interface ActiveClaimInfo {
 	projectPath: string;
 	role: string;
-	issueNumber: number;
-	issueTitle: string;
+	agentId: string;
+	sessionId: string;
+	issueNumber?: number;
+	issueTitle?: string;
 	claimedAt: string;
 }
 

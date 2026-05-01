@@ -30,8 +30,10 @@ import { SlotCard } from './SlotCard';
 interface ActiveClaimInfo {
 	projectPath: string;
 	role: string;
-	issueNumber: number;
-	issueTitle: string;
+	agentId: string;
+	sessionId: string;
+	issueNumber?: number;
+	issueTitle?: string;
 	claimedAt: string;
 }
 
@@ -69,16 +71,35 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 			.finally(() => setLoading(false));
 	}, [projectPath]);
 
-	// Hydrate initial claim state from in-memory ClaimTracker (no GitHub query)
+	// Hydrate initial claim state from in-memory ClaimTracker (no GitHub query).
+	// ClaimInfo from getBoard uses agentSessionId rather than agentId/sessionId,
+	// so we normalise the shape here for the renderer-local map.
 	useEffect(() => {
 		window.maestro.agentDispatch
 			.getBoard()
 			.then((res) => {
 				if (!res.success) return;
-				const items = (res.data as { items?: ActiveClaimInfo[] }).items ?? [];
+				type BoardItem = {
+					role?: string;
+					projectPath?: string;
+					agentSessionId?: string;
+					issueNumber?: number;
+					issueTitle?: string;
+					claimedAt?: string;
+				};
+				const items = (res.data as { items?: BoardItem[] }).items ?? [];
 				const map = new Map<string, ActiveClaimInfo>();
 				for (const item of items) {
-					if (item.role) map.set(item.role, item);
+					if (!item.role) continue;
+					map.set(item.role, {
+						projectPath: item.projectPath ?? '',
+						role: item.role,
+						agentId: item.agentSessionId ?? '',
+						sessionId: item.agentSessionId ?? '',
+						issueNumber: item.issueNumber,
+						issueTitle: item.issueTitle,
+						claimedAt: item.claimedAt ?? new Date().toISOString(),
+					});
 				}
 				setActiveClaims(map);
 			})

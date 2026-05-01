@@ -22,6 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { BrowserWindow } from 'electron';
 import type { DispatchRole, RoleSlotAssignment } from '../../shared/project-roles-types';
 import type { WorkItem, WorkGraphActor } from '../../shared/work-graph-types';
 import { logger } from '../utils/logger';
@@ -30,6 +31,19 @@ import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 
 const LOG_CONTEXT = '[SlotExecutor]';
+
+// ---------------------------------------------------------------------------
+// IPC event helpers — push claim lifecycle to renderer
+// ---------------------------------------------------------------------------
+
+function safeSendToRenderer(channel: string, payload: unknown): void {
+	const windows = BrowserWindow.getAllWindows();
+	for (const win of windows) {
+		if (!win.isDestroyed()) {
+			win.webContents.send(channel, payload);
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -287,7 +301,19 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 		);
 	}
 
-	// 4. Spawn
+	// 4. Spawn — emit claimStarted before spawning so the renderer shows the
+	//    active state even while the process is initialising.
+	const claimedAt = new Date().toISOString();
+	safeSendToRenderer('agentDispatch:claimStarted', {
+		projectPath: workItem.projectPath,
+		role,
+		agentId,
+		sessionId: dispatchSessionId,
+		issueNumber: workItem.github?.issueNumber,
+		issueTitle: workItem.title,
+		claimedAt,
+	});
+
 	auditLog({
 		kind: 'spawn-start',
 		workItemId,
@@ -429,6 +455,16 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 			error: err instanceof Error ? err.message : String(err),
 		});
 	}
+
+	// Emit claimEnded regardless of success/failure so the renderer clears the
+	// active state.  exitCode is 0 for clean exits, non-zero otherwise.
+	safeSendToRenderer('agentDispatch:claimEnded', {
+		projectPath: workItem.projectPath,
+		role,
+		agentId,
+		sessionId: dispatchSessionId,
+		exitCode: spawnSuccess ? 0 : 1,
+	});
 
 	return { success: spawnSuccess, error: spawnError };
 }

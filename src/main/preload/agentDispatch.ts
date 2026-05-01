@@ -44,15 +44,17 @@ export function createAgentDispatchApi() {
 		// -----------------------------------------------------------------------
 
 		/**
-		 * Subscribe to claim-started events emitted when DispatchEngine claims a
-		 * GitHub project item. Returns an unsubscribe function.
+		 * Subscribe to claim-started events emitted by SlotExecutor just before
+		 * the agent process is spawned. Returns an unsubscribe function.
 		 */
 		onClaimStarted: (
 			handler: (event: {
 				projectPath: string;
 				role: string;
-				issueNumber: number;
-				issueTitle: string;
+				agentId: string;
+				sessionId: string;
+				issueNumber?: number;
+				issueTitle?: string;
 				claimedAt: string;
 			}) => void
 		): (() => void) => {
@@ -64,11 +66,17 @@ export function createAgentDispatchApi() {
 		},
 
 		/**
-		 * Subscribe to claim-ended events emitted when DispatchEngine releases a claim.
-		 * Returns an unsubscribe function.
+		 * Subscribe to claim-ended events emitted by SlotExecutor after the agent
+		 * process exits (success or failure). Returns an unsubscribe function.
 		 */
 		onClaimEnded: (
-			handler: (event: { projectPath: string; role: string }) => void
+			handler: (event: {
+				projectPath: string;
+				role: string;
+				agentId: string;
+				sessionId: string;
+				exitCode?: number;
+			}) => void
 		): (() => void) => {
 			const listener = (_e: unknown, ev: unknown) => handler(ev as Parameters<typeof handler>[0]);
 			ipcRenderer.on('agentDispatch:claimEnded', listener);

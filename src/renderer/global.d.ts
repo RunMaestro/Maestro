@@ -3503,24 +3503,34 @@ interface MaestroAPI {
 		}>;
 		/**
 		 * Subscribe to claim-started events (#444).
-		 * Emitted when DispatchEngine successfully claims a GitHub project item.
+		 * Emitted by SlotExecutor just before the agent process is spawned.
 		 * Returns an unsubscribe function.
 		 */
 		onClaimStarted: (
 			handler: (event: {
 				projectPath: string;
 				role: string;
-				issueNumber: number;
-				issueTitle: string;
+				agentId: string;
+				sessionId: string;
+				issueNumber?: number;
+				issueTitle?: string;
 				claimedAt: string;
 			}) => void
 		) => () => void;
 		/**
 		 * Subscribe to claim-ended events (#444).
-		 * Emitted when DispatchEngine releases a claim (stale sweep, manual release, or completion).
+		 * Emitted by SlotExecutor after the agent process exits (success or failure).
 		 * Returns an unsubscribe function.
 		 */
-		onClaimEnded: (handler: (event: { projectPath: string; role: string }) => void) => () => void;
+		onClaimEnded: (
+			handler: (event: {
+				projectPath: string;
+				role: string;
+				agentId: string;
+				sessionId: string;
+				exitCode?: number;
+			}) => void
+		) => () => void;
 	};
 
 	/** Per-project role slot roster (#429). */
