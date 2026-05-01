@@ -330,8 +330,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 					const pmReq = {
 						args: args || undefined,
-						projectPath: activeSession.projectPath ?? undefined,
-						gitPath: activeSession.gitPath ?? undefined,
+						projectPath: activeSession.projectRoot ?? undefined,
+						gitPath: activeSession.projectRoot ?? undefined,
 						actor: { sessionId: activeSession.id },
 					};
 
