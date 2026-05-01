@@ -240,7 +240,7 @@ function SessionListInner(props: SessionListProps) {
 			}
 		}
 		return map;
-	}, [projectRoleSlots]);
+	}, [sessions, allSlots]);
 
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
