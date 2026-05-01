@@ -56,6 +56,12 @@ export interface AgentDispatchProfile {
 	maxConcurrentClaims: number;
 	/** Whether this agent is eligible to appear in the fleet (dispatch-eligible). */
 	fleetEnabled?: boolean;
+	/**
+	 * Absolute path to an external runner script invoked when this agent
+	 * claims a work item. When omitted, dispatch falls back to the Auto Run
+	 * playbook trigger path.  Required after #410 removes the default path.
+	 */
+	runnerScriptPath?: string;
 	suggestedDefaults?: AgentDispatchSuggestedDefaults;
 }
 

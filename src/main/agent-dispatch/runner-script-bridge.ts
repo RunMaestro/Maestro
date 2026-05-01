@@ -68,9 +68,7 @@ export interface RunnerScriptResult {
  * `RUNNER_SCRIPT_NOT_CONFIGURED` failure result when no path is configured.
  */
 export function resolveRunnerScriptPath(entry: AgentDispatchFleetEntry): string | null {
-	const profile = entry.dispatchProfile as unknown as Record<string, unknown>;
-	const configured =
-		typeof profile.runnerScriptPath === 'string' ? profile.runnerScriptPath : undefined;
+	const configured = entry.dispatchProfile.runnerScriptPath;
 
 	if (!configured) {
 		return null;

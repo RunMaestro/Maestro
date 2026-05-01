@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { AlertTriangle, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AgentConfig, ToolType } from '../../types';
+import type { AgentDispatchProfile } from '../../../shared/agent-dispatch-types';
+import { DEFAULT_AGENT_DISPATCH_PROFILE } from '../../../shared/agent-dispatch-types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
@@ -14,6 +16,7 @@ import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
+import { DispatchProfileFields } from '../AgentDispatch/DispatchProfileFields';
 import type { EditAgentModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { logger } from '../../utils/logger';
@@ -52,8 +55,10 @@ export function EditAgentModal({
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
 	const [copiedId, setCopiedId] = useState(false);
-	// Agent Dispatch fleet membership toggle
-	const [fleetEnabled, setFleetEnabled] = useState(false);
+	// Agent Dispatch — full profile editor state
+	const [dispatchProfileDraft, setDispatchProfileDraft] = useState<AgentDispatchProfile>(
+		DEFAULT_AGENT_DISPATCH_PROFILE
+	);
 	const agentDispatchEnabled = useSettingsStore((s) => s.encoreFeatures?.agentDispatch ?? false);
 	// Provider change state
 	const [selectedToolType, setSelectedToolType] = useState<ToolType>(
@@ -244,7 +249,21 @@ export function EditAgentModal({
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
-			setFleetEnabled(session.dispatchProfile?.fleetEnabled ?? false);
+			setDispatchProfileDraft({
+				autoPickupEnabled:
+					session.dispatchProfile?.autoPickupEnabled ??
+					DEFAULT_AGENT_DISPATCH_PROFILE.autoPickupEnabled,
+				capabilityTags:
+					session.dispatchProfile?.capabilityTags ?? DEFAULT_AGENT_DISPATCH_PROFILE.capabilityTags,
+				maxConcurrentClaims:
+					session.dispatchProfile?.maxConcurrentClaims ??
+					DEFAULT_AGENT_DISPATCH_PROFILE.maxConcurrentClaims,
+				fleetEnabled: session.dispatchProfile?.fleetEnabled ?? false,
+				runnerScriptPath: session.dispatchProfile?.runnerScriptPath,
+				...(session.dispatchProfile?.suggestedDefaults
+					? { suggestedDefaults: session.dispatchProfile.suggestedDefaults }
+					: {}),
+			});
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -321,17 +340,7 @@ export function EditAgentModal({
 					};
 
 		// Build dispatch profile only when Agent Dispatch feature is enabled
-		const dispatchProfile = agentDispatchEnabled
-			? {
-					autoPickupEnabled: session.dispatchProfile?.autoPickupEnabled ?? false,
-					capabilityTags: session.dispatchProfile?.capabilityTags ?? [],
-					maxConcurrentClaims: session.dispatchProfile?.maxConcurrentClaims ?? 1,
-					fleetEnabled,
-					...(session.dispatchProfile?.suggestedDefaults
-						? { suggestedDefaults: session.dispatchProfile.suggestedDefaults }
-						: {}),
-				}
-			: session.dispatchProfile;
+		const dispatchProfile = agentDispatchEnabled ? dispatchProfileDraft : session.dispatchProfile;
 
 		// Save with per-session config fields including model, contextWindow, SSH config, and dispatch profile
 		onSave(
@@ -364,7 +373,7 @@ export function EditAgentModal({
 		onSave,
 		onClose,
 		existingSessions,
-		fleetEnabled,
+		dispatchProfileDraft,
 		agentDispatchEnabled,
 	]);
 
@@ -661,7 +670,7 @@ export function EditAgentModal({
 					</div>
 				)}
 
-				{/* Dispatch — only shown when Agent Dispatch encore feature is enabled */}
+				{/* Dispatch profile editor — only shown when Agent Dispatch encore feature is enabled */}
 				{agentDispatchEnabled && (
 					<div>
 						<div
@@ -670,38 +679,13 @@ export function EditAgentModal({
 						>
 							Dispatch
 						</div>
-						<label className="flex items-center gap-3 cursor-pointer">
-							<div className="relative">
-								<input
-									type="checkbox"
-									className="sr-only"
-									checked={fleetEnabled}
-									onChange={(e) => setFleetEnabled(e.target.checked)}
-									id="dispatch-fleet-enabled"
-								/>
-								<div
-									className="w-9 h-5 rounded-full transition-colors"
-									style={{
-										backgroundColor: fleetEnabled ? theme.colors.accent : theme.colors.border,
-									}}
-								/>
-								<div
-									className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-									style={{
-										transform: fleetEnabled ? 'translateX(16px)' : 'translateX(0)',
-									}}
-								/>
-							</div>
-							<div>
-								<div className="text-sm" style={{ color: theme.colors.textMain }}>
-									Fleet member
-								</div>
-								<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-									When enabled, this agent is eligible to receive work items from the dispatch
-									fleet.
-								</div>
-							</div>
-						</label>
+						<DispatchProfileFields
+							profile={dispatchProfileDraft}
+							onChange={setDispatchProfileDraft}
+							theme={theme}
+							suggestedDefaults={dispatchProfileDraft.suggestedDefaults}
+							showFleetToggle={true}
+						/>
 					</div>
 				)}
 
