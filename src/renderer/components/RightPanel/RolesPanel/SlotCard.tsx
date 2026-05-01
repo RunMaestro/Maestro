@@ -1,15 +1,22 @@
 import React, { useCallback, useMemo } from 'react';
+import { Hammer, Wrench, Eye, GitMerge } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { Session } from '../../../types';
 import type { DispatchRole, RoleSlotAssignment } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLE_LABELS } from '../../../../shared/project-roles-types';
 
-// Role icon characters
-const ROLE_ICONS: Record<DispatchRole, string> = {
-	runner: '▶',
-	fixer: '🔧',
-	reviewer: '👁',
-	merger: '⎇',
+// Role icons + brand colors — match the sidebar SessionItem icons exactly.
+const ROLE_ICON_COMPONENT: Record<DispatchRole, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
+	runner: Hammer,
+	fixer: Wrench,
+	reviewer: Eye,
+	merger: GitMerge,
+};
+const ROLE_ICON_COLOR: Record<DispatchRole, string> = {
+	runner: '#c084fc',
+	fixer: '#fb923c',
+	reviewer: '#22d3ee',
+	merger: '#4ade80',
 };
 
 /** Active claim info pushed via IPC from SlotExecutor (#444). */
@@ -213,7 +220,15 @@ export function SlotCard({
 			{/* Header row */}
 			<div className="flex items-center justify-between mb-2">
 				<div className="flex items-center gap-1.5">
-					<span style={{ fontSize: '13px' }}>{ROLE_ICONS[role]}</span>
+					{(() => {
+						const Icon = ROLE_ICON_COMPONENT[role as DispatchRole];
+						return Icon ? (
+							<Icon
+								className="w-4 h-4 shrink-0"
+								style={{ color: ROLE_ICON_COLOR[role as DispatchRole] }}
+							/>
+						) : null;
+					})()}
 					<span
 						className="text-xs font-bold uppercase tracking-wide"
 						style={{ color: theme.colors.textMain }}
