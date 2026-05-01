@@ -12,6 +12,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	Check,
 	Copy,
@@ -132,12 +133,13 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 	const canUndo = strokes.length > 0;
 
-	return (
+	return createPortal(
 		<div
 			role="toolbar"
 			aria-label="Image annotator toolbar"
-			className="absolute top-4 left-1/2 z-30 flex items-center gap-1 rounded-lg px-2 py-1.5"
+			className="fixed top-4 left-1/2 flex items-center gap-1 rounded-lg px-2 py-1.5"
 			style={{
+				zIndex: 170,
 				transform: 'translateX(-50%)',
 				backgroundColor: `${theme.colors.bgSidebar}d9`,
 				backdropFilter: 'blur(12px) saturate(150%)',
@@ -258,7 +260,8 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			>
 				<X className="w-4 h-4" />
 			</GhostIconButton>
-		</div>
+		</div>,
+		document.body
 	);
 });
 
