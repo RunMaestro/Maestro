@@ -178,13 +178,36 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// Restore saved window state
 			const savedState = windowStateStore.store;
 
+			// Sanity-guard: a persisted state of e.g. 200x200 produces an invisible window.
+			// Clamp to sane minimums so a corrupted store can't ghost the app on the next launch.
+			const MIN_RESTORE_WIDTH = 600;
+			const MIN_RESTORE_HEIGHT = 400;
+			const DEFAULT_WIDTH = 1280;
+			const DEFAULT_HEIGHT = 800;
+
+			const safeWidth =
+				typeof savedState.width === 'number' && savedState.width >= MIN_RESTORE_WIDTH
+					? savedState.width
+					: DEFAULT_WIDTH;
+			const safeHeight =
+				typeof savedState.height === 'number' && savedState.height >= MIN_RESTORE_HEIGHT
+					? savedState.height
+					: DEFAULT_HEIGHT;
+
+			if (safeWidth !== savedState.width || safeHeight !== savedState.height) {
+				logger.warn(
+					`Persisted window size ${savedState.width}x${savedState.height} is below minimum; resetting to ${safeWidth}x${safeHeight}`,
+					'Window'
+				);
+			}
+
 			const mainWindow = new BrowserWindow({
 				x: savedState.x,
 				y: savedState.y,
-				width: savedState.width,
-				height: savedState.height,
-				minWidth: 1000,
-				minHeight: 600,
+				width: safeWidth,
+				height: safeHeight,
+				minWidth: 600,
+				minHeight: 400,
 				backgroundColor: '#0b0b0d',
 				...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 				...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
@@ -207,7 +230,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			}
 
 			logger.info('Browser window created', 'Window', {
-				size: `${savedState.width}x${savedState.height}`,
+				size: `${safeWidth}x${safeHeight}`,
 				maximized: savedState.isMaximized,
 				fullScreen: savedState.isFullScreen,
 				mode: isDevelopment ? 'development' : 'production',
