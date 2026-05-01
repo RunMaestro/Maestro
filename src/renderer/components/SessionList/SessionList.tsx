@@ -48,6 +48,8 @@ import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useAgentDispatchFleet } from '../../hooks/useAgentDispatchFleet';
+import type { DispatchRole } from '../../../shared/agent-dispatch-types';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -192,6 +194,23 @@ function SessionListInner(props: SessionListProps) {
 		};
 		// Re-fetch when sessions change so newly added agents show their Cue indicator
 	}, [sessions.length]);
+
+	// Dispatch fleet: maps session ID → { role, active } for sidebar role icons (#442).
+	// The fleet registry tracks which sessions are registered as dispatch agents and
+	// whether they currently hold active work-item claims.
+	const { fleet } = useAgentDispatchFleet();
+	const dispatchSessionMap = useMemo(() => {
+		const map = new Map<string, { role: DispatchRole; active: boolean }>();
+		for (const entry of fleet) {
+			if (!entry.sessionId) continue;
+			const firstRole = entry.dispatchProfile?.roles?.[0];
+			if (!firstRole) continue;
+			const active = entry.currentClaims.some((c) => c.status === 'active');
+			map.set(entry.sessionId, { role: firstRole, active });
+		}
+		return map;
+	}, [fleet]);
+
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
@@ -578,6 +597,8 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					dispatchRole={dispatchSessionMap.get(session.id)?.role}
+					dispatchActive={dispatchSessionMap.get(session.id)?.active}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -647,6 +668,8 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
+										dispatchRole={dispatchSessionMap.get(child.id)?.role}
+										dispatchActive={dispatchSessionMap.get(child.id)?.active}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
