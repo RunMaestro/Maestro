@@ -125,6 +125,7 @@ export const DispatchCardDetail = memo(function DispatchCardDetail({
 		try {
 			await agentDispatchService.assignManually({
 				workItemId: item.id,
+				workItem: item,
 				agent,
 				userInitiated: true,
 			});

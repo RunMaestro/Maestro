@@ -340,10 +340,12 @@ export const KanbanBoard = memo(function KanbanBoard({ theme }: KanbanBoardProps
 			// If dropped on the claimed column, we attempt a manual assign to a ready agent
 			if (targetStatus === 'claimed') {
 				const readyAgent = fleet.find((a) => a.readiness === 'ready' || a.readiness === 'idle');
-				if (readyAgent) {
+				const droppedItem = allItems.find((i) => i.id === workItemId);
+				if (readyAgent && droppedItem) {
 					try {
 						await agentDispatchService.assignManually({
 							workItemId,
+							workItem: droppedItem,
 							agent: readyAgent,
 							userInitiated: true,
 						});

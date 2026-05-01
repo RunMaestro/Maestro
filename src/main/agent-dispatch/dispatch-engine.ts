@@ -10,6 +10,7 @@ import type {
 	WorkGraphActor,
 	WorkGraphBroadcastEnvelope,
 	WorkGraphListResult,
+	WorkItemPipeline,
 } from '../../shared/work-graph-types';
 import type { FleetRegistry } from './fleet-registry';
 import { isAgentEligibleForPickup, selectAutoPickupAssignments } from './assignment-policy';
@@ -19,10 +20,22 @@ import {
 	getAutoPickupTriggerForFleetEvent,
 	isAutoPickupRelevantWorkGraphEvent,
 } from './events';
+import { nextRole, isTerminal, type PipelineEvent } from './state-machine';
 
 export interface AgentDispatchWorkGraphStore {
 	getUnblockedWorkItems(filters?: AgentReadyWorkFilter): Promise<WorkGraphListResult>;
 	claimItem(input: WorkItemClaimInput, actor?: WorkGraphActor): Promise<WorkItem>;
+	/**
+	 * Persist a pipeline state update for a work item.
+	 * Called by `advancePipeline` after a role completes its stage.
+	 * Implementations must update `pipeline` on the stored item and broadcast
+	 * the change so other subsystems (renderer, MCP) see the new role.
+	 */
+	updatePipeline?(
+		workItemId: string,
+		pipeline: WorkItemPipeline,
+		actor?: WorkGraphActor
+	): Promise<WorkItem>;
 }
 
 export interface AutoPickupExecution {
@@ -49,12 +62,35 @@ export interface AutoPickupRunResult {
 
 export interface ManualAssignmentInput {
 	workItemId: string;
+	/** The full work item — needed for role eligibility checks (#427). */
+	workItem: WorkItem;
 	agent: AgentDispatchFleetEntry;
 	userInitiated: boolean;
 	note?: string;
 	expiresAt?: string;
 	actor?: WorkGraphActor;
 	expectedUpdatedAt?: string;
+}
+
+/**
+ * Structured error returned when a manual assignment is rejected because the
+ * fleet entry's roles do not include the work item's current pipeline role.
+ */
+export interface RoleEligibilityError {
+	code: 'ROLE_NOT_ELIGIBLE';
+	workItemId: string;
+	workItemCurrentRole: string;
+	agentId: string;
+	agentRoles: string[];
+	message: string;
+}
+
+export function isRoleEligibilityError(value: unknown): value is RoleEligibilityError {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as RoleEligibilityError).code === 'ROLE_NOT_ELIGIBLE'
+	);
 }
 
 export class AgentDispatchEngine {
@@ -118,9 +154,36 @@ export class AgentDispatchEngine {
 		}
 	}
 
-	async assignManually(input: ManualAssignmentInput): Promise<WorkItem> {
+	/**
+	 * Manually assign a work item to a specific fleet agent.
+	 *
+	 * Role enforcement (#427): when the work item has a `pipeline` field, the
+	 * agent's `dispatchProfile.roles` must include `pipeline.currentRole`.
+	 * Returns a structured `RoleEligibilityError` (not a thrown exception) so
+	 * the renderer can surface a human-readable message rather than catching a
+	 * generic error.
+	 */
+	async assignManually(input: ManualAssignmentInput): Promise<WorkItem | RoleEligibilityError> {
 		if (!input.userInitiated) {
 			throw new Error('Manual assignment requires an explicit user-initiated action');
+		}
+
+		// Role gate — only applies when the item has a pipeline with a currentRole
+		if (input.workItem.pipeline) {
+			const currentRole = input.workItem.pipeline.currentRole;
+			const agentRoles = input.agent.dispatchProfile.roles ?? [];
+			if (!agentRoles.includes(currentRole)) {
+				return {
+					code: 'ROLE_NOT_ELIGIBLE',
+					workItemId: input.workItemId,
+					workItemCurrentRole: currentRole,
+					agentId: input.agent.id,
+					agentRoles,
+					message:
+						`Agent '${input.agent.displayName}' (roles: [${agentRoles.join(', ') || 'none'}]) ` +
+						`is not eligible for the '${currentRole}' role on work item '${input.workItemId}'.`,
+				};
+			}
 		}
 
 		return this.options.workGraph.claimItem(
@@ -140,6 +203,48 @@ export class AgentDispatchEngine {
 				providerSessionId: input.agent.providerSessionId,
 			}
 		);
+	}
+
+	/**
+	 * Advance the pipeline for a work item after its current role completes.
+	 *
+	 * Called when an agent signals completion via `pm:setStatus` (#430).
+	 * - Computes the next pipeline state via the state machine.
+	 * - Persists the update via `workGraph.updatePipeline` (if the store
+	 *   supports it — stores without the method are treated as no-op to allow
+	 *   gradual migration).
+	 * - Returns `null` if the work item has no pipeline (non-role-gated items).
+	 * - Returns the updated work item on success.
+	 */
+	async advancePipeline(
+		workItem: WorkItem,
+		event: PipelineEvent,
+		actor?: WorkGraphActor
+	): Promise<WorkItem | null> {
+		if (!workItem.pipeline) {
+			return null;
+		}
+
+		const updatedPipeline = nextRole(workItem.pipeline, event);
+
+		if (!this.options.workGraph.updatePipeline) {
+			// Store does not yet support pipeline persistence — return a synthetic item
+			// so callers can still reason about the next state without crashing.
+			return { ...workItem, pipeline: updatedPipeline };
+		}
+
+		return this.options.workGraph.updatePipeline(workItem.id, updatedPipeline, actor);
+	}
+
+	/**
+	 * Returns true when the pipeline has reached its terminal state
+	 * (merger-done), indicating the item can be marked 'done'.
+	 */
+	isPipelineTerminal(workItem: WorkItem): boolean {
+		if (!workItem.pipeline) {
+			return false;
+		}
+		return isTerminal(workItem.pipeline);
 	}
 
 	private async runAutoPickupOnce(
