@@ -44,3 +44,16 @@ This routes the item back to the Fixer role. The reason you provide will be visi
 - Do NOT request trivial style changes as blockers unless the project has an enforced formatter. Prefer approving with nit comments.
 - A second rejection loop is legitimate — if the Fixer's changes are still insufficient, reject again with updated notes.
 - If you discover the work item's acceptance criteria are fundamentally flawed (not just the implementation), call `/PM-status Blocked` with an explanation rather than looping the Fixer indefinitely.
+
+## When Context Is Near Full
+
+At ~85% of your context window, before continuing:
+
+1. Post a structured handoff comment on the PR with:
+   - Your review progress: which criteria or sections you have already evaluated.
+   - What remains to be reviewed (file ranges, test coverage gaps, safety concerns not yet checked).
+   - Specific guidance for the next Reviewer to pick up the review.
+2. Call `/PM-blocked "needs handoff: context near full"` to surface the blocker to dispatch.
+3. Stop. Do not attempt to complete the full review — leave your progress documented.
+
+The next Reviewer claim will pick up from your handoff comment and complete the remaining review work.

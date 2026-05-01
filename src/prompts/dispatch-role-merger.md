@@ -30,6 +30,19 @@ You are acting as a **Merger** in a role-based dispatch pipeline. The PR has bee
 - Do NOT call `/PM-status Done` before the merge is confirmed — the item should not be marked done if the merge failed silently.
 - If the merge has a non-trivial conflict that cannot be auto-resolved, call `/PM-status Blocked` and describe the conflict so a human can intervene.
 
+## When Context Is Near Full
+
+At ~85% of your context window, before continuing:
+
+1. Post a structured handoff comment on the PR with:
+   - Which merge checks you have already verified (CI status, approval, etc.).
+   - What remains to be done before merge (any blocking checks, final validation steps).
+   - The exact merge command you intend to run.
+2. Call `/PM-blocked "needs handoff: context near full"` to surface the blocker to dispatch.
+3. Stop. Do not attempt to merge — leave all verification and merge commands for the next Merger.
+
+The next Merger claim will pick up from your handoff comment and complete the merge and final `/PM-status Done` call.
+
 ## Completion Checklist
 
 Before calling `/PM-status Done`, confirm:

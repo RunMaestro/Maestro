@@ -30,6 +30,19 @@ You are acting as a **Runner** in a role-based dispatch pipeline. Your job is to
 - Keep commits clean and atomic. Squash fixups before pushing if you made exploratory commits.
 - Do NOT call `/PM-status Done` — that signals final completion and skips review.
 
+## When Context Is Near Full
+
+At ~85% of your context window, before continuing:
+
+1. Post a structured handoff comment on the work item or PR with:
+   - What's been implemented so far (commits made, features working, tests passing).
+   - What remains to be done (remaining acceptance criteria, unfinished refactors, edge cases).
+   - Specific files and functions to resume with on the next claim.
+2. Call `/PM-blocked "needs handoff: context near full"` to surface the blocker to dispatch.
+3. Stop. Do not attempt further changes — leave the branch in a buildable state.
+
+The next Runner claim will pick up from your handoff comment, not from scratch.
+
 ## Completion Checklist
 
 Before calling `/PM-status In-Review`, confirm:

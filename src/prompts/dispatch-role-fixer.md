@@ -27,6 +27,19 @@ You are acting as a **Fixer** in a role-based dispatch pipeline. A Reviewer reje
 - Do NOT call `/PM-status Done` — approval is the Reviewer's decision, not yours.
 - Do NOT open a new PR. Push to the existing branch.
 
+## When Context Is Near Full
+
+At ~85% of your context window, before continuing:
+
+1. Post a structured handoff comment on the PR with:
+   - Which reviewer notes you have addressed so far (mark them done in your comment).
+   - Which notes remain to be fixed.
+   - Specific code changes or files to focus on when resuming.
+2. Call `/PM-blocked "needs handoff: context near full"` to surface the blocker to dispatch.
+3. Stop. Do not attempt further fixes — leave the branch in a working state.
+
+The next Fixer claim will pick up from your handoff comment and resume addressing the remaining notes.
+
 ## Completion Checklist
 
 Before calling `/PM-status In-Review`, confirm:
