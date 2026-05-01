@@ -49,6 +49,14 @@ import {
 	plannerEpicDecompose,
 	plannerSync,
 } from './commands/planner';
+import {
+	fleetBoard,
+	fleetList,
+	fleetClaim,
+	fleetRelease,
+	fleetPause,
+	fleetResume,
+} from './commands/fleet';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -591,6 +599,57 @@ planner
 			json: options.json,
 		})
 	);
+
+// Fleet commands — Agent Dispatch: manage the fleet of agents that claim Work Graph items.
+// NOTE: "fleet" = Agent Dispatch (long-lived agents claiming work items).
+//       "dispatch" = Tab Dispatch (send a prompt to an agent tab). They are different.
+const fleet = program
+	.command('fleet')
+	.description(
+		'Manage the Agent Dispatch fleet (long-lived agents claiming Work Graph items).\n' +
+			'  NOTE: for tab dispatch (sending prompts to a tab), use `maestro-cli dispatch`.'
+	);
+
+fleet
+	.command('board')
+	.description('Show work items grouped by status (kanban-style board)')
+	.option('-p, --project <path>', 'Filter by project root path')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => fleetBoard({ project: options.project, json: options.json }));
+
+fleet
+	.command('list')
+	.description('List all fleet entries with readiness, current load, and pickup status')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => fleetList({ json: options.json }));
+
+fleet
+	.command('claim <workItemId>')
+	.description('Manually assign a work item to a fleet entry')
+	.requiredOption('--to <fleetEntryId>', 'Fleet entry ID to assign the work item to')
+	.option('--note <text>', 'Optional note to attach to the claim')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((workItemId, options) =>
+		fleetClaim(workItemId, { to: options.to, note: options.note, json: options.json })
+	);
+
+fleet
+	.command('release <workItemId>')
+	.description('Release an active claim on a work item')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((workItemId, options) => fleetRelease(workItemId, { json: options.json }));
+
+fleet
+	.command('pause <agentId>')
+	.description('Pause auto-pickup for an agent (resets on app restart)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => fleetPause(agentId, { json: options.json }));
+
+fleet
+	.command('resume <agentId>')
+	.description('Resume auto-pickup for a previously-paused agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => fleetResume(agentId, { json: options.json }));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
