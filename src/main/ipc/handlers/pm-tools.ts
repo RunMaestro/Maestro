@@ -4,9 +4,9 @@
  * Exposes three channels that agents call at workflow transitions to self-update
  * their claimed work item in the Projects v2 custom fields:
  *
- *   pm:setStatus  → updates Status field for the agent's claimed item
- *   pm:setRole    → updates Role field for the agent's claimed item
- *   pm:setBlocked → sets Status=Blocked + posts a comment with the reason
+ *   pm:setStatus  → updates AI Status field for the agent's claimed item
+ *   pm:setRole    → updates AI Role field for the agent's claimed item
+ *   pm:setBlocked → sets AI Status=Blocked + posts a comment with the reason
  *
  * Each handler:
  *  1. Resolves the calling agent's currently-claimed work item (via work-graph).
@@ -30,13 +30,13 @@ const LOG_CONTEXT = '[PmTools]';
 export interface PmToolsSetStatusInput {
 	/** The agent's own session ID — used to look up its current claim. */
 	agentSessionId: string;
-	/** Target status value — must match a Status field option name. */
+	/** Target status value — must match an AI Status field option name. */
 	status: string;
 }
 
 export interface PmToolsSetRoleInput {
 	agentSessionId: string;
-	/** Target role value — must match a Role field option name. */
+	/** Target role value — must match an AI Role field option name. */
 	role: string;
 }
 
@@ -80,7 +80,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			await recordPmEvent(workGraph, {
 				workItemId,
 				actor,
-				field: 'Status',
+				field: 'AI Status',
 				priorState: undefined,
 				newState: input.status,
 			});
@@ -99,7 +99,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 
 			return {
 				success: true,
-				data: { workItemId, field: 'Status', value: input.status } satisfies PmToolsResult,
+				data: { workItemId, field: 'AI Status', value: input.status } satisfies PmToolsResult,
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
@@ -126,7 +126,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			await recordPmEvent(workGraph, {
 				workItemId,
 				actor,
-				field: 'Role',
+				field: 'AI Role',
 				priorState: undefined,
 				newState: input.role,
 			});
@@ -134,7 +134,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			console.log(`${LOG_CONTEXT} pm:setRole workItem=${workItemId} role=${input.role}`);
 			return {
 				success: true,
-				data: { workItemId, field: 'Role', value: input.role } satisfies PmToolsResult,
+				data: { workItemId, field: 'AI Role', value: input.role } satisfies PmToolsResult,
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
@@ -156,7 +156,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 
 			const githubSync = new DeliveryPlannerGithubSync();
 
-			// 1. Set Projects v2 Status → Blocked.
+			// 1. Set Projects v2 AI Status → Blocked.
 			await githubSync.updateStatusField(projectId, projectItemId, 'Blocked');
 
 			// 2. Post a comment on the GitHub issue if one exists.
@@ -175,7 +175,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			await recordPmEvent(workGraph, {
 				workItemId,
 				actor,
-				field: 'Status',
+				field: 'AI Status',
 				priorState: workItem.status,
 				newState: 'Blocked',
 				reason: input.reason,
@@ -184,7 +184,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			console.log(`${LOG_CONTEXT} pm:setBlocked workItem=${workItemId} reason="${input.reason}"`);
 			return {
 				success: true,
-				data: { workItemId, field: 'Status', value: 'Blocked' } satisfies PmToolsResult,
+				data: { workItemId, field: 'AI Status', value: 'Blocked' } satisfies PmToolsResult,
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);

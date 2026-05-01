@@ -23,15 +23,20 @@ type ProjectFieldName =
 	| 'Parent Work Item'
 	| 'External Mirror ID'
 	| 'Agent Pickup'
-	| 'Status'
-	| 'Role'
-	| 'Stage'
-	| 'Priority';
+	| 'AI Status'
+	| 'AI Role'
+	| 'AI Stage'
+	| 'AI Priority'
+	| 'AI Parent PRD'
+	| 'AI Parent Epic'
+	| 'AI Assigned Slot'
+	| 'AI Last Heartbeat'
+	| 'AI Project';
 
 // Projects v2 custom fields that #430 requires to exist on every project before sync.
 // Shape: name → array of option names (for single-select fields) or null (for text fields).
 const REQUIRED_PROJECT_FIELDS: Record<string, string[] | null> = {
-	Status: [
+	'AI Status': [
 		'Idea',
 		'PRD Draft',
 		'Refinement',
@@ -41,9 +46,15 @@ const REQUIRED_PROJECT_FIELDS: Record<string, string[] | null> = {
 		'Blocked',
 		'Done',
 	],
-	Role: ['runner', 'fixer', 'reviewer', 'merger'],
-	Stage: ['prd', 'epic', 'task'],
-	Priority: ['P0', 'P1', 'P2', 'P3'],
+	'AI Role': ['runner', 'fixer', 'reviewer', 'merger'],
+	'AI Stage': ['prd', 'epic', 'task'],
+	'AI Priority': ['P0', 'P1', 'P2', 'P3'],
+	// New fields added in #438 (idempotent ensure-create)
+	'AI Parent PRD': null, // Text field — work-item id or issue link
+	'AI Parent Epic': null, // Text field — work-item id or issue link
+	'AI Assigned Slot': null, // Text field — agent id
+	'AI Last Heartbeat': null, // Text field — timestamp
+	'AI Project': null, // Text field — project root path
 	// 'External Mirror ID' is a text field — it may already exist (per #411); null signals text type.
 	'External Mirror ID': null,
 };
@@ -181,7 +192,7 @@ export class DeliveryPlannerGithubSync {
 	}
 
 	/**
-	 * Update the Projects v2 Status field for a single work item by its project item ID.
+	 * Update the Projects v2 AI Status field for a single work item by its project item ID.
 	 * Used by pm:setStatus and pm:setBlocked IPC handlers (#430).
 	 */
 	async updateStatusField(
@@ -190,11 +201,11 @@ export class DeliveryPlannerGithubSync {
 		statusValue: string
 	): Promise<void> {
 		const fields = await this.readProjectFields();
-		await this.setProjectField(projectId, projectItemId, fields, 'Status', statusValue);
+		await this.setProjectField(projectId, projectItemId, fields, 'AI Status', statusValue);
 	}
 
 	/**
-	 * Update the Projects v2 Role field for a single work item by its project item ID.
+	 * Update the Projects v2 AI Role field for a single work item by its project item ID.
 	 * Used by pm:setRole IPC handler (#430).
 	 */
 	async updateRoleField(
@@ -203,7 +214,7 @@ export class DeliveryPlannerGithubSync {
 		roleValue: string
 	): Promise<void> {
 		const fields = await this.readProjectFields();
-		await this.setProjectField(projectId, projectItemId, fields, 'Role', roleValue);
+		await this.setProjectField(projectId, projectItemId, fields, 'AI Role', roleValue);
 	}
 
 	/** Read the project and return its node ID. Used by pm-tools handlers. */
@@ -345,22 +356,68 @@ export class DeliveryPlannerGithubSync {
 			agentPickupForProject(item)
 		);
 
-		// #430 — set the five new v2 custom fields (Status, Role, Stage, Priority).
+		// #430 — set the v2 custom fields (AI Status, AI Role, AI Stage, AI Priority).
 		const statusValue = statusFieldForItem(item);
 		if (statusValue) {
-			await this.setProjectField(project.id, projectItemId, fields, 'Status', statusValue);
+			await this.setProjectField(project.id, projectItemId, fields, 'AI Status', statusValue);
 		}
 		const roleValue = roleFieldForItem(item);
 		if (roleValue) {
-			await this.setProjectField(project.id, projectItemId, fields, 'Role', roleValue);
+			await this.setProjectField(project.id, projectItemId, fields, 'AI Role', roleValue);
 		}
 		const stageValue = stageFieldForItem(item);
 		if (stageValue) {
-			await this.setProjectField(project.id, projectItemId, fields, 'Stage', stageValue);
+			await this.setProjectField(project.id, projectItemId, fields, 'AI Stage', stageValue);
 		}
 		const priorityValue = priorityFieldForItem(item);
 		if (priorityValue) {
-			await this.setProjectField(project.id, projectItemId, fields, 'Priority', priorityValue);
+			await this.setProjectField(project.id, projectItemId, fields, 'AI Priority', priorityValue);
+		}
+
+		// #438 — populate new fields when available
+		const parentPrdValue = parentPrdForProject(item);
+		if (parentPrdValue) {
+			await this.setProjectField(
+				project.id,
+				projectItemId,
+				fields,
+				'AI Parent PRD',
+				parentPrdValue
+			);
+		}
+		const parentEpicValue = parentEpicForProject(item);
+		if (parentEpicValue) {
+			await this.setProjectField(
+				project.id,
+				projectItemId,
+				fields,
+				'AI Parent Epic',
+				parentEpicValue
+			);
+		}
+		const assignedSlotValue = assignedSlotForProject(item);
+		if (assignedSlotValue) {
+			await this.setProjectField(
+				project.id,
+				projectItemId,
+				fields,
+				'AI Assigned Slot',
+				assignedSlotValue
+			);
+		}
+		const lastHeartbeatValue = lastHeartbeatForProject(item);
+		if (lastHeartbeatValue) {
+			await this.setProjectField(
+				project.id,
+				projectItemId,
+				fields,
+				'AI Last Heartbeat',
+				lastHeartbeatValue
+			);
+		}
+		const projectValue = projectForProject(item);
+		if (projectValue) {
+			await this.setProjectField(project.id, projectItemId, fields, 'AI Project', projectValue);
 		}
 
 		return projectItemId;
@@ -489,7 +546,7 @@ export class DeliveryPlannerGithubSync {
 	}
 
 	/**
-	 * Detect legacy status labels on an issue, copy the state into the Projects v2 Status
+	 * Detect legacy status labels on an issue, copy the state into the Projects v2 AI Status
 	 * field, then remove only those state labels (user labels are untouched).
 	 *
 	 * GraphQL mutation used for field update:
@@ -522,9 +579,9 @@ export class DeliveryPlannerGithubSync {
 		// Use the first matching label as the canonical status to migrate.
 		const mappedStatus = LEGACY_STATUS_LABELS[legacyMatches[0]];
 
-		// Update the Projects v2 Status field with the mapped value.
+		// Update the Projects v2 AI Status field with the mapped value.
 		const fields = await this.readProjectFields();
-		await this.setProjectField(projectId, projectItemId, fields, 'Status', mappedStatus);
+		await this.setProjectField(projectId, projectItemId, fields, 'AI Status', mappedStatus);
 
 		// Remove legacy status labels (not user labels).
 		for (const labelName of legacyMatches) {
@@ -730,4 +787,50 @@ function priorityFieldForItem(item: WorkItem): string {
 	if (typeof item.priority !== 'number') return '';
 	const labels: Record<number, string> = { 0: 'P0', 1: 'P1', 2: 'P2', 3: 'P3' };
 	return labels[item.priority] ?? '';
+}
+
+/**
+ * Maps WorkItem parentPrdId to the Projects v2 AI Parent PRD field value (#438).
+ * Returns work-item id or empty string.
+ */
+function parentPrdForProject(item: WorkItem): string {
+	return (typeof item.metadata?.parentPrdId === 'string' ? item.metadata.parentPrdId : '') ?? '';
+}
+
+/**
+ * Maps WorkItem parentEpicId to the Projects v2 AI Parent Epic field value (#438).
+ * Returns work-item id or empty string.
+ */
+function parentEpicForProject(item: WorkItem): string {
+	return (typeof item.metadata?.parentEpicId === 'string' ? item.metadata.parentEpicId : '') ?? '';
+}
+
+/**
+ * Maps WorkItem assignedSlot to the Projects v2 AI Assigned Slot field value (#438).
+ * Returns agent id or empty string.
+ */
+function assignedSlotForProject(item: WorkItem): string {
+	return (typeof item.metadata?.assignedSlot === 'string' ? item.metadata.assignedSlot : '') ?? '';
+}
+
+/**
+ * Maps WorkItem claim.lastHeartbeat to the Projects v2 AI Last Heartbeat field value (#438).
+ * Returns timestamp or empty string. Note: lastHeartbeat field may not yet exist on WorkItemClaim.
+ * This function is future-proof for when heartbeat machinery is implemented.
+ */
+function lastHeartbeatForProject(item: WorkItem): string {
+	// Check metadata as a fallback since lastHeartbeat may not be on the claim yet
+	const heartbeat =
+		typeof item.metadata?.lastHeartbeat === 'string'
+			? item.metadata.lastHeartbeat
+			: (item.claim as any)?.lastHeartbeat;
+	return (typeof heartbeat === 'string' ? heartbeat : '') ?? '';
+}
+
+/**
+ * Maps WorkItem projectPath to the Projects v2 AI Project field value (#438).
+ * Returns project root path or empty string.
+ */
+function projectForProject(item: WorkItem): string {
+	return item.projectPath ?? '';
 }

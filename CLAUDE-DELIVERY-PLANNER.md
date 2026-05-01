@@ -318,48 +318,53 @@ Labels applied: `delivery-planner`, plus any of `external-mirror`, `symphony`, `
 
 ---
 
-## GitHub State Model (#430)
+## GitHub State Model (#430, #438)
 
-> **Status is NOT in labels — status IS in Projects v2 custom fields.**
+> **AI Status is NOT in labels — status IS in Projects v2 custom fields with `AI ` prefix.**
 
-Starting with issue #430, work item state is tracked exclusively in GitHub Projects v2 custom fields, **not** in labels. This section documents the authoritative state model.
+Starting with issue #430 and expanded in #438, work item state is tracked exclusively in GitHub Projects v2 custom fields with an `AI ` prefix to distinguish Maestro-driven fields from human kanban. This section documents the authoritative state model.
 
 ### Custom Fields (Projects v2)
 
-On first sync to project #7, `DeliveryPlannerGithubSync.ensureProjectFields()` idempotently creates these five fields via the `createProjectV2Field` GraphQL mutation if they do not already exist:
+On first sync to project #7, `DeliveryPlannerGithubSync.ensureProjectFields()` idempotently creates these fields via the `createProjectV2Field` GraphQL mutation if they do not already exist:
 
 | Field                | Type            | Options                                                                                         |
 | -------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| `Status`             | `SINGLE_SELECT` | `Idea`, `PRD Draft`, `Refinement`, `Tasks Ready`, `In Progress`, `In Review`, `Blocked`, `Done` |
-| `Role`               | `SINGLE_SELECT` | `runner`, `fixer`, `reviewer`, `merger`                                                         |
-| `Stage`              | `SINGLE_SELECT` | `prd`, `epic`, `task`                                                                           |
-| `Priority`           | `SINGLE_SELECT` | `P0`, `P1`, `P2`, `P3`                                                                          |
+| `AI Status`          | `SINGLE_SELECT` | `Idea`, `PRD Draft`, `Refinement`, `Tasks Ready`, `In Progress`, `In Review`, `Blocked`, `Done` |
+| `AI Role`            | `SINGLE_SELECT` | `runner`, `fixer`, `reviewer`, `merger`                                                         |
+| `AI Stage`           | `SINGLE_SELECT` | `prd`, `epic`, `task`                                                                           |
+| `AI Priority`        | `SINGLE_SELECT` | `P0`, `P1`, `P2`, `P3`                                                                          |
+| `AI Parent PRD`      | `TEXT`          | (work-item id or issue link)                                                                    |
+| `AI Parent Epic`     | `TEXT`          | (work-item id or issue link)                                                                    |
+| `AI Assigned Slot`   | `TEXT`          | (agent id)                                                                                      |
+| `AI Last Heartbeat`  | `TEXT`          | (timestamp)                                                                                     |
+| `AI Project`         | `TEXT`          | (project root path)                                                                             |
 | `External Mirror ID` | `TEXT`          | (free-form, e.g. `delivery-planner#task-3`)                                                     |
 
 Field updates use the `updateProjectV2ItemFieldValue` GraphQL mutation (via `gh project item-edit --single-select-option-id` for single-select fields, or `--text` for text fields).
 
-### Status Mapping (WorkItemStatus → Status field)
+### AI Status Mapping (WorkItemStatus → AI Status field)
 
-| `WorkItem.status` | Projects v2 `Status` field |
-| ----------------- | -------------------------- |
-| `discovered`      | `Idea`                     |
-| `planned`         | `PRD Draft`                |
-| `ready`           | `Tasks Ready`              |
-| `claimed`         | `In Progress`              |
-| `in_progress`     | `In Progress`              |
-| `blocked`         | `Blocked`                  |
-| `review`          | `In Review`                |
-| `done`            | `Done`                     |
+| `WorkItem.status` | Projects v2 `AI Status` field |
+| ----------------- | ----------------------------- |
+| `discovered`      | `Idea`                        |
+| `planned`         | `PRD Draft`                   |
+| `ready`           | `Tasks Ready`                 |
+| `claimed`         | `In Progress`                 |
+| `in_progress`     | `In Progress`                 |
+| `blocked`         | `Blocked`                     |
+| `review`          | `In Review`                   |
+| `done`            | `Done`                        |
 
 ### Agent-Callable pm-tools Channels
 
 Agents update their own work item fields mid-workflow using three IPC channels (Track B, #430):
 
-| Channel         | Renderer API                                                | Effect                                                       |
-| --------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
-| `pm:setStatus`  | `window.maestro.pmTools.setStatus(agentSessionId, status)`  | Updates Status field for the agent's claimed item            |
-| `pm:setRole`    | `window.maestro.pmTools.setRole(agentSessionId, role)`      | Updates Role field for the agent's claimed item              |
-| `pm:setBlocked` | `window.maestro.pmTools.setBlocked(agentSessionId, reason)` | Sets Status=Blocked + posts a GitHub comment with the reason |
+| Channel         | Renderer API                                                | Effect                                                          |
+| --------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| `pm:setStatus`  | `window.maestro.pmTools.setStatus(agentSessionId, status)`  | Updates AI Status field for the agent's claimed item            |
+| `pm:setRole`    | `window.maestro.pmTools.setRole(agentSessionId, role)`      | Updates AI Role field for the agent's claimed item              |
+| `pm:setBlocked` | `window.maestro.pmTools.setBlocked(agentSessionId, reason)` | Sets AI Status=Blocked + posts a GitHub comment with the reason |
 
 **Ownership enforcement:** each channel resolves the calling agent's active claim via `workGraph.listItems({ ownerId: agentSessionId })` and throws if no active claim is found. Agents cannot update items they don't own.
 
@@ -378,7 +383,7 @@ When a project with legacy `status:*` labels is synced for the first time after 
 
 1. Reads the issue's current labels.
 2. Finds any `status:*` label (e.g. `status:in-progress` → `In Progress`).
-3. Calls `gh project item-edit --single-select-option-id` to set the Status field.
+3. Calls `gh project item-edit --single-select-option-id` to set the AI Status field.
 4. Removes only the legacy state labels; user-defined labels are untouched.
 
 Recognized legacy labels: `status:idea`, `status:prd-draft`, `status:refinement`, `status:tasks-ready`, `status:in-progress`, `status:in-review`, `status:blocked`, `status:done`.

@@ -147,6 +147,8 @@ type WorkGraphActor = import('../shared/work-graph-types').WorkGraphActor;
 // Agent Dispatch types
 type AgentDispatchFleetEntry = import('../shared/agent-dispatch-types').AgentDispatchFleetEntry;
 type ManualAssignmentInput = import('../main/agent-dispatch/dispatch-engine').ManualAssignmentInput;
+type RoleEligibilityError = import('../main/agent-dispatch/dispatch-engine').RoleEligibilityError;
+type SlotDisabledError = import('../main/agent-dispatch/dispatch-engine').SlotDisabledError;
 
 // Delivery Planner types
 type DeliveryPlannerCreatePrdRequest =
@@ -3451,7 +3453,9 @@ interface MaestroAPI {
 	agentDispatch: {
 		getBoard: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
 		getFleet: () => Promise<IpcDataResponse<AgentDispatchFleetEntry[]>>;
-		assignManually: (input: ManualAssignmentInput) => Promise<IpcDataResponse<WorkItem>>;
+		assignManually: (
+			input: ManualAssignmentInput
+		) => Promise<IpcDataResponse<WorkItem | RoleEligibilityError | SlotDisabledError>>;
 		releaseClaim: (
 			input: WorkItemClaimReleaseInput
 		) => Promise<IpcDataResponse<WorkItemClaim | undefined>>;
@@ -3647,6 +3651,48 @@ interface MaestroAPI {
 		beat: (
 			workItemId: string
 		) => Promise<IpcDataResponse<{ workItemId: string; lastHeartbeat: string }>>;
+	};
+
+	// pm-audit API — rule-based in-flight work sweep (#434)
+	pmAudit: {
+		/**
+		 * Run the full 7-check audit sweep over all non-archived work items.
+		 *
+		 * Gated by the `agentDispatch` encore feature flag.
+		 *
+		 * @param opts - Optional overrides (staleClaimMs, projectRoleSlots).
+		 * @returns Structured AuditReport with autoFixed and needsAttention findings.
+		 */
+		run: (opts?: {
+			/** Override the staleness threshold in milliseconds. Default: 5 minutes. */
+			staleClaimMs?: number;
+			/**
+			 * Per-project role slot map (role → agentId).
+			 * When omitted, the ORPHANED_SLOT_AGENT check is skipped.
+			 */
+			projectRoleSlots?: Partial<Record<string, string>>;
+		}) => Promise<
+			| {
+					success: true;
+					data: {
+						totalAudited: number;
+						autoFixed: Array<{
+							workItemId: string;
+							checkId: string;
+							message: string;
+							severity: 'auto-fix' | 'needs-attention';
+						}>;
+						needsAttention: Array<{
+							workItemId: string;
+							checkId: string;
+							message: string;
+							severity: 'auto-fix' | 'needs-attention';
+						}>;
+						errors: Array<{ workItemId: string; error: string }>;
+					};
+			  }
+			| { success: false; error: string }
+		>;
 	};
 }
 

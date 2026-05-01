@@ -372,10 +372,11 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmOrchestratorHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
-		
 	});
 	// Register pm-tools IPC handlers (#430): pm:setStatus, pm:setRole, pm:setBlocked
 	registerPmToolsHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Audit handlers (#434): pmAudit:run
+	registerPmAuditHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

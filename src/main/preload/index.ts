@@ -62,6 +62,7 @@ import { createPlanningPipelineApi } from './planningPipeline';
 import { createConversationalPrdApi } from './conversationalPrd';
 import { createWorkGraphApi } from './workGraph';
 import { createPmToolsApi } from './pmTools';
+import { createPmAuditApi } from './pmAudit';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -238,6 +239,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// pm-tools API (agent-callable status/role/blocked field updates, #430)
 	pmTools: createPmToolsApi(),
+
+	// pm-audit API (rule-based in-flight work sweep, #434)
+	pmAudit: createPmAuditApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -593,3 +597,7 @@ export type {
 	// From pmTools
 	PmToolsApi,
 } from './pmTools';
+export type {
+	// From pmAudit
+	PmAuditApi,
+} from './pmAudit';
