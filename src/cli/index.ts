@@ -57,6 +57,14 @@ import {
 	fleetPause,
 	fleetResume,
 } from './commands/fleet';
+import {
+	convPrdList,
+	convPrdStart,
+	convPrdAsk,
+	convPrdShow,
+	convPrdFinalize,
+	convPrdArchive,
+} from './commands/conv-prd';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -650,6 +658,74 @@ fleet
 	.description('Resume auto-pickup for a previously-paused agent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, options) => fleetResume(agentId, { json: options.json }));
+
+// Conv-PRD commands — Conversational PRD planner: drive a PRD draft interactively via CLI.
+// Requires the running Maestro desktop app with the Conversational PRD encore feature on.
+// Sessions are persisted to ~/.config/maestro/conversational-prd-sessions.json (Linux/Windows)
+// or ~/Library/Application Support/maestro/conversational-prd-sessions.json (macOS).
+const convPrd = program
+	.command('conv-prd')
+	.description(
+		'Drive the Conversational PRD planner (start sessions, send messages, finalize into Delivery Planner PRDs).\n' +
+			'  Requires Maestro desktop running with Conversational PRD encore feature enabled.'
+	);
+
+convPrd
+	.command('list')
+	.description('List all Conversational PRD sessions')
+	.option('-p, --project <path>', 'Filter by project root path')
+	.option('--include-archived', 'Include archived sessions in the list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) =>
+		convPrdList({
+			json: options.json,
+			project: options.project,
+			includeArchived: options.includeArchived,
+		})
+	);
+
+convPrd
+	.command('start')
+	.description('Start a new Conversational PRD session, returns { sessionId }')
+	.option('--initial <md>', 'Initial markdown content or brief to seed the session')
+	.option('-p, --project <path>', 'Project root path for the PRD')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) =>
+		convPrdStart({ initial: options.initial, project: options.project, json: options.json })
+	);
+
+convPrd
+	.command('ask <sessionId> <message>')
+	.description('Add a user turn to an existing session and receive the assistant reply')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sessionId, message, options) => convPrdAsk(sessionId, message, { json: options.json }));
+
+convPrd
+	.command('show <sessionId>')
+	.description('Show the current state of a session (messages + draft)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sessionId, options) => convPrdShow(sessionId, { json: options.json }));
+
+convPrd
+	.command('finalize <sessionId>')
+	.description(
+		'Finalize the PRD session — emits the final PRD.\n' +
+			'  With --handoff-to-planner, creates a Delivery Planner PRD work item from the result.'
+	)
+	.option('--handoff-to-planner', 'Create a Delivery Planner PRD work item and return its ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sessionId, options) =>
+		convPrdFinalize(sessionId, {
+			handoffToPlanner: options.handoffToPlanner,
+			json: options.json,
+		})
+	);
+
+convPrd
+	.command('archive <sessionId>')
+	.description('Archive a session (hides it from the default list)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((sessionId, options) => convPrdArchive(sessionId, { json: options.json }));
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
