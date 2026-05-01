@@ -4,21 +4,21 @@ Agent Dispatch documentation for the Maestro codebase. For the main guide, see [
 
 Agent Dispatch is the subsystem that selects an agent session, claims a GitHub issue, runs Auto Run documents, and releases the claim when work is done. It lives entirely inside the **Symphony** feature.
 
-> **v2 simpler 4-slot model (post-#429):** The per-project Roles tab now implements the canonical 1-slot-per-role design. FleetRegistry's complex eligibility queries (previously used for sophisticated capability matching) are dead code and slated for removal in #433. Prefer direct role assignment and capability hints in Work Graph metadata. See issue #425 rollout tracker for status.
+> **v2 simpler 4-slot model (post-#429):** The per-project Roles tab implements the canonical 1-slot-per-role design. Each slot references an existing Left Bar agent by its `Session.id` (`agentId`-based). When a work item is claimed, `executeSlot()` in `src/main/agent-dispatch/slot-executor.ts` resolves that session's config and spawns a fresh process via ProcessManager — mirroring the Cue executor pattern. FleetRegistry's complex eligibility queries are dead code slated for removal in #433.
 
-> **#441 — Ephemeral-spawn model:** Dev Crew slots are no longer tied to existing Left Bar agents. Each slot stores a `RoleSlotConfig` (agentProvider + model + effort + host) instead of an `agentId`. When a work item is claimed for a role, `executeEphemeralSlot()` in `src/main/agent-dispatch/ephemeral-slot-executor.ts`:
+> **Slot model — agentId-based (#429):** Dev Crew slots reference an existing Left Bar agent. Each slot stores a `RoleSlotAssignment` (`agentId` + optional `modelOverride` + `effortOverride` + `enabled`). The slot UI picker filters the Left Bar to agents whose `projectRoot` (normalised) and SSH remote ID match the active session's project and host. When work is dispatched, `slot-executor.ts`:
 >
-> 1. Validates the slot config (agentProvider set; runner host is local).
-> 2. Creates a per-claim git worktree at `<projectPath>/.maestro/worktrees/<role>-<claimId>/`.
-> 3. Spawns an ephemeral agent via `spawnAgent()` from `src/cli/services/agent-spawner.ts` — no duplicate spawn logic.
-> 4. Logs a heartbeat no-op (full heartbeat wiring awaits #435).
-> 5. On exit: advances the pipeline state, releases the claim, and cleans up the worktree.
+> 1. Loads the role's prompt template from `src/prompts/dispatch-role-<role>.md`.
+> 2. Builds CLI args via `buildAgentArgs` + `applyAgentConfigOverrides` (slot overrides win over session defaults).
+> 3. Applies SSH wrapping when the agent's `sessionSshRemoteConfig` is enabled.
+> 4. Calls `processManager.spawn()` — the same path Maestro uses for Cue prompts and group-chat agents.
+> 5. Waits for exit, advances the pipeline state, and releases the claim.
 >
-> **v1 migration path:** Users who previously configured slots with the old `agentId` shape (`RoleSlotAssignment`) will see a one-time "Reconfigure: ephemeral mode" banner in `SlotCard.tsx`. Clicking _Clear & reconfigure_ wipes the stale value and lets them pick fresh agentProvider/model/effort/host settings. The old `agentId` is never auto-promoted. The `isLegacySlot()` type guard in `src/shared/project-roles-types.ts` detects the legacy shape.
+> **Agent picker filter (SlotCard.tsx):** The agent dropdown shows only sessions where `session.projectRoot` (normalised) equals the active project root AND `session.sessionSshRemoteConfig?.remoteId` (or null for local) equals the active session's SSH remote ID. Empty-state message when no eligible agents exist: _"No agents configured for this project on this host. Create a dispatch agent in the Left Bar pointing at this project root, then come back."_
 
-> **Runner role is local-only and project-scoped (#440):** The `runner` pipeline role has two hard constraints enforced by both the UI and the DispatchEngine:
+> **Runner role is local-only and project-scoped (#440):** The `runner` pipeline role has two hard constraints enforced by the DispatchEngine:
 >
-> 1. **Local-only** — SSH-remote is forbidden for the runner slot. `SlotCard.tsx` disables the SSH options in the Host dropdown; `DispatchEngine.assignManually` rejects SSH-remote fleet entries with `{ code: 'RUNNER_REQUIRES_LOCAL', detail }`. Auto-pickup also skips SSH-remote agents for runner-role work items. `validateSlotConfig()` in `ephemeral-slot-executor.ts` adds a third enforcement layer.
+> 1. **Local-only** — SSH-remote agents are rejected for runner-role work items. `DispatchEngine.assignManually` rejects SSH-remote fleet entries with `{ code: 'RUNNER_REQUIRES_LOCAL', detail }`. Auto-pickup also skips SSH-remote agents for runner-role work items. (The agent picker filter in `SlotCard` already prevents selecting an SSH-remote agent when the active project is local, and vice versa.)
 > 2. **Project-scoped** — the runner must operate inside the project's local git checkout. `assignManually` calls `git remote get-url origin` in `WorkItem.projectPath` and verifies it matches `WorkItem.github.repo` (`HumpfTech/Maestro`). Mismatch or missing git repo rejects with `{ code: 'RUNNER_PROJECT_MISMATCH', expectedProjectPath, actualProjectPath, expectedRemote, actualRemote }`.
 >
 > Other roles (fixer, reviewer, merger) are unaffected — they may be SSH-remote.
@@ -44,21 +44,20 @@ Main process — IPC handlers (src/main/ipc/handlers/symphony.ts)
 
 ### Key source files
 
-| File                                                              | Role                                                                                  |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `src/main/ipc/handlers/symphony.ts`                               | All IPC handler registration; state read/write helpers; validation                    |
-| `src/main/services/symphony-runner.ts`                            | Git + GitHub CLI operations (clone, branch, PR)                                       |
-| `src/main/utils/symphony-fork.ts`                                 | Fork detection and remote-reconfiguration                                             |
-| `src/main/preload/symphony.ts`                                    | `window.maestro.symphony` bridge                                                      |
-| `src/shared/symphony-types.ts`                                    | All type definitions                                                                  |
-| `src/shared/symphony-constants.ts`                                | TTL values, URL constants, regex patterns                                             |
-| `src/main/ipc/handlers/agent-dispatch-slash-commands.ts`          | Eight `agentDispatch:*` IPC channels for slash-command operations                     |
-| `src/main/ipc/handlers/agent-dispatch.ts`                         | Agent Dispatch runtime IPC handlers (kanban, fleet view)                              |
-| `src/main/utils/requireEncoreFeature.ts`                          | Gate helper — returns `FEATURE_DISABLED` error when flag is off                       |
-| **`src/shared/project-roles-types.ts`**                           | **#441 — `RoleSlotConfig`, `SlotHost`, `isLegacySlot()`, migration types**            |
-| **`src/main/agent-dispatch/ephemeral-slot-executor.ts`**          | **#441 — Ephemeral spawn lifecycle: validate → worktree → spawn → advance → release** |
-| **`src/renderer/hooks/agentCreation/useProviderModelOptions.ts`** | **#441 — Shared hook: per-host provider/model/effort discovery (60 s cache)**         |
-| **`src/renderer/components/RightPanel/RolesPanel/SlotCard.tsx`**  | **#441 — 4-dropdown slot card (Host / Agent Provider / Model / Effort)**              |
+| File                                                             | Role                                                                                               |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `src/main/ipc/handlers/symphony.ts`                              | All IPC handler registration; state read/write helpers; validation                                 |
+| `src/main/services/symphony-runner.ts`                           | Git + GitHub CLI operations (clone, branch, PR)                                                    |
+| `src/main/utils/symphony-fork.ts`                                | Fork detection and remote-reconfiguration                                                          |
+| `src/main/preload/symphony.ts`                                   | `window.maestro.symphony` bridge                                                                   |
+| `src/shared/symphony-types.ts`                                   | All type definitions                                                                               |
+| `src/shared/symphony-constants.ts`                               | TTL values, URL constants, regex patterns                                                          |
+| `src/main/ipc/handlers/agent-dispatch-slash-commands.ts`         | Eight `agentDispatch:*` IPC channels for slash-command operations                                  |
+| `src/main/ipc/handlers/agent-dispatch.ts`                        | Agent Dispatch runtime IPC handlers (kanban, fleet view)                                           |
+| `src/main/utils/requireEncoreFeature.ts`                         | Gate helper — returns `FEATURE_DISABLED` error when flag is off                                    |
+| **`src/shared/project-roles-types.ts`**                          | **`RoleSlotAssignment` (agentId-based), `ProjectRoleSlots`**                                       |
+| **`src/main/agent-dispatch/slot-executor.ts`**                   | **Slot spawn lifecycle: build args → SSH wrap → processManager.spawn → advance → release**         |
+| **`src/renderer/components/RightPanel/RolesPanel/SlotCard.tsx`** | **Slot card: agent picker (project+host filtered), modelOverride, effortOverride, enabled toggle** |
 
 > **Naming note:** `agent-dispatch-slash-commands.ts` was previously named
 > `agent-dispatch-mcp.ts`. That name was misleading — it registers plain

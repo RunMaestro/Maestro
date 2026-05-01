@@ -126,6 +126,7 @@ export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
 		// === State from stores (direct subscriptions — no prop drilling) ===
 		const session = useSessionStore(selectActiveSession);
+		const allSessions = useSessionStore((s) => s.sessions);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -579,7 +580,16 @@ export const RightPanel = memo(
 
 					{activeRightTab === 'roles' && agentDispatchEnabled && (
 						<div data-tour="roles-panel" className="h-full">
-							<RolesPanel theme={theme} projectPath={session.projectRoot ?? null} />
+							<RolesPanel
+								theme={theme}
+								projectPath={session.projectRoot ?? null}
+								sessions={allSessions}
+								activeRemoteId={
+									session.sessionSshRemoteConfig?.enabled
+										? (session.sessionSshRemoteConfig.remoteId ?? null)
+										: null
+								}
+							/>
 						</div>
 					)}
 				</div>
