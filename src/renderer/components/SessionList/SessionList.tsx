@@ -217,8 +217,15 @@ function SessionListInner(props: SessionListProps) {
 			const m = new Map<string, Record<string, { agentId?: string }>>();
 			for (const path of projectPaths) {
 				try {
-					const slots = (await api.get!(path)) as Record<string, { agentId?: string }> | null;
-					if (slots) m.set(path, slots);
+					const res = (await api.get!(path)) as
+						| { success?: boolean; data?: Record<string, { agentId?: string }> }
+						| Record<string, { agentId?: string }>
+						| null;
+					const slots: Record<string, { agentId?: string }> =
+						res && typeof res === 'object' && 'success' in res && (res as { success?: boolean }).success
+							? ((res as { data?: Record<string, { agentId?: string }> }).data ?? {})
+							: ((res as Record<string, { agentId?: string }> | null) ?? {});
+					m.set(path, slots);
 				} catch {
 					// ignore — leave path out of map
 				}
