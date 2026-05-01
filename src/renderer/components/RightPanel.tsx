@@ -468,7 +468,11 @@ export const RightPanel = memo(
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'autorun'
+								? 'Auto Run'
+								: tab === 'roles'
+									? 'Dev Crew'
+									: tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
 

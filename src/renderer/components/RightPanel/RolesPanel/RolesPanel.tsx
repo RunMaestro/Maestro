@@ -124,7 +124,7 @@ export function RolesPanel({ theme, projectPath, sessions }: RolesPanelProps) {
 					className="text-xs font-bold uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
-					Fleet Roster
+					Dev Crew
 				</span>
 				{loading && (
 					<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
