@@ -308,6 +308,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										projectPath: effectiveCwd,
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
+										isWorktree: !!session.parentSessionId,
 									})
 									.catch((err) => {
 										// Don't fail the batch flow if stats recording fails

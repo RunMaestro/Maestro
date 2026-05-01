@@ -1284,6 +1284,30 @@ describe('HistoryManager', () => {
 			// Should not throw
 			expect(() => manager.stopWatching()).not.toThrow();
 		});
+
+		it('should register an error handler on the watcher to prevent unhandled rejections', () => {
+			const onSpy = vi.fn();
+			const mockWatcher = { close: vi.fn(), on: onSpy } as unknown as fs.FSWatcher;
+			mockWatch.mockReturnValue(mockWatcher);
+			mockExistsSync.mockReturnValue(true);
+
+			manager.startWatching(vi.fn());
+
+			expect(onSpy).toHaveBeenCalledWith('error', expect.any(Function));
+		});
+
+		it('should log and not throw if fs.watch itself throws', () => {
+			mockWatch.mockImplementation(() => {
+				throw new Error('EBUSY: resource busy');
+			});
+			mockExistsSync.mockReturnValue(true);
+
+			expect(() => manager.startWatching(vi.fn())).not.toThrow();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to start history watcher'),
+				expect.any(String)
+			);
+		});
 	});
 
 	// ----------------------------------------------------------------

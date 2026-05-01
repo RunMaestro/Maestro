@@ -363,6 +363,10 @@ export interface SettingsStoreState {
 	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	showSessionIdPill: boolean;
+	showSessionCostPill: boolean;
+	showWorktreePill: boolean;
+	showWorktreeBranchName: boolean;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
@@ -458,6 +462,10 @@ export interface SettingsStoreActions {
 	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
+	setShowSessionIdPill: (value: boolean) => void;
+	setShowSessionCostPill: (value: boolean) => void;
+	setShowWorktreePill: (value: boolean) => void;
+	setShowWorktreeBranchName: (value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
@@ -633,6 +641,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeDetailedTracking: false,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
+		showSessionIdPill: false,
+		showSessionCostPill: true,
+		showWorktreePill: true,
+		showWorktreeBranchName: true,
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
@@ -1163,6 +1175,26 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
+		},
+
+		setShowSessionIdPill: (value) => {
+			set({ showSessionIdPill: value });
+			window.maestro.settings.set('showSessionIdPill', value);
+		},
+
+		setShowSessionCostPill: (value) => {
+			set({ showSessionCostPill: value });
+			window.maestro.settings.set('showSessionCostPill', value);
+		},
+
+		setShowWorktreePill: (value) => {
+			set({ showWorktreePill: value });
+			window.maestro.settings.set('showWorktreePill', value);
+		},
+
+		setShowWorktreeBranchName: (value) => {
+			set({ showWorktreeBranchName: value });
+			window.maestro.settings.set('showWorktreeBranchName', value);
 		},
 
 		setModeratorStandingInstructions: (value) => {
@@ -2230,6 +2262,18 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
+		if (allSettings['showSessionIdPill'] !== undefined)
+			patch.showSessionIdPill = allSettings['showSessionIdPill'] as boolean;
+
+		if (allSettings['showSessionCostPill'] !== undefined)
+			patch.showSessionCostPill = allSettings['showSessionCostPill'] as boolean;
+
+		if (allSettings['showWorktreePill'] !== undefined)
+			patch.showWorktreePill = allSettings['showWorktreePill'] as boolean;
+
+		if (allSettings['showWorktreeBranchName'] !== undefined)
+			patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
+
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
@@ -2366,6 +2410,10 @@ export function getSettingsActions() {
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
+		setShowSessionIdPill: state.setShowSessionIdPill,
+		setShowSessionCostPill: state.setShowSessionCostPill,
+		setShowWorktreePill: state.setShowWorktreePill,
+		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,

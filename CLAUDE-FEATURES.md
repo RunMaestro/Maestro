@@ -10,13 +10,27 @@ The Usage Dashboard (`src/renderer/components/UsageDashboard/`) provides analyti
 
 ```
 src/renderer/components/UsageDashboard/
-├── UsageDashboardModal.tsx      # Main modal with view tabs (Overview, Agents, Activity, AutoRun)
-├── SummaryCards.tsx             # Metric cards (queries, duration, cost, Auto Runs)
-├── AgentComparisonChart.tsx     # Bar chart comparing agent usage
+├── UsageDashboardModal.tsx      # Main modal — view tabs: Overview, Agents, Agent Overview, Activity, Auto Run (+ Cue when both Encore flags are on)
+├── SummaryCards.tsx             # 12 metric cards (queries, duration, top agent, streak, best day, active days, worktree %, etc.)
+├── AgentOverviewCards.tsx       # Per-agent overview cards (Agents tab)
+├── SessionStats.tsx             # Session statistics (Agent Overview tab)
+├── AgentEfficiencyChart.tsx     # Agent efficiency chart (Agent Overview tab)
+├── AgentComparisonChart.tsx     # Bar chart comparing provider usage
+├── AgentUsageChart.tsx          # Per-agent usage over time
+├── WorktreeAnalytics.tsx        # Worktree-child session analytics
 ├── SourceDistributionChart.tsx  # Pie chart for user vs auto queries
+├── LocationDistributionChart.tsx # Local vs remote distribution
+├── RadialActivityChart.tsx      # Polar chart pair: hour-of-day + day-of-week (replaces flat Peak Hours)
+├── YearInPixelsStrip.tsx        # Time-range-adaptive day-cell hero strip on the Overview tab (week/month/quarter/year/all)
 ├── ActivityHeatmap.tsx          # Weekly activity heatmap (GitHub-style)
+├── WeekdayComparisonChart.tsx   # Weekday vs weekend comparison (Activity tab)
 ├── DurationTrendsChart.tsx      # Line chart for duration over time
 ├── AutoRunStats.tsx             # Auto Run-specific statistics
+├── TasksByHourChart.tsx         # Auto Run tasks-by-hour chart
+├── LongestAutoRunsTable.tsx     # Longest Auto Runs leaderboard
+├── CueStats.tsx                 # Cue automation analytics (Cue tab, gated on Encore flags)
+├── Sparkline.tsx                # Reusable mini trend line for metric cards
+├── chartUtils.ts                # Shared chart helpers (palettes, tooltip clamping)
 ├── ChartSkeletons.tsx           # Loading skeleton components
 ├── ChartErrorBoundary.tsx       # Error boundary with retry
 └── EmptyState.tsx               # Empty state when no data
@@ -75,6 +89,8 @@ statsCollectionEnabled: boolean; // Enable/disable stats collection (default: tr
 defaultStatsTimeRange: 'day' | 'week' | 'month' | 'year' | 'all'; // Default time filter
 colorBlindMode: boolean; // Use accessible color palettes
 preventSleepEnabled: boolean; // Prevent system sleep while agents are busy (default: false)
+showSessionIdPill: boolean; // Show session UUID pill in main panel header (default: false — opt-in)
+showSessionCostPill: boolean; // Show cost pill in main panel header (default: true)
 ```
 
 ---

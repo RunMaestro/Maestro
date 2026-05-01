@@ -1368,6 +1368,109 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(stats.byDay[1].date).toBe('2024-01-01');
 		});
 	});
+
+	describe('byWorktreeStatus breakdown calculations', () => {
+		it('should return correct worktree vs parent counts and durations', async () => {
+			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
+			// queryByWorktreeStatus is the 10th .all call in getAggregatedStats; populate
+			// the prior 9 with empty arrays so we can isolate the worktree assertion.
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent (from querySessionStats)
+				.mockReturnValueOnce([]) // 8: sessionsByDay (from querySessionStats)
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([
+					{ is_worktree: 0, count: 70, duration: 350000 },
+					{ is_worktree: 1, count: 30, duration: 150000 },
+				]); // 10: byWorktreeStatus
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.worktreeQueries).toBe(30);
+			expect(stats.parentQueries).toBe(70);
+			expect(stats.byWorktreeStatus).toEqual({
+				worktree: { count: 30, duration: 150000 },
+				parent: { count: 70, duration: 350000 },
+			});
+		});
+
+		it('should default to zeros when no rows exist', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('day');
+
+			expect(stats.worktreeQueries).toBe(0);
+			expect(stats.parentQueries).toBe(0);
+			expect(stats.byWorktreeStatus).toEqual({
+				worktree: { count: 0, duration: 0 },
+				parent: { count: 0, duration: 0 },
+			});
+		});
+
+		it('should treat NULL is_worktree (legacy rows) as parent via COALESCE', async () => {
+			// SQL's COALESCE(is_worktree, 0) collapses NULL to 0 before grouping, so the
+			// driver only sees a single 0-bucket row even when legacy NULL rows are present.
+			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent
+				.mockReturnValueOnce([]) // 8: sessionsByDay
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 10
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('all');
+
+			expect(stats.parentQueries).toBe(50);
+			expect(stats.worktreeQueries).toBe(0);
+			expect(stats.byWorktreeStatus.parent).toEqual({ count: 50, duration: 250000 });
+			expect(stats.byWorktreeStatus.worktree).toEqual({ count: 0, duration: 0 });
+		});
+
+		it('should use COALESCE(is_worktree, 0) in the SQL query', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.getAggregatedStats('week');
+
+			const prepareCalls = mockDb.prepare.mock.calls;
+			const worktreeCall = prepareCalls.find((call) =>
+				(call[0] as string).includes('COALESCE(is_worktree, 0)')
+			);
+
+			expect(worktreeCall).toBeDefined();
+			expect(worktreeCall![0]).toContain('GROUP BY COALESCE(is_worktree, 0)');
+			expect(worktreeCall![0]).toContain('FROM query_events');
+			// Ensures duration is summed alongside the count for the activity-split bar
+			expect(worktreeCall![0]).toContain('SUM(duration)');
+		});
+	});
 });
 
 /**

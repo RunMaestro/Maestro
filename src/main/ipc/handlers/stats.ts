@@ -17,6 +17,7 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getStatsDB } from '../../stats';
+import { flushTelemetry } from '../../cue/cue-telemetry';
 import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
 import {
 	QueryEvent,
@@ -173,6 +174,18 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					logger.warn(`Auto Run session not found: ${id}`, LOG_CONTEXT);
 				}
 				broadcastStatsUpdate(getMainWindow);
+
+				// Cue telemetry — autorun completion is the user's natural quiet
+				// window, so we flush the outbox here. Fire-and-forget: a failed
+				// flush leaves rows in the outbox for the next attempt and must
+				// not delay the IPC return. The submitter checks Encore flags
+				// internally; nothing happens if Cue/usageStats are off.
+				flushTelemetry({ reason: 'autorun' }).catch((error) => {
+					void captureException(error, {
+						operation: 'stats:end-autorun.flushTelemetry',
+					});
+				});
+
 				return updated;
 			}
 		)

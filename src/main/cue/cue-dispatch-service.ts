@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import { recordTriggerFired } from './cue-telemetry';
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -14,7 +15,9 @@ export interface CueDispatchServiceDeps {
 		chainDepth?: number,
 		cliOutput?: { target: string },
 		action?: CueSubscription['action'],
-		command?: CueCommand
+		command?: CueCommand,
+		chainRootId?: string,
+		parentEventId?: string
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 }
@@ -26,6 +29,13 @@ export interface CueDispatchService {
 	 * trigger silently accomplished nothing — e.g. all fan-out targets had
 	 * empty prompts. Previously this returned void and the user had no way
 	 * to distinguish "no-op" from "running in the background".
+	 *
+	 * `chainRootId` / `parentEventId` are Phase 01 lineage carriers: when
+	 * dispatch results from a chained completion, callers pass the parent
+	 * run's `chainRootId` (or `runId` if the parent was itself a root) and
+	 * the parent's `runId` so the resulting run's `cue_events` row stamps
+	 * the right tree position. Both undefined for fresh roots (manual
+	 * triggers, schedule firings, app.startup, etc.).
 	 */
 	dispatchSubscription(
 		ownerSessionId: string,
@@ -33,7 +43,9 @@ export interface CueDispatchService {
 		event: CueEvent,
 		sourceSessionName: string,
 		chainDepth?: number,
-		promptOverride?: string
+		promptOverride?: string,
+		chainRootId?: string,
+		parentEventId?: string
 	): number;
 }
 
@@ -45,8 +57,20 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			event: CueEvent,
 			sourceSessionName: string,
 			chainDepth?: number,
-			promptOverride?: string
+			promptOverride?: string,
+			chainRootId?: string,
+			parentEventId?: string
 		): number {
+			// Telemetry: one `trigger_fired` per subscription dispatch (not per
+			// fan-out target). Best-effort and gated on Encore flags inside the
+			// telemetry module — never throws into the dispatch path.
+			recordTriggerFired({
+				eventType: event.type,
+				subscriptionName: sub.name,
+				pipelineName: sub.pipeline_name,
+				triggerName: event.triggerName,
+			});
+
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
 				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
@@ -101,7 +125,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						chainDepth,
 						sub.cli_output,
 						sub.action,
-						sub.command
+						sub.command,
+						chainRootId,
+						parentEventId
 					);
 					dispatched++;
 				}
@@ -133,7 +159,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				chainDepth,
 				sub.cli_output,
 				sub.action,
-				sub.command
+				sub.command,
+				chainRootId,
+				parentEventId
 			);
 			return 1;
 		},

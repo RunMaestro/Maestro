@@ -82,6 +82,11 @@ export interface InMemoryCueQueueRow {
 	commandJson: string | null;
 	chainDepth: number;
 	queuedAt: number;
+	/** Phase 01 — chain lineage round-tripped so resumed runs stay attached
+	 *  to their chain root in stats. NULL for roots and for rows persisted
+	 *  before usageStats was enabled. */
+	chainRootId: string | null;
+	parentEventId: string | null;
 }
 
 export interface InMemoryCueDbState {

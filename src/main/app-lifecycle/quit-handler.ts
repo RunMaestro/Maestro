@@ -14,6 +14,8 @@ import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
 import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
+import { flushTelemetry } from '../cue/cue-telemetry';
+import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 
 /**
@@ -235,6 +237,20 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		stopAllCueRuns();
 		stopAllCueShellRuns();
 		stopAllCueCliRuns();
+
+		// Flush Cue telemetry outbox before quit so events captured between the
+		// last autorun and shutdown aren't deferred to the next launch (or lost
+		// if the user uninstalls). Fire-and-forget — performCleanup is sync and
+		// the network call may not finish before quit, but unflushed rows
+		// survive in SQLite for the next session.
+		flushTelemetry({ reason: 'app-quit' }).catch((error) => {
+			// Errors already logged inside flushTelemetry; report unexpected
+			// failures to Sentry so we can spot regressions, but don't rethrow
+			// — a network failure during shutdown shouldn't crash cleanup.
+			captureException(error, {
+				context: 'quit-handler.performCleanup.flushTelemetry',
+			});
+		});
 
 		// Clean up all running processes. shutdown:true makes PTYs SIGKILL
 		// immediately (no SIGTERM grace, no escalation timer, no onExit

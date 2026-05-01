@@ -43,6 +43,7 @@ import {
 } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
+import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
@@ -91,6 +92,8 @@ export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingS
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
+export { registerCueStatsHandlers };
+export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
@@ -249,6 +252,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
 		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
+	// Register Cue Stats handlers for the Cue Dashboard aggregation query
+	registerCueStatsHandlers({
 		settingsStore: deps.settingsStore,
 	});
 	// Register document graph handlers for file watching

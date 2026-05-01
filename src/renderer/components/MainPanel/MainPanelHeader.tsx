@@ -90,6 +90,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
+	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 
 	const headerRef = useRef<HTMLDivElement>(null);
@@ -402,7 +404,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			<div className="flex items-center gap-3 justify-end shrink-0">
 				{/* Session UUID Pill - click to copy full UUID, hidden at narrow widths via CSS container query */}
 				{/* Hide when file preview tab is focused - session stats are only relevant for AI tabs */}
-				{activeSession.inputMode === 'ai' &&
+				{showSessionIdPill &&
+					activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
 					activeTab?.agentSessionId &&
 					hasCapability('supportsSessionId') && (
@@ -431,7 +434,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 
 				{/* Cost Tracker - styled as pill, hidden at narrow widths via CSS container query */}
 				{/* Hide when file preview tab is focused - cost tracking is only relevant for AI tabs */}
-				{activeSession.inputMode === 'ai' &&
+				{showSessionCostPill &&
+					activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
 					(activeTab?.agentSessionId || activeTab?.usageStats) &&
 					hasCapability('supportsCostTracking') && (

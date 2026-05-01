@@ -63,6 +63,7 @@ import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-d
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
+import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -124,6 +125,13 @@ export interface CueEngineDeps {
 	onPreventSleep?: (reason: string) => void;
 	/** Called to allow system sleep (e.g., when Cue scheduled subscriptions or runs end) */
 	onAllowSleep?: (reason: string) => void;
+	/**
+	 * Phase 01 — gate for `pipeline_id` / `chain_root_id` / `parent_event_id`
+	 * writes on the `cue_events` table. Wired through to `CueRunManager`. The
+	 * production wiring reads `encoreFeatures.usageStats` from the settings
+	 * store; tests typically pass `() => true` or omit (defaults to off).
+	 */
+	getUsageStatsEnabled?: () => boolean;
 }
 
 export class CueEngine {
@@ -189,8 +197,29 @@ export class CueEngine {
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
-			onRunCompleted: (sessionId, result, subscriptionName, chainDepth) => {
+			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				// Telemetry: emit `run_completed` once per natural completion.
+				// task_kind is derived here rather than inside the run manager
+				// so the engine remains the sole authority on telemetry shape.
+				// `agent.completed` events came from chain propagation (handoff
+				// between agents). Subscriptions with `action: command` represent
+				// a command node firing. Everything else is a trigger-driven run.
+				const taskKind: 'agent_handoff' | 'command_node' | 'trigger_action' =
+					result.event.type === 'agent.completed'
+						? 'agent_handoff'
+						: result.event.payload?.actionKind === 'command'
+							? 'command_node'
+							: 'trigger_action';
+				recordTelemetryRunCompleted({
+					subscriptionName,
+					pipelineName: result.pipelineName,
+					taskKind,
+					chainRootId: chainRootId ?? null,
+					parentRunId: (result.event.payload?.parentRunId as string | undefined) ?? null,
+					durationMs: result.durationMs,
+					status: result.status,
+				});
 				// Carry forwarded outputs from the triggering event through to the
 				// completion notification so downstream agents can access them via
 				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
@@ -206,6 +235,11 @@ export class CueEngine {
 					triggeredBy: subscriptionName,
 					chainDepth: (chainDepth ?? 0) + 1,
 					forwardedOutputs: forwarded,
+					// Phase 01 — propagate chain lineage so the completion
+					// service can stamp it onto the next dispatched run's
+					// `cue_events` row.
+					parentRunId: result.runId,
+					chainRootId,
 				});
 			},
 			onRunStopped: (result) => {
@@ -223,17 +257,31 @@ export class CueEngine {
 			},
 			// Phase 12A: queue rows survive app crash / quit.
 			queuePersistence: this.queuePersistence,
+			// Phase 01: gate cue_events stats lineage writes on the Encore flag.
+			getUsageStatsEnabled: deps.getUsageStatsEnabled,
 		});
 		this.fanInTracker = createCueFanInTracker({
 			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
-			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+			dispatchSubscription: (
+				ownerSessionId,
+				sub,
+				event,
+				sourceSessionName,
+				chainDepth,
+				promptOverride,
+				chainRootId,
+				parentEventId
+			) => {
 				return this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
 					sourceSessionName,
-					chainDepth
+					chainDepth,
+					promptOverride,
+					chainRootId,
+					parentEventId
 				);
 			},
 		});
@@ -249,7 +297,9 @@ export class CueEngine {
 				chainDepth,
 				cliOutput,
 				action,
-				command
+				command,
+				chainRootId,
+				parentEventId
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -262,7 +312,9 @@ export class CueEngine {
 					action,
 					command,
 					undefined, // queuedAtOverride — fresh dispatch, not a restore
-					pipelineName
+					pipelineName,
+					chainRootId,
+					parentEventId
 				);
 			},
 			onLog: meteredOnLog,
@@ -308,13 +360,24 @@ export class CueEngine {
 				return views;
 			},
 			fanInTracker: this.fanInTracker,
-			onDispatch: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+			onDispatch: (
+				ownerSessionId,
+				sub,
+				event,
+				sourceSessionName,
+				chainDepth,
+				chainRootId,
+				parentEventId
+			) => {
 				this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
 					sourceSessionName,
-					chainDepth
+					chainDepth,
+					undefined, // no prompt override on chained completions
+					chainRootId,
+					parentEventId
 				);
 			},
 			onLog: meteredOnLog,
@@ -461,7 +524,13 @@ export class CueEngine {
 					// column for it). The summary builder will fall back to
 					// stripping the `-chain-N` suffix off subscriptionName, so
 					// restored runs degrade gracefully to the legacy label.
-					undefined
+					undefined,
+					// Phase 01 — chain lineage round-tripped through the
+					// queue table so resumed runs stay attached to their
+					// chain root in stats. Roots and rows persisted before
+					// usageStats was enabled come back as undefined.
+					entry.chainRootId,
+					entry.parentEventId
 				);
 			}
 		}

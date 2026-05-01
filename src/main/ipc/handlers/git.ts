@@ -15,6 +15,7 @@ import {
 import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../utils/cliDetection';
 import { getShellPath } from '../../runtime/getShellPath';
 import { captureMessage } from '../../utils/sentry';
+import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 import {
 	parseGitBranches,
 	parseGitTags,
@@ -1277,7 +1278,10 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					// Start watching the directory (only top level, not recursive)
 					const watcher = chokidar.watch(worktreePath, {
-						ignored: /(^|[/\\])\../, // Ignore dotfiles
+						ignored: [
+							/(^|[/\\])\../, // Ignore dotfiles
+							WINDOWS_LOCKED_SYSTEM_FILES,
+						],
 						persistent: true,
 						ignoreInitial: true,
 						depth: 0, // Only watch top-level directory changes

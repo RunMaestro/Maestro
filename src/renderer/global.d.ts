@@ -151,6 +151,7 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
+import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
@@ -2493,6 +2494,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			tabId?: string;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string>;
 		// Start an Auto Run session (returns session ID)
 		startAutoRun: (session: {
@@ -2581,6 +2583,12 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			worktreeQueries: number;
+			parentQueries: number;
+			byWorktreeStatus: {
+				worktree: { count: number; duration: number };
+				parent: { count: number; duration: number };
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
@@ -2606,6 +2614,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			createdAt: number;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string | null>;
 		// Record session closure
 		recordSessionClosed: (sessionId: string, closedAt: number) => Promise<boolean>;
@@ -2632,6 +2641,13 @@ interface MaestroAPI {
 		} | null>;
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
+	};
+	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
+	// encoreFeatures.maestroCue is off; consumers should catch and render
+	// the "feature off" state.
+	cueStats: {
+		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
 	};
 	// Document Graph API (file watching for graph visualization)
 	documentGraph: {
