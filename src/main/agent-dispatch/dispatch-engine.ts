@@ -256,6 +256,7 @@ export class AgentDispatchEngine {
 			return { trigger, queried: 0, selected: 0, claimed: 0, skipped: 0, errors: [] };
 		}
 
+		// TODO #433: simplify under 4-slot model; capabilityTags is deprecated
 		const capabilityTags = uniqueSorted(
 			eligibleFleet.flatMap((entry) => entry.dispatchCapabilities)
 		);

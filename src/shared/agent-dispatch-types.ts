@@ -58,16 +58,40 @@ export interface AgentDispatchSshRemoteMetadata {
 
 export const AGENT_DISPATCH_PROFILE_CONFIG_KEY = 'dispatchProfile';
 
+/**
+ * @deprecated Under the simpler 4-slot model (#429, #433), suggested defaults
+ * are no longer needed. This interface and its consumers will be removed in a
+ * follow-up pass. See CLAUDE-AGENT-DISPATCH.md for the new model.
+ */
 export interface AgentDispatchSuggestedDefaults {
 	capabilityTags?: string[];
 	maxConcurrentClaims?: number;
 }
 
 export interface AgentDispatchProfile {
+	/**
+	 * @deprecated Under the simpler 4-slot model (#429, #433), auto-pickup is
+	 * gated at the settings level instead. This field will be removed in a
+	 * follow-up pass.
+	 */
 	autoPickupEnabled: boolean;
+	/**
+	 * @deprecated Under the simpler 4-slot model (#429, #433), capability
+	 * matching is handled at the WorkItem/WorkGraph level. This field will be
+	 * removed in a follow-up pass.
+	 */
 	capabilityTags: string[];
+	/**
+	 * @deprecated Under the simpler 4-slot model (#429, #433), each role slot
+	 * is 1-agent exclusive (concurrency is 1 per role). This field will be
+	 * removed in a follow-up pass.
+	 */
 	maxConcurrentClaims: number;
-	/** Whether this agent is eligible to appear in the fleet (dispatch-eligible). */
+	/**
+	 * @deprecated Fleet membership is implicit (any agent can join). This field
+	 * was used for eligibility gates that are now superseded by role-based
+	 * filtering (#429, #433). Will be removed in follow-up pass.
+	 */
 	fleetEnabled?: boolean;
 	/**
 	 * Absolute path to an external runner script invoked when this agent
@@ -83,6 +107,11 @@ export interface AgentDispatchProfile {
 	 * still pick up items that have no `pipeline` field set.
 	 */
 	roles?: DispatchRole[];
+	/**
+	 * @deprecated Under the simpler 4-slot model (#429, #433), suggested
+	 * defaults are no longer needed. This field will be removed in a follow-up
+	 * pass.
+	 */
 	suggestedDefaults?: AgentDispatchSuggestedDefaults;
 }
 

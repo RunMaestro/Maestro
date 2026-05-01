@@ -102,6 +102,7 @@ export function isWorkItemEligibleForAutoPickup(workItem: WorkItem): boolean {
 }
 
 function getRemainingCapacity(entry: AgentDispatchFleetEntry): number {
+	// TODO #433: simplify under 4-slot model; maxConcurrentClaims is deprecated
 	const maxConcurrentClaims = Math.max(1, Math.floor(entry.dispatchProfile.maxConcurrentClaims));
 	return Math.max(0, maxConcurrentClaims - entry.currentLoad);
 }

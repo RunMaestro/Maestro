@@ -291,6 +291,7 @@ function normalizeDispatchProfile(
 	suggestedDefaults: AgentDefinition['dispatchSuggestedDefaults'],
 	value: unknown
 ): AgentDispatchProfile {
+	// TODO #433: simplify under 4-slot model; remove deprecated fields and suggested defaults
 	const stored = value && typeof value === 'object' ? (value as Partial<AgentDispatchProfile>) : {};
 	const maxConcurrentClaims = Number(stored.maxConcurrentClaims);
 	const capabilityTags = Array.isArray(stored.capabilityTags)

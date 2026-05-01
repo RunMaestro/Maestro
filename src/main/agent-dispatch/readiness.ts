@@ -40,6 +40,7 @@ export function deriveAgentDispatchReadiness(input: DeriveReadinessInput): Agent
 	const activeClaimCount = (input.activeClaims ?? []).filter(
 		(claim) => claim.status === 'active'
 	).length;
+	// TODO #433: simplify under 4-slot model; maxConcurrentClaims is deprecated
 	const maxConcurrentClaims = Math.max(1, Math.floor(input.maxConcurrentClaims ?? 1));
 	if (activeClaimCount >= maxConcurrentClaims) {
 		return 'busy';

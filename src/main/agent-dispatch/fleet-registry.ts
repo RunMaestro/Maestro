@@ -182,6 +182,7 @@ export function buildFleetEntries(
 		const locality = sshRemote ? 'ssh' : 'local';
 		const process = processesBySessionId.get(session.id);
 		const currentClaims = claimsByOwnerId.get(entryId) ?? claimsByOwnerId.get(session.id) ?? [];
+		// TODO #433: simplify under 4-slot model; maxConcurrentClaims is deprecated
 		const readiness = deriveAgentDispatchReadiness({
 			session: {
 				state: session.state,
@@ -210,6 +211,7 @@ export function buildFleetEntries(
 			readiness,
 			currentClaims,
 			currentLoad: currentClaims.filter((claim) => claim.status === 'active').length,
+			// TODO #433: simplify under 4-slot model; capabilityTags is deprecated
 			dispatchCapabilities: dispatchProfile.capabilityTags,
 			dispatchProfile,
 			pickupEnabled: isPickupEnabled(session, sshRemote, dispatchProfile, dispatchSettings),
@@ -286,6 +288,7 @@ function normalizeDispatchProfile(
 	suggestedDefaults: AgentDefinition['dispatchSuggestedDefaults'] | undefined,
 	storedProfile: AgentDispatchProfile | undefined
 ): AgentDispatchProfile {
+	// TODO #433: simplify under 4-slot model; remove deprecated fields and suggested defaults
 	return {
 		autoPickupEnabled:
 			storedProfile?.autoPickupEnabled ?? DEFAULT_AGENT_DISPATCH_PROFILE.autoPickupEnabled,
