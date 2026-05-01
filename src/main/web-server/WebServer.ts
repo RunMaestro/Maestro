@@ -41,11 +41,13 @@ import {
 	registerAgentDispatchRoutes,
 	registerDeliveryPlannerRoutes,
 	registerPlanningPipelineRoutes,
+	registerConversationalPrdRoutes,
 } from './routes';
 import type {
 	AgentDispatchRouteDependencies,
 	DeliveryPlannerRouteDependencies,
 	PlanningPipelineRouteDependencies,
+	ConversationalPrdRouteDependencies,
 } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
@@ -184,6 +186,9 @@ export class WebServer {
 
 	// Optional Planning Pipeline route dependencies (set before start())
 	private planningPipelineDeps: PlanningPipelineRouteDependencies | null = null;
+
+	// Optional Conversational PRD route dependencies (set before start())
+	private conversationalPrdDeps: ConversationalPrdRouteDependencies | null = null;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -643,6 +648,10 @@ export class WebServer {
 		this.planningPipelineDeps = deps;
 	}
 
+	setConversationalPrdDeps(deps: ConversationalPrdRouteDependencies): void {
+		this.conversationalPrdDeps = deps;
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -764,6 +773,16 @@ export class WebServer {
 				this.securityToken,
 				this.rateLimitConfig,
 				this.planningPipelineDeps
+			);
+		}
+
+		// Register Conversational PRD routes when deps have been supplied
+		if (this.conversationalPrdDeps) {
+			registerConversationalPrdRoutes(
+				this.server,
+				this.securityToken,
+				this.rateLimitConfig,
+				this.conversationalPrdDeps
 			);
 		}
 

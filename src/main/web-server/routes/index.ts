@@ -37,3 +37,7 @@ export {
 	registerPlanningPipelineRoutes,
 	PlanningPipelineRouteDependencies,
 } from './planningPipelineRoutes';
+export {
+	registerConversationalPrdRoutes,
+	ConversationalPrdRouteDependencies,
+} from './conversationalPrdRoutes';
