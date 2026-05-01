@@ -129,6 +129,13 @@ export function createPmApi() {
 		/** Legacy planning prompt seed event (used by /PM <idea>). */
 		onOpenPlanningPrompt: (handler: (event: PmOpenPlanningPromptEvent) => void): (() => void) =>
 			on('pm:openPlanningPrompt', handler),
+
+		/** Load all /PM verb prompts for the customAICommands dispatch path. */
+		loadCommands: (): Promise<{
+			success: boolean;
+			commands?: Array<{ id: string; command: string; description: string; prompt: string }>;
+			error?: string;
+		}> => ipcRenderer.invoke('pm:loadCommands'),
 	};
 }
 

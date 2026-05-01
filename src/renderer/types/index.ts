@@ -947,6 +947,14 @@ export interface BmadMetadata {
 	sourceUrl: string; // GitHub repo URL
 }
 
+// PM command definition — one entry per /PM verb (loaded from src/prompts/pm/)
+export interface PmCommand {
+	id: string; // e.g., 'orchestrate', 'prd-new', 'epic-decompose'
+	command: string; // e.g., '/PM', '/PM prd-new', '/PM epic-decompose'
+	description: string;
+	prompt: string;
+}
+
 // Leaderboard registration data for runmaestro.ai integration
 export interface LeaderboardRegistration {
 	// Required fields

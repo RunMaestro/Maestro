@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SpecKitCommand, OpenSpecCommand, BmadCommand } from '../../types';
+import type { SpecKitCommand, OpenSpecCommand, BmadCommand, PmCommand } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
@@ -29,6 +29,7 @@ import { useNotificationStore, notifyToast } from '../../stores/notificationStor
 import { getSpeckitCommands } from '../../services/speckit';
 import { getOpenSpecCommands } from '../../services/openspec';
 import { getBmadCommands } from '../../services/bmad';
+import { getPmCommands } from '../../services/pm';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
@@ -49,6 +50,8 @@ export interface AppInitializationReturn {
 	openspecCommands: OpenSpecCommand[];
 	/** Loaded BMAD commands */
 	bmadCommands: BmadCommand[];
+	/** Loaded PM commands (/PM verb prompts) */
+	pmCommands: PmCommand[];
 	/** Save a gist URL for a file path (persisted to settings) */
 	saveFileGistUrl: (filePath: string, gistInfo: GistInfo) => void;
 }
@@ -79,6 +82,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
 	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
 	const [bmadCommands, setBmadCommands] = useState<BmadCommand[]>([]);
+	const [pmCommands, setPmCommands] = useState<PmCommand[]>([]);
 
 	// --- Splash screen coordination ---
 	// Progress stages: 0-40% React bootstrap (splash.js), 40-60% settings,
@@ -282,6 +286,18 @@ export function useAppInitialization(): AppInitializationReturn {
 		})();
 	}, []);
 
+	// --- PM commands loading ---
+	useEffect(() => {
+		(async () => {
+			try {
+				const commands = await getPmCommands();
+				setPmCommands(commands);
+			} catch (error) {
+				logger.error('[PM] Failed to load commands:', undefined, error);
+			}
+		})();
+	}, []);
+
 	// --- SSH remote configs loading ---
 	// Non-critical: SSH may not be configured. Failures are logged but not
 	// reported to Sentry since the app functions fully without SSH remotes.
@@ -356,6 +372,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		speckitCommands,
 		openspecCommands,
 		bmadCommands,
+		pmCommands,
 		saveFileGistUrl,
 	};
 }

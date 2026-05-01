@@ -25,6 +25,7 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
+	PmCommand,
 } from '../types';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
@@ -120,6 +121,7 @@ export interface ProcessQueuedItemDeps {
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
 	bmadCommands?: BmadCommand[];
+	pmCommands?: PmCommand[];
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -361,7 +363,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
 					deps.openspecCommands.find((cmd) => cmd.command === item.command) ||
-					deps.bmadCommands?.find((cmd) => cmd.command === item.command);
+					deps.bmadCommands?.find((cmd) => cmd.command === item.command) ||
+					deps.pmCommands?.find((cmd) => cmd.command === item.command);
 
 				if (matchingCommand) {
 					let gitBranch: string | undefined;
@@ -374,17 +377,22 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						}
 					}
 
-					// Substitute $ARGUMENTS with command arguments, or append args if no placeholder
+					// Substitute $ARGUMENTS or {{ARGS}} with command arguments,
+					// or append args if no placeholder is found.
 					let promptWithArgs = matchingCommand.prompt;
 					if (item.commandArgs) {
 						if (/\$ARGUMENTS/g.test(promptWithArgs)) {
 							promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
+						} else if (/\{\{ARGS\}\}/g.test(promptWithArgs)) {
+							promptWithArgs = promptWithArgs.replace(/\{\{ARGS\}\}/g, item.commandArgs);
 						} else {
-							// No $ARGUMENTS placeholder — append trailing text after the prompt
+							// No placeholder found — append trailing text after the prompt
 							promptWithArgs = `${promptWithArgs}\n\n${item.commandArgs}`;
 						}
 					} else {
-						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, '');
+						promptWithArgs = promptWithArgs
+							.replace(/\$ARGUMENTS/g, '')
+							.replace(/\{\{ARGS\}\}/g, '');
 					}
 
 					// Substitute {{TEMPLATE_VARIABLES}}

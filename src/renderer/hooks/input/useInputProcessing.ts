@@ -282,7 +282,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					syncAiInputToSession('');
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 
-					notifyToast({ color: 'theme', title: '/PM-init', message: 'Initializing Project Meta fields…' });
+					notifyToast({
+						color: 'theme',
+						title: '/PM-init',
+						message: 'Initializing Project Meta fields…',
+					});
 
 					window.maestro.pmInit
 						.initRepo({ repo: repoArg })
@@ -298,7 +302,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								return;
 							}
 							const parts: string[] = [];
-							if (created.length > 0) parts.push(`Created ${created.length} field${created.length !== 1 ? 's' : ''}`);
+							if (created.length > 0)
+								parts.push(`Created ${created.length} field${created.length !== 1 ? 's' : ''}`);
 							if (existing.length > 0) parts.push(`${existing.length} already existed`);
 							notifyToast({
 								color: 'green',
@@ -318,88 +323,46 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return;
 				}
 
-				// Handle /PM slash-command suite (#428 + #436)
-				// All /PM verbs are dispatched to window.maestro.pm.* IPC channels.
-				// The session's projectPath and gitPath are forwarded so the backend
-				// can scope queries to the right project.
-				if (!isTerminalMode && commandText.startsWith('/PM')) {
-					const pmArgs = commandText.slice('/PM'.length).trim(); // e.g. "prd-edit abc123"
-					const spaceIdx = pmArgs.indexOf(' ');
-					const verb = spaceIdx === -1 ? pmArgs : pmArgs.substring(0, spaceIdx); // e.g. "prd-edit"
-					const args = spaceIdx === -1 ? '' : pmArgs.substring(spaceIdx + 1).trim(); // e.g. "abc123"
-
-					const pmReq = {
-						args: args || undefined,
-						projectPath: activeSession.projectRoot ?? undefined,
-						gitPath: activeSession.projectRoot ?? undefined,
-						actor: { sessionId: activeSession.id },
-					};
-
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('');
-					if (inputRef.current) inputRef.current.style.height = 'auto';
-
-					const pm = window.maestro.pm;
-					type PmFn = typeof pm.orchestrate;
-					const dispatch: Record<string, PmFn | ((r: typeof pmReq) => ReturnType<PmFn>)> = {
-						'': pm.orchestrate.bind(pm),
-						'prd-new': pm.prdNew.bind(pm),
-						'prd-edit': pm.prdEdit.bind(pm),
-						'prd-status': pm.prdStatus.bind(pm),
-						'prd-parse': pm.prdParse.bind(pm),
-						'prd-list': pm.prdList.bind(pm),
-						'epic-decompose': pm.epicDecompose.bind(pm),
-						'epic-edit': pm.epicEdit.bind(pm),
-						'epic-list': pm.epicList.bind(pm),
-						'epic-show': pm.epicShow.bind(pm),
-						'epic-sync': pm.epicSync.bind(pm),
-						'epic-start': pm.epicStart.bind(pm),
-						'issue-start': pm.issueStart.bind(pm),
-						'issue-show': pm.issueShow.bind(pm),
-						'issue-status': pm.issueStatus.bind(pm),
-						'issue-sync': pm.issueSync.bind(pm),
-						next: pm.next.bind(pm),
-						status: pm.status.bind(pm),
-						standup: pm.standup.bind(pm),
-					};
-
-					const handler = dispatch[verb];
-					if (handler) {
-						(handler as PmFn)(pmReq)
-							.then((res) => {
-								if (res.message) {
-									logger.info('[PM]', undefined, { verb, message: res.message.substring(0, 80) });
-								}
-								if (!res.success) {
-									logger.error('[PM] command failed:', undefined, res.error);
-								}
-							})
-							.catch((e: unknown) => logger.error('[PM] IPC error:', undefined, e));
-					} else {
-						// Unknown verb — forward the full command text to the AI agent
-						logger.warn('[PM] Unknown verb, forwarding to agent:', undefined, { verb });
-						// Fall through by not returning so the regular send path runs
-					}
-
-					return;
-				}
-
 				// Check for custom AI commands (only in AI mode)
 				if (!isTerminalMode) {
-					// Parse command and arguments: "/speckit.plan Blah blah" -> baseCommand="/speckit.plan", args="Blah blah"
+					// Parse command and arguments.
+					// For single-word commands (e.g. "/speckit.plan Blah blah"):
+					//   baseCommand="/speckit.plan", commandArgs="Blah blah"
+					// For multi-word commands (e.g. "/PM prd-new <name>"):
+					//   Try the longest matching prefix first so "/PM prd-new" is preferred
+					//   over "/PM" when the user types "/PM prd-new some name".
 					const firstSpaceIndex = commandText.indexOf(' ');
 					const baseCommand =
 						firstSpaceIndex === -1 ? commandText : commandText.substring(0, firstSpaceIndex);
-					const commandArgs =
-						firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
+
+					// Try to find a multi-word command that is a prefix of commandText.
+					// A multi-word command "X Y" matches if commandText equals "X Y" (no args)
+					// or starts with "X Y " (with trailing args).
+					const multiWordMatch = customAICommands.find((cmd) => {
+						if (!cmd.command.includes(' ')) return false;
+						return commandText === cmd.command || commandText.startsWith(cmd.command + ' ');
+					});
+
+					// Determine the effective command and args.
+					// Multi-word match takes precedence over single-word baseCommand match.
+					let effectiveCommand: string;
+					let commandArgs: string;
+					if (multiWordMatch) {
+						effectiveCommand = multiWordMatch.command;
+						commandArgs = commandText.slice(multiWordMatch.command.length).trim();
+					} else {
+						effectiveCommand = baseCommand;
+						commandArgs =
+							firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
+					}
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
 					const matchingAgentCommand = activeSession.agentCommands?.find(
-						(cmd) => cmd.command === baseCommand && cmd.prompt
+						(cmd) => cmd.command === effectiveCommand && cmd.prompt
 					);
 					const matchingCustomCommand =
-						customAICommands.find((cmd) => cmd.command === baseCommand) ||
+						multiWordMatch ||
+						customAICommands.find((cmd) => cmd.command === effectiveCommand) ||
 						(matchingAgentCommand
 							? {
 									command: matchingAgentCommand.command,

@@ -674,6 +674,7 @@ function MaestroConsoleInner() {
 		speckitCommands,
 		openspecCommands,
 		bmadCommands,
+		pmCommands,
 		saveFileGistUrl,
 	} = useAppInitialization();
 
@@ -794,11 +795,13 @@ function MaestroConsoleInner() {
 	const speckitCommandsRef = useRef(speckitCommands);
 	const openspecCommandsRef = useRef(openspecCommands);
 	const bmadCommandsRef = useRef(bmadCommands);
+	const pmCommandsRef = useRef(pmCommands);
 	const fileTabAutoRefreshEnabledRef = useRef(fileTabAutoRefreshEnabled);
 	customAICommandsRef.current = customAICommands;
 	speckitCommandsRef.current = speckitCommands;
 	openspecCommandsRef.current = openspecCommands;
 	bmadCommandsRef.current = bmadCommands;
+	pmCommandsRef.current = pmCommands;
 	fileTabAutoRefreshEnabledRef.current = fileTabAutoRefreshEnabled;
 
 	// Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now provided by useAgentExecution hook
@@ -1219,8 +1222,21 @@ function MaestroConsoleInner() {
 			prompt: cmd.prompt,
 			isBuiltIn: true,
 		}));
-		return [...customAICommands, ...speckitAsCustom, ...openspecAsCustom, ...bmadAsCustom];
-	}, [customAICommands, speckitCommands, openspecCommands, bmadCommands]);
+		const pmAsCustom: CustomAICommand[] = pmCommands.map((cmd) => ({
+			id: `pm-${cmd.id}`,
+			command: cmd.command,
+			description: cmd.description,
+			prompt: cmd.prompt,
+			isBuiltIn: true,
+		}));
+		return [
+			...customAICommands,
+			...speckitAsCustom,
+			...openspecAsCustom,
+			...bmadAsCustom,
+			...pmAsCustom,
+		];
+	}, [customAICommands, speckitCommands, openspecCommands, bmadCommands, pmCommands]);
 
 	// Combine built-in slash commands with custom AI commands, bundled methodology
 	// commands, and agent-specific commands for autocomplete.
@@ -1826,6 +1842,7 @@ function MaestroConsoleInner() {
 		speckitCommandsRef,
 		openspecCommandsRef,
 		bmadCommandsRef,
+		pmCommandsRef,
 		toggleGlobalLive,
 		isLiveMode,
 		sshRemoteConfigs,
@@ -1857,6 +1874,7 @@ function MaestroConsoleInner() {
 		speckitCommandsRef,
 		openspecCommandsRef,
 		bmadCommandsRef,
+		pmCommandsRef,
 	});
 	// Bridge: keep the original processQueuedItemRef in sync
 	processQueuedItemRef.current = processQueuedItem;
