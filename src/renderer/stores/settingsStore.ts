@@ -213,6 +213,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	deliveryPlanner: false,
 	planningPipeline: false,
 	conversationalPrd: false,
+	pmSuite: false,
 };
 
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {

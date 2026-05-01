@@ -87,6 +87,7 @@ import { registerPmOrchestratorHandlers } from '../../pm-orchestrator';
 import { registerPmToolsHandlers, PmToolsHandlerDependencies } from './pm-tools';
 // pm-audit — rule-based in-flight work sweep (#434)
 import { registerPmAuditHandlers, PmAuditHandlerDependencies } from './pm-audit';
+import { registerPmHeartbeatHandlers, PmHeartbeatHandlerDependencies } from './pm-heartbeat';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -157,6 +158,8 @@ export { registerPmToolsHandlers };
 export type { PmToolsHandlerDependencies };
 export { registerPmAuditHandlers };
 export type { PmAuditHandlerDependencies };
+export { registerPmHeartbeatHandlers };
+export type { PmHeartbeatHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -377,6 +380,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmToolsHandlers({ settingsStore: deps.settingsStore });
 	// Register PM Audit handlers (#434): pmAudit:run
 	registerPmAuditHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Heartbeat handlers (#435): pm:heartbeat agent liveness signal
+	registerPmHeartbeatHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

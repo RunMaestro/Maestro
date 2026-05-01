@@ -1013,6 +1013,8 @@ export interface EncoreFeatureFlags {
 	deliveryPlanner: boolean;
 	planningPipeline: boolean;
 	conversationalPrd: boolean;
+	/** /PM slash-command suite — orchestrator, PRD planner, epic/issue verbs, standup (#428 + #436) */
+	pmSuite: boolean;
 }
 
 // Director's Notes settings for synopsis generation

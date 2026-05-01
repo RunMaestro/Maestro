@@ -80,6 +80,7 @@ import {
 	registerConversationalPrdHandlers,
 	registerPmToolsHandlers,
 	registerPmAuditHandlers,
+	registerPmHeartbeatHandlers,
 	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -153,6 +154,7 @@ import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
 import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
 import { startGhProjectPoller } from './pm-reverse-sync/poller';
+import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -757,6 +759,10 @@ app.whenReady().then(async () => {
 		}
 	}
 
+	// Start stale-claim sweeper (#435): auto-releases claims with no heartbeat for >5 min.
+	// Not gated — sweeper is lightweight and handles the absence of deliveryPlanner gracefully.
+	startStaleClaimSweeper();
+
 	// Start Cue engine if the Encore Feature flag is enabled
 	if (encoreFeatures.maestroCue && cueEngine) {
 		logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
@@ -1236,6 +1242,9 @@ function setupIpcHandlers() {
 
 	// pm-audit — rule-based in-flight work sweep (#434)
 	registerPmAuditHandlers({ settingsStore: store });
+
+	// pm-heartbeat — agent liveness signal for stale-claim sweeper (#435)
+	registerPmHeartbeatHandlers({ settingsStore: store });
 }
 
 // Handle process output streaming (set up after initialization)
