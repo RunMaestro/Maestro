@@ -22,6 +22,7 @@ import { formatTokensCompact } from '../utils/formatters';
 import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 /** Shape of the global stats subset the share image consumes. Mirrors the
  * structure used by `AchievementCard`; defined here to keep the new module
@@ -597,6 +598,7 @@ export function AchievementShareButton({
 			}
 		} catch (error) {
 			logger.error('Failed to generate share image:', undefined, error);
+			captureException(error, { extra: { action: 'share-achievement-copy' } });
 		}
 	}, [generateShareImage]);
 
@@ -609,6 +611,7 @@ export function AchievementShareButton({
 			link.click();
 		} catch (error) {
 			logger.error('Failed to download image:', undefined, error);
+			captureException(error, { extra: { action: 'share-achievement-download', currentLevel } });
 		}
 	}, [generateShareImage, currentLevel]);
 

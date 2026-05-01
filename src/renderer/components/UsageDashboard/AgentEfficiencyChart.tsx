@@ -103,8 +103,33 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 			}
 		}
 
-		return foundWorktree ? result : null;
-	}, [data.bySessionByDay, sessions]);
+		if (!foundWorktree) return null;
+
+		// Backfill historical totals for providers whose stat sessions no longer
+		// resolve. Without this, deleted/closed agents drop out of the chart
+		// entirely once worktree splitting kicks in. The remainder lands in the
+		// regular bucket since we can't infer worktree status without the live
+		// session.
+		for (const [provider, agentTotals] of Object.entries(data.byAgent)) {
+			if (!result[provider]) {
+				result[provider] = {
+					regular: { count: 0, duration: 0 },
+					worktree: { count: 0, duration: 0 },
+				};
+			}
+			const reconstructedCount = result[provider].regular.count + result[provider].worktree.count;
+			const reconstructedDuration =
+				result[provider].regular.duration + result[provider].worktree.duration;
+			const missingCount = Math.max(0, agentTotals.count - reconstructedCount);
+			const missingDuration = Math.max(0, agentTotals.duration - reconstructedDuration);
+			if (missingCount > 0 || missingDuration > 0) {
+				result[provider].regular.count += missingCount;
+				result[provider].regular.duration += missingDuration;
+			}
+		}
+
+		return result;
+	}, [data.bySessionByDay, data.byAgent, sessions]);
 
 	// Calculate efficiency data (avg duration per query) for each agent
 	const efficiencyData = useMemo(() => {

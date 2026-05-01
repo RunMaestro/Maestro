@@ -7,6 +7,7 @@ import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -2208,6 +2209,50 @@ describe('FileExplorerPanel', () => {
 			// Focus behavior with requestAnimationFrame is tested elsewhere
 			const cancelButton = screen.getByText('Cancel');
 			expect(cancelButton).toBeInTheDocument();
+		});
+
+		it('does not attach a window keydown listener until the menu is opened', () => {
+			const spies = spyOnListeners(window);
+			render(<FileExplorerPanel {...defaultProps} />);
+			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
+			expect(keydownAdds).toHaveLength(0);
+			spies.restore();
+		});
+
+		it('closes the context menu on Escape', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expect(screen.queryByText('Copy Path')).not.toBeInTheDocument();
+		});
+
+		it('removes its keydown listener after the menu closes (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
+		});
+
+		it('removes its keydown listener on unmount with menu open (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { container, unmount } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 });

@@ -197,6 +197,13 @@ interface MaestroAPI {
 	sessions: {
 		getAll: () => Promise<any[]>;
 		setAll: (sessions: any[]) => Promise<boolean>;
+		/**
+		 * Incremental persistence: merge `updates` into the stored sessions and
+		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
+		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * tree on every change.
+		 */
+		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
 	};
@@ -3139,6 +3146,13 @@ interface MaestroAPI {
 		getEventCount: () => Promise<number>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
+		/**
+		 * Visibility-aware pause. Flip to false while the app is hidden so
+		 * the Cue scanner subsystem skips expensive background work; flip
+		 * back to true on visibility. Different from `disable`, which tears
+		 * the engine down entirely.
+		 */
+		setActive: (active: boolean) => Promise<void>;
 		stopRun: (runId: string) => Promise<boolean>;
 		stopAll: () => Promise<void>;
 		triggerSubscription: (

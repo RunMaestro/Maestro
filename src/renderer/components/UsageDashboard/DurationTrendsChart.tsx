@@ -477,8 +477,10 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 				{hoveredPoint &&
 					tooltipPos &&
 					(() => {
-						const tooltipWidth = 200;
-						const tooltipHeight = 80;
+						const hasRawRow =
+							showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration;
+						const tooltipWidth = 220;
+						const tooltipHeight = hasRawRow ? 98 : 80;
 						const { left, top } = clampTooltipToViewport({
 							anchorX: tooltipPos.x,
 							anchorY: tooltipPos.y - 8,
@@ -488,10 +490,13 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 						});
 						return (
 							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+								className="fixed z-50 px-3 py-2 rounded text-xs pointer-events-none shadow-lg"
 								style={{
 									left,
 									top,
+									width: tooltipWidth,
+									maxWidth: tooltipWidth,
+									whiteSpace: 'normal',
 									backgroundColor: theme.colors.bgActivity,
 									color: theme.colors.textMain,
 									border: `1px solid ${theme.colors.border}`,

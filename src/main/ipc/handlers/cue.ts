@@ -26,6 +26,7 @@ import {
 	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../cue/config/cue-config-repository';
+import { setCueActive } from '../../cue/cue-active-state';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
 import { captureException } from '../../utils/sentry';
 import type { CueEngine } from '../../cue/cue-engine';
@@ -128,6 +129,27 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		'cue:disable',
 		withIpcErrorLogging(handlerOpts('disable'), async (): Promise<void> => {
 			requireEngine().stop();
+		})
+	);
+
+	// Visibility-aware pause: the renderer flips this on visibilitychange so
+	// scanners (file-watcher / task-scanner / github-poller) stop doing
+	// expensive background work while the app is hidden. Different from
+	// enable/disable, which fully starts/stops the engine — setActive only
+	// gates the per-tick work and does not tear down state.
+	ipcMain.handle(
+		'cue:setActive',
+		withIpcErrorLogging(handlerOpts('setActive'), async (active: boolean): Promise<void> => {
+			// Strict type check rather than Boolean(active) coercion. Coercion
+			// would silently accept truthy strings / numbers / objects from a
+			// misbehaving caller, hiding the bug. withIpcErrorLogging surfaces
+			// thrown TypeErrors to Sentry so we get a real signal.
+			if (typeof active !== 'boolean') {
+				throw new TypeError(
+					`cue:setActive expected boolean, got ${typeof active} (${String(active)})`
+				);
+			}
+			setCueActive(active);
 		})
 	);
 

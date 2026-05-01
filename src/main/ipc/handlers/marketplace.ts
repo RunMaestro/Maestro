@@ -565,8 +565,16 @@ function setupLocalManifestWatcher(app: App): void {
 		});
 
 		// Prevent runtime errors (e.g. Windows UNKNOWN, file removed) from
-		// becoming unhandled rejections.
+		// becoming unhandled rejections. Recoverable filesystem codes stay
+		// warn-only; novel failure modes get reported to Sentry so we keep
+		// production visibility.
 		localManifestWatcher.on('error', (error) => {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT' || code === 'EPERM' || code === 'UNKNOWN') {
+				logger.warn(`Local manifest watcher error (${code}): ${error.message}`, LOG_CONTEXT);
+				return;
+			}
+			void captureException(error, { operation: 'marketplace:localManifestWatcher' });
 			logger.warn(`Local manifest watcher error: ${error.message}`, LOG_CONTEXT);
 		});
 

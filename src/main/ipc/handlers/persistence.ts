@@ -25,7 +25,33 @@ import {
 // Re-export types from canonical source so existing imports from './persistence' still work
 export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
 import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
-import type { Group } from '../../../shared/types';
+import type { Group, SessionCliActivity } from '../../../shared/types';
+
+/**
+ * Shallow-compare cliActivity for the diff broadcast.
+ *
+ * Replaces a previous `JSON.stringify(prev) !== JSON.stringify(curr)` per
+ * session per persistence flush, which was 2× O(stringify) per call. The
+ * cliActivity producer (`useCliActivityMonitoring`) only ever sets the field
+ * to `undefined` or to `{ playbookId, playbookName, startedAt }`, so a 4-step
+ * primitive comparison is equivalent at all real call sites and an order of
+ * magnitude cheaper.
+ */
+function cliActivityChanged(
+	prev: SessionCliActivity | null | undefined,
+	curr: SessionCliActivity | null | undefined
+): boolean {
+	// Existence change (one is null/undefined, the other isn't) — broadcast.
+	if (!prev !== !curr) return true;
+	// Both are nullish — no change.
+	if (!prev || !curr) return false;
+	// Both present — compare known fields.
+	return (
+		prev.playbookId !== curr.playbookId ||
+		prev.playbookName !== curr.playbookName ||
+		prev.startedAt !== curr.startedAt
+	);
+}
 
 /**
  * Dependencies required for persistence handlers
@@ -125,6 +151,144 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		sessionsStore.set('activeSessionId', id);
 	});
 
+	/**
+	 * Incremental session persistence: merge a subset of dirty sessions into
+	 * the existing stored sessions, optionally removing some by id.
+	 *
+	 * This is the preferred path for the renderer's debounced persistence —
+	 * it avoids cloning + serializing the entire sessions tree on every
+	 * change. `sessions:setAll` remains as the bootstrap path and as a
+	 * fallback when no diff baseline is available.
+	 *
+	 * Semantics:
+	 *  - `updates`: sessions to merge. If id matches an existing session,
+	 *    replaces it. If id is new, appends it. Order of new sessions
+	 *    follows the order in `updates`.
+	 *  - `removeIds`: sessions to remove. Applied alongside updates; a
+	 *    session in both lists is removed (remove wins).
+	 *  - Sessions not mentioned in either list are preserved as-is.
+	 *  - Broadcasts to web clients fire only for the touched sessions
+	 *    (added / state-changed / removed), matching `setAll` semantics.
+	 */
+	ipcMain.handle(
+		'sessions:setMany',
+		async (_, updates: StoredSession[] = [], removeIds: string[] = []) => {
+			const previousSessions = sessionsStore.get('sessions', []);
+			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
+			const removeSet = new Set(removeIds);
+			const updateMap = new Map(updates.map((s) => [s.id, s]));
+
+			// Build merged array preserving the existing order. Apply updates and
+			// skip removals in a single pass, then append any new sessions whose
+			// ids weren't seen in the existing array.
+			const merged: StoredSession[] = [];
+			for (const prev of previousSessions) {
+				if (removeSet.has(prev.id)) continue;
+				const update = updateMap.get(prev.id);
+				if (update) {
+					merged.push(update);
+					updateMap.delete(prev.id);
+				} else {
+					merged.push(prev);
+				}
+			}
+			for (const newSession of updateMap.values()) {
+				if (removeSet.has(newSession.id)) continue;
+				merged.push(newSession);
+			}
+
+			// Lifecycle logging (parallel to setAll's debug logs)
+			for (const session of updates) {
+				if (!previousMap.has(session.id) && !removeSet.has(session.id)) {
+					logger.debug('Session created', 'Sessions', {
+						sessionId: session.id,
+						name: session.name,
+						toolType: session.toolType,
+						cwd: session.cwd,
+					});
+				}
+			}
+			for (const id of removeIds) {
+				const prev = previousMap.get(id);
+				if (prev) {
+					logger.debug('Session destroyed', 'Sessions', {
+						sessionId: prev.id,
+						name: prev.name,
+					});
+				}
+			}
+
+			const webServer = getWebServer();
+			if (webServer && webServer.getWebClientCount() > 0) {
+				for (const session of updates) {
+					if (removeSet.has(session.id)) continue;
+					const prev = previousMap.get(session.id);
+					if (prev) {
+						if (
+							prev.state !== session.state ||
+							prev.inputMode !== session.inputMode ||
+							prev.name !== session.name ||
+							prev.cwd !== session.cwd ||
+							cliActivityChanged(prev.cliActivity, session.cliActivity)
+						) {
+							webServer.broadcastSessionStateChange(session.id, session.state, {
+								name: session.name,
+								toolType: session.toolType,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								cliActivity: session.cliActivity,
+							});
+						}
+					} else {
+						webServer.broadcastSessionAdded({
+							id: session.id,
+							name: session.name,
+							toolType: session.toolType,
+							state: session.state,
+							inputMode: session.inputMode,
+							cwd: session.cwd,
+							groupId: session.groupId || null,
+							groupName: session.groupName || null,
+							groupEmoji: session.groupEmoji || null,
+							parentSessionId: session.parentSessionId || null,
+							worktreeBranch: session.worktreeBranch || null,
+						});
+					}
+				}
+				for (const id of removeIds) {
+					if (previousMap.has(id)) {
+						webServer.broadcastSessionRemoved(id);
+					}
+				}
+			}
+
+			try {
+				sessionsStore.set('sessions', merged);
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				// Recoverable filesystem errors — the next debounced flush will
+				// retry when conditions improve. Log warn and return false so
+				// the renderer's flush path can mark the write as unconfirmed.
+				if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
+					logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
+					return false;
+				}
+				// Anything else is unexpected — log error and rethrow so
+				// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
+				// §"Error Handling & Sentry", silent swallows hide bugs from
+				// production telemetry.
+				logger.error(
+					`Unexpected error persisting sessions (setMany): ${(err as Error).message}`,
+					'Sessions',
+					err
+				);
+				throw err;
+			}
+
+			return true;
+		}
+	);
+
 	ipcMain.handle('sessions:setAll', async (_, sessions: StoredSession[]) => {
 		// Get previous sessions to detect changes
 		const previousSessions = sessionsStore.get('sessions', []);
@@ -167,7 +331,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 						prevSession.inputMode !== session.inputMode ||
 						prevSession.name !== session.name ||
 						prevSession.cwd !== session.cwd ||
-						JSON.stringify(prevSession.cliActivity) !== JSON.stringify(session.cliActivity)
+						cliActivityChanged(prevSession.cliActivity, session.cliActivity)
 					) {
 						webServer.broadcastSessionStateChange(session.id, session.state, {
 							name: session.name,

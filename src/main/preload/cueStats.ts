@@ -16,9 +16,22 @@ export type { CueStatsAggregation, CueStatsTimeRange } from '../../shared/cue-st
 export function createCueStatsApi() {
 	return {
 		// Get the full Cue stats aggregation payload for the given time range.
-		// Throws 'CueStatsDisabled' when either Encore flag is off.
-		getAggregation: (range: CueStatsTimeRange): Promise<CueStatsAggregation> =>
-			ipcRenderer.invoke('cue-stats:get-aggregation', range),
+		// Throws an Error with message exactly 'CueStatsDisabled' when either
+		// Encore flag is off. Electron's IPC layer wraps thrown errors into
+		// `Error invoking remote method '...': Error: <original>`, so we
+		// detect that wrapper here and rethrow the bare sentinel — keeps the
+		// preload contract stable for renderer consumers.
+		getAggregation: async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
+			try {
+				return await ipcRenderer.invoke('cue-stats:get-aggregation', range);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes('CueStatsDisabled')) {
+					throw new Error('CueStatsDisabled');
+				}
+				throw error;
+			}
+		},
 	};
 }
 

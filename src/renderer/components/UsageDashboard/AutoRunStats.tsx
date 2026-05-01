@@ -458,10 +458,13 @@ export const AutoRunStats = memo(function AutoRunStats({
 									>
 										<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
 										<div style={{ color: theme.colors.textDim }}>
-											<div>{hoveredBar.count} tasks completed</div>
+											<div>{hoveredBar.count} tasks attempted</div>
 											<div>
 												{hoveredBar.successCount} successful (
-												{Math.round((hoveredBar.successCount / hoveredBar.count) * 100)}%)
+												{hoveredBar.count > 0
+													? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
+													: 0}
+												%)
 											</div>
 										</div>
 									</div>

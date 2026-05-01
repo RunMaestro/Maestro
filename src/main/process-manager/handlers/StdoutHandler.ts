@@ -268,10 +268,6 @@ export class StdoutHandler {
 			this.handleStreamJsonData(sessionId, managedProcess, cleanedOutput);
 		} else if (isBatchMode) {
 			managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + cleanedOutput;
-			logger.debug('[ProcessManager] Accumulated JSON buffer', 'ProcessManager', {
-				sessionId,
-				bufferLength: managedProcess.jsonBuffer.length,
-			});
 		} else {
 			this.bufferManager.emitDataBuffered(sessionId, cleanedOutput);
 		}
@@ -383,12 +379,6 @@ export class StdoutHandler {
 					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "claude login" to re-authenticate.`;
 				}
 
-				logger.debug('[ProcessManager] Error detected from output', 'ProcessManager', {
-					sessionId,
-					errorType: agentError.type,
-					errorMessage: agentError.message,
-					isRemote: !!managedProcess.sshRemoteId,
-				});
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
@@ -411,11 +401,6 @@ export class StdoutHandler {
 					timestamp: Date.now(),
 					raw: { errorLine: line },
 				};
-				logger.debug('[ProcessManager] SSH error detected from output', 'ProcessManager', {
-					sessionId,
-					errorType: sshError.type,
-					errorMessage: sshError.message,
-				});
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
@@ -434,14 +419,8 @@ export class StdoutHandler {
 			// non-JSON noise from shell profiles or MCP server startup that should
 			// not be displayed to the user.
 			this.bufferManager.emitDataBuffered(sessionId, line);
-		} else {
-			// Suppressed non-JSON line for JSONL agent
-			logger.info('[StdoutHandler] SUPPRESSED non-JSON line for JSONL agent', 'ProcessManager', {
-				sessionId,
-				toolType: managedProcess.toolType,
-				linePreview: line.substring(0, 80),
-			});
 		}
+		// Non-JSON lines from JSONL agents are silently suppressed (shell profile noise, MCP startup, etc.)
 	}
 
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
@@ -452,16 +431,6 @@ export class StdoutHandler {
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
 		const event = outputParser.parseJsonObject(parsed);
-
-		logger.debug('[ProcessManager] Parsed event from output parser', 'ProcessManager', {
-			sessionId,
-			eventType: event?.type,
-			hasText: !!event?.text,
-			textPreview: event?.text?.substring(0, 100),
-			isPartial: event?.isPartial,
-			isResultMessage: event ? outputParser.isResultMessage(event) : false,
-			resultEmitted: managedProcess.resultEmitted,
-		});
 
 		if (!event) return;
 
@@ -504,24 +473,8 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// DEBUG: Log thinking-chunk emission conditions
-		if (event.type === 'text') {
-			logger.debug('[ProcessManager] Checking thinking-chunk conditions', 'ProcessManager', {
-				sessionId,
-				eventType: event.type,
-				isPartial: event.isPartial,
-				hasText: !!event.text,
-				textLength: event.text?.length,
-				textPreview: event.text?.substring(0, 100),
-			});
-		}
-
 		// Handle streaming text events (OpenCode, Codex reasoning)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			logger.debug('[ProcessManager] Emitting thinking-chunk', 'ProcessManager', {
-				sessionId,
-				textLength: event.text.length,
-			});
 			// For Copilot, skip thinking-chunk emission — the parser's delta events
 			// accumulate in streamedText which is emitted once as the result at exit.
 			// Emitting thinking-chunks AND result would duplicate the content.
@@ -593,14 +546,6 @@ export class StdoutHandler {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
-				logger.debug(
-					'[ProcessManager] Emitting final Codex result at turn completion',
-					'ProcessManager',
-					{
-						sessionId,
-						resultLength: resultText.length,
-					}
-				);
 				this.bufferManager.emitDataBuffered(sessionId, resultText);
 			}
 		}

@@ -147,8 +147,32 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		// If no worktree agents were found, splitting adds no signal — let the
 		// chart render the simpler byAgent view to avoid losing historical data
 		// from sessions that aren't currently in the sessions list.
-		return foundWorktree ? result : null;
-	}, [data.bySessionByDay, sessions]);
+		if (!foundWorktree) return null;
+
+		// Reconcile against data.byAgent so providers whose stat-session IDs
+		// no longer resolve (deleted/historical agents) keep their full
+		// historical totals. The unmatched remainder lands in the regular
+		// bucket — we can't infer worktree status without the live session.
+		for (const [provider, agentTotals] of Object.entries(data.byAgent)) {
+			if (!result[provider]) {
+				result[provider] = {
+					regular: { count: 0, duration: 0 },
+					worktree: { count: 0, duration: 0 },
+				};
+			}
+			const reconstructedCount = result[provider].regular.count + result[provider].worktree.count;
+			const reconstructedDuration =
+				result[provider].regular.duration + result[provider].worktree.duration;
+			const missingCount = Math.max(0, agentTotals.count - reconstructedCount);
+			const missingDuration = Math.max(0, agentTotals.duration - reconstructedDuration);
+			if (missingCount > 0 || missingDuration > 0) {
+				result[provider].regular.count += missingCount;
+				result[provider].regular.duration += missingDuration;
+			}
+		}
+
+		return result;
+	}, [data.bySessionByDay, data.byAgent, sessions]);
 
 	// Process and sort agent data
 	const agentData = useMemo((): AgentData[] => {

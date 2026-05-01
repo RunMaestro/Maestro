@@ -49,15 +49,36 @@ type ByDayEntry = StatsAggregation['byDay'][number];
 const SPARKLINE_DAYS = 7;
 
 /**
- * Extracts the most recent `SPARKLINE_DAYS` daily query counts (oldest →
- * newest), left-padding with zeros so the returned array always has
- * `SPARKLINE_DAYS` entries. This keeps sparkline geometry stable when
- * the user has fewer than a week of activity.
+ * Build a fixed last-7-days window ending at today, indexing the byDay series
+ * by its YYYY-MM-DD date string and falling back to zero for absent days. This
+ * keeps the sparkline geometrically faithful — sparse byDay rows would
+ * otherwise compress gaps and overstate momentum.
+ */
+function buildLast7DaysWindow(byDay: ByDayEntry[], pick: (entry: ByDayEntry) => number): number[] {
+	const lookup = new Map<string, number>();
+	for (const entry of byDay) {
+		lookup.set(entry.date, pick(entry));
+	}
+	const ymd = (d: Date) =>
+		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+	const values: number[] = [];
+	const cursor = new Date();
+	cursor.setHours(0, 0, 0, 0);
+	for (let i = SPARKLINE_DAYS - 1; i >= 0; i--) {
+		const day = new Date(cursor);
+		day.setDate(cursor.getDate() - i);
+		values.push(lookup.get(ymd(day)) ?? 0);
+	}
+	return values;
+}
+
+/**
+ * Returns the last 7 days of query counts oldest → newest. Days with no
+ * activity are zero-filled rather than skipped so the sparkline shape matches
+ * calendar reality.
  */
 export function getLast7Days(byDay: ByDayEntry[]): number[] {
-	const counts = byDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
+	return buildLast7DaysWindow(byDay, (d) => d.count);
 }
 
 /**
@@ -156,12 +177,10 @@ export function formatShortDate(dateStr: string): string {
 
 /**
  * Same as {@link getLast7Days} but pulls each day's total `duration`
- * (in ms) instead of the query count.
+ * (in ms) instead of the query count. Densified the same way.
  */
 export function getLast7DaysDuration(byDay: ByDayEntry[]): number[] {
-	const durations = byDay.slice(-SPARKLINE_DAYS).map((d) => d.duration);
-	if (durations.length >= SPARKLINE_DAYS) return durations;
-	return [...new Array(SPARKLINE_DAYS - durations.length).fill(0), ...durations];
+	return buildLast7DaysWindow(byDay, (d) => d.duration);
 }
 
 interface SummaryCardsProps {

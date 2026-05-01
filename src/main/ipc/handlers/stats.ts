@@ -12,11 +12,13 @@
  * - CSV export for data analysis
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getStatsDB } from '../../stats';
 import { flushTelemetry } from '../../cue/cue-telemetry';
+import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
 import {
 	QueryEvent,
 	AutoRunSession,
@@ -78,24 +80,50 @@ function broadcastStatsUpdate(getMainWindow: () => BrowserWindow | null): void {
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
 
-	// Record a query event (interactive conversation turn)
+	// PR-B 1.5: flush any buffered query events synchronously before the app
+	// exits so we don't drop them. The handler is fire-and-forget — if it
+	// throws (e.g. DB already closed) the buffer module logs it; we don't
+	// want to block quit on stats persistence.
+	app.on('before-quit', () => {
+		try {
+			flushQueryEventsSync();
+		} catch (err) {
+			logger.warn('Failed to flush query event buffer on quit', LOG_CONTEXT, err);
+			// Surface to Sentry so we get a real signal in production —
+			// quit-time data loss is the worst time to lose telemetry, since
+			// we can't retry. Per CLAUDE.md §"Error Handling & Sentry".
+			void captureException(err instanceof Error ? err : new Error(String(err)), {
+				operation: 'stats:beforeQuitFlush',
+			});
+		}
+	});
+
+	// Record a query event (interactive conversation turn).
+	//
+	// PR-B 1.5: events are buffered and flushed in a single transaction every
+	// 500ms or every 50 events (whichever first). This collapses many
+	// per-turn fsyncs into one, on the streaming hot path. The buffered
+	// id is generated synchronously and returned — callers don't need to
+	// wait for the actual write.
 	ipcMain.handle(
 		'stats:record-query',
 		withIpcErrorLogging(handlerOpts('recordQuery'), async (event: Omit<QueryEvent, 'id'>) => {
-			// Check if stats collection is enabled
 			if (!isStatsCollectionEnabled(settingsStore)) {
 				logger.debug('Stats collection disabled, skipping query event', LOG_CONTEXT);
 				return null;
 			}
 
 			const db = getStatsDB();
-			const id = db.insertQueryEvent(event);
-			logger.debug(`Recorded query event: ${id}`, LOG_CONTEXT, {
+			const id = enqueueQueryEvent(db.database, event);
+			logger.debug(`Buffered query event: ${id}`, LOG_CONTEXT, {
 				sessionId: event.sessionId,
 				agentType: event.agentType,
 				source: event.source,
 				duration: event.duration,
 			});
+			// Notify renderer that stats may have changed soon. The actual
+			// write happens asynchronously; the dashboard is best-effort
+			// realtime, so a small lag (≤500ms) is acceptable.
 			broadcastStatsUpdate(getMainWindow);
 			return id;
 		})
@@ -152,7 +180,11 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				// flush leaves rows in the outbox for the next attempt and must
 				// not delay the IPC return. The submitter checks Encore flags
 				// internally; nothing happens if Cue/usageStats are off.
-				void flushTelemetry({ reason: 'autorun' });
+				flushTelemetry({ reason: 'autorun' }).catch((error) => {
+					void captureException(error, {
+						operation: 'stats:end-autorun.flushTelemetry',
+					});
+				});
 
 				return updated;
 			}

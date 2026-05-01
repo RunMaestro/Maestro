@@ -57,7 +57,21 @@ function getSshRemoteById(
 
 // State managed by this module
 const autoRunWatchers = new Map<string, FSWatcher>();
-const autoRunWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
+// One coalescing timer per folder. Pending changes within the debounce window
+// are flushed together so 10 files written in parallel produce one tick of work
+// instead of 10 staggered IPC bursts.
+type PendingFolderChanges = {
+	timer: NodeJS.Timeout;
+	changes: Map<string, string>;
+};
+const autoRunWatchPending = new Map<string, PendingFolderChanges>();
+
+const clearPendingChangesForFolder = (folderPath: string) => {
+	const pending = autoRunWatchPending.get(folderPath);
+	if (!pending) return;
+	clearTimeout(pending.timer);
+	autoRunWatchPending.delete(folderPath);
+};
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -910,12 +924,7 @@ export function registerAutorunHandlers(
 				if (autoRunWatchers.has(folderPath)) {
 					autoRunWatchers.get(folderPath)?.close();
 					autoRunWatchers.delete(folderPath);
-					const debouncePrefix = `${folderPath}:`;
-					for (const [key, timer] of autoRunWatchDebounceTimers) {
-						if (!key.startsWith(debouncePrefix)) continue;
-						clearTimeout(timer);
-						autoRunWatchDebounceTimers.delete(key);
-					}
+					clearPendingChangesForFolder(folderPath);
 				}
 
 				// Create folder if it doesn't exist (agent will create files in it)
@@ -944,39 +953,42 @@ export function registerAutorunHandlers(
 					depth: 99, // Recursive watching
 				});
 
-				// Handler for file changes
+				// Handler for file changes — coalesces all pending changes for this folder
+				// into a single debounced flush so a burst of writes produces one tick of work.
 				const handleFileChange = (eventType: string) => (filePath: string) => {
 					// Only care about .md files
 					if (!filePath.toLowerCase().endsWith('.md')) {
 						return;
 					}
 
-					// Get filename relative to watch folder
 					const filename = path.relative(folderPath, filePath);
-
-					// Debounce per file to avoid flooding without dropping unrelated file events
-					const debounceKey = `${folderPath}:${filename}`;
-					const existingTimer = autoRunWatchDebounceTimers.get(debounceKey);
-					if (existingTimer) {
-						clearTimeout(existingTimer);
+					const existing = autoRunWatchPending.get(folderPath);
+					if (existing) {
+						clearTimeout(existing.timer);
 					}
+					const changes = existing?.changes ?? new Map<string, string>();
+					// 'rename' (add/unlink) takes precedence over 'change' for the same file.
+					const prior = changes.get(filename);
+					changes.set(filename, prior === 'rename' ? 'rename' : eventType);
 
 					const timer = setTimeout(() => {
-						autoRunWatchDebounceTimers.delete(debounceKey);
-						// Send event to renderer
+						autoRunWatchPending.delete(folderPath);
 						const mainWindow = getMainWindow();
-						if (isWebContentsAvailable(mainWindow)) {
-							// Remove .md extension from filename to match autorun conventions
-							const filenameWithoutExt = filename.replace(/\.md$/i, '');
+						if (!isWebContentsAvailable(mainWindow)) return;
+						for (const [name, evt] of changes) {
+							const filenameWithoutExt = name.replace(/\.md$/i, '');
 							mainWindow.webContents.send('autorun:fileChanged', {
 								folderPath,
 								filename: filenameWithoutExt,
-								eventType,
+								eventType: evt,
 							});
-							logger.info(`Auto Run file changed: ${filename} (${eventType})`, LOG_CONTEXT);
 						}
-					}, 300); // 300ms debounce
-					autoRunWatchDebounceTimers.set(debounceKey, timer);
+						logger.info(
+							`Auto Run flushed ${changes.size} change(s) for ${folderPath}`,
+							LOG_CONTEXT
+						);
+					}, 300);
+					autoRunWatchPending.set(folderPath, { timer, changes });
 				};
 
 				watcher.on('add', handleFileChange('rename'));
@@ -1004,12 +1016,7 @@ export function registerAutorunHandlers(
 				autoRunWatchers.delete(folderPath);
 				logger.info(`Stopped watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
 			}
-			const debouncePrefix = `${folderPath}:`;
-			for (const [key, timer] of autoRunWatchDebounceTimers) {
-				if (!key.startsWith(debouncePrefix)) continue;
-				clearTimeout(timer);
-				autoRunWatchDebounceTimers.delete(key);
-			}
+			clearPendingChangesForFolder(folderPath);
 			return {};
 		})
 	);

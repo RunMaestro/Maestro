@@ -148,6 +148,7 @@ describe('persistence IPC handlers', () => {
 				'sessions:getActiveSessionId',
 				'sessions:setActiveSessionId',
 				'sessions:setAll',
+				'sessions:setMany',
 				'groups:getAll',
 				'groups:setAll',
 				'cli:getActivity',
@@ -614,6 +615,90 @@ describe('persistence IPC handlers', () => {
 			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalled();
 		});
 
+		// Characterization tests for cliActivity diff semantics. PR-A commit 2 will
+		// swap the JSON.stringify comparison for a shallow field compare; these
+		// tests pin down the exact (prev, curr) pairs that must continue to
+		// broadcast (or stay silent) so the swap is verifiable.
+		describe('cliActivity diff (lock-in for shallow-compare swap)', () => {
+			const baseSession = {
+				id: 'session-1',
+				name: 'Session 1',
+				cwd: '/test',
+				state: 'idle' as const,
+				inputMode: 'ai' as const,
+				toolType: 'claude-code',
+			};
+			const playbookA = { playbookId: 'pb-a', playbookName: 'Build', startedAt: 1000 };
+			const playbookB = { playbookId: 'pb-b', playbookName: 'Test', startedAt: 2000 };
+
+			beforeEach(() => {
+				mockWebServer.getWebClientCount.mockReturnValue(2);
+			});
+
+			it('does not broadcast when both prev and curr have no cliActivity', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession }]);
+				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+			});
+
+			it('broadcasts when cliActivity goes from undefined to playbook', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession, cliActivity: playbookA }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when cliActivity goes from playbook to undefined', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when playbookId changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, playbookId: 'pb-c' } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when playbookName changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, playbookName: 'NewName' } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('broadcasts when startedAt changes', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [
+					{ ...baseSession, cliActivity: { ...playbookA, startedAt: 9999 } },
+				]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not broadcast when cliActivity reference changes but fields match', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				// New object, same field values — should be treated as unchanged.
+				await handler!({} as any, [{ ...baseSession, cliActivity: { ...playbookA } }]);
+				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+			});
+
+			it('broadcasts when entire playbook is swapped', async () => {
+				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
+				const handler = handlers.get('sessions:setAll');
+				await handler!({} as any, [{ ...baseSession, cliActivity: playbookB }]);
+				expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledTimes(1);
+			});
+		});
+
 		it('should not broadcast when no web clients connected', async () => {
 			mockWebServer.getWebClientCount.mockReturnValue(0);
 			const sessions = [
@@ -736,6 +821,238 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any, [{ id: 's1', name: 'S1', state: 'idle' }]);
 
 			expect(result).toBe(false);
+		});
+	});
+
+	describe('sessions:setMany', () => {
+		const baseSession = {
+			id: 's1',
+			name: 'Session 1',
+			cwd: '/test',
+			projectRoot: '/test',
+			state: 'idle' as const,
+			inputMode: 'ai' as const,
+			toolType: 'claude-code',
+		};
+
+		it('writes the merged sessions array to the store', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, name: 'Updated' }], []);
+
+			expect(mockSessionsStore.set).toHaveBeenCalledWith(
+				'sessions',
+				expect.arrayContaining([expect.objectContaining({ id: 's1', name: 'Updated' })])
+			);
+		});
+
+		it('returns true on success', async () => {
+			mockSessionsStore.get.mockReturnValue([]);
+			const handler = handlers.get('sessions:setMany');
+			const result = await handler!({} as any, [], []);
+			expect(result).toBe(true);
+		});
+
+		it('is a no-op when given empty updates and empty removeIds', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], []);
+
+			// merged should equal previous (no add, no remove)
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', [
+				expect.objectContaining({ id: 's1' }),
+			]);
+		});
+
+		it('replaces an existing session by id', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseSession, name: 'Old' },
+				{ ...baseSession, id: 's2', name: 'Other' },
+			]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, name: 'New' }], []);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			expect(merged).toHaveLength(2);
+			expect(merged.find((s: any) => s.id === 's1').name).toBe('New');
+			expect(merged.find((s: any) => s.id === 's2').name).toBe('Other');
+		});
+
+		it('appends a new session to the end', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, id: 's2', name: 'Two' }], []);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			expect(merged.map((s: any) => s.id)).toEqual(['s1', 's2']);
+		});
+
+		it('removes sessions whose id is in removeIds', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseSession, id: 's1' },
+				{ ...baseSession, id: 's2' },
+			]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1']);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			expect(merged.map((s: any) => s.id)).toEqual(['s2']);
+		});
+
+		it('handles mixed updates and removes in one call', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseSession, id: 's1' },
+				{ ...baseSession, id: 's2' },
+				{ ...baseSession, id: 's3' },
+			]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!(
+				{} as any,
+				[
+					{ ...baseSession, id: 's2', name: 'Updated' },
+					{ ...baseSession, id: 's4', name: 'New' },
+				],
+				['s1']
+			);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			// s1 removed, s2 updated, s3 untouched, s4 appended
+			expect(merged.map((s: any) => s.id)).toEqual(['s2', 's3', 's4']);
+			expect(merged.find((s: any) => s.id === 's2').name).toBe('Updated');
+		});
+
+		it('preserves existing order when updating', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{ ...baseSession, id: 'a' },
+				{ ...baseSession, id: 'b' },
+				{ ...baseSession, id: 'c' },
+			]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, id: 'b', name: 'B-updated' }], []);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			expect(merged.map((s: any) => s.id)).toEqual(['a', 'b', 'c']);
+		});
+
+		it('lets remove win when an id appears in both updates and removeIds', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, name: 'Should be ignored' }], ['s1']);
+
+			const merged = mockSessionsStore.set.mock.calls[0][1];
+			expect(merged).toEqual([]);
+		});
+
+		it('treats updates with unseen ids as adds (broadcastSessionAdded)', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, id: 'new1' }], []);
+
+			expect(mockWebServer.broadcastSessionAdded).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'new1' })
+			);
+			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+		});
+
+		it('broadcasts state changes for updated sessions when web clients connected', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, state: 'idle' }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, state: 'busy' }], []);
+
+			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
+				's1',
+				'busy',
+				expect.any(Object)
+			);
+		});
+
+		it('broadcasts removals for ids that existed', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1']);
+
+			expect(mockWebServer.broadcastSessionRemoved).toHaveBeenCalledWith('s1');
+		});
+
+		it('does not broadcast removals for ids that did not exist', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 's1' }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['nonexistent']);
+
+			expect(mockWebServer.broadcastSessionRemoved).not.toHaveBeenCalled();
+		});
+
+		it('does not broadcast when no web clients are connected', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(0);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [{ ...baseSession, state: 'busy' }], ['nonexistent']);
+
+			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+			expect(mockWebServer.broadcastSessionAdded).not.toHaveBeenCalled();
+			expect(mockWebServer.broadcastSessionRemoved).not.toHaveBeenCalled();
+		});
+
+		it('does not broadcast state-change for an unchanged session', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const handler = handlers.get('sessions:setMany');
+			// New object with identical primitives — should be silent.
+			await handler!({} as any, [{ ...baseSession }], []);
+
+			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
+		});
+
+		it('returns false on ENOSPC write error (recoverable)', async () => {
+			const error = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+			error.code = 'ENOSPC';
+			mockSessionsStore.set.mockImplementation(() => {
+				throw error;
+			});
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+			const result = await handler!({} as any, [{ ...baseSession }], []);
+
+			expect(result).toBe(false);
+		});
+
+		it('returns false on ENFILE write error (recoverable)', async () => {
+			const error = new Error('ENFILE: too many open files') as NodeJS.ErrnoException;
+			error.code = 'ENFILE';
+			mockSessionsStore.set.mockImplementation(() => {
+				throw error;
+			});
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+			const result = await handler!({} as any, [{ ...baseSession }], []);
+
+			expect(result).toBe(false);
+		});
+
+		it('rethrows unexpected errors so withIpcErrorLogging can surface them to Sentry', async () => {
+			mockSessionsStore.set.mockImplementation(() => {
+				throw new TypeError('Converting circular structure to JSON');
+			});
+			mockSessionsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('sessions:setMany');
+
+			await expect(handler!({} as any, [{ ...baseSession }], [])).rejects.toThrow(
+				'Converting circular structure to JSON'
+			);
 		});
 	});
 

@@ -195,6 +195,27 @@ describe('AgentOverviewCards', () => {
 		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('42');
 	});
 
+	it('shows 0 instead of duplicating the provider total when multiple sessions share a provider', () => {
+		// Two sessions of the same toolType with no per-session bySessionByDay
+		// data. Reusing the provider total for each card would render "42" on
+		// both, overstating per-agent usage. Expect 0 on each instead.
+		const sessions: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha' }),
+			buildSession({ id: 's2', name: 'Beta' }),
+		];
+		const data = buildData({
+			byAgent: { 'claude-code': { count: 42, duration: 0 } },
+		});
+
+		render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+		const counts = screen.getAllByTestId('agent-card-query-count');
+		expect(counts).toHaveLength(2);
+		for (const node of counts) {
+			expect(node.textContent).toBe('0');
+		}
+	});
+
 	it('renders a per-session sparkline when bySessionByDay has data', () => {
 		const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
 		const data = buildData({

@@ -476,7 +476,7 @@ textarea::placeholder {
 	height: 6px;
 	border-radius: 9999px;
 	margin: 0 2px;
-	background-color: currentColor;
+	background-color: currentcolor;
 	animation: bounce-dot 1.4s ease-in-out infinite;
 }
 
@@ -805,6 +805,26 @@ svg.wand-sparkle-active path:nth-child(8) {
 /* Smooth step edge marker hover effect */
 .react-flow__edge:hover .react-flow__edge-textwrapper {
 	opacity: 1;
+}
+
+/*
+ * Cue pipeline drag-preview line (connecting nodes).
+ *
+ * The Cue PipelineCanvas passes a custom <PipelineConnectionLine> component
+ * via `connectionLineComponent` so we render the path ourselves with full
+ * control. This rule is a belt-and-suspenders safety net for any ReactFlow
+ * surface that falls back to the default ConnectionLine — without it, the
+ * default `stroke: #b1b1b7` is invisible against the dark theme.
+ *
+ * If the inline style on a custom component sets stroke explicitly, that
+ * style has higher specificity than this class rule and wins. This rule
+ * only kicks in when nothing else has styled the path.
+ */
+.react-flow__connection-path {
+	stroke: #06b6d4; /* CUE_COLOR — keep in sync with shared/cue-pipeline-types.ts */
+	stroke-width: 2;
+	stroke-dasharray: 6 3;
+	fill: none;
 }
 
 /* Reduced motion preference - accessibility best practice */

@@ -1040,7 +1040,7 @@ export function UsageDashboardModal({
 									}}
 									data-testid="section-agent-overview-cards"
 								>
-									{sessions.length > 0 ? (
+									{sessions.some((s) => s.toolType !== 'terminal') ? (
 										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
 											<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
 										</ChartErrorBoundary>

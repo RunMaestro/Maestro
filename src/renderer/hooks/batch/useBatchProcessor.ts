@@ -32,7 +32,7 @@ import { logger } from '../../utils/logger';
 
 // Debounce delay for batch state updates (Quick Win 1)
 const BATCH_STATE_DEBOUNCE_MS = 200;
-const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 3000;
+const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
 // Regex to match checked markdown checkboxes for reset-on-completion
 // Matches both [x] and [X] with various checkbox formats (standard and GitHub-style)
@@ -1029,7 +1029,9 @@ export function useBatchProcessor({
 						// This handles: template substitution, document expansion, agent spawning,
 						// session registration, re-reading document, and synopsis generation
 
-						// Poll all documents during task execution for real-time progress.
+						// Poll only the currently-processing document. Other documents in the
+						// playbook can't change during this task — the agent is working on
+						// docEntry — so snapshot their counts once and reuse them across ticks.
 						let progressPollActive = true;
 						let progressPollInFlight = false;
 						let progressPollGeneration = 0;
@@ -1042,18 +1044,26 @@ export function useBatchProcessor({
 								progressPollTimeout = null;
 							}
 						};
+						let otherDocsTotal = 0;
+						let otherDocsChecked = 0;
+						for (const doc of documents) {
+							if (doc.filename === docEntry.filename) continue;
+							try {
+								const r = await readDocAndCountTasks(folderPath, doc.filename, sshRemoteId);
+								otherDocsTotal += r.taskCount + r.checkedCount;
+								otherDocsChecked += r.checkedCount;
+							} catch {
+								// Ignore — baseline is best-effort
+							}
+						}
 						const runProgressPoll = async () => {
 							if (!progressPollActive || progressPollInFlight) return;
 							const generationAtStart = progressPollGeneration;
 							progressPollInFlight = true;
 							try {
-								let polledTotal = 0;
-								let polledChecked = 0;
-								for (const doc of documents) {
-									const r = await readDocAndCountTasks(folderPath, doc.filename, sshRemoteId);
-									polledTotal += r.taskCount + r.checkedCount;
-									polledChecked += r.checkedCount;
-								}
+								const r = await readDocAndCountTasks(folderPath, docEntry.filename, sshRemoteId);
+								const polledTotal = otherDocsTotal + r.taskCount + r.checkedCount;
+								const polledChecked = otherDocsChecked + r.checkedCount;
 								if (!progressPollActive || generationAtStart !== progressPollGeneration) return;
 								updateBatchStateAndBroadcastRef.current!(sessionId, (prev) => {
 									const prevState = prev[sessionId] || DEFAULT_BATCH_STATE;

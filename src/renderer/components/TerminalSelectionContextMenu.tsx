@@ -5,10 +5,11 @@
  * (and no URL link is being hovered — that case is handled by LinkContextMenu).
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { Copy, Send } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { useEventListener } from '../hooks/utils/useEventListener';
 
 export interface TerminalSelectionContextMenuState {
 	x: number;
@@ -40,18 +41,14 @@ export function TerminalSelectionContextMenu({
 
 	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
-	useEffect(() => {
-		const handleMouseDown = () => onDismissRef.current();
-		const handleKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') onDismissRef.current();
-		};
-		document.addEventListener('mousedown', handleMouseDown);
-		document.addEventListener('keydown', handleKey);
-		return () => {
-			document.removeEventListener('mousedown', handleMouseDown);
-			document.removeEventListener('keydown', handleKey);
-		};
-	}, []);
+	useEventListener('mousedown', () => onDismissRef.current(), { target: document });
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') onDismissRef.current();
+		},
+		{ target: document }
+	);
 
 	const handleCopy = useCallback(() => {
 		onCopy?.(menu.selection);

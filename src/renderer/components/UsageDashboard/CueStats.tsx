@@ -1317,6 +1317,7 @@ const ErrorNote = memo(function ErrorNote({
 				{message}
 			</div>
 			<button
+				type="button"
 				onClick={onRetry}
 				className="px-4 py-1.5 rounded text-sm"
 				style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
@@ -1345,9 +1346,9 @@ export const CueStats = memo(function CueStats({
 			const result = await window.maestro.cueStats.getAggregation(timeRange);
 			setAggregation(result);
 		} catch (err) {
-			// Electron wraps thrown errors as
-			// `Error invoking remote method '<channel>': Error: <original>`,
-			// so equality on the original sentinel never matches in production.
+			// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
+			// message (Electron otherwise wraps thrown errors). Substring check
+			// remains as defense-in-depth in case the bridge changes.
 			const rawMessage = err instanceof Error ? err.message : String(err);
 			const isDisabled = rawMessage.includes('CueStatsDisabled');
 			if (!isDisabled) {

@@ -4,7 +4,7 @@
  * toggle. Used as the body of the Activity Log tab.
  */
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
 	AlertTriangle,
 	ChevronDown,
@@ -26,6 +26,9 @@ interface ActivityLogProps {
 	log: CueRunResult[];
 	theme: Theme;
 	subscriptionPipelineMap: Map<string, { name: string; color: string }>;
+	searchQuery: string;
+	setSearchQuery: (q: string) => void;
+	searchInputRef: React.RefObject<HTMLInputElement>;
 }
 
 function buildHaystack(
@@ -76,10 +79,29 @@ function formatActivityTimestamp(iso: string, now: Date): string {
 	return `${y}-${m}-${d} ${time}`;
 }
 
-export function ActivityLog({ log, theme, subscriptionPipelineMap }: ActivityLogProps) {
+export function ActivityLog({
+	log,
+	theme,
+	subscriptionPipelineMap,
+	searchQuery,
+	setSearchQuery,
+	searchInputRef,
+}: ActivityLogProps) {
 	const [visibleCount, setVisibleCount] = useState(100);
 	const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(new Set());
-	const [searchQuery, setSearchQuery] = useState('');
+
+	// Cmd/Ctrl+F focuses the search box.
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+			if (e.key !== 'f' && e.key !== 'F') return;
+			e.preventDefault();
+			searchInputRef.current?.focus();
+			searchInputRef.current?.select();
+		};
+		window.addEventListener('keydown', handleKeyDown);
+		return () => window.removeEventListener('keydown', handleKeyDown);
+	}, [searchInputRef]);
 
 	// Sort newest-first by startedAt; the engine's ring buffer hands us oldest→newest.
 	const sorted = useMemo(() => {
@@ -149,6 +171,7 @@ export function ActivityLog({ log, theme, subscriptionPipelineMap }: ActivityLog
 					>
 						<Search className="w-3 h-3 flex-shrink-0" style={{ color: theme.colors.textDim }} />
 						<input
+							ref={searchInputRef}
 							type="text"
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}

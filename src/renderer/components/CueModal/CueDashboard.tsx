@@ -24,6 +24,8 @@ export interface CueDashboardProps {
 	onRetry: () => void;
 	sessions: CueSessionStatus[];
 	activeRuns: CueRunResult[];
+	/** Recent completed/failed runs — used to compute average runtime stat. */
+	activityLog: CueRunResult[];
 	queueStatus: Record<string, number>;
 	graphSessions: CueGraphSession[];
 	dashboardPipelines: CuePipeline[];
@@ -50,6 +52,7 @@ export function CueDashboard({
 	onRetry,
 	sessions,
 	activeRuns,
+	activityLog,
 	queueStatus,
 	graphSessions,
 	dashboardPipelines,
@@ -64,6 +67,16 @@ export function CueDashboard({
 	onStopRun,
 	onStopAll,
 }: CueDashboardProps) {
+	// Average runtime across the loaded activity log. Excludes still-running
+	// entries (durationMs is final-state only). null when no finished runs are
+	// available so the stat card can render an em dash instead of "0ms".
+	const averageRuntimeMs = useMemo(() => {
+		const finished = activityLog.filter((r) => r.status !== 'running');
+		if (finished.length === 0) return null;
+		const total = finished.reduce((sum, r) => sum + r.durationMs, 0);
+		return total / finished.length;
+	}, [activityLog]);
+
 	// Distinct agents referenced by any pipeline's agent nodes — "agents
 	// associated with Cue" in the dashboard sense.
 	const agentCount = useMemo(() => {
@@ -114,7 +127,7 @@ export function CueDashboard({
 				theme={theme}
 				pipelineCount={dashboardPipelines.length}
 				executionCount={executionCount}
-				activeRunCount={activeRuns.length}
+				averageRuntimeMs={averageRuntimeMs}
 				agentCount={agentCount}
 			/>
 

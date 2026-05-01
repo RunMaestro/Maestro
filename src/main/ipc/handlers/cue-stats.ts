@@ -89,17 +89,28 @@ function isCueStatsEnabled(settingsStore: { get: (key: string) => unknown }): bo
 export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): void {
 	const { settingsStore, getCueEngine } = deps;
 
+	// Run the disabled-flag gate OUTSIDE withIpcErrorLogging so the
+	// `CueStatsDisabled` sentinel isn't treated as an unexpected IPC error and
+	// doesn't pollute Sentry/log output for what is the renderer's expected
+	// recovery path. Real errors from the aggregation query stay wrapped.
+	const wrappedAggregation = withIpcErrorLogging(
+		handlerOpts('getAggregation'),
+		async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
+			const subscriptionToPipeline = buildSubscriptionToPipelineMap(getCueEngine);
+			return getCueStatsAggregation(range, { subscriptionToPipeline });
+		}
+	);
+
 	ipcMain.handle(
 		'cue-stats:get-aggregation',
-		withIpcErrorLogging(
-			handlerOpts('getAggregation'),
-			async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
-				if (!isCueStatsEnabled(settingsStore)) {
-					throw new Error('CueStatsDisabled');
-				}
-				const subscriptionToPipeline = buildSubscriptionToPipelineMap(getCueEngine);
-				return getCueStatsAggregation(range, { subscriptionToPipeline });
+		async (
+			event: Electron.IpcMainInvokeEvent,
+			range: CueStatsTimeRange
+		): Promise<CueStatsAggregation> => {
+			if (!isCueStatsEnabled(settingsStore)) {
+				throw new Error('CueStatsDisabled');
 			}
-		)
+			return wrappedAggregation(event, range);
+		}
 	);
 }

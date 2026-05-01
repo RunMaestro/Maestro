@@ -11,7 +11,14 @@
  * peaks, dry spells, and recent momentum all readable at once.
  */
 
-import { memo, useMemo, useState } from 'react';
+import {
+	memo,
+	useMemo,
+	useState,
+	type MouseEvent,
+	type KeyboardEvent,
+	type FocusEvent,
+} from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { StatsTimeRange } from '../../../shared/stats-types';
@@ -205,7 +212,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 		return null;
 	}
 
-	const handleEnter = (cell: DayCell, e: React.MouseEvent<HTMLDivElement>) => {
+	const handleEnter = (cell: DayCell, e: MouseEvent<HTMLDivElement>) => {
 		setHovered(cell);
 		const rect = e.currentTarget.getBoundingClientRect();
 		setAnchor({ x: rect.left + rect.width / 2, y: rect.top });
@@ -213,6 +220,24 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 	const handleLeave = () => {
 		setHovered(null);
 		setAnchor(null);
+	};
+	const handleFocus = (cell: DayCell, e: FocusEvent<HTMLDivElement>) => {
+		setHovered(cell);
+		const rect = e.currentTarget.getBoundingClientRect();
+		setAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+	};
+	const handleKeyDown = (cell: DayCell, e: KeyboardEvent<HTMLDivElement>) => {
+		if (e.key === 'Escape') {
+			setHovered(null);
+			setAnchor(null);
+			return;
+		}
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			setHovered(cell);
+			const rect = e.currentTarget.getBoundingClientRect();
+			setAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+		}
 	};
 
 	return (
@@ -243,7 +268,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 					{cells.map((cell, idx) => (
 						<div
 							key={cell.dateStr}
-							className="rounded-[2px] cursor-default"
+							className="rounded-[2px] cursor-default focus:outline-none"
 							style={{
 								flex: '1 1 0',
 								minWidth: 0,
@@ -256,7 +281,11 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 							}}
 							onMouseEnter={(e) => handleEnter(cell, e)}
 							onMouseLeave={handleLeave}
+							onFocus={(e) => handleFocus(cell, e)}
+							onBlur={handleLeave}
+							onKeyDown={(e) => handleKeyDown(cell, e)}
 							role="gridcell"
+							tabIndex={0}
 							aria-label={`${cell.displayDate}: ${cell.count} ${
 								cell.count === 1 ? 'query' : 'queries'
 							}`}

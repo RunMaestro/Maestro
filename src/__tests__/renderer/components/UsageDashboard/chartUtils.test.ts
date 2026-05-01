@@ -101,6 +101,24 @@ describe('chartUtils', () => {
 			expect(findSessionByStatId('any-id', undefined)).toBeUndefined();
 			expect(findSessionByStatId('any-id', [])).toBeUndefined();
 		});
+
+		it('does not mis-match when one session id is a prefix of another (delimited)', () => {
+			const sess1 = makeSession({ id: 'sess-1' });
+			const sess10 = makeSession({ id: 'sess-10' });
+			// Stats key for the longer id should resolve to the longer session
+			// regardless of array order.
+			expect(findSessionByStatId('sess-10-ai-tab1', [sess1, sess10])).toBe(sess10);
+			expect(findSessionByStatId('sess-10-ai-tab1', [sess10, sess1])).toBe(sess10);
+			// And for the shorter id with a suffix, the shorter one wins.
+			expect(findSessionByStatId('sess-1-ai-tab1', [sess1, sess10])).toBe(sess1);
+		});
+
+		it('prefers exact match even when a longer id starts with the same string', () => {
+			const sess1 = makeSession({ id: 'sess-1' });
+			const sess10 = makeSession({ id: 'sess-10' });
+			expect(findSessionByStatId('sess-1', [sess1, sess10])).toBe(sess1);
+			expect(findSessionByStatId('sess-10', [sess1, sess10])).toBe(sess10);
+		});
 	});
 
 	describe('prettifyAgentType', () => {

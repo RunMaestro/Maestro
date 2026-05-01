@@ -54,13 +54,24 @@ function buildSessionSparkline(sessionByDay: ByDayEntry[] | undefined): number[]
 /**
  * Resolve the query count shown on a session's card. Prefers the per-session
  * breakdown when available; otherwise falls back to the provider-level total
- * for that agent type. Shared between the parent (for sort order) and
- * `AgentCard` (for display) so both stay in sync.
+ * — but only when this is the sole visible session for that provider. With
+ * multiple sessions sharing a provider, the provider total can't be safely
+ * attributed to any single one, so we show 0 instead of overstating each card.
+ * Shared between the parent (for sort order) and `AgentCard` (for display) so
+ * both stay in sync.
  */
-function getSessionQueryCount(session: Session, data: StatsAggregation): number {
+function getSessionQueryCount(
+	session: Session,
+	data: StatsAggregation,
+	visibleSessions?: Session[]
+): number {
 	const sessionByDay = data.bySessionByDay?.[session.id];
 	if (sessionByDay && sessionByDay.length > 0) {
 		return sessionByDay.reduce((sum, d) => sum + d.count, 0);
+	}
+	if (visibleSessions) {
+		const sameProviderCount = visibleSessions.filter((s) => s.toolType === session.toolType).length;
+		if (sameProviderCount !== 1) return 0;
 	}
 	return data.byAgent?.[session.toolType]?.count ?? 0;
 }
@@ -100,6 +111,8 @@ interface AgentCardProps {
 	animationIndex: number;
 	/** When true, render the card with a thicker accent border to flag the active filter */
 	isSelected: boolean;
+	/** All visible sessions; needed to disambiguate the provider-fallback count */
+	visibleSessions: Session[];
 }
 
 const AgentCard = memo(function AgentCard({
@@ -108,6 +121,7 @@ const AgentCard = memo(function AgentCard({
 	theme,
 	animationIndex,
 	isSelected,
+	visibleSessions,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
 	const isBusy = session.state === 'busy';
@@ -116,8 +130,11 @@ const AgentCard = memo(function AgentCard({
 	const { queryCount, sparklineData } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
 		const sparkline = buildSessionSparkline(sessionByDay);
-		return { queryCount: getSessionQueryCount(session, data), sparklineData: sparkline };
-	}, [data, session]);
+		return {
+			queryCount: getSessionQueryCount(session, data, visibleSessions),
+			sparklineData: sparkline,
+		};
+	}, [data, session, visibleSessions]);
 
 	const sparklineColor = isWorktree ? theme.colors.accent : statusColor;
 
@@ -236,14 +253,14 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	// matches the agent count shown elsewhere in the dashboard. Sort by
 	// query count desc so the most-used agents lead the grid (stable for
 	// ties — relies on Array.prototype.sort stability per ES2019).
-	const activeSessions = useMemo(
-		() =>
-			sessions
-				.filter((s) => s.toolType !== 'terminal')
-				.slice()
-				.sort((a, b) => getSessionQueryCount(b, data) - getSessionQueryCount(a, data)),
-		[sessions, data]
-	);
+	const activeSessions = useMemo(() => {
+		const filtered = sessions.filter((s) => s.toolType !== 'terminal');
+		return filtered
+			.slice()
+			.sort(
+				(a, b) => getSessionQueryCount(b, data, filtered) - getSessionQueryCount(a, data, filtered)
+			);
+	}, [sessions, data]);
 
 	if (activeSessions.length === 0) return null;
 
@@ -265,6 +282,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					theme={theme}
 					animationIndex={index}
 					isSelected={isSessionHighlighted(session, activeFilterKey)}
+					visibleSessions={activeSessions}
 				/>
 			))}
 		</div>

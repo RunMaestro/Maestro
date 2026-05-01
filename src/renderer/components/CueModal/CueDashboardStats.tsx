@@ -1,12 +1,12 @@
 /**
  * CueDashboardStats — Top-of-dashboard stat cards: pipelines, total executions
- * (lifetime), active runs, agents in pipelines.
+ * (lifetime), average runtime over the recent activity log, agents in pipelines.
  */
 
-import { Activity, GitFork, PlayCircle, Users } from 'lucide-react';
+import { Activity, Clock, GitFork, Users } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Theme } from '../../types';
-import { formatNumber } from '../../../shared/formatters';
+import { formatElapsedTime, formatNumber } from '../../../shared/formatters';
 
 /** GitHub-stars style: lower-case suffix (1k, 1.1k, 10.3k). */
 function formatCompactCount(n: number): string {
@@ -17,7 +17,8 @@ interface CueDashboardStatsProps {
 	theme: Theme;
 	pipelineCount: number;
 	executionCount: number;
-	activeRunCount: number;
+	/** Average run duration (ms) across the loaded activity log; null when no completed runs. */
+	averageRuntimeMs: number | null;
 	agentCount: number;
 }
 
@@ -56,7 +57,7 @@ export function CueDashboardStats({
 	theme,
 	pipelineCount,
 	executionCount,
-	activeRunCount,
+	averageRuntimeMs,
 	agentCount,
 }: CueDashboardStatsProps) {
 	return (
@@ -75,9 +76,9 @@ export function CueDashboardStats({
 			/>
 			<StatCard
 				theme={theme}
-				label="Active Runs"
-				value={formatCompactCount(activeRunCount)}
-				icon={<PlayCircle className="w-4 h-4" style={{ color: theme.colors.accent }} />}
+				label="Average Runtime"
+				value={averageRuntimeMs === null ? '—' : formatElapsedTime(averageRuntimeMs)}
+				icon={<Clock className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			/>
 			<StatCard
 				theme={theme}

@@ -270,13 +270,24 @@ export function recordRunCompleted(args: RecordRunCompletedArgs): void {
 }
 
 function persistEvent(event: CueTelemetryEvent): void {
-	const id = crypto.randomUUID();
-	insertTelemetryEvent(id, JSON.stringify(event));
-	// Threshold-flush safety net for installs that never run Auto Run. Cheap
-	// — countTelemetryEvents is a single COUNT(*) on a small table.
-	const size = countTelemetryEvents();
-	if (size >= OUTBOX_FLUSH_THRESHOLD) {
-		void flushTelemetry({ reason: 'threshold' });
+	// Telemetry is best-effort: any DB failure here (insert OR the COUNT(*)
+	// behind countTelemetryEvents) must NOT bubble out of recordTriggerFired
+	// / recordRunCompleted, since those run on the dispatch and completion
+	// hot paths.
+	try {
+		const id = crypto.randomUUID();
+		insertTelemetryEvent(id, JSON.stringify(event));
+		// Threshold-flush safety net for installs that never run Auto Run.
+		// Cheap — countTelemetryEvents is a single COUNT(*) on a small table.
+		const size = countTelemetryEvents();
+		if (size >= OUTBOX_FLUSH_THRESHOLD) {
+			void flushTelemetry({ reason: 'threshold' });
+		}
+	} catch (err) {
+		logger.warn(
+			`Telemetry outbox write failed: ${err instanceof Error ? err.message : String(err)}`,
+			LOG_CONTEXT
+		);
 	}
 }
 
@@ -360,11 +371,13 @@ export async function flushTelemetry(
 
 		const body = JSON.stringify(payload);
 		if (Buffer.byteLength(body, 'utf8') > MAX_PAYLOAD_BYTES) {
-			// Drop half the events and try again next flush rather than
-			// hanging forever on a too-large batch. Half is arbitrary but
-			// guarantees forward progress.
-			const keep = Math.floor(events.length / 2);
-			const dropIds = ids.slice(keep);
+			// Drop the OLDEST half and try again next flush rather than
+			// hanging forever on a too-large batch. getTelemetryBatch returns
+			// rows oldest-first, so slice from the front. Half is arbitrary
+			// but guarantees forward progress; ceil() ensures we always make
+			// progress even on a 1-row batch.
+			const dropCount = Math.max(1, Math.ceil(ids.length / 2));
+			const dropIds = ids.slice(0, dropCount);
 			deleteTelemetryEvents(dropIds);
 			logger.warn(
 				`Telemetry batch exceeded ${MAX_PAYLOAD_BYTES} bytes — dropped ${dropIds.length} events`,

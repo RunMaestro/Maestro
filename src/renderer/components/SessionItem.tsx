@@ -208,7 +208,13 @@ export const SessionItem = memo(function SessionItem({
 						onBlur={(e) => onFinishRename(e.target.value)}
 						onKeyDown={(e) => {
 							e.stopPropagation();
-							if (e.key === 'Enter') onFinishRename(e.currentTarget.value);
+							// Commit through onBlur only — calling onFinishRename here AND
+							// letting blur fire would double-fire the IPC. Forcing blur on
+							// Enter funnels both code paths through the single handler.
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								e.currentTarget.blur();
+							}
 						}}
 					/>
 				) : (

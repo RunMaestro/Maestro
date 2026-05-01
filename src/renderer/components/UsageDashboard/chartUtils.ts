@@ -29,14 +29,51 @@ export function isParentAgent(session: Session): boolean {
 
 /**
  * Resolve a stats `sessionId` (which may include suffixes like tab IDs) to the
- * matching Session by prefix. Returns undefined if no match is found.
+ * matching Session. Returns undefined if no match is found.
+ *
+ * Why the longest-prefix dance: stat keys are either the bare session id or
+ * `<id><delimiter><tabId>`. Naive `startsWith` mis-matches when one session id
+ * is a prefix of another (e.g. `sess-1` matching keys for `sess-10`), poisoning
+ * worktree detection and display-name lookup. We prefer exact match, then a
+ * delimited prefix match (`-`, `:`, `/`, `_`, `.`), then fall back to the
+ * longest matching id so worktree IDs that violate our delimiter conventions
+ * still resolve.
  */
 export function findSessionByStatId(
 	statSessionId: string,
 	sessions: Session[] | undefined
 ): Session | undefined {
 	if (!sessions || sessions.length === 0) return undefined;
-	return sessions.find((s) => statSessionId.startsWith(s.id));
+	const exact = sessions.find((s) => s.id === statSessionId);
+	if (exact) return exact;
+
+	const DELIMITERS = new Set(['-', ':', '/', '_', '.']);
+	let best: Session | undefined;
+	let bestLen = -1;
+	for (const session of sessions) {
+		if (!statSessionId.startsWith(session.id)) continue;
+		if (statSessionId.length === session.id.length) {
+			return session;
+		}
+		const nextChar = statSessionId.charAt(session.id.length);
+		const isDelimited = DELIMITERS.has(nextChar);
+		if (isDelimited && session.id.length > bestLen) {
+			best = session;
+			bestLen = session.id.length;
+		}
+	}
+	if (best) return best;
+
+	// Fallback: longest prefix without a delimiter, so we still resolve when an
+	// id was generated outside our delimiter conventions.
+	for (const session of sessions) {
+		if (!statSessionId.startsWith(session.id)) continue;
+		if (session.id.length > bestLen) {
+			best = session;
+			bestLen = session.id.length;
+		}
+	}
+	return best;
 }
 
 /**

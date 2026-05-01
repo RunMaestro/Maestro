@@ -240,4 +240,84 @@ describe('cue-file-watcher', () => {
 
 		consoleSpy.mockRestore();
 	});
+
+	// PR-B 1.4: visibility-aware pause
+	describe('isActive gate', () => {
+		it('drops the debounced event when isActive returns false', () => {
+			const onEvent = vi.fn();
+			let active = false;
+
+			createCueFileWatcher({
+				watchGlob: '**/*.ts',
+				projectRoot: '/test',
+				debounceMs: 5000,
+				onEvent,
+				triggerName: 'test',
+				isActive: () => active,
+			});
+
+			const changeHandler = mockOn.mock.calls.find((call) => call[0] === 'change')?.[1];
+			changeHandler('src/index.ts');
+			vi.advanceTimersByTime(5000);
+
+			expect(onEvent).not.toHaveBeenCalled();
+		});
+
+		it('dispatches the next event after isActive flips to true', () => {
+			const onEvent = vi.fn();
+			let active = false;
+
+			createCueFileWatcher({
+				watchGlob: '**/*.ts',
+				projectRoot: '/test',
+				debounceMs: 5000,
+				onEvent,
+				triggerName: 'test',
+				isActive: () => active,
+			});
+
+			const changeHandler = mockOn.mock.calls.find((call) => call[0] === 'change')?.[1];
+			changeHandler('src/inactive.ts');
+			vi.advanceTimersByTime(5000);
+			expect(onEvent).not.toHaveBeenCalled();
+
+			active = true;
+			changeHandler('src/active.ts');
+			vi.advanceTimersByTime(5000);
+			expect(onEvent).toHaveBeenCalledTimes(1);
+		});
+
+		it('still subscribes to chokidar even when isActive is false (no setup teardown)', () => {
+			createCueFileWatcher({
+				watchGlob: '**/*.ts',
+				projectRoot: '/test',
+				debounceMs: 5000,
+				onEvent: vi.fn(),
+				triggerName: 'test',
+				isActive: () => false,
+			});
+
+			const registeredEvents = mockOn.mock.calls.map((call) => call[0]);
+			expect(registeredEvents).toContain('change');
+			expect(registeredEvents).toContain('add');
+			expect(registeredEvents).toContain('unlink');
+		});
+
+		it('defaults to always-active when isActive is omitted', () => {
+			const onEvent = vi.fn();
+			createCueFileWatcher({
+				watchGlob: '**/*.ts',
+				projectRoot: '/test',
+				debounceMs: 5000,
+				onEvent,
+				triggerName: 'test',
+			});
+
+			const changeHandler = mockOn.mock.calls.find((call) => call[0] === 'change')?.[1];
+			changeHandler('src/index.ts');
+			vi.advanceTimersByTime(5000);
+
+			expect(onEvent).toHaveBeenCalledTimes(1);
+		});
+	});
 });
