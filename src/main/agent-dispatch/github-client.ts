@@ -17,10 +17,12 @@
 
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
-import {
-	DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER,
-	DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
-} from '../delivery-planner/github-sync';
+
+// Legacy fallback project coordinates (#447): used by GithubClient when no
+// per-project mapping has been resolved. Active code should inject coordinates
+// via GithubClientOptions.projectOwner / projectNumber.
+const LEGACY_FALLBACK_PROJECT_OWNER = 'HumpfTech' as const;
+const LEGACY_FALLBACK_PROJECT_NUMBER = 7 as const;
 
 const LOG_CONTEXT = '[GithubClient]';
 
@@ -71,10 +73,23 @@ export class GithubClient {
 	private rateLimitCheckedAt = 0;
 	// How often to re-check the rate limit (10 min)
 	private readonly rateLimitCheckIntervalMs = 10 * 60 * 1000;
+	/** Per-project GitHub project owner (#447). */
+	private readonly projectOwner: string;
+	/** Per-project GitHub project number (#447). */
+	private readonly projectNumber: number;
 
-	constructor(opts: { ttlMs?: number; rateLimitLow?: number } = {}) {
+	constructor(
+		opts: {
+			ttlMs?: number;
+			rateLimitLow?: number;
+			projectOwner?: string;
+			projectNumber?: number;
+		} = {}
+	) {
 		this.ttlMs = opts.ttlMs ?? 30_000;
 		this.rateLimitLow = opts.rateLimitLow ?? 100;
+		this.projectOwner = opts.projectOwner ?? LEGACY_FALLBACK_PROJECT_OWNER;
+		this.projectNumber = opts.projectNumber ?? LEGACY_FALLBACK_PROJECT_NUMBER;
 	}
 
 	// -------------------------------------------------------------------------
@@ -206,9 +221,9 @@ export class GithubClient {
 		const result = await this.runGh([
 			'project',
 			'view',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--format',
 			'json',
 		]);
@@ -228,9 +243,9 @@ export class GithubClient {
 		const result = await this.runGh([
 			'project',
 			'item-list',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--format',
 			'json',
 			'--limit',
@@ -286,9 +301,9 @@ export class GithubClient {
 		const result = await this.runGh([
 			'project',
 			'field-list',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--format',
 			'json',
 		]);

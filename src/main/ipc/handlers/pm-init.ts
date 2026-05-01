@@ -20,12 +20,16 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
 import { DeliveryPlannerGithubSync } from '../../delivery-planner/github-sync';
+import type { GithubProjectMapping } from '../../delivery-planner/github-project-discovery';
+import { discoverGithubProject } from '../../delivery-planner/github-project-discovery';
 
 const LOG_CONTEXT = '[PmInit]';
 
 export interface PmInitInput {
 	/** Optional repo slug override (e.g. "owner/repo"). Not yet used — reserved for future. */
 	repo?: string;
+	/** Project path to auto-discover GitHub project from git remote (#447). */
+	projectPath?: string;
 }
 
 export interface PmInitResult {
@@ -42,7 +46,7 @@ export function registerPmInitHandlers(deps: PmInitHandlerDependencies): void {
 	const gate = () => requireEncoreFeature(deps.settingsStore, 'deliveryPlanner');
 
 	// ── pm:initRepo ───────────────────────────────────────────────────────────
-	ipcMain.handle('pm:initRepo', async (_event, _input: PmInitInput = {}) => {
+	ipcMain.handle('pm:initRepo', async (_event, input: PmInitInput = {}) => {
 		const gateError = gate();
 		if (gateError) return gateError;
 
@@ -65,9 +69,36 @@ export function registerPmInitHandlers(deps: PmInitHandlerDependencies): void {
 			return result;
 		}
 
+		// Step 1 (#447): Discover + persist the GitHub project mapping for this project path.
+		// This must run before initProjectFields() so the sync instance uses the right project.
+		let projectMapping: GithubProjectMapping | undefined;
+		if (input.projectPath) {
+			try {
+				const map = deps.settingsStore.get<Record<string, GithubProjectMapping>>(
+					'projectGithubMap',
+					{}
+				);
+				if (map[input.projectPath]) {
+					projectMapping = map[input.projectPath];
+				} else {
+					projectMapping = await discoverGithubProject(input.projectPath);
+					const updatedMap = { ...map, [input.projectPath]: projectMapping };
+					deps.settingsStore.set('projectGithubMap', updatedMap);
+				}
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				console.warn(`${LOG_CONTEXT} GitHub project discovery failed — using defaults: ${message}`);
+				// Non-fatal: fall through to use default project coordinates.
+			}
+		}
+
 		// Delegate field creation to the shared github-sync helper.
 		try {
-			const sync = new DeliveryPlannerGithubSync();
+			const sync = new DeliveryPlannerGithubSync({
+				projectOwner: projectMapping?.owner,
+				projectNumber: projectMapping?.projectNumber,
+				projectTitle: projectMapping?.projectTitle,
+			});
 			const fieldResult = await sync.initProjectFields();
 			result.created.push(...fieldResult.created);
 			result.existing.push(...fieldResult.existing);

@@ -26,6 +26,14 @@ import type {
 import { DISPATCH_ROLES } from '../../../../shared/project-roles-types';
 import { SlotCard } from './SlotCard';
 
+/** Resolved GitHub project info, shown in the panel header (#447). */
+interface GithubProjectInfo {
+	owner: string;
+	repo: string;
+	projectNumber: number;
+	projectTitle: string;
+}
+
 /** Minimal claim shape needed to show busy state on a SlotCard. */
 interface ActiveClaimInfo {
 	projectPath: string;
@@ -52,6 +60,10 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 	const [activeClaims, setActiveClaims] = useState<Map<string, ActiveClaimInfo>>(new Map());
 	const [loading, setLoading] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
+	// GitHub project mapping (#447)
+	const [githubProject, setGithubProject] = useState<GithubProjectInfo | null>(null);
+	const [githubProjectLoading, setGithubProjectLoading] = useState(false);
+	const [githubProjectError, setGithubProjectError] = useState<string | null>(null);
 
 	// Load project role slots when projectPath changes
 	useEffect(() => {
@@ -69,6 +81,35 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 			})
 			.catch(() => {})
 			.finally(() => setLoading(false));
+	}, [projectPath]);
+
+	// Resolve GitHub project mapping on mount / projectPath change (#447)
+	useEffect(() => {
+		if (!projectPath) {
+			setGithubProject(null);
+			setGithubProjectError(null);
+			return;
+		}
+		setGithubProjectLoading(true);
+		setGithubProjectError(null);
+		window.maestro.pmResolveGithubProject
+			.resolve({ projectPath })
+			.then((res) => {
+				if (res.success) {
+					setGithubProject({
+						owner: res.data.owner,
+						repo: res.data.repo,
+						projectNumber: res.data.projectNumber,
+						projectTitle: res.data.projectTitle,
+					});
+				} else {
+					setGithubProjectError(res.error);
+				}
+			})
+			.catch((err: unknown) => {
+				setGithubProjectError(String(err));
+			})
+			.finally(() => setGithubProjectLoading(false));
 	}, [projectPath]);
 
 	// Hydrate initial claim state from in-memory ClaimTracker (no GitHub query).
@@ -186,6 +227,99 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 					<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
 						Loading…
 					</span>
+				)}
+			</div>
+
+			{/* GitHub project header (#447) */}
+			<div
+				className="mb-3 px-2 py-1.5 rounded text-[10px] flex items-center gap-1 flex-wrap"
+				style={{ backgroundColor: `${theme.colors.textDim}15`, color: theme.colors.textDim }}
+			>
+				{githubProjectLoading && <span>Resolving GitHub project…</span>}
+				{!githubProjectLoading && githubProjectError && (
+					<>
+						<span style={{ color: theme.colors.error }}>GitHub: {githubProjectError}</span>
+						<button
+							className="underline ml-1 cursor-pointer"
+							style={{ color: theme.colors.accent ?? theme.colors.textDim }}
+							onClick={() => {
+								if (!projectPath) return;
+								setGithubProjectLoading(true);
+								setGithubProjectError(null);
+								window.maestro.pmResolveGithubProject
+									.resolve({ projectPath, forceRefresh: true })
+									.then((res) => {
+										if (res.success) {
+											setGithubProject({
+												owner: res.data.owner,
+												repo: res.data.repo,
+												projectNumber: res.data.projectNumber,
+												projectTitle: res.data.projectTitle,
+											});
+										} else {
+											setGithubProjectError(res.error);
+										}
+									})
+									.catch((err: unknown) => setGithubProjectError(String(err)))
+									.finally(() => setGithubProjectLoading(false));
+							}}
+						>
+							Retry
+						</button>
+					</>
+				)}
+				{!githubProjectLoading && !githubProjectError && githubProject && (
+					<>
+						<span>GitHub:</span>
+						<a
+							href={`https://github.com/${githubProject.owner}/${githubProject.repo}`}
+							target="_blank"
+							rel="noreferrer"
+							className="font-medium hover:underline"
+							style={{ color: theme.colors.textMain ?? theme.colors.textDim }}
+						>
+							{githubProject.owner}/{githubProject.repo}
+						</a>
+						<span>·</span>
+						<a
+							href={`https://github.com/orgs/${githubProject.owner}/projects/${githubProject.projectNumber}`}
+							target="_blank"
+							rel="noreferrer"
+							className="hover:underline"
+							style={{ color: theme.colors.textMain ?? theme.colors.textDim }}
+						>
+							Project #{githubProject.projectNumber} '{githubProject.projectTitle}'
+						</a>
+						<span>↗</span>
+						<button
+							className="ml-auto text-[9px] underline cursor-pointer"
+							title="Reconfigure GitHub project"
+							style={{ color: theme.colors.textDim }}
+							onClick={() => {
+								if (!projectPath) return;
+								setGithubProjectLoading(true);
+								setGithubProjectError(null);
+								window.maestro.pmResolveGithubProject
+									.resolve({ projectPath, forceRefresh: true })
+									.then((res) => {
+										if (res.success) {
+											setGithubProject({
+												owner: res.data.owner,
+												repo: res.data.repo,
+												projectNumber: res.data.projectNumber,
+												projectTitle: res.data.projectTitle,
+											});
+										} else {
+											setGithubProjectError(res.error);
+										}
+									})
+									.catch((err: unknown) => setGithubProjectError(String(err)))
+									.finally(() => setGithubProjectLoading(false));
+							}}
+						>
+							Reconfigure
+						</button>
+					</>
 				)}
 			</div>
 

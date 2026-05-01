@@ -13,9 +13,13 @@ import {
 	makeDeliveryPlannerGithubReference,
 } from './github-safety';
 
-export const DELIVERY_PLANNER_GITHUB_PROJECT_OWNER = 'HumpfTech' as const;
-export const DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER = 7 as const;
-export const DELIVERY_PLANNER_GITHUB_PROJECT_TITLE = 'Humpf Tech Maestro Features' as const;
+// Legacy fallback constants — kept only for the HumpfTech/Maestro repository
+// when no projectGithubMap entry has been stored yet (defensive migration).
+// All active code now uses the per-project coordinates injected at construction time.
+// See: discoverGithubProject() in github-project-discovery.ts (#447).
+const LEGACY_FALLBACK_OWNER = 'HumpfTech' as const;
+const LEGACY_FALLBACK_PROJECT_NUMBER = 7 as const;
+const LEGACY_FALLBACK_PROJECT_TITLE = 'Humpf Tech Maestro Features' as const;
 
 type ProjectFieldName =
 	| 'Maestro Major'
@@ -92,6 +96,10 @@ export interface DeliveryPlannerGithubExec {
 export interface DeliveryPlannerGithubSyncOptions {
 	exec?: DeliveryPlannerGithubExec;
 	cwd?: string;
+	/** Per-project GitHub project coordinates (#447). Falls back to legacy HumpfTech values when omitted. */
+	projectOwner?: string;
+	projectNumber?: number;
+	projectTitle?: string;
 }
 
 export interface DeliveryPlannerGithubSyncResult {
@@ -130,10 +138,20 @@ interface GhIssueLabels {
 export class DeliveryPlannerGithubSync {
 	private readonly exec: DeliveryPlannerGithubExec;
 	private readonly cwd?: string;
+	/** Per-project GitHub project owner (#447). */
+	private readonly projectOwner: string;
+	/** Per-project GitHub project number (#447). */
+	private readonly projectNumber: number;
+	/** Per-project GitHub project title used for validation (#447). */
+	private readonly projectTitle: string | undefined;
 
 	constructor(options: DeliveryPlannerGithubSyncOptions = {}) {
 		this.exec = options.exec ?? execFileNoThrow;
 		this.cwd = options.cwd;
+		this.projectOwner = options.projectOwner ?? LEGACY_FALLBACK_OWNER;
+		this.projectNumber = options.projectNumber ?? LEGACY_FALLBACK_PROJECT_NUMBER;
+		// Title is optional — only validated when provided.
+		this.projectTitle = options.projectTitle ?? LEGACY_FALLBACK_PROJECT_TITLE;
 	}
 
 	async syncIssue(item: WorkItem): Promise<DeliveryPlannerGithubSyncResult> {
@@ -468,16 +486,16 @@ export class DeliveryPlannerGithubSync {
 		const result = await this.runGh([
 			'project',
 			'view',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--format',
 			'json',
 		]);
 		const project = parseJson<GhProjectView>(result.stdout, 'GitHub project view response');
-		if (project.title && project.title !== DELIVERY_PLANNER_GITHUB_PROJECT_TITLE) {
+		if (this.projectTitle && project.title && project.title !== this.projectTitle) {
 			throw new Error(
-				`Unexpected GitHub project title "${project.title}"; expected "${DELIVERY_PLANNER_GITHUB_PROJECT_TITLE}"`
+				`Unexpected GitHub project title "${project.title}"; expected "${this.projectTitle}"`
 			);
 		}
 		return project;
@@ -487,9 +505,9 @@ export class DeliveryPlannerGithubSync {
 		const result = await this.runGh([
 			'project',
 			'field-list',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--format',
 			'json',
 		]);
@@ -504,9 +522,9 @@ export class DeliveryPlannerGithubSync {
 		const result = await this.runGh([
 			'project',
 			'item-add',
-			String(DELIVERY_PLANNER_GITHUB_PROJECT_NUMBER),
+			String(this.projectNumber),
 			'--owner',
-			DELIVERY_PLANNER_GITHUB_PROJECT_OWNER,
+			this.projectOwner,
 			'--url',
 			url,
 			'--format',
@@ -688,9 +706,10 @@ function parseJson<T>(value: string, label: string): T {
 }
 
 function parseIssueNumberFromUrl(url: string): number {
-	const match = url.match(/github\.com\/HumpfTech\/Maestro\/issues\/(\d+)$/);
+	// Accept any GitHub issues URL: github.com/<owner>/<repo>/issues/<number>
+	const match = url.match(/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)$/);
 	if (!match) {
-		throw new Error('GitHub issue create response did not include a fork issue URL');
+		throw new Error('GitHub issue create response did not include a valid GitHub issue URL');
 	}
 
 	return Number(match[1]);

@@ -3655,6 +3655,12 @@ interface MaestroAPI {
 		onOpenPlanningPipeline: (handler: (event: PmOpenPlanningPipelineEvent) => void) => () => void;
 		/** Legacy planning prompt seed event (used by /PM <idea>). Returns unsubscribe fn. */
 		onOpenPlanningPrompt: (handler: (event: PmOpenPlanningPromptEvent) => void) => () => void;
+		/** Load all /PM verb prompts for the customAICommands dispatch path. */
+		loadCommands: () => Promise<{
+			success: boolean;
+			commands?: Array<{ id: string; command: string; description: string; prompt: string }>;
+			error?: string;
+		}>;
 	};
 
 	// pm-tools API — agent-callable project management tools (#430)
@@ -3741,6 +3747,31 @@ interface MaestroAPI {
 						}>;
 						errors: Array<{ workItemId: string; error: string }>;
 					};
+			  }
+			| { success: false; error: string }
+		>;
+	};
+
+	// pm-resolveGithubProject API — per-project GitHub project mapping (#447)
+	pmResolveGithubProject: {
+		/**
+		 * Resolve (or discover) the GitHub Projects v2 mapping for a project path.
+		 * Returns a cached result if one exists in settings; runs discovery otherwise.
+		 *
+		 * @param input - { projectPath, forceRefresh? }
+		 */
+		resolve: (input: { projectPath: string; forceRefresh?: boolean }) => Promise<
+			| {
+					success: true;
+					data: {
+						owner: string;
+						repo: string;
+						projectNumber: number;
+						projectId: string;
+						projectTitle: string;
+						discoveredAt: string;
+					};
+					fromCache: boolean;
 			  }
 			| { success: false; error: string }
 		>;

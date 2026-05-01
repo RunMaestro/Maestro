@@ -66,6 +66,7 @@ import { createPmAuditApi } from './pmAudit';
 import { createPmHeartbeatApi } from './pmHeartbeat';
 import { createPmApi } from './pm';
 import { createPmInitApi } from './pmInit';
+import { createPmResolveGithubProjectApi } from './pmResolveGithubProject';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -252,6 +253,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// PM Init API (#445): /PM-init idempotent field bootstrap
 	pmInit: createPmInitApi(),
+
+	// PM Resolve GitHub Project API (#447): per-project GitHub project mapping
+	pmResolveGithubProject: createPmResolveGithubProjectApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -354,6 +358,8 @@ export {
 	createPmApi,
 	// pm-init
 	createPmInitApi,
+	// pm-resolve-github-project
+	createPmResolveGithubProjectApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -620,3 +626,7 @@ export type {
 	// From pmInit
 	PmInitApi,
 } from './pmInit';
+export type {
+	// From pmResolveGithubProject
+	PmResolveGithubProjectApi,
+} from './pmResolveGithubProject';

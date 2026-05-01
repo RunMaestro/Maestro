@@ -74,6 +74,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	totalActiveTimeMs: 0,
 	lastSelectedPromptId: null,
 	spellCheck: false,
+	projectGithubMap: {},
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

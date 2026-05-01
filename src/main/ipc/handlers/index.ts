@@ -90,6 +90,13 @@ import { registerPmAuditHandlers, PmAuditHandlerDependencies } from './pm-audit'
 import { registerPmHeartbeatHandlers, PmHeartbeatHandlerDependencies } from './pm-heartbeat';
 // pm-init — /PM-init idempotent field bootstrap (#445)
 import { registerPmInitHandlers, PmInitHandlerDependencies } from './pm-init';
+// pm-resolve-github-project — per-project GitHub project mapping (#447)
+import {
+	registerPmResolveGithubProjectHandlers,
+	PmResolveGithubProjectHandlerDependencies,
+} from './pm-resolve-github-project';
+// pm-commands — load /PM verb prompts for customAICommands dispatch path
+import { registerPmCommandsHandlers } from './pm-commands';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -165,6 +172,9 @@ export { registerPmOrchestratorHandlers };
 export { registerPmInitHandlers };
 export type { PmInitHandlerDependencies };
 export type { PmHeartbeatHandlerDependencies };
+export { registerPmResolveGithubProjectHandlers };
+export type { PmResolveGithubProjectHandlerDependencies };
+export { registerPmCommandsHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -389,6 +399,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmHeartbeatHandlers({ settingsStore: deps.settingsStore });
 	// Register PM Init handlers (#445): pm:initRepo idempotent field bootstrap
 	registerPmInitHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Resolve GitHub Project handlers (#447): pm:resolveGithubProject per-project mapping
+	registerPmResolveGithubProjectHandlers({ settingsStore: deps.settingsStore });
+	// Register PM Commands handler: pm:loadCommands for customAICommands dispatch path
+	registerPmCommandsHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }
