@@ -233,6 +233,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Wizard-only file restrictions (writes limited to Auto Run folder)',
 		category: 'includes',
 	},
+	// Conversational PRD Planner
+	{
+		id: 'conversational-prd-planner',
+		filename: 'conversational-prd-planner.md',
+		description: 'Conversational PRD planner system prompt',
+		category: 'conversational-prd',
+	},
 ];
 
 /**
@@ -271,6 +278,8 @@ export const PROMPT_IDS = {
 	DIRECTOR_NOTES: 'director-notes',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
+	// Conversational PRD Planner
+	CONVERSATIONAL_PRD_PLANNER: 'conversational-prd-planner',
 } as const;
 
 export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
