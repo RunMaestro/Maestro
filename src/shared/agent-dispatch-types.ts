@@ -5,6 +5,8 @@ import type {
 	WorkItemClaim,
 	WorkItemClaimInput,
 	WorkItemOwner,
+	WorkItemPipeline,
+	WorkItemPipelineRole,
 	WorkItemStatus,
 } from './work-graph-types';
 import { WORK_GRAPH_AGENT_READY_TAG } from './work-graph-types';
@@ -16,6 +18,8 @@ export type {
 	WorkItemClaim,
 	WorkItemClaimInput,
 	WorkItemOwner,
+	WorkItemPipeline,
+	WorkItemPipelineRole,
 	WorkItemStatus,
 };
 export { WORK_GRAPH_AGENT_READY_TAG };
@@ -28,6 +32,15 @@ export type AgentDispatchReadiness =
 	| 'busy'
 	| 'paused'
 	| 'error';
+
+/**
+ * Role within a dispatch pipeline (#426).
+ * - runner   — executes the primary work (implements the feature / fix)
+ * - fixer    — applies targeted fixes when a runner's output is rejected
+ * - reviewer — reads the runner's output and approves or requests changes
+ * - merger   — merges approved work into the target branch
+ */
+export type DispatchRole = 'runner' | 'fixer' | 'reviewer' | 'merger';
 
 export type AgentDispatchLocality = 'local' | 'ssh';
 
@@ -62,6 +75,14 @@ export interface AgentDispatchProfile {
 	 * playbook trigger path.  Required after #410 removes the default path.
 	 */
 	runnerScriptPath?: string;
+	/**
+	 * Pipeline roles this agent is eligible to fill (#426).
+	 * When a WorkItem has `pipeline.currentRole` set, only fleet members whose
+	 * `roles` array includes that role are candidates for auto-pickup.
+	 * Omit (or leave empty) to opt out of role-gated items; such agents will
+	 * still pick up items that have no `pipeline` field set.
+	 */
+	roles?: DispatchRole[];
 	suggestedDefaults?: AgentDispatchSuggestedDefaults;
 }
 

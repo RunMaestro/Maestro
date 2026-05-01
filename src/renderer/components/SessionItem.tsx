@@ -1,7 +1,20 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Zap } from 'lucide-react';
+import {
+	Activity,
+	GitBranch,
+	Bot,
+	Bookmark,
+	AlertCircle,
+	Server,
+	Zap,
+	Hammer,
+	Wrench,
+	Eye,
+	GitMerge,
+} from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Session, Group, Theme } from '../types';
+import type { DispatchRole } from '../../shared/agent-dispatch-types';
 import { getStatusColor } from '../utils/theme';
 
 // ============================================================================
@@ -38,6 +51,7 @@ export interface SessionItemProps {
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
+	dispatchRole?: DispatchRole; // Current pipeline role assigned to this agent (#426)
 
 	// Handlers
 	onSelect: () => void;
@@ -80,6 +94,7 @@ export const SessionItem = memo(function SessionItem({
 	jumpNumber,
 	cueSubscriptionCount,
 	cueActiveRun,
+	dispatchRole,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -171,6 +186,22 @@ export const SessionItem = memo(function SessionItem({
 							title={`Maestro Cue ${cueActiveRun ? 'running' : 'active'} (${cueSubscriptionCount} subscription${cueSubscriptionCount === 1 ? '' : 's'})`}
 						>
 							<Zap className="w-3 h-3" style={{ color: '#2dd4bf' }} fill="#2dd4bf" />
+						</span>
+					)}
+					{dispatchRole != null && (
+						<span className="shrink-0 flex items-center" title={`Dispatch role: ${dispatchRole}`}>
+							{dispatchRole === 'runner' && (
+								<Hammer className="w-3 h-3" style={{ color: '#a78bfa' }} />
+							)}
+							{dispatchRole === 'fixer' && (
+								<Wrench className="w-3 h-3" style={{ color: '#f59e0b' }} />
+							)}
+							{dispatchRole === 'reviewer' && (
+								<Eye className="w-3 h-3" style={{ color: '#38bdf8' }} />
+							)}
+							{dispatchRole === 'merger' && (
+								<GitMerge className="w-3 h-3" style={{ color: '#34d399' }} />
+							)}
 						</span>
 					)}
 				</div>

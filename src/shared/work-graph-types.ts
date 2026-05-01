@@ -21,6 +21,24 @@ export type WorkItemType =
 	| 'decision'
 	| 'milestone';
 
+/**
+ * Role within a multi-agent dispatch pipeline (#426).
+ * Mirrors `DispatchRole` in agent-dispatch-types — kept here to avoid a
+ * circular import (work-graph-types ← agent-dispatch-types).
+ */
+export type WorkItemPipelineRole = 'runner' | 'fixer' | 'reviewer' | 'merger';
+
+/**
+ * Pipeline state for role-based dispatch (#426).
+ * Attach to a WorkItem to route it through an ordered multi-agent workflow.
+ */
+export interface WorkItemPipeline {
+	/** The role that must handle this item next. */
+	currentRole: WorkItemPipelineRole;
+	/** Ordered list of roles that have already completed their stage. */
+	completedRoles: WorkItemPipelineRole[];
+}
+
 export type WorkItemStatus =
 	| 'discovered'
 	| 'planned'
@@ -151,6 +169,12 @@ export interface WorkItem {
 	dueAt?: string;
 	completedAt?: string;
 	metadata?: Record<string, unknown>;
+	/**
+	 * Role-based pipeline state (#426). When set, only agents whose
+	 * `dispatchProfile.roles` includes `pipeline.currentRole` are eligible for
+	 * auto-pickup. Omit to use the legacy capability-tag-only matching.
+	 */
+	pipeline?: WorkItemPipeline;
 	// Tracker sync columns — populated by the local-first tracker backend; read-only to all other subsystems
 	trackerBackendId?: string;
 	trackerSyncState?: TrackerSyncState;

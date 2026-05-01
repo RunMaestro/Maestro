@@ -52,7 +52,12 @@ export function selectAutoPickupAssignments(
 				candidate,
 				overlap: getCapabilityOverlap(candidate.entry, workItem),
 			}))
-			.filter(({ candidate, overlap }) => candidate.remainingCapacity > 0 && overlap.length > 0)
+			.filter(
+				({ candidate, overlap }) =>
+					candidate.remainingCapacity > 0 &&
+					overlap.length > 0 &&
+					isAgentEligibleForRole(candidate.entry, workItem)
+			)
 			.sort((left, right) =>
 				compareWorkAgentPair(left.candidate, left.overlap, right.candidate, right.overlap)
 			)[0];
@@ -109,6 +114,27 @@ function getCapabilityOverlap(entry: AgentDispatchFleetEntry, workItem: WorkItem
 	return normalizeTags(entry.dispatchCapabilities).filter((capability) =>
 		workCapabilities.has(capability)
 	);
+}
+
+/**
+ * Returns true when the agent satisfies the work item's pipeline role
+ * requirement (#426).
+ *
+ * Rules:
+ * - If the work item has no `pipeline` field → no role gate, always passes.
+ * - If the agent's `dispatchProfile.roles` is empty / unset → agent opted out
+ *   of role-gated items; fails.
+ * - Otherwise, the agent must include `pipeline.currentRole` in its roles.
+ */
+export function isAgentEligibleForRole(
+	entry: AgentDispatchFleetEntry,
+	workItem: WorkItem
+): boolean {
+	if (!workItem.pipeline) {
+		return true;
+	}
+	const agentRoles = entry.dispatchProfile.roles ?? [];
+	return agentRoles.includes(workItem.pipeline.currentRole);
 }
 
 function compareWorkAgentPair(
