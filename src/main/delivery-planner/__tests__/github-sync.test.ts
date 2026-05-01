@@ -177,6 +177,7 @@ function makeWorkItem(overrides: Partial<WorkItem> = {}): WorkItem {
 		source: 'delivery-planner',
 		readonly: false,
 		tags: ['delivery-planner', 'external-mirror'],
+		version: 0,
 		createdAt: timestamp,
 		updatedAt: timestamp,
 		metadata: {

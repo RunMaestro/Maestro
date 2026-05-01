@@ -135,7 +135,10 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 		return this.requireItem(id);
 	}
 
-	async updateItem(input: WorkItemUpdateInput): Promise<WorkItem> {
+	async updateItem(
+		input: WorkItemUpdateInput,
+		opts?: { expectedVersion?: number }
+	): Promise<WorkItem> {
 		const db = this.getDb();
 		const current = await this.getItem(input.id);
 		if (!current) {
@@ -144,16 +147,26 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 		if (input.expectedUpdatedAt && input.expectedUpdatedAt !== current.updatedAt) {
 			throw new Error(`Work Graph item changed since ${input.expectedUpdatedAt}: ${input.id}`);
 		}
+		if (opts?.expectedVersion !== undefined && opts.expectedVersion !== current.version) {
+			const err = new Error(
+				`STALE_VERSION: Work Graph item ${input.id} has version ${current.version}, expected ${opts.expectedVersion}`
+			);
+			(err as Error & { code: string; currentVersion: number }).code = 'STALE_VERSION';
+			(err as Error & { code: string; currentVersion: number }).currentVersion = current.version;
+			throw err;
+		}
 		if (current.readonly && input.patch.readonly !== false) {
 			throw new Error(`Readonly Work Graph item must be adopted before update: ${input.id}`);
 		}
 
 		const timestamp = new Date().toISOString();
+		const nextVersion = current.version + 1;
 		const next: WorkItem = {
 			...current,
 			...input.patch,
 			readonly: input.patch.readonly ?? current.readonly,
 			slug: input.patch.slug ?? (input.patch.title ? makeSlug(input.patch.title) : current.slug),
+			version: nextVersion,
 			updatedAt: timestamp,
 		};
 
@@ -164,7 +177,7 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 						type = ?, status = ?, title = ?, description = ?, project_path = ?, git_path = ?,
 						mirror_hash = ?, source = ?, readonly = ?, slug = ?, parent_work_item_id = ?,
 						owner_json = ?, github_json = ?, capabilities_json = ?, priority = ?, due_at = ?,
-						completed_at = ?, metadata_json = ?, updated_at = ?
+						completed_at = ?, metadata_json = ?, version = ?, updated_at = ?
 					WHERE id = ?
 				`
 			).run(
@@ -186,6 +199,7 @@ export class WorkGraphStorage implements DeliveryPlannerWorkGraphStore {
 				next.dueAt ?? null,
 				next.completedAt ?? null,
 				toJson(next.metadata),
+				nextVersion,
 				timestamp,
 				next.id
 			);

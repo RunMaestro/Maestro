@@ -27,6 +27,7 @@ class MemoryWorkGraphStore implements DeliveryPlannerWorkGraphStore {
 			status: input.status ?? 'discovered',
 			readonly: input.readonly ?? false,
 			tags: input.tags ?? [],
+			version: 0,
 			createdAt: timestamp,
 			updatedAt: timestamp,
 			dependencies: input.dependencies?.map((dependency) => ({

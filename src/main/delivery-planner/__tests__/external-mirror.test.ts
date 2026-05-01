@@ -206,6 +206,7 @@ function makeWorkItem(projectPath: string, overrides: Partial<WorkItem>): WorkIt
 		source: 'delivery-planner',
 		readonly: false,
 		tags: [],
+		version: 0,
 		createdAt: '2026-04-30T00:00:00.000Z',
 		updatedAt: '2026-04-30T00:00:00.000Z',
 		...overrides,

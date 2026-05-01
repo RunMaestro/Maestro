@@ -40,6 +40,7 @@ export interface WorkItemPipeline {
 }
 
 export type WorkItemStatus =
+	| 'backlog'
 	| 'discovered'
 	| 'planned'
 	| 'ready'
@@ -142,6 +143,8 @@ export interface WorkItemClaim {
 	releasedAt?: string;
 	completedAt?: string;
 	note?: string;
+	/** ISO timestamp of the last heartbeat emitted by the owning agent (updated via pm:heartbeat). */
+	lastHeartbeat?: string;
 }
 
 export interface WorkItem {

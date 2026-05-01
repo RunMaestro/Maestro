@@ -64,6 +64,7 @@ export interface WorkItemClaimRow {
 	released_at: string | null;
 	completed_at: string | null;
 	note: string | null;
+	last_heartbeat: string | null;
 }
 
 export interface WorkItemEventRow {
@@ -214,6 +215,7 @@ export function mapWorkItemClaimRow(row: WorkItemClaimRow): WorkItemClaim {
 		releasedAt: row.released_at ?? undefined,
 		completedAt: row.completed_at ?? undefined,
 		note: row.note ?? undefined,
+		lastHeartbeat: row.last_heartbeat ?? undefined,
 	};
 }
 
