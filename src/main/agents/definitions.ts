@@ -103,6 +103,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	batchModeEnvVars?: Record<string, string>; // Env vars applied ONLY to CLI batch spawns (maestro-cli send). Not applied to desktop UI or --live path. Use for settings that only make sense in short-lived non-interactive sessions (e.g., disabling background tasks).
+	dispatchSuggestedDefaults?: import('../../shared/agent-dispatch-types').AgentDispatchSuggestedDefaults; // Suggested dispatch profile defaults for this agent type
 }
 
 /**

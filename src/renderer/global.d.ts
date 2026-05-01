@@ -89,6 +89,31 @@ type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
+// Work Graph types (used by workGraph and agentDispatch namespaces)
+type WorkItemFilters = import('../shared/work-graph-types').WorkItemFilters;
+type WorkItemSearchFilters = import('../shared/work-graph-types').WorkItemSearchFilters;
+type WorkGraphListResult = import('../shared/work-graph-types').WorkGraphListResult;
+type WorkItem = import('../shared/work-graph-types').WorkItem;
+type WorkItemCreateInput = import('../shared/work-graph-types').WorkItemCreateInput;
+type WorkItemUpdateInput = import('../shared/work-graph-types').WorkItemUpdateInput;
+type WorkItemClaim = import('../shared/work-graph-types').WorkItemClaim;
+type WorkItemClaimInput = import('../shared/work-graph-types').WorkItemClaimInput;
+type WorkItemClaimRenewInput = import('../shared/work-graph-types').WorkItemClaimRenewInput;
+type WorkItemClaimReleaseInput = import('../shared/work-graph-types').WorkItemClaimReleaseInput;
+type WorkItemClaimCompleteInput = import('../shared/work-graph-types').WorkItemClaimCompleteInput;
+type WorkItemEvent = import('../shared/work-graph-types').WorkItemEvent;
+type TagDefinition = import('../shared/work-graph-types').TagDefinition;
+type WorkGraphImportInput = import('../shared/work-graph-types').WorkGraphImportInput;
+type WorkGraphImportSummary = import('../shared/work-graph-types').WorkGraphImportSummary;
+type AgentReadyWorkFilter = import('../shared/work-graph-types').AgentReadyWorkFilter;
+type WorkGraphBroadcastEnvelope = import('../shared/work-graph-types').WorkGraphBroadcastEnvelope;
+
+// Agent Dispatch types
+type AgentDispatchFleetEntry = import('../shared/agent-dispatch-types').AgentDispatchFleetEntry;
+type ManualAssignmentInput = import('../main/agent-dispatch/dispatch-engine').ManualAssignmentInput;
+
+type IpcDataResponse<T> = { success: true; data: T } | { success: false; error: string };
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -901,6 +926,22 @@ interface MaestroAPI {
 		}>;
 		get: (agentId: string, sshRemoteId?: string) => Promise<AgentConfig | null>;
 		getCapabilities: (agentId: string) => Promise<AgentCapabilities>;
+		getDispatchSettings: () => Promise<
+			import('../shared/agent-dispatch-types').AgentDispatchSettings
+		>;
+		setDispatchSettings: (
+			settings: import('../shared/agent-dispatch-types').AgentDispatchSettings
+		) => Promise<boolean>;
+		getDispatchProfiles: () => Promise<
+			Record<string, import('../shared/agent-dispatch-types').AgentDispatchProfile>
+		>;
+		getDispatchProfile: (
+			agentId: string
+		) => Promise<import('../shared/agent-dispatch-types').AgentDispatchProfile>;
+		setDispatchProfile: (
+			agentId: string,
+			profile: import('../shared/agent-dispatch-types').AgentDispatchProfile
+		) => Promise<boolean>;
 		getConfig: (agentId: string) => Promise<Record<string, any>>;
 		setConfig: (agentId: string, config: Record<string, any>) => Promise<boolean>;
 		getConfigValue: (agentId: string, key: string) => Promise<any>;
@@ -3252,6 +3293,90 @@ interface MaestroAPI {
 			projectPath: string,
 			agentId?: string
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
+	};
+
+	// Work Graph API
+	workGraph: {
+		listItems: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		searchItems: (filters: WorkItemSearchFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		getItem: (id: string) => Promise<IpcDataResponse<WorkItem | undefined>>;
+		createItem: (input: WorkItemCreateInput) => Promise<IpcDataResponse<WorkItem>>;
+		updateItem: (input: WorkItemUpdateInput) => Promise<IpcDataResponse<WorkItem>>;
+		deleteItem: (id: string) => Promise<IpcDataResponse<boolean>>;
+		claimItem: (input: WorkItemClaimInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		renewClaim: (input: WorkItemClaimRenewInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		releaseClaim: (input: WorkItemClaimReleaseInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		completeClaim: (input: WorkItemClaimCompleteInput) => Promise<IpcDataResponse<WorkItemClaim>>;
+		listEvents: (workItemId: string) => Promise<IpcDataResponse<WorkItemEvent[]>>;
+		listTags: () => Promise<IpcDataResponse<TagDefinition[]>>;
+		upsertTag: (definition: TagDefinition) => Promise<IpcDataResponse<TagDefinition>>;
+		importItems: (input: WorkGraphImportInput) => Promise<IpcDataResponse<WorkGraphImportSummary>>;
+		getUnblockedAgentReadyWork: (
+			filters?: AgentReadyWorkFilter
+		) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		onChanged: (handler: (event: WorkGraphBroadcastEnvelope) => void) => () => void;
+	};
+
+	// Agent Dispatch API (fleet, board, assign, release, pause/resume)
+	agentDispatch: {
+		getBoard: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		getFleet: () => Promise<IpcDataResponse<AgentDispatchFleetEntry[]>>;
+		assignManually: (input: ManualAssignmentInput) => Promise<IpcDataResponse<WorkItem>>;
+		releaseClaim: (
+			input: WorkItemClaimReleaseInput
+		) => Promise<IpcDataResponse<WorkItemClaim | undefined>>;
+		pauseAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
+		resumeAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
+		listEligible: () => Promise<
+			IpcDataResponse<
+				Array<{
+					id: string;
+					title: string;
+					status: string;
+					dependsOn: string[];
+					claimedBySessionId?: string;
+					claimedAt?: string;
+					parentId?: string;
+				}>
+			>
+		>;
+		createSubtask: (params: { title: string; parentId: string; dependsOn?: string[] }) => Promise<
+			IpcDataResponse<{
+				id: string;
+				title: string;
+				status: string;
+				dependsOn: string[];
+				parentId?: string;
+			}>
+		>;
+		listAgents: () => Promise<{ success: boolean; agents?: unknown[]; error?: string }>;
+		assign: (params: { itemId: string; sessionId: string }) => Promise<{
+			success: boolean;
+			item?: unknown;
+			error?: string;
+		}>;
+		release: (params: { itemId: string }) => Promise<{
+			success: boolean;
+			item?: unknown;
+			error?: string;
+		}>;
+		pause: (params: { sessionId: string }) => Promise<{
+			success: boolean;
+			agent?: unknown;
+			error?: string;
+		}>;
+		resume: (params: { sessionId: string }) => Promise<{
+			success: boolean;
+			agent?: unknown;
+			error?: string;
+		}>;
+		status: () => Promise<{
+			success: boolean;
+			agents?: unknown[];
+			eligible?: unknown[];
+			inProgress?: unknown[];
+			error?: string;
+		}>;
 	};
 }
 

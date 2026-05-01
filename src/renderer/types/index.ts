@@ -7,6 +7,56 @@ export * from './contextMerge';
 export type { Theme, ThemeId, ThemeMode, ThemeColors } from '../../shared/theme-types';
 export { isValidThemeId } from '../../shared/theme-types';
 
+// Re-export Work Graph contracts from shared location
+export type {
+	AgentReadyWorkFilter,
+	WorkGraphActor,
+	WorkGraphActorType,
+	WorkGraphBroadcastEnvelope,
+	WorkGraphBroadcastOperation,
+	WorkGraphCapabilityRouting,
+	WorkGraphImportItemSummary,
+	WorkGraphImportStatus,
+	WorkGraphImportSummary,
+	WorkGraphImportInput,
+	WorkGraphImportItemInput,
+	WorkGraphItemBroadcastPayload,
+	WorkGraphListResult,
+	WorkGraphReadyTag,
+	WorkItem,
+	WorkItemClaim,
+	WorkItemClaimCompleteInput,
+	WorkItemClaimInput,
+	WorkItemClaimReleaseInput,
+	WorkItemClaimRenewInput,
+	WorkItemClaimSource,
+	WorkItemClaimStatus,
+	WorkItemCreateInput,
+	WorkItemDependency,
+	WorkItemDependencyStatus,
+	WorkItemDependencyType,
+	WorkItemEvent,
+	WorkItemFilters,
+	WorkItemGithubReference,
+	WorkItemOwner,
+	WorkItemPatch,
+	WorkItemSource,
+	WorkItemStatus,
+	WorkItemType,
+	WorkItemUpdateInput,
+	TagDefinition,
+} from '../../shared/work-graph-types';
+export {
+	WORK_GRAPH_FORK_REPOSITORY,
+	WORK_GRAPH_READY_TAG,
+	WORK_GRAPH_READY_TAG_DEFINITION,
+} from '../../shared/work-graph-types';
+export type {
+	AgentDispatchProfile,
+	AgentDispatchSettings,
+	AgentDispatchSuggestedDefaults,
+} from '../../shared/agent-dispatch-types';
+
 // Re-export types from shared location
 export type {
 	AgentError,
@@ -26,6 +76,7 @@ export type {
 	Playbook,
 	ThinkingMode,
 	WorktreeRunTarget,
+	WorkGraphDispatchContext,
 } from '../../shared/types';
 
 // Re-export Symphony types for session metadata
