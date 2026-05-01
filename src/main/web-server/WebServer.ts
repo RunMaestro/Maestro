@@ -361,6 +361,18 @@ export class WebServer {
 		  ) => Promise<{ success: boolean; pid: number }>)
 		| null = null;
 	private killTerminalForWebCallback: ((sessionId: string) => boolean) | null = null;
+	private buildSshFileTreeCallback:
+		| ((
+				sessionId: string,
+				dirPath: string,
+				maxDepth: number
+		  ) => Promise<Array<{
+				name: string;
+				type: 'file' | 'folder';
+				children?: any[];
+				path: string;
+		  }> | null>)
+		| null = null;
 
 	setWriteToTerminalCallback(callback: (sessionId: string, data: string) => boolean): void {
 		this.writeToTerminalCallback = callback;
@@ -383,6 +395,21 @@ export class WebServer {
 
 	setKillTerminalForWebCallback(callback: (sessionId: string) => boolean): void {
 		this.killTerminalForWebCallback = callback;
+	}
+
+	setBuildSshFileTreeCallback(
+		callback: (
+			sessionId: string,
+			dirPath: string,
+			maxDepth: number
+		) => Promise<Array<{
+			name: string;
+			type: 'file' | 'folder';
+			children?: any[];
+			path: string;
+		}> | null>
+	): void {
+		this.buildSshFileTreeCallback = callback;
 	}
 
 	setExecuteCommandCallback(callback: ExecuteCommandCallback): void {
@@ -856,6 +883,8 @@ export class WebServer {
 				Promise.resolve({ success: false, pid: 0 }),
 			killTerminalForWeb: (sessionId: string) =>
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
+			buildSshFileTree: (sessionId: string, dirPath: string, maxDepth: number) =>
+				this.buildSshFileTreeCallback?.(sessionId, dirPath, maxDepth) ?? Promise.resolve(null),
 			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 		});
