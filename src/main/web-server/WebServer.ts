@@ -34,8 +34,14 @@ import { getLocalIpAddress } from '../utils/networkUtils';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
-import { ApiRoutes, StaticRoutes, WsRoute, registerAgentDispatchRoutes } from './routes';
-import type { AgentDispatchRouteDependencies } from './routes';
+import {
+	ApiRoutes,
+	StaticRoutes,
+	WsRoute,
+	registerAgentDispatchRoutes,
+	registerDeliveryPlannerRoutes,
+} from './routes';
+import type { AgentDispatchRouteDependencies, DeliveryPlannerRouteDependencies } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -167,6 +173,9 @@ export class WebServer {
 
 	// Optional Agent Dispatch route dependencies (set before start())
 	private agentDispatchDeps: AgentDispatchRouteDependencies | null = null;
+
+	// Optional Delivery Planner route dependencies (set before start())
+	private deliveryPlannerDeps: DeliveryPlannerRouteDependencies | null = null;
 
 	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
@@ -618,6 +627,10 @@ export class WebServer {
 		this.agentDispatchDeps = deps;
 	}
 
+	setDeliveryPlannerDeps(deps: DeliveryPlannerRouteDependencies): void {
+		this.deliveryPlannerDeps = deps;
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -719,6 +732,16 @@ export class WebServer {
 				this.securityToken,
 				this.rateLimitConfig,
 				this.agentDispatchDeps
+			);
+		}
+
+		// Register Delivery Planner routes when deps have been supplied
+		if (this.deliveryPlannerDeps) {
+			registerDeliveryPlannerRoutes(
+				this.server,
+				this.securityToken,
+				this.rateLimitConfig,
+				this.deliveryPlannerDeps
 			);
 		}
 

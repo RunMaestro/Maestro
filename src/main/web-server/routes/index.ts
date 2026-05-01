@@ -29,3 +29,7 @@ export {
 } from './wsRoute';
 
 export { registerAgentDispatchRoutes, AgentDispatchRouteDependencies } from './agentDispatchRoutes';
+export {
+	registerDeliveryPlannerRoutes,
+	DeliveryPlannerRouteDependencies,
+} from './deliveryPlannerRoutes';
