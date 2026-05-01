@@ -8,6 +8,7 @@ import type { ProcessManager } from '../process-manager';
 import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
+import { getWorkGraphItemStore } from '../work-graph';
 
 /**
  * Sets up the exit listener for process termination.
@@ -532,6 +533,66 @@ export function setupExitListener(
 				{ sessionId, exitCode: code }
 			);
 			return;
+		}
+
+		// ── Failure surfacing (#435) ─────────────────────────────────────────
+		// When an agent exits non-zero, automatically surface the failure to any
+		// claimed work item so the status reflects the problem instead of going silent.
+		if (code !== 0) {
+			void (async () => {
+				try {
+					const workGraph = getWorkGraphItemStore();
+					// List items in in-progress or claimed state
+					const result = await workGraph.listItems({
+						statuses: ['claimed', 'in_progress'],
+					});
+					// Find any item where the active claim's owner id/providerSessionId matches this session
+					const claimedItem = result.items.find(
+						(item) =>
+							item.claim?.status === 'active' &&
+							(item.claim.owner.id === sessionId ||
+								item.claim.owner.providerSessionId === sessionId)
+					);
+					if (claimedItem) {
+						const blockedReason = `agent exited code ${code}`;
+						// Mark work item as blocked with the exit code
+						await workGraph.updateItem({
+							id: claimedItem.id,
+							patch: { status: 'blocked' },
+							actor: {
+								type: 'system',
+								id: 'exit-listener',
+							},
+						});
+						// Record an audit event
+						await workGraph.recordEvent({
+							workItemId: claimedItem.id,
+							type: 'status_changed',
+							actor: {
+								type: 'system',
+								id: 'exit-listener',
+							},
+							before: { status: claimedItem.status },
+							after: { status: 'blocked' },
+							message: blockedReason,
+						});
+						logger.info(
+							'[FailureSurfacing] Marked work item blocked due to agent exit',
+							'ProcessListener',
+							{
+								workItemId: claimedItem.id,
+								code,
+								reason: blockedReason,
+							}
+						);
+					}
+				} catch (err) {
+					logger.warn('[FailureSurfacing] Failed to surface agent exit', 'ProcessListener', {
+						error: String(err),
+						code,
+					});
+				}
+			})();
 		}
 
 		safeSend('process:exit', sessionId, code);
