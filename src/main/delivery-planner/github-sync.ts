@@ -37,6 +37,7 @@ type ProjectFieldName =
 // Shape: name → array of option names (for single-select fields) or null (for text fields).
 const REQUIRED_PROJECT_FIELDS: Record<string, string[] | null> = {
 	'AI Status': [
+		'Backlog',
 		'Idea',
 		'PRD Draft',
 		'Refinement',

@@ -1,3 +1,5 @@
+import { execFile as execFileCallback } from 'child_process';
+import { promisify } from 'util';
 import type {
 	AgentDispatchAssignmentDecision,
 	AgentDispatchFleetEntry,
@@ -12,6 +14,7 @@ import type {
 	WorkGraphListResult,
 	WorkItemPipeline,
 } from '../../shared/work-graph-types';
+import type { DispatchRole } from '../../shared/project-roles-types';
 import type { FleetRegistry } from './fleet-registry';
 import { isAgentEligibleForPickup, selectAutoPickupAssignments } from './assignment-policy';
 import {
@@ -21,6 +24,8 @@ import {
 	isAutoPickupRelevantWorkGraphEvent,
 } from './events';
 import { nextRole, isTerminal, type PipelineEvent } from './state-machine';
+
+const execFile = promisify(execFileCallback);
 
 export interface AgentDispatchWorkGraphStore {
 	getUnblockedWorkItems(filters?: AgentReadyWorkFilter): Promise<WorkGraphListResult>;
@@ -49,6 +54,19 @@ export interface AgentDispatchEngineOptions {
 	executeClaim?: (execution: AutoPickupExecution) => void | Promise<void>;
 	maxAssignmentsPerRun?: number;
 	queryLimit?: number;
+	/**
+	 * Optional callback to check whether a role slot is enabled for new work.
+	 *
+	 * Called before auto-pickup and manual assignment.  If the slot is disabled
+	 * (drain mode) the engine rejects the attempt without touching the claim
+	 * — currently-running work is not interrupted.
+	 *
+	 * @param projectPath - the project the work item belongs to
+	 * @param role        - the pipeline role being claimed
+	 * @param agentId     - the fleet agent's Session.id
+	 * @returns `true` when the slot is active; `false` when in drain mode
+	 */
+	isSlotEnabled?: (projectPath: string, role: DispatchRole, agentId: string) => boolean;
 }
 
 export interface AutoPickupRunResult {
@@ -90,6 +108,87 @@ export function isRoleEligibilityError(value: unknown): value is RoleEligibility
 		typeof value === 'object' &&
 		value !== null &&
 		(value as RoleEligibilityError).code === 'ROLE_NOT_ELIGIBLE'
+	);
+}
+
+/**
+ * Structured error returned when a manual assignment is rejected because the
+ * work item is in `backlog` status (#439).  Backlog items are unapproved and
+ * must be explicitly promoted before any agent can pick them up.
+ */
+export interface BacklogStatusError {
+	code: 'BACKLOG_STATUS';
+	workItemId: string;
+	message: string;
+}
+
+export function isBacklogStatusError(value: unknown): value is BacklogStatusError {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as BacklogStatusError).code === 'BACKLOG_STATUS'
+	);
+}
+
+/**
+ * Structured error returned when a manual assignment is rejected because the
+ * target role slot has been disabled (drain mode) by the user (#437).
+ */
+export interface SlotDisabledError {
+	code: 'SLOT_DISABLED';
+	role: string;
+	slotAgentId: string;
+	message: string;
+}
+
+export function isSlotDisabledError(value: unknown): value is SlotDisabledError {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as SlotDisabledError).code === 'SLOT_DISABLED'
+	);
+}
+
+/**
+ * Structured error returned when a runner-role assignment is rejected because
+ * the agent is SSH-remote (#440). Runner agents must execute locally.
+ */
+export interface RunnerRequiresLocalError {
+	code: 'RUNNER_REQUIRES_LOCAL';
+	workItemId: string;
+	agentId: string;
+	detail: string;
+}
+
+export function isRunnerRequiresLocalError(value: unknown): value is RunnerRequiresLocalError {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as RunnerRequiresLocalError).code === 'RUNNER_REQUIRES_LOCAL'
+	);
+}
+
+/**
+ * Structured error returned when a runner-role assignment is rejected because
+ * the agent's cwd or git remote doesn't match the work item's project (#440).
+ * Runners must operate inside the project's local checkout.
+ */
+export interface RunnerProjectMismatchError {
+	code: 'RUNNER_PROJECT_MISMATCH';
+	workItemId: string;
+	agentId: string;
+	expectedProjectPath?: string;
+	actualProjectPath?: string;
+	expectedRemote?: string;
+	actualRemote?: string;
+	detail: string;
+}
+
+export function isRunnerProjectMismatchError(value: unknown): value is RunnerProjectMismatchError {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as RunnerProjectMismatchError).code === 'RUNNER_PROJECT_MISMATCH'
 	);
 }
 
@@ -157,15 +256,32 @@ export class AgentDispatchEngine {
 	/**
 	 * Manually assign a work item to a specific fleet agent.
 	 *
+	 * Backlog gate (#439): items with `status === 'backlog'` are unapproved and
+	 * are hard-blocked from both auto-pickup and manual assignment.  Promote the
+	 * item out of backlog first (e.g. via `/PM prd-new` finalise or planner
+	 * decompose) before assigning it.
+	 *
 	 * Role enforcement (#427): when the work item has a `pipeline` field, the
 	 * agent's `dispatchProfile.roles` must include `pipeline.currentRole`.
-	 * Returns a structured `RoleEligibilityError` (not a thrown exception) so
-	 * the renderer can surface a human-readable message rather than catching a
-	 * generic error.
+	 * Returns a structured error (not a thrown exception) so the renderer can
+	 * surface a human-readable message rather than catching a generic error.
 	 */
-	async assignManually(input: ManualAssignmentInput): Promise<WorkItem | RoleEligibilityError> {
+	async assignManually(
+		input: ManualAssignmentInput
+	): Promise<WorkItem | RoleEligibilityError | BacklogStatusError | SlotDisabledError> {
 		if (!input.userInitiated) {
 			throw new Error('Manual assignment requires an explicit user-initiated action');
+		}
+
+		// Backlog gate (#439) — hard-block before any other checks.
+		if (input.workItem.status === 'backlog') {
+			return {
+				code: 'BACKLOG_STATUS',
+				workItemId: input.workItemId,
+				message:
+					`Work item '${input.workItemId}' is in backlog and cannot be assigned. ` +
+					`Promote it out of backlog before assigning.`,
+			};
 		}
 
 		// Role gate — only applies when the item has a pipeline with a currentRole
@@ -183,6 +299,25 @@ export class AgentDispatchEngine {
 						`Agent '${input.agent.displayName}' (roles: [${agentRoles.join(', ') || 'none'}]) ` +
 						`is not eligible for the '${currentRole}' role on work item '${input.workItemId}'.`,
 				};
+			}
+
+			// Slot drain-mode gate (#437) — check after role eligibility so the role
+			// error takes precedence when both conditions fail simultaneously.
+			if (this.options.isSlotEnabled) {
+				const projectPath = input.workItem.projectPath ?? '';
+				if (
+					projectPath &&
+					!this.options.isSlotEnabled(projectPath, currentRole as DispatchRole, input.agent.id)
+				) {
+					return {
+						code: 'SLOT_DISABLED',
+						role: currentRole,
+						slotAgentId: input.agent.id,
+						message:
+							`Slot for role '${currentRole}' is disabled (drain mode). ` +
+							`New assignments are paused; the current item will complete normally.`,
+					};
+				}
 			}
 		}
 
@@ -280,6 +415,21 @@ export class AgentDispatchEngine {
 		};
 
 		for (const decision of decisions) {
+			// Slot drain-mode gate (#437): skip auto-pickup when the role slot is
+			// disabled.  The item is left unclaimed so it can be picked up once the
+			// slot is re-enabled or reassigned.
+			if (this.options.isSlotEnabled && decision.workItem.pipeline) {
+				const projectPath = decision.workItem.projectPath ?? '';
+				const currentRole = decision.workItem.pipeline.currentRole as DispatchRole;
+				if (
+					projectPath &&
+					!this.options.isSlotEnabled(projectPath, currentRole, decision.agent.id)
+				) {
+					result.skipped += 1;
+					continue;
+				}
+			}
+
 			const claimedItem = await this.tryClaim(decision, result);
 			if (!claimedItem) {
 				continue;

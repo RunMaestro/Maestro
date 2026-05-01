@@ -347,6 +347,7 @@ Field updates use the `updateProjectV2ItemFieldValue` GraphQL mutation (via `gh 
 
 | `WorkItem.status` | Projects v2 `AI Status` field |
 | ----------------- | ----------------------------- |
+| `backlog`         | `Backlog`                     |
 | `discovered`      | `Idea`                        |
 | `planned`         | `PRD Draft`                   |
 | `ready`           | `Tasks Ready`                 |
@@ -355,6 +356,8 @@ Field updates use the `updateProjectV2ItemFieldValue` GraphQL mutation (via `gh 
 | `blocked`         | `Blocked`                     |
 | `review`          | `In Review`                   |
 | `done`            | `Done`                        |
+
+> **#439 — Backlog gate:** items with `status === 'backlog'` are excluded from both auto-pickup and manual assignment; promote them (via `/PM prd-new` finalise or planner decompose) before assigning.
 
 ### Agent-Callable pm-tools Channels
 

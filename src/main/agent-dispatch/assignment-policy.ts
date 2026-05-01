@@ -94,6 +94,7 @@ export function isAgentEligibleForPickup(entry: AgentDispatchFleetEntry): boolea
 export function isWorkItemEligibleForAutoPickup(workItem: WorkItem): boolean {
 	return (
 		workItem.tags.includes(WORK_GRAPH_AGENT_READY_TAG) &&
+		workItem.status !== 'backlog' &&
 		workItem.status !== 'archived' &&
 		workItem.status !== 'canceled' &&
 		workItem.status !== 'done' &&
