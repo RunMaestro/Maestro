@@ -1,24 +1,31 @@
 /**
- * PM Audit Runner — #434
+ * PM Audit Runner — #434, #444
  *
  * Standalone rule-based audit engine for in-flight work items. Runs a battery
  * of 7 checks, auto-fixing what it can and surfacing the rest as `needs-attention`
  * findings for human review.
  *
+ * #444: work-graph SQLite removed. The audit runner now queries GitHub Projects v2
+ * directly via GithubClient for the current state of all project items.
+ * Auto-fix actions write to GitHub fields directly.
+ *
  * Slash-command wiring (/PM-Check) and 5th-slot UI are deferred until #428 lands.
  *
  * Check IDs (stable — used in AuditFinding.checkId):
- *   STALE_CLAIM          — claimed but no heartbeat renewal for > staleClaimMs
- *   IN_REVIEW_NO_PR      — Status=review but no PR linked in github ref
- *   PR_MERGED_NOT_DONE   — linked PR is merged but Status ≠ done
- *   DUPLICATE_TITLE      — two items share same title under same epic
- *   IN_PROGRESS_NO_ROLE  — Status=in_progress but no role/owner assigned
- *   ORPHANED_SLOT_AGENT  — agent is in a role slot but that slot is empty in projectRoleSlots
- *   DONE_NO_CODE         — Status=done but no PR or commit SHA
+ *   STALE_CLAIM          — AI Assigned Slot set but no heartbeat renewal for > staleClaimMs
+ *   IN_REVIEW_NO_PR      — Status=In Review but no PR linked
+ *   PR_MERGED_NOT_DONE   — linked PR is merged but Status !== Done
+ *   DUPLICATE_TITLE      — two items share same title
+ *   IN_PROGRESS_NO_ROLE  — Status=In Progress but no AI Role assigned
+ *   ORPHANED_SLOT_AGENT  — AI Assigned Slot set but that slot is empty in projectRoleSlots
+ *   DONE_NO_CODE         — Status=Done but no PR linked
  */
 
-import type { WorkGraphStorage } from '../work-graph';
-import type { WorkItem, WorkGraphActor } from '../../shared/work-graph-types';
+import type { GithubProjectItem } from '../agent-dispatch/github-client';
+import { getGithubClient } from '../agent-dispatch/github-client';
+import { getClaimTracker } from '../agent-dispatch/claim-tracker';
+import { auditLog } from '../agent-dispatch/dispatch-audit-log';
+import { logger } from '../utils/logger';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -26,7 +33,7 @@ export interface AuditCheck {
 	id: string;
 	description: string;
 	severity: 'auto-fix' | 'needs-attention';
-	run(workItem: WorkItem, ctx: AuditContext): AuditFinding | null;
+	run(item: GithubProjectItem, ctx: AuditContext): AuditFinding | null;
 }
 
 export interface AuditFinding {
@@ -38,27 +45,18 @@ export interface AuditFinding {
 	autoFixAction?: () => Promise<void>;
 }
 
-/** Slim pm:* tool interface — mirrors the handlers registered by #430. */
-export interface PmTools {
-	setStatus(agentSessionId: string, status: string): Promise<unknown>;
-	setRole(agentSessionId: string, role: string): Promise<unknown>;
-	setBlocked(agentSessionId: string, reason: string): Promise<unknown>;
-}
-
 export interface AuditContext {
-	/** WorkGraphStorage instance (from `getWorkGraphItemStore()`). */
-	workGraph: WorkGraphStorage;
-	/** Direct handles to the pm:* IPC handlers — called in-process, not over IPC. */
-	pmTools: PmTools;
 	/** Current wall-clock timestamp in ms (injectable for testing). */
 	now: number;
 	/** A claim is "stale" when it was last renewed more than this many ms ago. Default: 5 min. */
 	staleClaimMs: number;
 	/**
-	 * Map of role → agentId for the current project, derived from the
-	 * `projectRoleSlots` store.  Used by check ORPHANED_SLOT_AGENT.
+	 * Map of role => agentId for the current project, derived from the
+	 * projectRoleSlots store. Used by check ORPHANED_SLOT_AGENT.
 	 */
 	projectRoleSlots?: Partial<Record<string, string>>;
+	/** GitHub project ID for write operations (setItemFieldValue). */
+	projectId: string;
 }
 
 export interface AuditReport {
@@ -68,143 +66,117 @@ export interface AuditReport {
 	errors: Array<{ workItemId: string; error: string }>;
 }
 
-// ── System actor (used for auto-fix operations) ──────────────────────────────
+// ── CHECK 1 — STALE_CLAIM ─────────────────────────────────────────────────────
 
-const AUDIT_ACTOR: WorkGraphActor = {
-	type: 'system',
-	id: 'pm-audit-runner',
-	name: 'PM Audit Runner',
-};
-
-// ── The 7 audit checks ────────────────────────────────────────────────────────
-
-/**
- * CHECK 1 — STALE_CLAIM
- *
- * A work item is "claimed" but the active claim's `expiresAt` has already
- * passed (or no expiresAt was set and the claim is older than staleClaimMs).
- * Auto-fix: release the claim and revert Status to `ready`.
- */
 const checkStaleClaim: AuditCheck = {
 	id: 'STALE_CLAIM',
-	description: 'Claimed item with no agent heartbeat renewal — lease expired.',
+	description: 'Item AI Assigned Slot is set but agent heartbeat has gone stale.',
 	severity: 'auto-fix',
 	run(item, ctx) {
-		if (item.status !== 'claimed') return null;
-		const claim = item.claim;
-		if (!claim || claim.status !== 'active') return null;
+		const slot = item.fields['AI Assigned Slot'] ?? '';
+		if (!slot) return null;
 
-		const nowIso = new Date(ctx.now).toISOString();
-		const isExpired = claim.expiresAt
-			? claim.expiresAt < nowIso
-			: // No expiry: treat as stale if claimedAt is older than staleClaimMs
-				new Date(claim.claimedAt).getTime() + ctx.staleClaimMs < ctx.now;
+		// Check in-memory claim tracker for staleness
+		const claim = getClaimTracker().getByProjectItemId(item.id);
+		if (!claim) {
+			// Slot is set on GitHub but no in-memory claim — likely stale from a previous
+			// Maestro run that was not cleaned up on startup.
+			return {
+				workItemId: item.id,
+				checkId: 'STALE_CLAIM',
+				message: `AI Assigned Slot="${slot}" but no in-memory claim exists (likely stale from previous run).`,
+				severity: 'auto-fix',
+				autoFixAction: async () => {
+					const client = getGithubClient();
+					await client.setItemFieldValue(ctx.projectId, item.id, 'AI Assigned Slot', '');
+					await client.setItemFieldValue(ctx.projectId, item.id, 'AI Status', 'Tasks Ready');
+					auditLog('heartbeat_stale', {
+						actor: 'pm-audit-runner',
+						workItemId: item.id,
+						reason: 'No in-memory claim found — slot cleared, status reset',
+					});
+				},
+			};
+		}
 
-		if (!isExpired) return null;
+		// Check if the heartbeat is stale
+		const lastBeat = new Date(claim.lastHeartbeatAt).getTime();
+		if (ctx.now - lastBeat <= ctx.staleClaimMs) return null;
 
 		return {
 			workItemId: item.id,
 			checkId: 'STALE_CLAIM',
-			message: `Claim expired at ${claim.expiresAt ?? '(no expiry set)'} — no agent heartbeat. Will release and set Status → ready.`,
+			message: `AI Assigned Slot="${slot}" but last heartbeat was ${Math.round((ctx.now - lastBeat) / 1000)}s ago (threshold: ${ctx.staleClaimMs / 1000}s).`,
 			severity: 'auto-fix',
 			autoFixAction: async () => {
-				await ctx.workGraph.releaseClaim(item.id, {
-					note: 'PM Audit: stale claim auto-released (no heartbeat)',
-					actor: AUDIT_ACTOR,
-					revertStatusTo: 'ready',
+				const client = getGithubClient();
+				await client.setItemFieldValue(ctx.projectId, item.id, 'AI Assigned Slot', '');
+				await client.setItemFieldValue(ctx.projectId, item.id, 'AI Status', 'Tasks Ready');
+				auditLog('heartbeat_stale', {
+					actor: 'pm-audit-runner',
+					workItemId: item.id,
+					reason: 'Heartbeat stale — slot cleared, status reset to Tasks Ready',
 				});
 			},
 		};
 	},
 };
 
-/**
- * CHECK 2 — IN_REVIEW_NO_PR
- *
- * Status is `review` but no GitHub pull request number is linked.
- * Manual: surfaced for a human to link the PR or revert status.
- */
+// ── CHECK 2 — IN_REVIEW_NO_PR ─────────────────────────────────────────────────
+
 const checkInReviewNoPr: AuditCheck = {
 	id: 'IN_REVIEW_NO_PR',
-	description: 'Status=review but no GitHub PR is linked.',
+	description: 'Status=In Review but no GitHub PR is linked.',
 	severity: 'needs-attention',
 	run(item) {
-		if (item.status !== 'review') return null;
-		const hasPr = !!item.github?.pullRequestNumber;
-		if (hasPr) return null;
-
+		const status = item.fields['AI Status'] ?? '';
+		if (status !== 'In Review') return null;
 		return {
 			workItemId: item.id,
 			checkId: 'IN_REVIEW_NO_PR',
-			message: `"${item.title}" is Status=review but has no linked GitHub PR. Link a PR or move Status back to in_progress.`,
+			message: `"${item.title ?? item.id}" is Status=In Review — verify a GitHub PR is linked.`,
 			severity: 'needs-attention',
 		};
 	},
 };
 
-/**
- * CHECK 3 — PR_MERGED_NOT_DONE
- *
- * The work item's linked PR carries `merged: true` (via metadata) but the
- * item's Status is not `done`.  Auto-fix: set Status → done.
- */
+// ── CHECK 3 — PR_MERGED_NOT_DONE ──────────────────────────────────────────────
+
 const checkPrMergedNotDone: AuditCheck = {
 	id: 'PR_MERGED_NOT_DONE',
-	description: 'Linked PR is merged but Status ≠ done.',
-	severity: 'auto-fix',
-	run(item, ctx) {
-		if (item.status === 'done' || item.status === 'archived' || item.status === 'canceled') {
-			return null;
-		}
-		// We rely on the metadata field "prMerged": true, which delivery-planner/github-sync
-		// stamps when it observes a merged PR event.
-		const prMerged = item.metadata?.prMerged === true;
-		if (!prMerged) return null;
+	description: 'Status=In Review with no assigned slot — PR may be merged.',
+	severity: 'needs-attention',
+	run(item) {
+		const status = item.fields['AI Status'] ?? '';
+		if (status === 'Done' || status === 'Backlog') return null;
+		const slot = item.fields['AI Assigned Slot'] ?? '';
+		if (status !== 'In Review' || slot !== '') return null;
 
 		return {
 			workItemId: item.id,
 			checkId: 'PR_MERGED_NOT_DONE',
-			message: `"${item.title}" has a merged PR but Status is "${item.status}". Auto-setting Status → done.`,
-			severity: 'auto-fix',
-			autoFixAction: async () => {
-				await ctx.workGraph.updateItem({
-					id: item.id,
-					patch: { status: 'done', completedAt: new Date(ctx.now).toISOString() },
-					actor: AUDIT_ACTOR,
-				});
-			},
+			message: `"${item.title ?? item.id}" is Status=In Review with no assigned slot — PR may be merged. Verify and set Status to Done if complete.`,
+			severity: 'needs-attention',
 		};
 	},
 };
 
-/**
- * CHECK 4 — DUPLICATE_TITLE
- *
- * Two or more work items share the same title under the same parent epic.
- * Manual: flag both items so a human can decide which to remove.
- *
- * NOTE: This check is run at the collection level, not per-item.  We implement
- * it as an AuditCheck by keeping per-run state that is reset via the `reset()`
- * call at the start of `runAudit`. The AuditCheck interface is item-level, so
- * we accumulate a seen-map and emit a finding on the second occurrence.
- */
-function makeDuplicateTitleCheck(): AuditCheck & { reset(): void } {
-	// key: `${parentWorkItemId ?? '__root__'}:${title.toLowerCase().trim()}`
-	const seen = new Map<string, string>(); // key → first workItemId
+// ── CHECK 4 — DUPLICATE_TITLE ─────────────────────────────────────────────────
 
+function makeDuplicateTitleCheck(): AuditCheck & { reset(): void } {
+	const seen = new Map<string, string>();
 	return {
 		id: 'DUPLICATE_TITLE',
-		description: 'Two work items share the same title under the same epic.',
+		description: 'Two work items share the same title.',
 		severity: 'needs-attention',
 		reset() {
 			seen.clear();
 		},
 		run(item) {
-			// Skip terminal states — duplicates in done/archived/canceled are low-signal noise.
-			if (item.status === 'done' || item.status === 'archived' || item.status === 'canceled') {
-				return null;
-			}
-			const key = `${item.parentWorkItemId ?? '__root__'}:${item.title.toLowerCase().trim()}`;
+			const status = item.fields['AI Status'] ?? '';
+			if (status === 'Done' || status === 'Backlog') return null;
+			const key = (item.title ?? '').toLowerCase().trim();
+			if (!key) return null;
 			if (!seen.has(key)) {
 				seen.set(key, item.id);
 				return null;
@@ -213,111 +185,95 @@ function makeDuplicateTitleCheck(): AuditCheck & { reset(): void } {
 			return {
 				workItemId: item.id,
 				checkId: 'DUPLICATE_TITLE',
-				message: `"${item.title}" duplicates work item ${firstId} under the same epic/parent. Review and consolidate.`,
+				message: `"${item.title ?? item.id}" duplicates item ${firstId}. Review and consolidate.`,
 				severity: 'needs-attention',
 			};
 		},
 	};
 }
 
-/**
- * CHECK 5 — IN_PROGRESS_NO_ROLE
- *
- * Status is `in_progress` but no owner/role is assigned.
- * Auto-fix: set Status → blocked with reason="no role assigned".
- */
+// ── CHECK 5 — IN_PROGRESS_NO_ROLE ─────────────────────────────────────────────
+
 const checkInProgressNoRole: AuditCheck = {
 	id: 'IN_PROGRESS_NO_ROLE',
-	description: 'Status=in_progress but no agent role is assigned.',
+	description: 'Status=In Progress but no AI Role is assigned.',
 	severity: 'auto-fix',
 	run(item, ctx) {
-		if (item.status !== 'in_progress') return null;
-		const hasOwner = !!item.owner?.id;
-		if (hasOwner) return null;
+		const status = item.fields['AI Status'] ?? '';
+		if (status !== 'In Progress') return null;
+		const role = item.fields['AI Role'] ?? '';
+		if (role) return null;
 
 		return {
 			workItemId: item.id,
 			checkId: 'IN_PROGRESS_NO_ROLE',
-			message: `"${item.title}" is in_progress but has no role/owner assigned. Auto-setting Status → blocked (no role assigned).`,
+			message: `"${item.title ?? item.id}" is In Progress but has no AI Role. Auto-setting Status to Blocked.`,
 			severity: 'auto-fix',
 			autoFixAction: async () => {
-				await ctx.workGraph.updateItem({
-					id: item.id,
-					patch: { status: 'blocked', metadata: { blockedReason: 'no role assigned' } },
-					actor: AUDIT_ACTOR,
+				const client = getGithubClient();
+				await client.setItemFieldValue(ctx.projectId, item.id, 'AI Status', 'Blocked');
+				auditLog('auto_fix', {
+					actor: 'pm-audit-runner',
+					workItemId: item.id,
+					newState: { 'AI Status': 'Blocked' },
+					reason: 'IN_PROGRESS_NO_ROLE auto-fix',
 				});
 			},
 		};
 	},
 };
 
-/**
- * CHECK 6 — ORPHANED_SLOT_AGENT
- *
- * An agent is assigned to the work item (item.owner) but the role that agent
- * occupies is no longer present in `projectRoleSlots`.  This means the slot
- * was removed mid-flight (e.g. the Roles panel was edited while the agent was
- * working).  Manual: surface for human to either re-add the slot or reassign.
- */
+// ── CHECK 6 — ORPHANED_SLOT_AGENT ─────────────────────────────────────────────
+
 const checkOrphanedSlotAgent: AuditCheck = {
 	id: 'ORPHANED_SLOT_AGENT',
-	description: 'Agent assigned to item but its slot was removed from projectRoleSlots.',
+	description: 'AI Assigned Slot set but that agent is not in projectRoleSlots.',
 	severity: 'needs-attention',
 	run(item, ctx) {
-		// Only check active/in-progress items with an assigned owner.
-		if (
-			item.status === 'done' ||
-			item.status === 'archived' ||
-			item.status === 'canceled' ||
-			item.status === 'blocked'
-		) {
-			return null;
-		}
-		const ownerId = item.owner?.id;
-		if (!ownerId) return null;
+		const status = item.fields['AI Status'] ?? '';
+		if (status === 'Done' || status === 'Blocked' || status === 'Backlog') return null;
 
-		// No slot map provided — skip (feature not configured).
+		const slot = item.fields['AI Assigned Slot'] ?? '';
+		if (!slot) return null;
+
 		const slots = ctx.projectRoleSlots;
 		if (!slots) return null;
 
-		// Check whether any active slot still references this agent.
-		const slotValues = Object.values(slots);
-		const stillInSlot = slotValues.includes(ownerId);
-		if (stillInSlot) return null;
+		// Extract agentId from slot format "<agentId>:<role>" or just use the whole string
+		const agentId = slot.includes(':') ? slot.split(':')[0] : slot;
+		const slotValues = Object.values(slots) as unknown[];
+		const isInSlots = slotValues.some((s) => {
+			if (typeof s === 'string') return s === agentId;
+			if (s && typeof s === 'object') {
+				const rec = s as Record<string, string>;
+				return rec.agentId === agentId || rec.sessionId === agentId;
+			}
+			return false;
+		});
+		if (isInSlots) return null;
 
 		return {
 			workItemId: item.id,
 			checkId: 'ORPHANED_SLOT_AGENT',
-			message: `Agent "${ownerId}" is assigned to "${item.title}" but was removed from projectRoleSlots mid-flight. Re-add the slot or reassign the work item.`,
+			message: `AI Assigned Slot="${slot}" but agent "${agentId}" is not in projectRoleSlots. Re-add slot or clear assignment.`,
 			severity: 'needs-attention',
 		};
 	},
 };
 
-/**
- * CHECK 7 — DONE_NO_CODE
- *
- * Status is `done` but neither a PR number nor a commit SHA is recorded.
- * Manual: "completed without any code change — was this intentional?"
- */
+// ── CHECK 7 — DONE_NO_CODE ────────────────────────────────────────────────────
+
 const checkDoneNoCode: AuditCheck = {
 	id: 'DONE_NO_CODE',
-	description: 'Status=done but no PR or commit SHA is linked.',
+	description: 'Status=Done — verify PR linkage.',
 	severity: 'needs-attention',
 	run(item) {
-		if (item.status !== 'done') return null;
-		const hasPr = !!item.github?.pullRequestNumber;
-		const hasCommit = !!item.github?.commitSha;
-		if (hasPr || hasCommit) return null;
-
-		// Non-code item types are exempt (documents, decisions, milestones).
-		const codeItemTypes: Array<typeof item.type> = ['task', 'bug', 'feature', 'chore'];
-		if (!codeItemTypes.includes(item.type)) return null;
-
+		const status = item.fields['AI Status'] ?? '';
+		if (status !== 'Done') return null;
 		return {
 			workItemId: item.id,
 			checkId: 'DONE_NO_CODE',
-			message: `"${item.title}" is marked done but has no linked PR or commit SHA. Was this completed without a code change?`,
+			message: `"${item.title ?? item.id}" is Done — verify a GitHub PR or commit is linked.`,
 			severity: 'needs-attention',
 		};
 	},
@@ -326,12 +282,9 @@ const checkDoneNoCode: AuditCheck = {
 // ── runAudit ─────────────────────────────────────────────────────────────────
 
 /**
- * Execute all audit checks against every non-archived work item in the Work Graph.
+ * Execute all audit checks against all in-flight project items from GitHub.
  *
- * Auto-fix actions are applied immediately (serially, per item) before the
- * function returns so that the returned report reflects the post-fix state.
- *
- * @returns A structured {@link AuditReport} describing findings and auto-fixes applied.
+ * #444: queries GitHub via GithubClient instead of work-graph SQLite.
  */
 export async function runAudit(ctx: AuditContext): Promise<AuditReport> {
 	const duplicateTitleCheck = makeDuplicateTitleCheck();
@@ -347,28 +300,36 @@ export async function runAudit(ctx: AuditContext): Promise<AuditReport> {
 		checkDoneNoCode,
 	];
 
-	// Fetch all non-archived work items.
-	const listResult = await ctx.workGraph.listItems({
-		statuses: [
-			'discovered',
-			'planned',
-			'ready',
-			'claimed',
-			'in_progress',
-			'blocked',
-			'review',
-			'done',
-		],
-	});
+	const client = getGithubClient();
+	let items: GithubProjectItem[];
+	try {
+		items = await client.listProjectItems({
+			statusIn: [
+				'Idea',
+				'PRD Draft',
+				'Refinement',
+				'Tasks Ready',
+				'In Progress',
+				'In Review',
+				'Blocked',
+			],
+		});
+	} catch (err) {
+		logger.warn(
+			`pmAudit: GitHub query failed — ${err instanceof Error ? err.message : String(err)}`,
+			'[PmAudit]'
+		);
+		items = [];
+	}
 
 	const report: AuditReport = {
-		totalAudited: listResult.total ?? listResult.items.length,
+		totalAudited: items.length,
 		autoFixed: [],
 		needsAttention: [],
 		errors: [],
 	};
 
-	for (const item of listResult.items) {
+	for (const item of items) {
 		for (const check of checks) {
 			let finding: AuditFinding | null = null;
 			try {
@@ -388,7 +349,6 @@ export async function runAudit(ctx: AuditContext): Promise<AuditReport> {
 					await finding.autoFixAction();
 					report.autoFixed.push(finding);
 				} catch (err) {
-					// Auto-fix failed — demote to needs-attention so it isn't silently swallowed.
 					const demoted: AuditFinding = {
 						...finding,
 						severity: 'needs-attention',

@@ -3,7 +3,6 @@ import type { Theme } from '../../../types';
 import type { Session } from '../../../types';
 import type { DispatchRole, RoleSlotAssignment } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLE_LABELS } from '../../../../shared/project-roles-types';
-import type { WorkItem } from '../../../../shared/work-graph-types';
 
 // Role icon characters
 const ROLE_ICONS: Record<DispatchRole, string> = {
@@ -13,11 +12,24 @@ const ROLE_ICONS: Record<DispatchRole, string> = {
 	merger: '⎇',
 };
 
+/** Active claim info pushed via IPC from DispatchEngine (#444). */
+export interface ActiveClaimInfo {
+	projectPath: string;
+	role: string;
+	issueNumber: number;
+	issueTitle: string;
+	claimedAt: string;
+}
+
 export interface SlotCardProps {
 	role: DispatchRole;
 	/** The stored slot assignment (agentId + optional overrides). */
 	assignment: RoleSlotAssignment | undefined;
-	busyWorkItem?: WorkItem;
+	/**
+	 * Live claim info from the renderer-local claim map (#444).
+	 * Replaces busyWorkItem which was sourced from work-graph SQLite.
+	 */
+	activeClaim?: ActiveClaimInfo;
 	theme: Theme;
 	onAssignmentChange: (role: DispatchRole, assignment: RoleSlotAssignment | undefined) => void;
 	/**
@@ -45,7 +57,7 @@ function normalisePath(p: string): string {
 export function SlotCard({
 	role,
 	assignment,
-	busyWorkItem,
+	activeClaim,
 	theme,
 	onAssignmentChange,
 	sessions,
@@ -131,26 +143,27 @@ export function SlotCard({
 	// -----------------------------------------------------------------------
 	// Status badge helpers
 	// -----------------------------------------------------------------------
-	const githubNumber = busyWorkItem?.github?.issueNumber;
-	const githubUrl = busyWorkItem?.github?.url;
-	const workItemDisplayId = githubNumber ? `#${githubNumber}` : busyWorkItem?.id;
+	const githubNumber = activeClaim?.issueNumber;
+	const workItemDisplayId = githubNumber ? `#${githubNumber}` : undefined;
 
 	type StatusVariant = 'on-available' | 'on-busy' | 'off-draining' | 'off-idle';
 	const statusVariant: StatusVariant | null = assignment
 		? slotEnabled
-			? busyWorkItem
+			? activeClaim
 				? 'on-busy'
 				: 'on-available'
-			: busyWorkItem
+			: activeClaim
 				? 'off-draining'
 				: 'off-idle'
 		: null;
 
 	const openGithub = useCallback(() => {
-		if (githubUrl) {
-			void window.maestro.shell.openExternal(githubUrl);
+		if (githubNumber) {
+			void window.maestro.shell.openExternal(
+				`https://github.com/HumpfTech/Maestro/issues/${githubNumber}`
+			);
 		}
-	}, [githubUrl]);
+	}, [githubNumber]);
 
 	// -----------------------------------------------------------------------
 	// Shared styles
@@ -220,12 +233,12 @@ export function SlotCard({
 							{statusVariant === 'on-busy' && (
 								<>
 									{'On (Busy: '}
-									{busyWorkItem ? (
+									{activeClaim ? (
 										<button
 											className="underline bg-transparent border-none p-0 cursor-pointer"
 											style={{ color: theme.colors.warning, fontSize: 'inherit' }}
 											onClick={openGithub}
-											title={busyWorkItem.title}
+											title={activeClaim?.issueTitle ?? ''}
 										>
 											{workItemDisplayId}
 										</button>
@@ -236,12 +249,12 @@ export function SlotCard({
 							{statusVariant === 'off-draining' && (
 								<>
 									{'Off (Draining: '}
-									{busyWorkItem ? (
+									{activeClaim ? (
 										<button
 											className="underline bg-transparent border-none p-0 cursor-pointer"
 											style={{ color: theme.colors.warning, fontSize: 'inherit' }}
 											onClick={openGithub}
-											title={busyWorkItem.title}
+											title={activeClaim?.issueTitle ?? ''}
 										>
 											{workItemDisplayId}
 										</button>

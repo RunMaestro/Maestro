@@ -153,9 +153,12 @@ import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
 import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
-import { startGhProjectPoller } from './pm-reverse-sync/poller';
+// pm-reverse-sync poller removed (#444): GitHub-as-truth, no local DB to sync to
 import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
 import { startDispatchPoller, stopDispatchPoller } from './agent-dispatch/dispatch-poller';
+import { getGithubClient } from './agent-dispatch/github-client';
+import { getClaimTracker } from './agent-dispatch/claim-tracker';
+import { auditLog } from './agent-dispatch/dispatch-audit-log';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -785,23 +788,20 @@ app.whenReady().then(async () => {
 		}
 	}
 
-	// Start the GitHub Project v2 reverse-sync poller (#435).
-	// Gated behind the deliveryPlanner Encore Feature — only relevant when
-	// Delivery Planner is enabled and items have been synced to GitHub Projects.
-	if (encoreFeatures.deliveryPlanner) {
-		try {
-			startGhProjectPoller();
-		} catch (err) {
-			logger.warn(
-				`GitHub Project reverse-sync poller failed to start: ${err instanceof Error ? err.message : String(err)}`,
-				'Startup'
-			);
-		}
-	}
+	// pm-reverse-sync poller removed (#444): GitHub Projects v2 is now the sole durable
+	// state; there is no local DB to sync to.
 
-	// Start stale-claim sweeper (#435): auto-releases claims with no heartbeat for >5 min.
-	// Not gated — sweeper is lightweight and handles the absence of deliveryPlanner gracefully.
+	// Start stale-claim sweeper (#435, #444): auto-releases claims with no heartbeat for >5 min.
+	// #444: uses in-memory ClaimTracker + GithubClient instead of work-graph SQLite.
+	// Not gated — sweeper is lightweight and handles absence of deliveryPlanner gracefully.
 	startStaleClaimSweeper();
+
+	// Self-healing on startup (#444): release any GitHub AI Assigned Slot entries that
+	// point at this Maestro install from a previous run (in-memory state was lost on
+	// restart; those claims are stale by definition).
+	if (encoreFeatures.agentDispatch || encoreFeatures.deliveryPlanner) {
+		void reconcileStaleGithubClaims();
+	}
 
 	// Start Cue engine if the Encore Feature flag is enabled
 	if (encoreFeatures.maestroCue && cueEngine) {
@@ -1365,5 +1365,70 @@ function setupProcessListeners() {
 
 		// WakaTime heartbeat listener (query-complete → heartbeat, exit → cleanup)
 		setupWakaTimeListener(processManager, wakatimeManager, store);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Self-healing reconciliation (#444)
+// ---------------------------------------------------------------------------
+
+/**
+ * On startup, release any GitHub Projects v2 items whose AI Assigned Slot
+ * points at this Maestro install from a previous run.  In-memory state
+ * (ClaimTracker) was lost on restart, so those claims are stale by definition.
+ *
+ * Strategy: query all project items. For any item where AI Assigned Slot is
+ * non-empty AND not already in the in-memory ClaimTracker, clear the slot and
+ * reset AI Status to "Tasks Ready".
+ *
+ * This runs once, fire-and-forget, after setupIpcHandlers() completes.
+ */
+async function reconcileStaleGithubClaims(): Promise<void> {
+	const LOG = '[StartupReconcile]';
+	try {
+		const client = getGithubClient();
+		const projectId = await client.readProjectId();
+		const items = await client.listProjectItems({
+			// Only items with a non-empty AI Assigned Slot
+			assignedSlotMatches: ':',
+		});
+
+		if (items.length === 0) {
+			logger.info('Startup reconcile: no assigned slots found — nothing to release', LOG);
+			return;
+		}
+
+		logger.info(`Startup reconcile: found ${items.length} item(s) with AI Assigned Slot set`, LOG);
+		const tracker = getClaimTracker();
+		let released = 0;
+
+		for (const item of items) {
+			// If we already have an in-memory claim for this item, it's active — skip
+			if (tracker.getByProjectItemId(item.id)) continue;
+
+			// No in-memory claim → stale from previous run → release
+			try {
+				await client.setItemFieldValue(projectId, item.id, 'AI Assigned Slot', '');
+				await client.setItemFieldValue(projectId, item.id, 'AI Status', 'Tasks Ready');
+				auditLog('reconcile_stale', {
+					actor: 'startup-reconcile',
+					workItemId: item.id,
+					reason: `Startup: AI Assigned Slot was "${item.fields['AI Assigned Slot']}" but no in-memory claim — cleared`,
+				});
+				released++;
+			} catch (err) {
+				logger.warn(
+					`Startup reconcile: failed to release item ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+					LOG
+				);
+			}
+		}
+
+		logger.info(`Startup reconcile: released ${released} stale claim(s)`, LOG);
+	} catch (err) {
+		logger.warn(
+			`Startup reconcile: failed — ${err instanceof Error ? err.message : String(err)}`,
+			'[StartupReconcile]'
+		);
 	}
 }

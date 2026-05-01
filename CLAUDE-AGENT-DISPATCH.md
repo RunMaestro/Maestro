@@ -25,6 +25,66 @@ Agent Dispatch is the subsystem that selects an agent session, claims a GitHub i
 
 ---
 
+## #444 — GitHub-as-Truth Refactor (completed)
+
+The local SQLite work-graph mirror has been removed as the durable state layer for Agent Dispatch. GitHub Projects v2 (AI-prefixed custom fields) is now the sole source of truth for claim state. The local in-memory `ClaimTracker` and a JSONL audit log replace what was in SQLite.
+
+### What changed
+
+| Before (#443)                                     | After (#444)                                                           |
+| ------------------------------------------------- | ---------------------------------------------------------------------- |
+| SQLite `work_item_claims` table                   | In-memory `ClaimTracker` (`Map<agentSessionId, Map<role, ClaimInfo>>`) |
+| `pm-reverse-sync/` poller syncing GitHub → SQLite | **Deleted** — no local DB to sync to                                   |
+| `workGraph:*` IPC namespace                       | **Removed** — preload/workGraph.ts deleted                             |
+| `renderer/services/workGraph.ts`                  | **Stubbed** (returns empty results) — callers migrate in follow-up     |
+| Heartbeat written to DB column                    | `ClaimTracker.renewHeartbeat(projectItemId)` in-memory only            |
+| pm-audit reads SQLite                             | Queries `client.listProjectItems()` from GitHub                        |
+| RolesPanel polls `getBoard()` every 10 s          | Subscribes to `agentDispatch:claimStarted/claimEnded` IPC events       |
+
+### New source files
+
+| File                                            | Role                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| `src/main/agent-dispatch/github-client.ts`      | TTL-cached `gh` CLI wrapper for GitHub Projects v2 reads/writes     |
+| `src/main/agent-dispatch/claim-tracker.ts`      | In-memory claim state (`ClaimTracker` singleton + `ClaimInfo` type) |
+| `src/main/agent-dispatch/dispatch-audit-log.ts` | Appends JSONL to `<userData>/dispatch-audit.jsonl`                  |
+
+### ClaimInfo shape
+
+```typescript
+interface ClaimInfo {
+	claimId: string; // "<projectPath>:<role>:<issueNumber>"
+	projectPath: string;
+	role: string;
+	issueNumber: number;
+	issueTitle: string;
+	projectItemId: string; // GitHub Projects v2 item ID (for writes)
+	projectId: string; // GitHub node-ID of the project
+	agentSessionId: string; // Left Bar session that owns the claim
+	claimedAt: string; // ISO timestamp
+	lastHeartbeatAt: string; // ISO timestamp (updated by pm:heartbeat)
+}
+```
+
+### Renderer live-update flow (post-#444)
+
+1. `DispatchEngine` calls `emitClaimStarted(mainWindow, claimInfo)` / `emitClaimEnded(mainWindow, { projectPath, role })` via `BrowserWindow.webContents.send()`.
+2. `src/main/preload/agentDispatch.ts` exposes `onClaimStarted(handler)` / `onClaimEnded(handler)` — each returns an unsubscribe function.
+3. `RolesPanel.tsx` subscribes on mount; maintains a renderer-local `Map<role, ActiveClaimInfo>` state; passes `activeClaim` to each `SlotCard`.
+4. Initial hydration: single `getBoard()` call on mount (reads ClaimTracker snapshot). No polling.
+
+### Startup reconciliation
+
+`reconcileStaleGithubClaims()` runs once after app start (in `src/main/index.ts`). It calls `client.listProjectItems({ statusIn: ['in_progress'] })` and clears `AI Assigned Slot` for any item whose slot value is not in the current `ClaimTracker`. This releases claims from crashed or restarted sessions before auto-pickup resumes.
+
+### Files NOT deleted (callers not yet migrated)
+
+- `src/main/work-graph/` — still used by `delivery-planner`, `planning-pipeline`, `pm-orchestrator`, `mcp/work-graph-tools`, `runtime.ts`, web server routes. Migration tracked in follow-up issues.
+- `src/shared/work-graph-types.ts` — imported by 30+ files; kept as a pure type file.
+- `src/renderer/services/workGraph.ts` — stubbed, returns empty results for all methods.
+
+---
+
 ## Architecture
 
 ```

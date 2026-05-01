@@ -1,21 +1,21 @@
 /**
- * pm:heartbeat IPC handler (#435).
+ * pm:heartbeat IPC handler (#435, #444).
  *
  * Agents call this channel every 60 s while they hold an active claim on a
- * WorkItem. The handler stamps `claim.lastHeartbeat` to the current ISO
- * timestamp so the stale-claim sweeper can detect dead agents.
+ * work item. The handler updates lastHeartbeatAt in the in-memory ClaimTracker
+ * so the stale-claim sweeper can detect dead agents.
+ *
+ * #444: work-graph SQLite removed. The DB column `last_heartbeat` no longer
+ * exists. This handler updates the in-memory tracker only — GitHub Projects v2
+ * AI Assigned Slot field is the durable truth; heartbeat is ephemeral.
  *
  * Gated by the `deliveryPlanner` encore feature flag (same gate as pm-tools).
- *
- * Ownership is not re-verified here — the caller supplies a workItemId and
- * only the active claim row is updated, so there is no cross-claim mutation
- * risk. If the item has no active claim the UPDATE is a no-op.
  */
 
 import { ipcMain } from 'electron';
-import { getWorkGraphDB } from '../../work-graph';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
+import { getClaimTracker } from '../../agent-dispatch/claim-tracker';
 
 const LOG_CONTEXT = '[PmHeartbeat]';
 
@@ -24,37 +24,24 @@ export interface PmHeartbeatHandlerDependencies {
 }
 
 export function registerPmHeartbeatHandlers(deps: PmHeartbeatHandlerDependencies): void {
-	ipcMain.handle('pm:heartbeat', async (_event, workItemId: string) => {
+	ipcMain.handle('pm:heartbeat', async (_event, projectItemId: string) => {
 		// Gate: encore flag must be enabled
 		const gateError = requireEncoreFeature(deps.settingsStore, 'deliveryPlanner');
 		if (gateError) return gateError;
 
-		if (!workItemId || typeof workItemId !== 'string') {
-			return { success: false, error: 'workItemId is required' };
+		if (!projectItemId || typeof projectItemId !== 'string') {
+			return { success: false, error: 'projectItemId is required' };
 		}
 
-		try {
-			const db = getWorkGraphDB().database;
-			const now = new Date().toISOString();
+		const now = new Date().toISOString();
+		const found = getClaimTracker().renewHeartbeat(projectItemId);
 
-			const result = db
-				.prepare(
-					`UPDATE work_item_claims SET last_heartbeat = ? WHERE work_item_id = ? AND status = 'active'`
-				)
-				.run(now, workItemId);
-
-			if (result.changes === 0) {
-				// No active claim on this item — return a soft error so the renderer
-				// can stop the beat loop.
-				return { success: false, error: `No active claim on work item: ${workItemId}` };
-			}
-
-			console.debug(`${LOG_CONTEXT} heartbeat workItem=${workItemId} at=${now}`);
-			return { success: true, data: { workItemId, lastHeartbeat: now } };
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			console.error(`${LOG_CONTEXT} pm:heartbeat failed for ${workItemId}:`, message);
-			return { success: false, error: message };
+		if (!found) {
+			// No in-memory claim for this item — signal the agent to stop the beat loop.
+			return { success: false, error: `No active claim for projectItemId: ${projectItemId}` };
 		}
+
+		console.debug(`${LOG_CONTEXT} heartbeat projectItem=${projectItemId} at=${now}`);
+		return { success: true, data: { projectItemId, lastHeartbeat: now } };
 	});
 }

@@ -36,11 +36,13 @@ function ClaimRow({
 		const action = force ? 'force' : 'release';
 		setPendingAction(action);
 		try {
+			// #444: releaseClaim now takes { projectItemId, agentSessionId, role }.
+			// WorkItemClaim.workItemId is the GitHub project item ID in the new model;
+			// role is not stored on the legacy claim shape so we pass an empty string.
 			await agentDispatchService.releaseClaim({
-				workItemId: claim.workItemId,
-				claimId: claim.id,
-				owner: claim.owner,
-				note: force ? 'Force-released by user' : 'Released by user',
+				projectItemId: claim.workItemId,
+				agentSessionId: claim.owner.id,
+				role: '',
 			});
 			notifyToast({
 				color: 'green',

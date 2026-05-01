@@ -1,25 +1,26 @@
 /**
- * Stale-claim sweeper (#435).
+ * Stale-claim sweeper (#435, #444).
  *
- * Runs on a configurable interval (default: 30 s). For each work item that has
- * an active claim, it checks whether `lastHeartbeat` is older than `staleMs`
- * (default: 5 min). If so, the claim is auto-released, the item status is reset
- * to "Tasks Ready", and a comment is posted on the linked GitHub issue.
+ * Runs on a configurable interval (default: 30 s). Iterates the in-memory
+ * ClaimTracker looking for claims whose lastHeartbeatAt is older than
+ * staleMs (default: 5 min). If found, releases the claim on GitHub by:
+ *   1. Clearing AI Assigned Slot on the project item
+ *   2. Setting AI Status = "Tasks Ready"
+ *   3. Posting a comment on the linked GitHub issue
  *
- * The sweeper is started once after setupIpcHandlers() in main/index.ts and
- * remains active for the lifetime of the app. Stop it by calling clearInterval
- * on the returned handle.
+ * #444: work-graph SQLite removed. The sweeper uses the ClaimTracker (in-memory)
+ * and GithubClient (GitHub as truth) instead of the DB.
  *
  * This is intentionally separate from the pmAudit on-demand runner (#434):
  *   - sweeper = continuous background auto-release
  *   - audit   = on-demand multi-check health report
  */
 
-import { getWorkGraphDB } from '../work-graph';
-import { getWorkGraphItemStore } from '../work-graph';
-import { DeliveryPlannerGithubSync } from '../delivery-planner/github-sync';
+import { getClaimTracker, type ClaimInfo } from '../agent-dispatch/claim-tracker';
+import { getGithubClient } from '../agent-dispatch/github-client';
+import { auditLog } from '../agent-dispatch/dispatch-audit-log';
 import { logger } from '../utils/logger';
-import type { WorkItem, WorkItemStatus } from '../../shared/work-graph-types';
+import { DELIVERY_PLANNER_GITHUB_REPOSITORY } from '../delivery-planner/github-safety';
 
 const LOG_CONTEXT = '[StaleSweeper]';
 
@@ -59,65 +60,61 @@ export function startStaleClaimSweeper(opts: StaleSweeperOptions = {}): NodeJS.T
 }
 
 async function runSweep(staleMs: number): Promise<void> {
-	const db = getWorkGraphDB().database;
-	const workGraph = getWorkGraphItemStore();
-	const now = Date.now();
-	const staleThreshold = new Date(now - staleMs).toISOString();
+	const tracker = getClaimTracker();
+	const staleClaims = tracker.getStaleClaims(staleMs);
 
-	// Find all active claims whose last_heartbeat is older than the threshold,
-	// or where last_heartbeat is NULL (no heartbeat ever received).
-	// We exclude items that have never had a heartbeat AND were claimed very
-	// recently (within staleMs) to avoid releasing fresh claims that haven't
-	// had a chance to emit their first beat.
-	const staleClaimRows = db
-		.prepare(
-			`
-			SELECT wic.work_item_id
-			FROM work_item_claims wic
-			WHERE wic.status = 'active'
-			  AND (
-			    (wic.last_heartbeat IS NOT NULL AND wic.last_heartbeat < ?)
-			    OR (wic.last_heartbeat IS NULL AND wic.claimed_at < ?)
-			  )
-		`
-		)
-		.all(staleThreshold, staleThreshold) as Array<{ work_item_id: string }>;
+	if (staleClaims.length === 0) return;
 
-	if (staleClaimRows.length === 0) return;
+	logger.info(`Stale-claim sweep found ${staleClaims.length} stale claim(s)`, LOG_CONTEXT);
 
-	logger.info(`Stale-claim sweep found ${staleClaimRows.length} stale claim(s)`, LOG_CONTEXT);
-
-	for (const row of staleClaimRows) {
-		await releaseStale(workGraph, row.work_item_id);
+	for (const claim of staleClaims) {
+		await releaseStale(claim);
 	}
 }
 
-async function releaseStale(
-	workGraph: ReturnType<typeof getWorkGraphItemStore>,
-	workItemId: string
-): Promise<void> {
-	try {
-		const item = await workGraph.getItem(workItemId);
-		if (!item) {
-			logger.warn(`Stale sweep: work item ${workItemId} not found — skipping`, LOG_CONTEXT);
-			return;
-		}
+async function releaseStale(claim: ClaimInfo): Promise<void> {
+	const tracker = getClaimTracker();
+	const client = getGithubClient();
 
-		// Release the claim and reset status to "Tasks Ready" equivalent.
-		// WorkItemStatus 'ready' maps to the "Tasks Ready" kanban column.
-		await workGraph.releaseClaim(workItemId, {
-			note: 'auto-released after agent timeout',
-			actor: { type: 'system', id: 'stale-sweeper' },
-			revertStatusTo: 'ready' as WorkItemStatus,
+	try {
+		// 1. Clear AI Assigned Slot and reset AI Status on GitHub
+		await client.setItemFieldValue(claim.projectId, claim.projectItemId, 'AI Assigned Slot', '');
+		await client.setItemFieldValue(
+			claim.projectId,
+			claim.projectItemId,
+			'AI Status',
+			'Tasks Ready'
+		);
+
+		// 2. Remove from in-memory tracker
+		tracker.removeClaim(claim.agentSessionId, claim.role);
+
+		// 3. Audit log
+		auditLog('heartbeat_stale', {
+			actor: 'stale-sweeper',
+			workItemId: claim.projectItemId,
+			reason: `Auto-released after agent timeout (agentSessionId=${claim.agentSessionId} role=${claim.role})`,
 		});
 
-		logger.info(`Stale-claim auto-released: workItem=${workItemId}`, LOG_CONTEXT);
+		logger.info(
+			`Stale-claim auto-released: projectItem=${claim.projectItemId} role=${claim.role}`,
+			LOG_CONTEXT
+		);
 
-		// Post a comment on the linked GitHub issue if one exists.
-		await postStaleComment(item);
+		// 4. Post a comment on the GitHub issue (best-effort)
+		if (claim.issueNumber) {
+			await postStaleComment(claim).catch((err) => {
+				logger.warn(
+					`Stale sweep: GitHub comment failed for issue #${claim.issueNumber}: ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+					LOG_CONTEXT
+				);
+			});
+		}
 	} catch (err) {
 		logger.warn(
-			`Stale sweep: failed to release claim for ${workItemId}: ${
+			`Stale sweep: failed to release claim for projectItem=${claim.projectItemId}: ${
 				err instanceof Error ? err.message : String(err)
 			}`,
 			LOG_CONTEXT
@@ -125,22 +122,11 @@ async function releaseStale(
 	}
 }
 
-async function postStaleComment(item: WorkItem): Promise<void> {
-	if (!item.github?.issueNumber) return;
-
-	try {
-		const githubSync = new DeliveryPlannerGithubSync();
-		await githubSync.addProgressComment(
-			item,
-			'**Agent timeout** — claim auto-released after missing heartbeat. Item returned to Tasks Ready.'
-		);
-	} catch (err) {
-		// GitHub comment failure is non-fatal — log and continue.
-		logger.warn(
-			`Stale sweep: GitHub comment failed for issue #${item.github?.issueNumber}: ${
-				err instanceof Error ? err.message : String(err)
-			}`,
-			LOG_CONTEXT
-		);
-	}
+async function postStaleComment(claim: ClaimInfo): Promise<void> {
+	const client = getGithubClient();
+	await client.addItemComment(
+		claim.issueNumber,
+		DELIVERY_PLANNER_GITHUB_REPOSITORY,
+		'**Agent timeout** — claim auto-released after missing heartbeat. Item returned to Tasks Ready.'
+	);
 }

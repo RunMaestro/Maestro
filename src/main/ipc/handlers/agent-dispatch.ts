@@ -5,31 +5,38 @@
  * the renderer via strongly-typed IPC channels.
  *
  * Channel conventions:
- *   agentDispatch:getBoard        → kanban-ready work items from Work Graph
+ *   agentDispatch:getBoard        → in-memory claim state (GitHub-backed, #444)
  *   agentDispatch:getFleet        → current fleet entries from FleetRegistry
  *   agentDispatch:assignManually  → manual claim via AgentDispatchEngine
- *   agentDispatch:releaseClaim    → release a work item claim via WorkGraphStorage
+ *   agentDispatch:releaseClaim    → release a claim on GitHub via ClaimTracker
  *   agentDispatch:pauseAgent      → pause auto-pickup for an agent
  *   agentDispatch:resumeAgent     → resume auto-pickup for an agent
  *
+ * Claim events pushed to renderer:
+ *   agentDispatch:claimStarted    → { projectPath, role, issueNumber, issueTitle, claimedAt }
+ *   agentDispatch:claimEnded      → { projectPath, role }
+ *
+ * #444: work-graph SQLite removed. Board data now comes from the in-memory
+ * ClaimTracker, which is populated by DispatchEngine on claim/release.
+ *
  * Pause/resume are implemented through FleetRegistry.pause()/resume() which
  * flip a local in-memory pause flag. They do NOT persist across restarts.
- * TODO(#77): Wire pause state to heartbeat / lease recovery when #77 ships.
  *
  * All handlers are gated by the `agentDispatch` encore feature flag.
  * When the flag is off, every channel returns:
  *   { success: false, code: 'FEATURE_DISABLED', feature: 'agentDispatch' }
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
-import { getWorkGraphItemStore } from '../../work-graph';
-import type { WorkItemFilters, WorkItemClaimReleaseInput } from '../../../shared/work-graph-types';
 import type { ManualAssignmentInput } from '../../agent-dispatch/dispatch-engine';
 import type { AgentDispatchFleetEntry } from '../../../shared/agent-dispatch-types';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import type { SettingsStoreInterface } from '../../stores/types';
 import { logger } from '../../utils/logger';
+import { getClaimTracker } from '../../agent-dispatch/claim-tracker';
+import { getGithubClient } from '../../agent-dispatch/github-client';
+import { auditLog } from '../../agent-dispatch/dispatch-audit-log';
 
 const LOG_CONTEXT = '[AgentDispatch]';
 
@@ -38,29 +45,63 @@ export interface AgentDispatchHandlerDependencies {
 	settingsStore: SettingsStoreInterface;
 }
 
-export function registerAgentDispatchHandlers(deps: AgentDispatchHandlerDependencies): void {
-	const workGraph = getWorkGraphItemStore();
+export interface AgentDispatchClaimStartedEvent {
+	projectPath: string;
+	role: string;
+	issueNumber: number;
+	issueTitle: string;
+	claimedAt: string;
+}
 
+export interface AgentDispatchClaimEndedEvent {
+	projectPath: string;
+	role: string;
+}
+
+/** Emit claim-started event to all renderer windows. */
+export function emitClaimStarted(
+	getWindow: () => BrowserWindow | null,
+	event: AgentDispatchClaimStartedEvent
+): void {
+	const win = getWindow();
+	if (win && !win.isDestroyed()) {
+		win.webContents.send('agentDispatch:claimStarted', event);
+	}
+}
+
+/** Emit claim-ended event to all renderer windows. */
+export function emitClaimEnded(
+	getWindow: () => BrowserWindow | null,
+	event: AgentDispatchClaimEndedEvent
+): void {
+	const win = getWindow();
+	if (win && !win.isDestroyed()) {
+		win.webContents.send('agentDispatch:claimEnded', event);
+	}
+}
+
+export function registerAgentDispatchHandlers(deps: AgentDispatchHandlerDependencies): void {
 	/** Check the agentDispatch encore feature flag. Returns structured error or null. */
 	const gate = () => requireEncoreFeature(deps.settingsStore, 'agentDispatch');
 
 	// -------------------------------------------------------------------------
 	// agentDispatch:getBoard
 	//
-	// Returns work-graph items suitable for a kanban board. The caller may pass
-	// WorkItemFilters to scope by project, status, tags, etc. Issue #80 owns
-	// the UI; this handler returns a stable { items, total } shape that #80 can
-	// depend on directly.
+	// Returns in-memory claim state as a board-shaped response.
+	// #444: no longer queries work-graph SQLite — uses ClaimTracker instead.
+	// The renderer subscribes to claimStarted/Ended events for live updates and
+	// only calls getBoard for initial hydration.
 	// -------------------------------------------------------------------------
-	ipcMain.handle('agentDispatch:getBoard', async (_event, filters?: WorkItemFilters) => {
+	ipcMain.handle('agentDispatch:getBoard', async (_event) => {
 		const gateError = gate();
 		if (gateError) {
 			logger.debug('agentDispatch flag off — rejecting getBoard', LOG_CONTEXT);
 			return gateError;
 		}
 		try {
-			const result = await workGraph.listItems(filters ?? {});
-			return { success: true, data: result };
+			const claims = getClaimTracker().getAll();
+			// Shape: { items: ClaimInfo[], total: number } — matches board expectation
+			return { success: true, data: { items: claims, total: claims.length } };
 		} catch (err) {
 			logger.error('getBoard error', LOG_CONTEXT, { error: String(err) });
 			return { success: false, error: String(err) };
@@ -114,22 +155,53 @@ export function registerAgentDispatchHandlers(deps: AgentDispatchHandlerDependen
 	// -------------------------------------------------------------------------
 	// agentDispatch:releaseClaim
 	//
-	// Releases an active claim on a work item via the Work Graph storage layer.
+	// Releases an active claim: clears AI Assigned Slot on GitHub and removes
+	// from the in-memory ClaimTracker.
+	// #444: no longer touches work-graph SQLite.
 	// -------------------------------------------------------------------------
-	ipcMain.handle('agentDispatch:releaseClaim', async (_event, input: WorkItemClaimReleaseInput) => {
-		const gateError = gate();
-		if (gateError) {
-			logger.debug('agentDispatch flag off — rejecting releaseClaim', LOG_CONTEXT);
-			return gateError;
+	ipcMain.handle(
+		'agentDispatch:releaseClaim',
+		async (_event, input: { projectItemId: string; agentSessionId: string; role: string }) => {
+			const gateError = gate();
+			if (gateError) {
+				logger.debug('agentDispatch flag off — rejecting releaseClaim', LOG_CONTEXT);
+				return gateError;
+			}
+			try {
+				const tracker = getClaimTracker();
+				const claim = tracker.getByProjectItemId(input.projectItemId);
+				if (!claim) {
+					return {
+						success: false,
+						error: `No active claim for projectItemId: ${input.projectItemId}`,
+					};
+				}
+				const client = getGithubClient();
+				await client.setItemFieldValue(
+					claim.projectId,
+					claim.projectItemId,
+					'AI Assigned Slot',
+					''
+				);
+				await client.setItemFieldValue(
+					claim.projectId,
+					claim.projectItemId,
+					'AI Status',
+					'Tasks Ready'
+				);
+				tracker.removeClaim(claim.agentSessionId, claim.role);
+				auditLog('release', {
+					actor: input.agentSessionId ?? 'user',
+					workItemId: claim.projectItemId,
+					reason: 'manual release via IPC',
+				});
+				return { success: true, data: { released: true, projectItemId: input.projectItemId } };
+			} catch (err) {
+				logger.error('releaseClaim error', LOG_CONTEXT, { error: String(err) });
+				return { success: false, error: String(err) };
+			}
 		}
-		try {
-			const data = await workGraph.releaseClaim(input);
-			return { success: true, data };
-		} catch (err) {
-			logger.error('releaseClaim error', LOG_CONTEXT, { error: String(err) });
-			return { success: false, error: String(err) };
-		}
-	});
+	);
 
 	// -------------------------------------------------------------------------
 	// agentDispatch:pauseAgent

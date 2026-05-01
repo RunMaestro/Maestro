@@ -255,10 +255,11 @@ export const KanbanBoard = memo(function KanbanBoard({ theme }: KanbanBoardProps
 		setError(null);
 		try {
 			const [boardResult, fleetResult] = await Promise.all([
-				agentDispatchService.getBoard({ limit: 1000 }),
+				// #444: getBoard() takes no filters — returns in-memory ClaimTracker state.
+				agentDispatchService.getBoard(),
 				agentDispatchService.getFleet(),
 			]);
-			setAllItems(boardResult.items);
+			setAllItems(boardResult.items as WorkItem[]);
 			setFleet(fleetResult);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));

@@ -1,62 +1,67 @@
-import type {
-	AgentReadyWorkFilter,
-	TagDefinition,
-	WorkGraphBroadcastEnvelope,
-	WorkGraphImportInput,
-	WorkGraphImportSummary,
-	WorkGraphListResult,
-	WorkItem,
-	WorkItemClaim,
-	WorkItemClaimCompleteInput,
-	WorkItemClaimInput,
-	WorkItemClaimReleaseInput,
-	WorkItemClaimRenewInput,
-	WorkItemCreateInput,
-	WorkItemEvent,
-	WorkItemFilters,
-	WorkItemSearchFilters,
-	WorkItemUpdateInput,
-} from '../../shared/work-graph-types';
+/**
+ * Work Graph renderer service — STUBBED (#444)
+ *
+ * The local work-graph SQLite DB and workGraph IPC namespace have been
+ * removed in #444 (GitHub-as-truth refactor). This file is kept to avoid
+ * breaking delivery-planner, kanban board, and other callers that still
+ * reference workGraphService. Those callers will be migrated to GitHub-direct
+ * queries in follow-up issues.
+ *
+ * All methods return empty results or no-ops so callers degrade gracefully
+ * rather than crashing at runtime.
+ *
+ * TODO(#444-follow-up): remove this file once all callers are migrated.
+ */
 
-type IpcResponse<T> = { success: true; data: T } | { success: false; error: string };
+import type { WorkGraphListResult, WorkItem, WorkItemFilters } from '../../shared/work-graph-types';
 
-const unwrap = async <T>(response: Promise<IpcResponse<T>>): Promise<T> => {
-	const result = await response;
-	if (!result.success) {
-		throw new Error(result.error);
-	}
-	return result.data;
-};
+const EMPTY_LIST: WorkGraphListResult = { items: [], total: 0 };
 
 export const workGraphService = {
-	listItems: (filters?: WorkItemFilters): Promise<WorkGraphListResult> =>
-		unwrap(window.maestro.workGraph.listItems(filters)),
-	searchItems: (filters: WorkItemSearchFilters): Promise<WorkGraphListResult> =>
-		unwrap(window.maestro.workGraph.searchItems(filters)),
-	getItem: (id: string): Promise<WorkItem | undefined> =>
-		unwrap(window.maestro.workGraph.getItem(id)),
-	createItem: (input: WorkItemCreateInput): Promise<WorkItem> =>
-		unwrap(window.maestro.workGraph.createItem(input)),
-	updateItem: (input: WorkItemUpdateInput): Promise<WorkItem> =>
-		unwrap(window.maestro.workGraph.updateItem(input)),
-	deleteItem: (id: string): Promise<boolean> => unwrap(window.maestro.workGraph.deleteItem(id)),
-	claimItem: (input: WorkItemClaimInput): Promise<WorkItemClaim> =>
-		unwrap(window.maestro.workGraph.claimItem(input)),
-	renewClaim: (input: WorkItemClaimRenewInput): Promise<WorkItemClaim> =>
-		unwrap(window.maestro.workGraph.renewClaim(input)),
-	releaseClaim: (input: WorkItemClaimReleaseInput): Promise<WorkItemClaim> =>
-		unwrap(window.maestro.workGraph.releaseClaim(input)),
-	completeClaim: (input: WorkItemClaimCompleteInput): Promise<WorkItemClaim> =>
-		unwrap(window.maestro.workGraph.completeClaim(input)),
-	listEvents: (workItemId: string): Promise<WorkItemEvent[]> =>
-		unwrap(window.maestro.workGraph.listEvents(workItemId)),
-	listTags: (): Promise<TagDefinition[]> => unwrap(window.maestro.workGraph.listTags()),
-	upsertTag: (definition: TagDefinition): Promise<TagDefinition> =>
-		unwrap(window.maestro.workGraph.upsertTag(definition)),
-	importItems: (input: WorkGraphImportInput): Promise<WorkGraphImportSummary> =>
-		unwrap(window.maestro.workGraph.importItems(input)),
-	getUnblockedAgentReadyWork: (filters?: AgentReadyWorkFilter): Promise<WorkGraphListResult> =>
-		unwrap(window.maestro.workGraph.getUnblockedAgentReadyWork(filters)),
-	onChanged: (handler: (event: WorkGraphBroadcastEnvelope) => void): (() => void) =>
-		window.maestro.workGraph.onChanged(handler),
+	listItems: (_filters?: WorkItemFilters): Promise<WorkGraphListResult> =>
+		Promise.resolve(EMPTY_LIST),
+
+	searchItems: (_filters: unknown): Promise<WorkGraphListResult> => Promise.resolve(EMPTY_LIST),
+
+	getItem: (_id: string): Promise<WorkItem | undefined> => Promise.resolve(undefined),
+
+	createItem: (_input: unknown): Promise<WorkItem> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	updateItem: (_input: unknown): Promise<WorkItem> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	deleteItem: (_id: string): Promise<boolean> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	claimItem: (_input: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	renewClaim: (_input: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	releaseClaim: (_input: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	completeClaim: (_input: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	listEvents: (_workItemId: string): Promise<unknown[]> => Promise.resolve([]),
+
+	listTags: (): Promise<unknown[]> => Promise.resolve([]),
+
+	upsertTag: (_definition: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	importItems: (_input: unknown): Promise<unknown> =>
+		Promise.reject(new Error('workGraph removed (#444) — use GitHub directly')),
+
+	getUnblockedAgentReadyWork: (_filters?: unknown): Promise<WorkGraphListResult> =>
+		Promise.resolve(EMPTY_LIST),
+
+	/** No-op: workGraph:changed events are gone (#444). Returns empty unsubscribe. */
+	onChanged:
+		(_handler: (event: unknown) => void): (() => void) =>
+		() =>
+			undefined,
 };

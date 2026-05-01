@@ -4,15 +4,12 @@
  * Thin wrapper around window.maestro.agentDispatch that unwraps the
  * { success, data } IPC envelope and throws on failure so callers can rely on
  * normal async/await error handling.
+ *
+ * #444: getBoard now returns in-memory ClaimTracker state (no workGraph dependency).
+ * releaseClaim input shape updated to { projectItemId, agentSessionId, role }.
  */
 
-import type {
-	WorkItemFilters,
-	WorkItemClaimReleaseInput,
-	WorkGraphListResult,
-	WorkItem,
-	WorkItemClaim,
-} from '../../shared/work-graph-types';
+import type { WorkItem } from '../../shared/work-graph-types';
 import type { AgentDispatchFleetEntry } from '../../shared/agent-dispatch-types';
 import type {
 	ManualAssignmentInput,
@@ -32,10 +29,10 @@ const unwrap = async <T>(response: Promise<IpcResponse<T>>): Promise<T> => {
 
 export const agentDispatchService = {
 	/**
-	 * Fetch work items formatted for kanban display.
+	 * Fetch in-memory claim state (replaces work-graph board query, #444).
 	 */
-	getBoard: (filters?: WorkItemFilters): Promise<WorkGraphListResult> =>
-		unwrap(window.maestro.agentDispatch.getBoard(filters)),
+	getBoard: (): Promise<{ items: unknown[]; total: number }> =>
+		unwrap(window.maestro.agentDispatch.getBoard()),
 
 	/**
 	 * Fetch the current fleet entries from the FleetRegistry.
@@ -59,9 +56,14 @@ export const agentDispatchService = {
 		unwrap(window.maestro.agentDispatch.assignManually(input)),
 
 	/**
-	 * Release an active claim on a work item.
+	 * Release an active claim on a GitHub project item (#444).
+	 * Clears AI Assigned Slot on GitHub and removes from in-memory ClaimTracker.
 	 */
-	releaseClaim: (input: WorkItemClaimReleaseInput): Promise<WorkItemClaim | undefined> =>
+	releaseClaim: (input: {
+		projectItemId: string;
+		agentSessionId: string;
+		role: string;
+	}): Promise<{ released: boolean; projectItemId: string }> =>
 		unwrap(window.maestro.agentDispatch.releaseClaim(input)),
 
 	/**

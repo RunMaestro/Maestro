@@ -60,7 +60,7 @@ import { createProjectRolesApi } from './projectRoles';
 import { createDeliveryPlannerApi } from './deliveryPlanner';
 import { createPlanningPipelineApi } from './planningPipeline';
 import { createConversationalPrdApi } from './conversationalPrd';
-import { createWorkGraphApi } from './workGraph';
+// #444: createWorkGraphApi removed — workGraph namespace eliminated
 import { createPmToolsApi } from './pmTools';
 import { createPmAuditApi } from './pmAudit';
 import { createPmHeartbeatApi } from './pmHeartbeat';
@@ -221,10 +221,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
 
-	// Work Graph API (item store, claims, tags, events)
-	workGraph: createWorkGraphApi(),
-
 	// Agent Dispatch API (fleet, board, assign, release, pause/resume + MCP registry)
+	// #444: workGraph namespace removed — GitHub Projects v2 is the sole durable state.
 	agentDispatch: createAgentDispatchApi(),
 
 	// Per-project role slot roster API (#429)
@@ -334,9 +332,7 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
-	// Work Graph
-	createWorkGraphApi,
-	// Agent Dispatch
+	// Agent Dispatch (#444: createWorkGraphApi removed)
 	createAgentDispatchApi,
 	// Project Roles
 	createProjectRolesApi,
@@ -585,10 +581,7 @@ export type {
 	PromptsApi,
 	CorePromptData,
 } from './prompts';
-export type {
-	// From workGraph
-	WorkGraphApi,
-} from './workGraph';
+// #444: WorkGraphApi removed — workGraph namespace eliminated
 export type {
 	// From agentDispatch
 	AgentDispatchApi,

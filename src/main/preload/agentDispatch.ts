@@ -2,10 +2,14 @@
  * Preload API for Agent Dispatch
  *
  * Provides the window.maestro.agentDispatch namespace for:
- * - Kanban board work items from Work Graph (getBoard)
+ * - Kanban board items from in-memory ClaimTracker (getBoard)
  * - Fleet registry entries (getFleet)
  * - Manual assignment, claim release, pause/resume (runtime handlers)
+ * - Claim lifecycle events: onClaimStarted, onClaimEnded (renderer subscribes)
  * - MCP/slash-command registry: listAgents, listEligible, assign, release, pause, resume, createSubtask, status
+ *
+ * #444: workGraph namespace removed — GitHub Projects v2 is the sole durable state.
+ * Board data now comes from the in-memory ClaimTracker via IPC events.
  */
 
 import { ipcRenderer } from 'electron';
@@ -16,8 +20,8 @@ export function createAgentDispatchApi() {
 		// Runtime handlers (agent-dispatch.ts)
 		// -----------------------------------------------------------------------
 
-		/** Return kanban-ready work items from the Work Graph. */
-		getBoard: (filters?: unknown) => ipcRenderer.invoke('agentDispatch:getBoard', filters),
+		/** Return kanban-ready claim state from the in-memory ClaimTracker. */
+		getBoard: () => ipcRenderer.invoke('agentDispatch:getBoard'),
 
 		/** Return all current fleet entries from the FleetRegistry. */
 		getFleet: () => ipcRenderer.invoke('agentDispatch:getFleet'),
@@ -25,7 +29,7 @@ export function createAgentDispatchApi() {
 		/** Manually assign a work item to an agent (userInitiated must be true). */
 		assignManually: (input: unknown) => ipcRenderer.invoke('agentDispatch:assignManually', input),
 
-		/** Release an active claim on a work item. */
+		/** Release an active claim on a work item (clears AI Assigned Slot on GitHub). */
 		releaseClaim: (input: unknown) => ipcRenderer.invoke('agentDispatch:releaseClaim', input),
 
 		/** Pause auto-pickup for an agent (in-memory only, resets on restart). */
@@ -33,6 +37,45 @@ export function createAgentDispatchApi() {
 
 		/** Resume auto-pickup for an agent (in-memory only, resets on restart). */
 		resumeAgent: (agentId: string) => ipcRenderer.invoke('agentDispatch:resumeAgent', agentId),
+
+		// -----------------------------------------------------------------------
+		// Claim lifecycle events (#444)
+		// Subscribe to these to keep the Dev Crew tab up to date without polling.
+		// -----------------------------------------------------------------------
+
+		/**
+		 * Subscribe to claim-started events emitted when DispatchEngine claims a
+		 * GitHub project item. Returns an unsubscribe function.
+		 */
+		onClaimStarted: (
+			handler: (event: {
+				projectPath: string;
+				role: string;
+				issueNumber: number;
+				issueTitle: string;
+				claimedAt: string;
+			}) => void
+		): (() => void) => {
+			const listener = (_e: unknown, ev: unknown) => handler(ev as Parameters<typeof handler>[0]);
+			ipcRenderer.on('agentDispatch:claimStarted', listener);
+			return () => {
+				ipcRenderer.removeListener('agentDispatch:claimStarted', listener);
+			};
+		},
+
+		/**
+		 * Subscribe to claim-ended events emitted when DispatchEngine releases a claim.
+		 * Returns an unsubscribe function.
+		 */
+		onClaimEnded: (
+			handler: (event: { projectPath: string; role: string }) => void
+		): (() => void) => {
+			const listener = (_e: unknown, ev: unknown) => handler(ev as Parameters<typeof handler>[0]);
+			ipcRenderer.on('agentDispatch:claimEnded', listener);
+			return () => {
+				ipcRenderer.removeListener('agentDispatch:claimEnded', listener);
+			};
+		},
 
 		// -----------------------------------------------------------------------
 		// Slash-command IPC handlers (agent-dispatch-slash-commands.ts).

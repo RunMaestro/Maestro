@@ -3,9 +3,16 @@
  *
  * Shows exactly 4 slot cards (runner / fixer / reviewer / merger).
  * Persists via projectRoles:get / projectRoles:set IPC channels.
- * Polls agentDispatch:getBoard every 10 s to show busy state.
  *
- * Slots reference existing Left Bar agents (agentId-based).  SlotCard filters
+ * #444: removed polling getBoard against work-graph SQLite.
+ * Now subscribes to agentDispatch:claimStarted/claimEnded IPC events from
+ * DispatchEngine to maintain a renderer-local claim state map.
+ * Initial hydration via agentDispatch:getBoard (in-memory ClaimTracker).
+ *
+ * No GitHub query is made on initial mount — all data comes from the
+ * in-memory ClaimTracker pushed via IPC events.
+ *
+ * Slots reference existing Left Bar agents (agentId-based). SlotCard filters
  * the sessions list to agents on the same project + host as the active session.
  */
 
@@ -17,8 +24,16 @@ import type {
 	RoleSlotAssignment,
 } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLES } from '../../../../shared/project-roles-types';
-import type { WorkItem } from '../../../../shared/work-graph-types';
 import { SlotCard } from './SlotCard';
+
+/** Minimal claim shape needed to show busy state on a SlotCard. */
+interface ActiveClaimInfo {
+	projectPath: string;
+	role: string;
+	issueNumber: number;
+	issueTitle: string;
+	claimedAt: string;
+}
 
 interface RolesPanelProps {
 	theme: Theme;
@@ -31,10 +46,12 @@ interface RolesPanelProps {
 
 export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: RolesPanelProps) {
 	const [slots, setSlots] = useState<ProjectRoleSlots>({});
-	const [busyItems, setBusyItems] = useState<WorkItem[]>([]);
+	// Renderer-local claim state: role → claim info
+	const [activeClaims, setActiveClaims] = useState<Map<string, ActiveClaimInfo>>(new Map());
 	const [loading, setLoading] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 
+	// Load project role slots when projectPath changes
 	useEffect(() => {
 		if (!projectPath) {
 			setSlots({});
@@ -52,26 +69,43 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 			.finally(() => setLoading(false));
 	}, [projectPath]);
 
+	// Hydrate initial claim state from in-memory ClaimTracker (no GitHub query)
 	useEffect(() => {
-		let cancelled = false;
+		window.maestro.agentDispatch
+			.getBoard()
+			.then((res) => {
+				if (!res.success) return;
+				const items = (res.data as { items?: ActiveClaimInfo[] }).items ?? [];
+				const map = new Map<string, ActiveClaimInfo>();
+				for (const item of items) {
+					if (item.role) map.set(item.role, item);
+				}
+				setActiveClaims(map);
+			})
+			.catch(() => {});
+	}, []);
 
-		function poll() {
-			if (cancelled) return;
-			window.maestro.agentDispatch
-				.getBoard()
-				.then((res) => {
-					if (!cancelled && res.success) {
-						setBusyItems(res.data.items ?? []);
-					}
-				})
-				.catch(() => {});
-		}
+	// Subscribe to live claim events from DispatchEngine (#444)
+	useEffect(() => {
+		const unsubStart = window.maestro.agentDispatch.onClaimStarted((event) => {
+			setActiveClaims((prev) => {
+				const next = new Map(prev);
+				next.set(event.role, event);
+				return next;
+			});
+		});
 
-		poll();
-		const id = setInterval(poll, 10_000);
+		const unsubEnd = window.maestro.agentDispatch.onClaimEnded((event) => {
+			setActiveClaims((prev) => {
+				const next = new Map(prev);
+				next.delete(event.role);
+				return next;
+			});
+		});
+
 		return () => {
-			cancelled = true;
-			clearInterval(id);
+			unsubStart();
+			unsubEnd();
 		};
 	}, []);
 
@@ -101,17 +135,11 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 	);
 
 	/**
-	 * Find the busy work item for a role slot.
-	 * Matched by pipeline.currentRole on the work item.
+	 * Find the busy claim info for a role slot.
+	 * Matched by role name against the renderer-local claim map.
 	 */
-	function busyItemForRole(role: DispatchRole): WorkItem | undefined {
-		const slot = slots[role];
-		if (!slot) return undefined;
-
-		return busyItems.find(
-			(item) =>
-				item.claim != null && item.claim.status === 'active' && item.pipeline?.currentRole === role
-		);
+	function busyClaimForRole(role: DispatchRole): ActiveClaimInfo | undefined {
+		return activeClaims.get(role);
 	}
 
 	if (!projectPath) {
@@ -154,7 +182,7 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 					key={role}
 					role={role}
 					assignment={slots[role]}
-					busyWorkItem={busyItemForRole(role)}
+					activeClaim={busyClaimForRole(role)}
 					theme={theme}
 					onAssignmentChange={handleAssignmentChange}
 					sessions={sessions}
@@ -164,7 +192,7 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 			))}
 
 			<p className="text-[10px] mt-2 px-1" style={{ color: theme.colors.textDim }}>
-				Busy state refreshes every 10 s. Live events pending #427.
+				Busy state updates via live events from DispatchEngine (#444).
 			</p>
 		</div>
 	);

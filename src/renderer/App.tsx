@@ -497,45 +497,47 @@ function MaestroConsoleInner() {
 	// sessionsLoaded moved to useQueueProcessing hook
 	const activeSession = useActiveSession();
 
-	// --- Claim heartbeat loop (#435) ---
+	// --- Claim heartbeat loop (#435, #444) ---
 	// Keeps the stale-claim sweeper from auto-releasing our claim while the agent is running.
-	// Looks up the active claimed work item for the current session and pulses every 60 s.
-	const [activeClaimWorkItemId, setActiveClaimWorkItemId] = React.useState<string | null>(null);
+	// #444: workGraph.listItems removed — use agentDispatch:getBoard (in-memory ClaimTracker).
+	// The heartbeat now identifies a claim by projectItemId, not workItemId.
+	const [activeClaimProjectItemId, setActiveClaimProjectItemId] = React.useState<string | null>(
+		null
+	);
 	useEffect(() => {
 		if (!encoreFeatures.deliveryPlanner || !activeSessionId) {
-			setActiveClaimWorkItemId(null);
+			setActiveClaimProjectItemId(null);
 			return;
 		}
-		let cancelled = false;
+
 		const load = async () => {
 			try {
-				const result = await window.maestro.workGraph.listItems({
-					ownerId: activeSessionId,
-					statuses: ['claimed', 'in_progress'],
-				});
-				if (cancelled) return;
+				const result = await window.maestro.agentDispatch.getBoard();
 				if (result.success) {
-					const active = result.data.items.find(
-						(item: { claim?: { status: string }; id: string }) => item.claim?.status === 'active'
-					);
-					setActiveClaimWorkItemId(active?.id ?? null);
+					const items =
+						(result.data as { items?: Array<{ agentSessionId?: string; projectItemId?: string }> })
+							.items ?? [];
+					const mine = items.find((item) => item.agentSessionId === activeSessionId);
+					setActiveClaimProjectItemId(mine?.projectItemId ?? null);
 				} else {
-					setActiveClaimWorkItemId(null);
+					setActiveClaimProjectItemId(null);
 				}
 			} catch {
-				if (!cancelled) setActiveClaimWorkItemId(null);
+				setActiveClaimProjectItemId(null);
 			}
 		};
+
 		void load();
-		const unsubscribe = window.maestro.workGraph.onChanged(() => {
-			void load();
-		});
+
+		// Refresh on claim events
+		const unsubStart = window.maestro.agentDispatch.onClaimStarted(() => void load());
+		const unsubEnd = window.maestro.agentDispatch.onClaimEnded(() => void load());
 		return () => {
-			cancelled = true;
-			unsubscribe?.();
+			unsubStart();
+			unsubEnd();
 		};
 	}, [encoreFeatures.deliveryPlanner, activeSessionId]);
-	useClaimHeartbeat(activeClaimWorkItemId);
+	useClaimHeartbeat(activeClaimProjectItemId);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {

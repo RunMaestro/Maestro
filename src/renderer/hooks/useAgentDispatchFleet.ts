@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { WorkGraphBroadcastEnvelope } from '../../shared/work-graph-types';
 import type { AgentDispatchFleetEntry } from '../../shared/agent-dispatch-types';
 import { agentDispatchService } from '../services/agentDispatch';
 import { workGraphService } from '../services/workGraph';
 
-const FLEET_EVENT_OPERATIONS = new Set([
-	'agentDispatch.fleet.changed',
-	'agentDispatch.agent.readinessChanged',
-	'agentDispatch.agent.claimsChanged',
-	'agentDispatch.agent.pickupChanged',
-]);
+// #444: workGraph broadcast events are gone; workGraphService.onChanged is a no-op stub.
+// Fleet changes now come via agentDispatch:claimStarted/claimEnded IPC events.
+// The polling fallback below keeps the fleet up-to-date until callers migrate fully.
 
 /**
  * Fetches and keeps the agent dispatch fleet up-to-date.
@@ -44,10 +40,10 @@ export function useAgentDispatchFleet() {
 	useEffect(() => {
 		void refresh();
 
-		const handleEvent = (event: WorkGraphBroadcastEnvelope) => {
-			if (FLEET_EVENT_OPERATIONS.has(event.operation)) {
-				void refresh();
-			}
+		// #444: workGraph broadcast is gone — onChanged is a stub that never fires.
+		// We keep the subscription wiring so the unsubscribe call is still valid.
+		const handleEvent = (_event: unknown) => {
+			void refresh();
 		};
 
 		const unsubscribe = workGraphService.onChanged(handleEvent);

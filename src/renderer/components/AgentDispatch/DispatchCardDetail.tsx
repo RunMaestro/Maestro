@@ -103,7 +103,13 @@ export const DispatchCardDetail = memo(function DispatchCardDetail({
 		if (!item.claim) return;
 		setReleasing(true);
 		try {
-			await agentDispatchService.releaseClaim({ workItemId: item.id });
+			// #444: releaseClaim now takes { projectItemId, agentSessionId, role }.
+			// item.id is the GitHub project item ID; claim owner/role may not be on the WorkItem shape.
+			await agentDispatchService.releaseClaim({
+				projectItemId: item.id,
+				agentSessionId: item.claim?.owner?.id ?? '',
+				role: '',
+			});
 			notifyToast({ color: 'green', title: 'Claim released', message: item.title });
 			onRefresh();
 		} catch (err) {

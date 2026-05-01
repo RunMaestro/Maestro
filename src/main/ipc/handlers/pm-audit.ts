@@ -13,11 +13,11 @@
 
 import { ipcMain } from 'electron';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
-import { getWorkGraphItemStore } from '../../work-graph';
 import { runAudit } from '../../pm-audit/audit-runner';
 import type { AuditReport } from '../../pm-audit/audit-runner';
 import type { SettingsStoreInterface } from '../../stores/types';
 import { logger } from '../../utils/logger';
+import { getGithubClient } from '../../agent-dispatch/github-client';
 
 const LOG_CONTEXT = '[PmAudit]';
 
@@ -53,23 +53,15 @@ export function registerPmAuditHandlers(deps: PmAuditHandlerDependencies): void 
 		}
 
 		try {
-			const workGraph = getWorkGraphItemStore();
-
-			// Minimal pmTools shim: the audit auto-fixes call workGraph directly,
-			// so we only need stub methods here.  Full pm:* IPC is used by agents;
-			// the audit runner calls workGraph methods in-process via autoFixAction.
-			const pmTools = {
-				setStatus: async () => undefined,
-				setRole: async () => undefined,
-				setBlocked: async () => undefined,
-			};
+			// Resolve the GitHub project ID once (cached after first call)
+			const client = getGithubClient();
+			const projectId = await client.readProjectId();
 
 			const report = await runAudit({
-				workGraph,
-				pmTools,
 				now: Date.now(),
 				staleClaimMs: opts.staleClaimMs ?? 5 * 60 * 1000,
 				projectRoleSlots: opts.projectRoleSlots,
+				projectId,
 			});
 
 			logger.info(

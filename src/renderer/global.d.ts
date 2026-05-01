@@ -19,25 +19,9 @@ import type {
 	DeliveryPlannerPromoteDocGapResult,
 	DeliveryPlannerSyncRequest,
 } from '../shared/delivery-planner-types';
-import type {
-	AgentReadyWorkFilter,
-	TagDefinition,
-	WorkGraphBroadcastEnvelope,
-	WorkGraphImportInput,
-	WorkGraphImportSummary,
-	WorkGraphListResult,
-	WorkItem,
-	WorkItemClaim,
-	WorkItemClaimCompleteInput,
-	WorkItemClaimInput,
-	WorkItemClaimReleaseInput,
-	WorkItemClaimRenewInput,
-	WorkItemCreateInput,
-	WorkItemEvent,
-	WorkItemFilters,
-	WorkItemSearchFilters,
-	WorkItemUpdateInput,
-} from '../shared/work-graph-types';
+// #444: work-graph bulk import removed from global.d.ts.
+// Types still needed by deliveryPlanner and agentDispatch are imported inline below via type aliases.
+import type { WorkItem } from '../shared/work-graph-types';
 
 // Vite raw imports for .md files
 declare module '*.md?raw' {
@@ -124,24 +108,9 @@ type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
-// Work Graph types (used by workGraph and agentDispatch namespaces)
-type WorkItemFilters = import('../shared/work-graph-types').WorkItemFilters;
-type WorkItemSearchFilters = import('../shared/work-graph-types').WorkItemSearchFilters;
+// Types from work-graph-types still needed by delivery-planner and agent-dispatch UIs
+// #444: workGraph namespace removed; WorkItem and related still used by delivery-planner components
 type WorkGraphListResult = import('../shared/work-graph-types').WorkGraphListResult;
-type WorkItem = import('../shared/work-graph-types').WorkItem;
-type WorkItemCreateInput = import('../shared/work-graph-types').WorkItemCreateInput;
-type WorkItemUpdateInput = import('../shared/work-graph-types').WorkItemUpdateInput;
-type WorkItemClaim = import('../shared/work-graph-types').WorkItemClaim;
-type WorkItemClaimInput = import('../shared/work-graph-types').WorkItemClaimInput;
-type WorkItemClaimRenewInput = import('../shared/work-graph-types').WorkItemClaimRenewInput;
-type WorkItemClaimReleaseInput = import('../shared/work-graph-types').WorkItemClaimReleaseInput;
-type WorkItemClaimCompleteInput = import('../shared/work-graph-types').WorkItemClaimCompleteInput;
-type WorkItemEvent = import('../shared/work-graph-types').WorkItemEvent;
-type TagDefinition = import('../shared/work-graph-types').TagDefinition;
-type WorkGraphImportInput = import('../shared/work-graph-types').WorkGraphImportInput;
-type WorkGraphImportSummary = import('../shared/work-graph-types').WorkGraphImportSummary;
-type AgentReadyWorkFilter = import('../shared/work-graph-types').AgentReadyWorkFilter;
-type WorkGraphBroadcastEnvelope = import('../shared/work-graph-types').WorkGraphBroadcastEnvelope;
 type WorkGraphActor = import('../shared/work-graph-types').WorkGraphActor;
 
 // Agent Dispatch types
@@ -3464,38 +3433,22 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
 
-	// Work Graph API
-	workGraph: {
-		listItems: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
-		searchItems: (filters: WorkItemSearchFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
-		getItem: (id: string) => Promise<IpcDataResponse<WorkItem | undefined>>;
-		createItem: (input: WorkItemCreateInput) => Promise<IpcDataResponse<WorkItem>>;
-		updateItem: (input: WorkItemUpdateInput) => Promise<IpcDataResponse<WorkItem>>;
-		deleteItem: (id: string) => Promise<IpcDataResponse<boolean>>;
-		claimItem: (input: WorkItemClaimInput) => Promise<IpcDataResponse<WorkItemClaim>>;
-		renewClaim: (input: WorkItemClaimRenewInput) => Promise<IpcDataResponse<WorkItemClaim>>;
-		releaseClaim: (input: WorkItemClaimReleaseInput) => Promise<IpcDataResponse<WorkItemClaim>>;
-		completeClaim: (input: WorkItemClaimCompleteInput) => Promise<IpcDataResponse<WorkItemClaim>>;
-		listEvents: (workItemId: string) => Promise<IpcDataResponse<WorkItemEvent[]>>;
-		listTags: () => Promise<IpcDataResponse<TagDefinition[]>>;
-		upsertTag: (definition: TagDefinition) => Promise<IpcDataResponse<TagDefinition>>;
-		importItems: (input: WorkGraphImportInput) => Promise<IpcDataResponse<WorkGraphImportSummary>>;
-		getUnblockedAgentReadyWork: (
-			filters?: AgentReadyWorkFilter
-		) => Promise<IpcDataResponse<WorkGraphListResult>>;
-		onChanged: (handler: (event: WorkGraphBroadcastEnvelope) => void) => () => void;
-	};
+	// #444: workGraph namespace removed — GitHub Projects v2 is the sole durable state.
+	// Renderer uses agentDispatch.onClaimStarted/onClaimEnded for live updates.
 
-	// Agent Dispatch API (fleet, board, assign, release, pause/resume)
+	// Agent Dispatch API (fleet, board, assign, release, pause/resume, claim events)
+	// #444: getBoard returns in-memory ClaimTracker state; workGraph namespace eliminated.
 	agentDispatch: {
-		getBoard: (filters?: WorkItemFilters) => Promise<IpcDataResponse<WorkGraphListResult>>;
+		getBoard: () => Promise<IpcDataResponse<{ items: unknown[]; total: number }>>;
 		getFleet: () => Promise<IpcDataResponse<AgentDispatchFleetEntry[]>>;
 		assignManually: (
 			input: ManualAssignmentInput
 		) => Promise<IpcDataResponse<WorkItem | RoleEligibilityError | SlotDisabledError>>;
-		releaseClaim: (
-			input: WorkItemClaimReleaseInput
-		) => Promise<IpcDataResponse<WorkItemClaim | undefined>>;
+		releaseClaim: (input: {
+			projectItemId: string;
+			agentSessionId: string;
+			role: string;
+		}) => Promise<IpcDataResponse<{ released: boolean; projectItemId: string }>>;
 		pauseAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
 		resumeAgent: (agentId: string) => Promise<IpcDataResponse<{ paused: boolean }>>;
 		listEligible: () => Promise<
@@ -3548,6 +3501,26 @@ interface MaestroAPI {
 			inProgress?: unknown[];
 			error?: string;
 		}>;
+		/**
+		 * Subscribe to claim-started events (#444).
+		 * Emitted when DispatchEngine successfully claims a GitHub project item.
+		 * Returns an unsubscribe function.
+		 */
+		onClaimStarted: (
+			handler: (event: {
+				projectPath: string;
+				role: string;
+				issueNumber: number;
+				issueTitle: string;
+				claimedAt: string;
+			}) => void
+		) => () => void;
+		/**
+		 * Subscribe to claim-ended events (#444).
+		 * Emitted when DispatchEngine releases a claim (stale sweep, manual release, or completion).
+		 * Returns an unsubscribe function.
+		 */
+		onClaimEnded: (handler: (event: { projectPath: string; role: string }) => void) => () => void;
 	};
 
 	/** Per-project role slot roster (#429). */
