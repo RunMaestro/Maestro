@@ -106,11 +106,38 @@ export function SlotCard({
 		[role, assignment, onAssignmentChange]
 	);
 
-	const statusLabel = assignment ? (busyWorkItem ? 'busy' : 'idle') : null;
+	const handleToggleEnabled = useCallback(() => {
+		if (!assignment) return;
+		onAssignmentChange(role, {
+			...assignment,
+			enabled: assignment.enabled === false ? true : false,
+		});
+	}, [role, assignment, onAssignmentChange]);
+
+	// enabled defaults to true when absent
+	const slotEnabled = assignment ? assignment.enabled !== false : true;
 
 	const githubNumber = busyWorkItem?.github?.issueNumber;
 	const githubUrl = busyWorkItem?.github?.url;
 	const workItemDisplayId = githubNumber ? `#${githubNumber}` : busyWorkItem?.id;
+
+	/**
+	 * Status badge text (#437 drain-mode spec):
+	 *   On  + no busy item  → "On (Available)"
+	 *   On  + busy item     → "On (Busy: #1234)"
+	 *   Off + busy item     → "Off (Draining: #1234)"
+	 *   Off + no busy item  → "Off (Idle)"
+	 */
+	type StatusVariant = 'on-available' | 'on-busy' | 'off-draining' | 'off-idle';
+	const statusVariant: StatusVariant | null = assignment
+		? slotEnabled
+			? busyWorkItem
+				? 'on-busy'
+				: 'on-available'
+			: busyWorkItem
+				? 'off-draining'
+				: 'off-idle'
+		: null;
 
 	const openGithub = useCallback(() => {
 		if (githubUrl) {
@@ -130,11 +157,26 @@ export function SlotCard({
 		cursor: 'pointer',
 	};
 
+	const statusBadgeColor = (v: StatusVariant) => {
+		if (v === 'on-busy' || v === 'off-draining') return theme.colors.warning;
+		if (v === 'on-available') return theme.colors.accent;
+		return theme.colors.textDim; // off-idle
+	};
+
+	const statusBadgeBg = (v: StatusVariant) => {
+		if (v === 'on-busy' || v === 'off-draining') return `${theme.colors.warning}25`;
+		if (v === 'on-available') return `${theme.colors.accent}20`;
+		return `${theme.colors.textDim}20`; // off-idle
+	};
+
 	return (
 		<div
 			className="rounded border mb-3 p-3"
 			style={{
-				borderColor: statusLabel === 'busy' ? theme.colors.warning : theme.colors.border,
+				borderColor:
+					statusVariant === 'on-busy' || statusVariant === 'off-draining'
+						? theme.colors.warning
+						: theme.colors.border,
 				backgroundColor: theme.colors.bgActivity,
 			}}
 		>
@@ -149,53 +191,126 @@ export function SlotCard({
 					</span>
 				</div>
 
-				{statusLabel && (
-					<span
-						className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-						style={{
-							backgroundColor:
-								statusLabel === 'busy' ? `${theme.colors.warning}25` : `${theme.colors.accent}20`,
-							color: statusLabel === 'busy' ? theme.colors.warning : theme.colors.accent,
-						}}
-					>
-						{statusLabel === 'busy' ? (
-							<>
-								{'Busy: '}
-								{busyWorkItem ? (
-									<button
-										className="underline bg-transparent border-none p-0 cursor-pointer"
-										style={{ color: theme.colors.warning, fontSize: 'inherit' }}
-										onClick={openGithub}
-										title={busyWorkItem.title}
-									>
-										{workItemDisplayId}
-									</button>
-								) : null}
-							</>
-						) : (
-							'Idle'
-						)}
-					</span>
-				)}
+				<div className="flex items-center gap-1.5">
+					{statusVariant && (
+						<span
+							className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+							style={{
+								backgroundColor: statusBadgeBg(statusVariant),
+								color: statusBadgeColor(statusVariant),
+							}}
+						>
+							{statusVariant === 'on-available' && 'On (Available)'}
+							{statusVariant === 'on-busy' && (
+								<>
+									{'On (Busy: '}
+									{busyWorkItem ? (
+										<button
+											className="underline bg-transparent border-none p-0 cursor-pointer"
+											style={{ color: theme.colors.warning, fontSize: 'inherit' }}
+											onClick={openGithub}
+											title={busyWorkItem.title}
+										>
+											{workItemDisplayId}
+										</button>
+									) : null}
+									{')'}
+								</>
+							)}
+							{statusVariant === 'off-draining' && (
+								<>
+									{'Off (Draining: '}
+									{busyWorkItem ? (
+										<button
+											className="underline bg-transparent border-none p-0 cursor-pointer"
+											style={{ color: theme.colors.warning, fontSize: 'inherit' }}
+											onClick={openGithub}
+											title={busyWorkItem.title}
+										>
+											{workItemDisplayId}
+										</button>
+									) : null}
+									{')'}
+								</>
+							)}
+							{statusVariant === 'off-idle' && 'Off (Idle)'}
+						</span>
+					)}
+
+					{assignment && (
+						<button
+							onClick={handleToggleEnabled}
+							className="text-[10px] px-1.5 py-0.5 rounded font-medium border"
+							style={{
+								backgroundColor: slotEnabled
+									? `${theme.colors.accent}20`
+									: `${theme.colors.textDim}15`,
+								color: slotEnabled ? theme.colors.accent : theme.colors.textDim,
+								borderColor: slotEnabled ? `${theme.colors.accent}50` : `${theme.colors.textDim}40`,
+								cursor: 'pointer',
+							}}
+							title={
+								slotEnabled
+									? 'Slot is On — click to disable (drain mode)'
+									: 'Slot is Off — click to enable'
+							}
+						>
+							{slotEnabled ? 'On' : 'Off'}
+						</button>
+					)}
+				</div>
 			</div>
 
 			<div className="mb-2">
 				<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
 					Agent
 				</label>
-				<select
-					value={assignment?.agentId ?? ''}
-					onChange={(e) => handleAgentChange(e.target.value)}
-					style={selectStyle}
-					title="Agent assigned to this role slot"
-				>
-					<option value="">Select agent for {DISPATCH_ROLE_LABELS[role]}</option>
-					{sessions.map((s) => (
-						<option key={s.id} value={s.id}>
-							{s.name || s.id}
-						</option>
-					))}
-				</select>
+				{role === 'runner' ? (
+					<>
+						<select
+							value={assignment?.agentId ?? ''}
+							onChange={(e) => handleAgentChange(e.target.value)}
+							style={selectStyle}
+							title="Agent assigned to this role slot"
+						>
+							<option value="">Select agent for {DISPATCH_ROLE_LABELS[role]}</option>
+							{sessions.filter((s) => !s.sessionSshRemoteConfig?.enabled).length === 0 ? (
+								<option value="" disabled>
+									No local agents available — runner role requires local execution.
+								</option>
+							) : (
+								sessions.map((s) => {
+									const isRemote = s.sessionSshRemoteConfig?.enabled === true;
+									if (isRemote) return null;
+									return (
+										<option key={s.id} value={s.id}>
+											{s.name || s.id}
+										</option>
+									);
+								})
+							)}
+						</select>
+						{sessions.some((s) => s.sessionSshRemoteConfig?.enabled) && (
+							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+								SSH-remote agents are hidden — runners must be local.
+							</p>
+						)}
+					</>
+				) : (
+					<select
+						value={assignment?.agentId ?? ''}
+						onChange={(e) => handleAgentChange(e.target.value)}
+						style={selectStyle}
+						title="Agent assigned to this role slot"
+					>
+						<option value="">Select agent for {DISPATCH_ROLE_LABELS[role]}</option>
+						{sessions.map((s) => (
+							<option key={s.id} value={s.id}>
+								{s.name || s.id}
+							</option>
+						))}
+					</select>
+				)}
 			</div>
 
 			{assignment && availableModels.length > 0 && (

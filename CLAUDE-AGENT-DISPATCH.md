@@ -6,6 +6,13 @@ Agent Dispatch is the subsystem that selects an agent session, claims a GitHub i
 
 > **v2 simpler 4-slot model (post-#429):** The per-project Roles tab now implements the canonical 1-slot-per-role design. FleetRegistry's complex eligibility queries (previously used for sophisticated capability matching) are dead code and slated for removal in #433. Prefer direct role assignment and capability hints in Work Graph metadata. See issue #425 rollout tracker for status.
 
+> **Runner role is local-only and project-scoped (#440):** The `runner` pipeline role has two hard constraints enforced by both the UI and the DispatchEngine:
+>
+> 1. **Local-only** — SSH-remote agents (`locality === 'ssh'`) are forbidden from the runner slot. The `SlotCard.tsx` agent picker filters them out entirely; `DispatchEngine.assignManually` rejects them with `{ code: 'RUNNER_REQUIRES_LOCAL', detail }`. Auto-pickup also skips SSH-remote agents for runner-role work items.
+> 2. **Project-scoped** — the runner must operate inside the project's local git checkout. `assignManually` calls `git remote get-url origin` in `WorkItem.projectPath` and verifies it matches `WorkItem.github.repo` (`HumpfTech/Maestro`). Mismatch or missing git repo rejects with `{ code: 'RUNNER_PROJECT_MISMATCH', expectedProjectPath, actualProjectPath, expectedRemote, actualRemote }`.
+>
+> Other roles (fixer, reviewer, merger) are unaffected — they may still be SSH-remote.
+
 ---
 
 ## Architecture

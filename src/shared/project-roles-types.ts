@@ -32,6 +32,14 @@ export interface RoleSlotAssignment {
 	modelOverride?: string;
 	/** Optional effort override (e.g. 'high', 'medium') for this slot. */
 	effortOverride?: string;
+	/**
+	 * Whether this slot is enabled for new work pickup (default: true).
+	 *
+	 * When `false` the slot enters "drain mode": the DispatchEngine rejects
+	 * any new auto-pickup or manual assignment for this role/agent pair, but
+	 * any currently-running item is allowed to complete naturally.
+	 */
+	enabled?: boolean;
 }
 
 /**

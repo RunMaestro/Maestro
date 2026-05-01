@@ -268,7 +268,14 @@ export class AgentDispatchEngine {
 	 */
 	async assignManually(
 		input: ManualAssignmentInput
-	): Promise<WorkItem | RoleEligibilityError | BacklogStatusError | SlotDisabledError> {
+	): Promise<
+		| WorkItem
+		| RoleEligibilityError
+		| BacklogStatusError
+		| SlotDisabledError
+		| RunnerRequiresLocalError
+		| RunnerProjectMismatchError
+	> {
 		if (!input.userInitiated) {
 			throw new Error('Manual assignment requires an explicit user-initiated action');
 		}
@@ -299,6 +306,14 @@ export class AgentDispatchEngine {
 						`Agent '${input.agent.displayName}' (roles: [${agentRoles.join(', ') || 'none'}]) ` +
 						`is not eligible for the '${currentRole}' role on work item '${input.workItemId}'.`,
 				};
+			}
+
+			// Runner-role guards (#440) — enforce local-only + project-scoped execution.
+			if (currentRole === 'runner') {
+				const runnerError = await this.checkRunnerEligibility(input);
+				if (runnerError) {
+					return runnerError;
+				}
 			}
 
 			// Slot drain-mode gate (#437) — check after role eligibility so the role
@@ -415,6 +430,15 @@ export class AgentDispatchEngine {
 		};
 
 		for (const decision of decisions) {
+			// Runner-role guard (#440): SSH-remote agents must not auto-pickup runner items.
+			if (
+				decision.workItem.pipeline?.currentRole === 'runner' &&
+				decision.agent.locality === 'ssh'
+			) {
+				result.skipped += 1;
+				continue;
+			}
+
 			// Slot drain-mode gate (#437): skip auto-pickup when the role slot is
 			// disabled.  The item is left unclaimed so it can be picked up once the
 			// slot is re-enabled or reassigned.
@@ -442,6 +466,81 @@ export class AgentDispatchEngine {
 		}
 
 		return result;
+	}
+
+	/**
+	 * Validates runner-role constraints (#440):
+	 * 1. Agent must be local (not SSH-remote).
+	 * 2. git remote get-url origin in workItem.projectPath must match
+	 *    workItem.github.repo (HumpfTech/Maestro fork-only assumption).
+	 *
+	 * Returns a structured error if any constraint is violated, or null when
+	 * all constraints pass.
+	 */
+	private async checkRunnerEligibility(
+		input: ManualAssignmentInput
+	): Promise<RunnerRequiresLocalError | RunnerProjectMismatchError | null> {
+		const { agent, workItem, workItemId } = input;
+
+		// 1. Local-only guard — reject SSH-remote agents.
+		if (agent.locality === 'ssh') {
+			return {
+				code: 'RUNNER_REQUIRES_LOCAL',
+				workItemId,
+				agentId: agent.id,
+				detail:
+					`Agent '${agent.displayName}' is configured as SSH-remote (host: ${agent.host}). ` +
+					`Runner agents must execute locally on the Maestro host.`,
+			};
+		}
+
+		// 2. Git-remote guard — origin must match the GitHub repo on the work item.
+		const expectedProjectPath = workItem.projectPath;
+		if (workItem.github?.repo && expectedProjectPath) {
+			const expectedRemote = `HumpfTech/${workItem.github.repo}`;
+			let actualRemote: string | undefined;
+			try {
+				const { stdout } = await execFile('git', [
+					'-C',
+					expectedProjectPath,
+					'remote',
+					'get-url',
+					'origin',
+				]);
+				actualRemote = stdout.trim();
+			} catch (err) {
+				const detail = err instanceof Error ? err.message : String(err);
+				return {
+					code: 'RUNNER_PROJECT_MISMATCH',
+					workItemId,
+					agentId: agent.id,
+					expectedProjectPath,
+					detail:
+						`Could not verify git remote for runner assignment: ${detail}. ` +
+						`Ensure '${expectedProjectPath}' is a git repository with a valid origin remote.`,
+				};
+			}
+
+			// Normalize both sides: strip trailing .git and protocol prefix so
+			// "https://github.com/HumpfTech/Maestro.git" == "HumpfTech/Maestro".
+			const normalizedActual = normalizeGitRemote(actualRemote);
+			const normalizedExpected = normalizeGitRemote(expectedRemote);
+			if (normalizedActual !== normalizedExpected) {
+				return {
+					code: 'RUNNER_PROJECT_MISMATCH',
+					workItemId,
+					agentId: agent.id,
+					expectedProjectPath,
+					expectedRemote: normalizedExpected,
+					actualRemote: normalizedActual,
+					detail:
+						`Runner project mismatch: git remote origin in '${expectedProjectPath}' ` +
+						`is '${normalizedActual}' but work item expects '${normalizedExpected}'.`,
+				};
+			}
+		}
+
+		return null;
 	}
 
 	private async tryClaim(
@@ -506,4 +605,17 @@ function toOwner(entry: AgentDispatchFleetEntry): WorkItemOwner {
 
 function uniqueSorted(values: string[]): string[] {
 	return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+}
+
+/**
+ * Strips protocol, host, and .git suffix from a git remote URL so that
+ * "https://github.com/HumpfTech/Maestro.git", "git@github.com:HumpfTech/Maestro.git",
+ * and "HumpfTech/Maestro" all normalize to "HumpfTech/Maestro".
+ */
+function normalizeGitRemote(remote: string): string {
+	return remote
+		.trim()
+		.replace(/\.git$/, '')
+		.replace(/^https?:\/\/[^\/]+\//, '')
+		.replace(/^git@[^:]+:/, '');
 }

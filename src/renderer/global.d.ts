@@ -220,14 +220,51 @@ interface PmCommandResponse {
 
 interface PmOpenConvPrdEvent {
 	conversationId?: string;
-	startRequest: {
+	startRequest?: {
 		projectPath: string;
 		gitPath: string;
 		greeting?: string;
 		actor?: unknown;
 	};
+	/** 'new' = fresh session, 'edit' = load existing PRD (set by /PM prd-edit) */
+	mode?: 'new' | 'edit';
+	seed?: string;
+	prdId?: string;
+	projectPath?: string;
 	idea?: string;
 	autoDecompose?: boolean;
+}
+
+/** Emitted by pm:openDeliveryPlanner — renderer should open Delivery Planner. */
+interface PmOpenDeliveryPlannerEvent {
+	mode: 'decompose-prd' | 'edit-epic' | 'sync-epic' | 'sync-issue';
+	prdId?: string;
+	epicId?: string;
+	taskId?: string;
+	projectPath?: string;
+}
+
+/** Emitted by pm:openAgentDispatch — renderer should open Agent Dispatch to claim a task. */
+interface PmOpenAgentDispatchEvent {
+	mode: 'claim';
+	taskId: string;
+	sessionId?: string;
+}
+
+/** Emitted by pm:openPlanningPipeline — renderer should kick Planning Pipeline for an epic. */
+interface PmOpenPlanningPipelineEvent {
+	mode: 'start-epic';
+	epicId: string;
+	projectPath?: string;
+}
+
+/** Legacy planning prompt seed event (used by /PM <idea>). */
+interface PmOpenPlanningPromptEvent {
+	mode: 'orchestrate' | 'prd-new';
+	idea?: string;
+	name?: string;
+	projectPath?: string;
+	gitPath?: string;
 }
 
 /**
@@ -3585,25 +3622,56 @@ interface MaestroAPI {
 		) => Promise<IpcDataResponse<ConversationalPrdFinalizeResponse>>;
 	};
 
-	// PM slash-command suite (/PM orchestrate, prd-new, prd-list, next, status, standup)
+	// PM slash-command suite (#428 + #436)
 	pm: {
 		/** /PM <idea> — full orchestration pipeline: Conv-PRD → Epic → Tasks → GitHub */
 		orchestrate: (req: PmCommandRequest) => Promise<PmCommandResponse>;
 		/** /PM prd-new <name> — open Conv-PRD modal seeded with a name */
 		prdNew: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM prd-edit <id> — open Conv-PRD modal in edit mode for existing PRD */
+		prdEdit: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM prd-status <id> — quick PRD status lookup */
+		prdStatus: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM prd-parse <id> — convert PRD to structured planner input */
+		prdParse: (req: PmCommandRequest) => Promise<PmCommandResponse>;
 		/** /PM prd-list — list PRDs for the current project */
 		prdList: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-decompose <prd-id> — decompose PRD into epic + tasks */
+		epicDecompose: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-edit <id> — open Delivery Planner with epic preloaded */
+		epicEdit: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-list — table of all epics */
+		epicList: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-show <id> — full epic detail including tasks */
+		epicShow: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-sync <id> — GitHub sync via Delivery Planner */
+		epicSync: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM epic-start <id> — kick Planning Pipeline for the epic */
+		epicStart: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM issue-start <task-id> — manual claim into Agent Dispatch */
+		issueStart: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM issue-show <task-id> — full task detail */
+		issueShow: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM issue-status <task-id> — quick task status */
+		issueStatus: (req: PmCommandRequest) => Promise<PmCommandResponse>;
+		/** /PM issue-sync <task-id> — GitHub roundtrip for a task */
+		issueSync: (req: PmCommandRequest) => Promise<PmCommandResponse>;
 		/** /PM next — next eligible work item */
 		next: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
 		/** /PM status — board snapshot */
 		status: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
-		/** /PM standup — standup summary */
+		/** /PM standup — rich standup from Work Graph (yesterday/today/blockers) */
 		standup: (req?: PmCommandRequest) => Promise<PmCommandResponse>;
-		/**
-		 * Listen for main-process push events requesting the Conv-PRD modal to open.
-		 * Returns an unsubscribe function.
-		 */
+		/** Open Conv-PRD modal (new or edit mode). Returns unsubscribe fn. */
 		onOpenConvPrd: (handler: (event: PmOpenConvPrdEvent) => void) => () => void;
+		/** Open Delivery Planner with a mode. Returns unsubscribe fn. */
+		onOpenDeliveryPlanner: (handler: (event: PmOpenDeliveryPlannerEvent) => void) => () => void;
+		/** Open Agent Dispatch to claim a task. Returns unsubscribe fn. */
+		onOpenAgentDispatch: (handler: (event: PmOpenAgentDispatchEvent) => void) => () => void;
+		/** Open Planning Pipeline to start an epic. Returns unsubscribe fn. */
+		onOpenPlanningPipeline: (handler: (event: PmOpenPlanningPipelineEvent) => void) => () => void;
+		/** Legacy planning prompt seed event (used by /PM <idea>). Returns unsubscribe fn. */
+		onOpenPlanningPrompt: (handler: (event: PmOpenPlanningPromptEvent) => void) => () => void;
 	};
 
 	// pm-tools API — agent-callable project management tools (#430)

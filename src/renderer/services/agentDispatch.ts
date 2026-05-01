@@ -14,7 +14,11 @@ import type {
 	WorkItemClaim,
 } from '../../shared/work-graph-types';
 import type { AgentDispatchFleetEntry } from '../../shared/agent-dispatch-types';
-import type { ManualAssignmentInput } from '../../main/agent-dispatch/dispatch-engine';
+import type {
+	ManualAssignmentInput,
+	RoleEligibilityError,
+	SlotDisabledError,
+} from '../../main/agent-dispatch/dispatch-engine';
 
 type IpcResponse<T> = { success: true; data: T } | { success: false; error: string };
 
@@ -43,8 +47,15 @@ export const agentDispatchService = {
 	/**
 	 * Manually assign a work item to an agent.
 	 * Requires input.userInitiated === true.
+	 *
+	 * Resolves with the claimed `WorkItem`, or a structured `RoleEligibilityError`
+	 * / `SlotDisabledError` when the engine rejects the assignment without
+	 * throwing — callers should check `data.code` before treating the result as
+	 * a full `WorkItem`.
 	 */
-	assignManually: (input: ManualAssignmentInput): Promise<WorkItem> =>
+	assignManually: (
+		input: ManualAssignmentInput
+	): Promise<WorkItem | RoleEligibilityError | SlotDisabledError> =>
 		unwrap(window.maestro.agentDispatch.assignManually(input)),
 
 	/**
