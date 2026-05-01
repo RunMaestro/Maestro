@@ -4,7 +4,7 @@ Architecture and implementation guide for the Delivery Planner feature. For the 
 
 **Status:** Core modules are merged and tested. The service, external mirror, GitHub sync, IPC handlers, and web routes are all canonical. Desktop UI components (PRD Wizard, Epic View, Dashboard) and web/mobile surfaces remain follow-up work. The epic task graph is in `.claude/epics/delivery-planner/`.
 
-> **Migration note (issue #411):** The mirror subsystem previously targeted `.claude/ccpm/` (a CCPM-compatible path). It has been renamed to `external-mirror` and the default root moved to `.maestro/external-mirror/` to avoid collision with Claude Code's session-storage layout under `.claude/`. All `ccpm-*` identifiers in source (`ccpmSlug`, `ccpmTaskId`, `ccpmBugId`, `CcpmMirrorResult`, etc.) are now `mirror*` / `ExternalMirror*`.
+> **v2 state model updates:** GitHub state now lives exclusively in Projects v2 custom fields (per #430), not labels. The mirror subsystem has been renamed from `ccpm-mirror/` to `external-mirror` (per #411); default path moved to `.maestro/external-mirror/`. All `ccpm-*` identifiers in source are now `mirror*` / `ExternalMirror*`. See issue #425 rollout tracker for status.
 
 ---
 
