@@ -4,6 +4,8 @@ Agent Dispatch documentation for the Maestro codebase. For the main guide, see [
 
 Agent Dispatch is the subsystem that selects an agent session, claims a GitHub issue, runs Auto Run documents, and releases the claim when work is done. It lives entirely inside the **Symphony** feature.
 
+> **v2 simpler 4-slot model (post-#429):** The per-project Roles tab now implements the canonical 1-slot-per-role design. FleetRegistry's complex eligibility queries (previously used for sophisticated capability matching) are dead code and slated for removal in #433. Prefer direct role assignment and capability hints in Work Graph metadata. See issue #425 rollout tracker for status.
+
 ---
 
 ## Architecture

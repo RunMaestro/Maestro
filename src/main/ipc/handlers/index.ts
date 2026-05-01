@@ -85,6 +85,8 @@ import {
 import { registerPmOrchestratorHandlers } from '../../pm-orchestrator';
 // pm-tools — agent-callable pm:setStatus / pm:setRole / pm:setBlocked (#430)
 import { registerPmToolsHandlers, PmToolsHandlerDependencies } from './pm-tools';
+// pm-audit — rule-based in-flight work sweep (#434)
+import { registerPmAuditHandlers, PmAuditHandlerDependencies } from './pm-audit';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -153,6 +155,8 @@ export { registerPlanningPipelineHandlers };
 export type { PlanningPipelineHandlerDependencies };
 export { registerPmToolsHandlers };
 export type { PmToolsHandlerDependencies };
+export { registerPmAuditHandlers };
+export type { PmAuditHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };

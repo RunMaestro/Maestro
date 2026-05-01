@@ -1,0 +1,9 @@
+# Critical: Ollama defaults to a small context and can silently truncate.
+# Keep num_ctx explicit for Aider's repo map and loaded project guidance.
+
+- name: ollama_chat/qwen3-coder:30b
+  edit_format: whole
+  use_repo_map: true
+  extra_params:
+    num_ctx: 131072
+    temperature: 0.1

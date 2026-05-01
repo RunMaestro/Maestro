@@ -1,0 +1,26 @@
+## Aider configuration for Maestro.
+## Auto-loaded when aider runs from the project root.
+
+# Single model mode for the Ollama server.
+set-env: OLLAMA_API_BASE=http://10.10.2.207:11434
+model: ollama_chat/qwen3-coder:30b
+
+# Local models are more reliable with whole-file edits than diff patches.
+edit-format: whole
+
+# Review changes before committing.
+auto-commits: false
+
+# Equivalent to "yolo": always answer yes to confirmations.
+yes-always: true
+
+# TypeScript check after edits.
+lint-cmd: npx tsc --noEmit
+
+# Keep repo map token budget reasonable.
+map-tokens: 2048
+
+# Always load project guidance.
+read:
+  - AGENTS.md
+  - CLAUDE.md

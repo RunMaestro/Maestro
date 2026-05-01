@@ -2,6 +2,7 @@
 // Built-in commands are intercepted by Maestro before being sent to the agent
 
 import type { ToolType } from './types';
+import { getCommandsForSurface } from '../shared/slashCommands';
 
 export interface SlashCommand {
 	command: string;
@@ -11,23 +12,10 @@ export interface SlashCommand {
 	agentTypes?: ToolType[]; // Only show for specific agent types (if undefined, show for all)
 }
 
-// Built-in Maestro slash commands
+// Built-in Maestro slash commands - filtered to desktop surface only
 // These are intercepted by Maestro and handled specially (not passed to the agent)
-export const slashCommands: SlashCommand[] = [
-	{
-		command: '/history',
-		description: 'Generate a synopsis of recent work and add to history',
-		aiOnly: true,
-	},
-	{
-		command: '/wizard',
-		description: 'Start the planning wizard for Auto Run documents',
-		aiOnly: true,
-	},
-	{
-		command: '/skills',
-		description: 'List available Claude Code skills for this project',
-		aiOnly: true,
-		agentTypes: ['claude-code'],
-	},
-];
+export const slashCommands: SlashCommand[] = getCommandsForSurface('desktop').map((def) => ({
+	command: def.verb,
+	description: def.description,
+	aiOnly: def.aiOnly,
+}));

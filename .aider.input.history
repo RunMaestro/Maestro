@@ -1,0 +1,56 @@
+
+# 2026-05-01 15:11:13.943234
++n
+
+# 2026-05-01 15:15:16.771616
++Working in /opt/aider-work on branch Project-Meta of HumpfTech/Maestro fork.                                          
++  Background: this is a clone-fork of an Electron app, recent priority features                                         
++  just landed and need polish. Five sonnet subagents are working other issues                                           
++  in parallel worktrees — DO NOT touch:                                                                                 
++    - src/renderer/components/RightPanel/RolesPanel/* (#429)                                                            
++    - src/main/delivery-planner/github-sync.ts (#430)                                                                   
++    - src/main/ipc/handlers/pm-tools.ts (#430)           
++    - src/main/pm-orchestrator.ts (#428)                                                                                
++    - src/shared/slashCommands.ts (#428)                                                                                
++    - src/prompts/pm/* (#428)                           
++    - src/main/agent-dispatch/state-machine.ts (#427)                                                                   
++    - src/main/agent-dispatch/dispatch-engine.ts (#427)                                                                 
++    - src/prompts/dispatch-role-*.md (#427)                                                                             
++    - src/main/web-server/routes/* (#432)                                                                               
++                                                                                                                        
++  Three concrete tasks (do them in order, commit each separately):                                                      
++                                                                                                                        
++  TASK 1 — Cleanup #433 (subset)                                                                                        
++    Delete these directories and their contents:                                                                        
++      src/main/planning-pipeline/triggers/                                                                              
++      src/main/planning-pipeline/sla/                                                                                   
++      src/main/planning-pipeline/heartbeat/                                                                             
++      src/main/planning-pipeline/hygiene/                                                                             
++    After deletion, fix any broken imports in:                                                                          
++      src/main/planning-pipeline/index.ts                                                                               
++      src/main/planning-pipeline/runtime.ts (if exists)                                                                 
++    Verify: `npx tsc -p tsconfig.main.json` must exit 0.                                                                
++    Commit message: "Clean up planning-pipeline dead weight (triggers/sla/heartbeat/hygiene) per #433"                  
++                                                                                                                      
++  TASK 2 — Fix tiny Maestro window                                                                                      
++    The BrowserWindow opens at 200x200 on this install. Investigate:
++      src/main/window-manager.ts (and src/main/app-lifecycle/*)                                                         
++    Find where window state is restored from persisted store.                                                         
++    Add a minimum-size guard: if persisted width < 600 or height < 400, fall back                                       
++    to default (1280x800).                                                                                            
++    Verify tsc clean.                                                                                                   
++    Commit message: "fix: enforce minimum window size when restoring persisted state"                                 
++                                                                                                                        
++  TASK 3 — Escape-closes priority modals                                                                                
++    Files:                                                                                                              
++      src/renderer/components/AgentDispatch/AgentDispatchModal.tsx                                                      
++      src/renderer/components/DeliveryPlanner/DeliveryPlannerModal.tsx                                                  
++      src/renderer/components/PlanningPipeline/PlanningPipelineModal.tsx                                              
++      src/renderer/components/ConversationalPRD/ConversationalPrdModal.tsx                                              
++    For each, ensure useModalLayer() is wired so Escape closes the modal.                                               
++    Pattern reference: src/renderer/components/SymphonyModal.tsx (read first).                                          
++    Verify both tsc passes (main + renderer).                                                                           
++    Commit message: "fix: wire useModalLayer for priority modals so Escape closes"                                      
++    git push origin Project-Meta --no-verify
++
++  Stop. Report what worked / what didn't.
