@@ -98,43 +98,6 @@ export function relativePathInsideRoot(rootPath: string, filePath: string): stri
 }
 
 /**
- * Convert a file path to POSIX format (forward slashes).
- */
-export function toPosixPath(filePath: string): string {
-	return filePath.replace(/[\\/]+/g, '/');
-}
-
-/**
- * Resolve path segments under a root and reject traversal outside that root.
- */
-export function resolveInsideRoot(rootPath: string, ...segments: string[]): string {
-	const root = path.resolve(rootPath);
-	const resolved = path.resolve(root, ...segments);
-	const relative = path.relative(root, resolved);
-
-	if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
-		return resolved;
-	}
-
-	throw new Error(`Resolved path must stay inside root: ${rootPath}`);
-}
-
-/**
- * Return a slash-delimited path relative to a root and reject paths outside that root.
- */
-export function relativePathInsideRoot(rootPath: string, filePath: string): string {
-	const root = path.resolve(rootPath);
-	const resolved = path.resolve(filePath);
-	const relative = path.relative(root, resolved);
-
-	if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
-		throw new Error(`Path must stay inside root: ${rootPath}`);
-	}
-
-	return toPosixPath(relative);
-}
-
-/**
  * Split a version string into its numeric part and optional pre-release suffix.
  *
  * @param version - Cleaned version string (no 'v' prefix), e.g., "0.15.0-rc.1"
