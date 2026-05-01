@@ -159,6 +159,7 @@ export type { PmToolsHandlerDependencies };
 export { registerPmAuditHandlers };
 export type { PmAuditHandlerDependencies };
 export { registerPmHeartbeatHandlers };
+export { registerPmOrchestratorHandlers };
 export type { PmHeartbeatHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
