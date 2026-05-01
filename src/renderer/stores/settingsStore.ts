@@ -209,6 +209,9 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	usageStats: true,
 	symphony: true,
 	maestroCue: false,
+	agentDispatch: false,
+	deliveryPlanner: false,
+	planningPipeline: false,
 };
 
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {

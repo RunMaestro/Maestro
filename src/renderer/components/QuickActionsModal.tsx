@@ -239,6 +239,12 @@ interface QuickActionsModalProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Agent Dispatch
+	onOpenAgentDispatch?: () => void;
+	// Delivery Planner
+	onOpenDeliveryPlanner?: () => void;
+	// Planning Pipeline
+	onOpenPlanningPipeline?: () => void;
 }
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
@@ -336,6 +342,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onConfigureCue,
+		onOpenAgentDispatch,
+		onOpenDeliveryPlanner,
+		onOpenPlanningPipeline,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -1565,6 +1574,51 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'Open YAML editor for event-driven automation',
 						action: () => {
 							onConfigureCue(activeSession);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Agent Dispatch - fleet and work board
+		...(onOpenAgentDispatch
+			? [
+					{
+						id: 'agentDispatch',
+						label: 'Agent Dispatch',
+						shortcut: shortcuts.openAgentDispatch,
+						subtext: 'View fleet and work item board',
+						action: () => {
+							onOpenAgentDispatch();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Delivery Planner
+		...(onOpenDeliveryPlanner
+			? [
+					{
+						id: 'deliveryPlanner',
+						label: 'Delivery Planner',
+						shortcut: shortcuts.openDeliveryPlanner,
+						subtext: 'Manage PRDs, epics, and GitHub sync',
+						action: () => {
+							onOpenDeliveryPlanner();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Planning Pipeline
+		...(onOpenPlanningPipeline
+			? [
+					{
+						id: 'planningPipeline',
+						label: 'Planning Pipeline',
+						shortcut: shortcuts.openPlanningPipeline,
+						subtext: 'View planning stage pipeline dashboard',
+						action: () => {
+							onOpenPlanningPipeline();
 							setQuickActionOpen(false);
 						},
 					},

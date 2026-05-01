@@ -326,6 +326,12 @@ function MaestroConsoleInner() {
 		setCueModalOpen,
 		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
+		// Agent Dispatch Modal
+		setAgentDispatchOpen,
+		// Delivery Planner Modal
+		setDeliveryPlannerOpen,
+		// Planning Pipeline Modal
+		setPlanningPipelineOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -457,6 +463,18 @@ function MaestroConsoleInner() {
 			closeCueYamlEditor();
 		}
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
+
+	useEffect(() => {
+		if (!encoreFeatures.agentDispatch) setAgentDispatchOpen(false);
+	}, [encoreFeatures.agentDispatch, setAgentDispatchOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.deliveryPlanner) setDeliveryPlannerOpen(false);
+	}, [encoreFeatures.deliveryPlanner, setDeliveryPlannerOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.planningPipeline) setPlanningPipelineOpen(false);
+	}, [encoreFeatures.planningPipeline, setPlanningPipelineOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
@@ -2125,6 +2143,9 @@ function MaestroConsoleInner() {
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
 		setCueModalOpen,
+		setAgentDispatchOpen,
+		setDeliveryPlannerOpen,
+		setPlanningPipelineOpen,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -2858,6 +2879,15 @@ function MaestroConsoleInner() {
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
+					onOpenAgentDispatch={
+						encoreFeatures.agentDispatch ? () => setAgentDispatchOpen(true) : undefined
+					}
+					onOpenDeliveryPlanner={
+						encoreFeatures.deliveryPlanner ? () => setDeliveryPlannerOpen(true) : undefined
+					}
+					onOpenPlanningPipeline={
+						encoreFeatures.planningPipeline ? () => setPlanningPipelineOpen(true) : undefined
+					}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
 					onFileTabSelect={handleUtilityFileTabSelect}
