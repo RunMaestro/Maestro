@@ -37,6 +37,7 @@ import {
 	LEGACY_HUMPFTECH_PROJECT_NUMBER,
 	LEGACY_HUMPFTECH_PROJECT_TITLE,
 } from '../../../shared/legacy-humpftech-fallback';
+import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[PmResolveGithubProject]';
 
@@ -130,10 +131,9 @@ export function registerPmResolveGithubProjectHandlers(
 
 			if (!result.ok) {
 				const { code, message, detail, candidates } = result.error;
-				console.error(
-					`${LOG_CONTEXT} discovery failed for "${projectPath}" [${code}]:`,
-					message,
-					detail ?? ''
+				logger.error(
+					`discovery failed for "${projectPath}" [${code}]: ${message}${detail ? ' ' + detail : ''}`,
+					LOG_CONTEXT
 				);
 
 				// Fallback: if projectGithubMap is completely empty and the path looks like
@@ -148,8 +148,9 @@ export function registerPmResolveGithubProjectHandlers(
 					code !== 'MULTIPLE_MATCHES';
 
 				if (isFallbackEligible) {
-					console.warn(
-						`${LOG_CONTEXT} Using legacy fallback for "${projectPath}". Run /PM-init to persist proper mapping.`
+					logger.warn(
+						`Using legacy fallback for "${projectPath}". Run /PM-init to persist proper mapping.`,
+						LOG_CONTEXT
 					);
 					return { success: true, data: LEGACY_FALLBACK, fromCache: false };
 				}

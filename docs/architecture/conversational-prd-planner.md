@@ -2,8 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-05-01
-**Issue:** HumpfTech/Maestro #204
-**Deciders:** HumpfTech platform team
+**Deciders:** Maestro platform team
 
 ---
 

@@ -24,6 +24,7 @@ import {
 	isAutoPickupRelevantWorkGraphEvent,
 } from './events';
 import { nextRole, isTerminal, type PipelineEvent } from './state-machine';
+import { logger } from '../utils/logger';
 
 const execFile = promisify(execFileCallback);
 
@@ -633,10 +634,11 @@ function warnIfLegacyLabels(workItemId: string, tags: string[]): void {
 	if (!tags || tags.length === 0) return;
 	const found = tags.filter((t) => LEGACY_AGENT_LABELS.includes(t));
 	if (found.length === 0) return;
-	console.warn(
-		`[DispatchEngine] Legacy label(s) detected on issue/item "${workItemId}": [${found.join(', ')}]. ` +
+	logger.warn(
+		`Legacy label(s) detected on issue/item "${workItemId}": [${found.join(', ')}]. ` +
 			`These are ignored — the AI Status custom field on GitHub Projects v2 is the source of truth. ` +
-			`Run /PM migrate-labels to convert legacy labels to AI Status field values.`
+			`Run /PM migrate-labels to convert legacy labels to AI Status field values.`,
+		'DispatchEngine'
 	);
 }
 

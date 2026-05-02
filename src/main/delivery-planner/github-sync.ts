@@ -896,7 +896,7 @@ function lastHeartbeatForProject(item: WorkItem): string {
 	const heartbeat =
 		typeof item.metadata?.lastHeartbeat === 'string'
 			? item.metadata.lastHeartbeat
-			: (item.claim as any)?.lastHeartbeat;
+			: item.claim?.lastHeartbeat;
 	return (typeof heartbeat === 'string' ? heartbeat : '') ?? '';
 }
 

@@ -22,6 +22,7 @@ import type { SettingsStoreInterface } from '../../stores/types';
 import { DeliveryPlannerGithubSync } from '../../delivery-planner/github-sync';
 import type { GithubProjectMapping } from '../../delivery-planner/github-project-discovery';
 import { discoverGithubProject } from '../../delivery-planner/github-project-discovery';
+import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[PmInit]';
 
@@ -87,14 +88,15 @@ export function registerPmInitHandlers(deps: PmInitHandlerDependencies): void {
 						const updatedMap = { ...map, [input.projectPath]: projectMapping };
 						deps.settingsStore.set('projectGithubMap', updatedMap);
 					} else {
-						console.warn(
-							`${LOG_CONTEXT} GitHub project discovery failed [${discoveryResult.error.code}] — using defaults: ${discoveryResult.error.message}`
+						logger.warn(
+							`GitHub project discovery failed [${discoveryResult.error.code}] — using defaults: ${discoveryResult.error.message}`,
+							LOG_CONTEXT
 						);
 					}
 				}
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
-				console.warn(`${LOG_CONTEXT} GitHub project discovery failed — using defaults: ${message}`);
+				logger.warn(`GitHub project discovery failed — using defaults: ${message}`, LOG_CONTEXT);
 				// Non-fatal: fall through to use default project coordinates.
 			}
 		}
@@ -112,7 +114,7 @@ export function registerPmInitHandlers(deps: PmInitHandlerDependencies): void {
 			result.errors.push(...fieldResult.errors);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			console.error(`${LOG_CONTEXT} pm:initRepo failed:`, message);
+			logger.error(`pm:initRepo failed: ${message}`, LOG_CONTEXT);
 			result.errors.push(message);
 		}
 

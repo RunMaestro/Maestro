@@ -48,22 +48,31 @@ function getPmPromptsDir(): string {
 }
 
 /**
- * Returns the absolute path to the PM handbook directory.
+ * Returns the absolute path to the PM handbook directory, or null when not
+ * available (packaged builds do not ship the handbook).
  *
- * Temporarily hardcoded to the fork root at /opt/Maestro-fork so the agent
- * can Read handbook files during development on this clone.
+ * In development: derives the path relative to __dirname so it works on any
+ * checkout regardless of clone location.
  *
  * TODO: Switch to `${activeSession.projectRoot}/docs/pm/handbook/` once
  * projectRoot is threaded through the loadPmCommands IPC call.
  */
-function getPmHandbookDir(): string {
-	// Hardcoded fork root — dev only.
-	return '/opt/Maestro-fork/docs/pm/handbook';
+function getPmHandbookDir(): string | null {
+	if (app.isPackaged) {
+		// Handbook files are not included in the packaged app build.
+		return null;
+	}
+	// In dev mode __dirname is dist/main/ipc/handlers — four levels up is the project root.
+	return path.join(__dirname, '..', '..', '..', '..', 'docs', 'pm', 'handbook');
 }
 
 /** Build the handbook table-of-contents appendix for the /PM system prompt. */
 function buildHandbookAppendix(): string {
 	const handbookDir = getPmHandbookDir();
+	if (!handbookDir) {
+		// Handbook not available (packaged build).
+		return '';
+	}
 	const files = [
 		'01-prd-creation.md',
 		'02-epic-decomposition.md',

@@ -16,6 +16,7 @@ import { ipcMain } from 'electron';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
 import { getClaimTracker } from '../../agent-dispatch/claim-tracker';
+import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[PmHeartbeat]';
 
@@ -41,7 +42,7 @@ export function registerPmHeartbeatHandlers(deps: PmHeartbeatHandlerDependencies
 			return { success: false, error: `No active claim for projectItemId: ${projectItemId}` };
 		}
 
-		console.debug(`${LOG_CONTEXT} heartbeat projectItem=${projectItemId} at=${now}`);
+		logger.debug(`heartbeat projectItem=${projectItemId} at=${now}`, LOG_CONTEXT);
 		return { success: true, data: { projectItemId, lastHeartbeat: now } };
 	});
 }

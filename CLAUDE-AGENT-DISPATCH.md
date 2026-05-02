@@ -58,7 +58,7 @@ Agent Dispatch is the subsystem that selects an agent session, claims a GitHub i
 > **Runner role is local-only and project-scoped (#440):** The `runner` pipeline role has two hard constraints enforced by the DispatchEngine:
 >
 > 1. **Local-only** — SSH-remote agents are rejected for runner-role work items. `DispatchEngine.assignManually` rejects SSH-remote fleet entries with `{ code: 'RUNNER_REQUIRES_LOCAL', detail }`. Auto-pickup also skips SSH-remote agents for runner-role work items. (The agent picker filter in `SlotCard` already prevents selecting an SSH-remote agent when the active project is local, and vice versa.)
-> 2. **Project-scoped** — the runner must operate inside the project's local git checkout. `assignManually` calls `git remote get-url origin` in `WorkItem.projectPath` and verifies it matches `WorkItem.github.repo` (`HumpfTech/Maestro`). Mismatch or missing git repo rejects with `{ code: 'RUNNER_PROJECT_MISMATCH', expectedProjectPath, actualProjectPath, expectedRemote, actualRemote }`.
+> 2. **Project-scoped** — the runner must operate inside the project's local git checkout. `assignManually` calls `git remote get-url origin` in `WorkItem.projectPath` and verifies it matches `WorkItem.github.repo` (e.g. `owner/repo`). Mismatch or missing git repo rejects with `{ code: 'RUNNER_PROJECT_MISMATCH', expectedProjectPath, actualProjectPath, expectedRemote, actualRemote }`.
 >
 > Other roles (fixer, reviewer, merger) are unaffected — they may be SSH-remote.
 

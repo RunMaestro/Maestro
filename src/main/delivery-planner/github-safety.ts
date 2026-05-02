@@ -114,12 +114,10 @@ export function makeDeliveryPlannerGithubReferenceWithConfig(
 		commitSha?: string;
 	}
 ): WorkItemGithubReference {
-	// The owner/repo literal types on WorkItemGithubReference are a legacy
-	// constraint; cast through unknown until the shared type is widened (#447).
 	return {
-		owner: config.owner as unknown as WorkItemGithubReference['owner'],
-		repo: config.repo as unknown as WorkItemGithubReference['repo'],
-		repository: `${config.owner}/${config.repo}` as WorkItemGithubReference['repository'],
+		owner: config.owner,
+		repo: config.repo,
+		repository: `${config.owner}/${config.repo}`,
 		...input,
 	};
 }
@@ -154,12 +152,10 @@ export function makeDeliveryPlannerGithubReference(input: {
 }): WorkItemGithubReference {
 	// Returns a reference with placeholder values. github-sync.ts (PR #447)
 	// will be updated to pass real config-driven coordinates.
-	// Cast through unknown — literal type constraint on WorkItemGithubReference
-	// will be relaxed in the same PR.
 	return {
-		owner: '' as unknown as WorkItemGithubReference['owner'],
-		repo: '' as unknown as WorkItemGithubReference['repo'],
-		repository: '' as WorkItemGithubReference['repository'],
+		owner: '',
+		repo: '',
+		repository: '',
 		...input,
 	};
 }

@@ -9,7 +9,7 @@
  *  - In-process Promise queue prevents concurrent-write races (optimistic lock).
  *  - Constructor is synchronous; initial load happens via loadSync() using the
  *    injected fs — test-friendly because fs is a dependency-injected interface.
- *  - Corrupt / missing file → empty store + console.warn (never throws on read).
+ *  - Corrupt / missing file → empty store + logger.warn (never throws on read).
  *  - The `archived` flag hides sessions from default listSessions() results.
  */
 
@@ -25,6 +25,7 @@ import type {
 	ConversationalPrdSessionStatus,
 } from '../../shared/conversational-prd-types';
 import type { IConversationalPrdStore } from './session-store';
+import { logger } from '../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -96,7 +97,7 @@ export class FileConversationalPrdStore implements IConversationalPrdStore {
 		try {
 			raw = await this.fs.readFile(this.filePath, 'utf8');
 		} catch (err) {
-			console.warn('[FileConversationalPrdStore] Could not read sessions file:', err);
+			logger.warn(`Could not read sessions file: ${err}`, 'FileConversationalPrdStore');
 			return;
 		}
 
@@ -104,12 +105,12 @@ export class FileConversationalPrdStore implements IConversationalPrdStore {
 		try {
 			parsed = JSON.parse(raw);
 		} catch (err) {
-			console.warn('[FileConversationalPrdStore] Malformed sessions file — starting empty:', err);
+			logger.warn(`Malformed sessions file — starting empty: ${err}`, 'FileConversationalPrdStore');
 			return;
 		}
 
 		if (!isValidStoreFile(parsed)) {
-			console.warn('[FileConversationalPrdStore] Unexpected sessions file schema — starting empty');
+			logger.warn('Unexpected sessions file schema — starting empty', 'FileConversationalPrdStore');
 			return;
 		}
 
@@ -278,7 +279,7 @@ export class FileConversationalPrdStore implements IConversationalPrdStore {
 		this.writeQueue = this.writeQueue
 			.then(() => this.persist())
 			.catch((err) => {
-				console.error('[FileConversationalPrdStore] Failed to persist sessions:', err);
+				logger.error(`Failed to persist sessions: ${err}`, 'FileConversationalPrdStore');
 			});
 	}
 

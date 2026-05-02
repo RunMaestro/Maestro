@@ -27,6 +27,7 @@ import { getGithubClient } from '../../agent-dispatch/github-client';
 import { auditLog } from '../../agent-dispatch/dispatch-audit-log';
 import { sweepMergedBranches } from '../../pm-branch-hygiene/branch-cleaner';
 import { DELIVERY_PLANNER_GITHUB_REPOSITORY } from '../../delivery-planner/github-safety';
+import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[PmTools]';
 
@@ -92,8 +93,9 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 				newState: { 'AI Status': input.status },
 			});
 
-			console.log(
-				`${LOG_CONTEXT} pm:setStatus projectItem=${claim.projectItemId} status=${input.status}`
+			logger.info(
+				`pm:setStatus projectItem=${claim.projectItemId} status=${input.status}`,
+				LOG_CONTEXT
 			);
 
 			// Merger-done branch cleanup — best-effort
@@ -111,7 +113,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			console.error(`${LOG_CONTEXT} pm:setStatus failed:`, message);
+			logger.error(`pm:setStatus failed: ${message}`, LOG_CONTEXT);
 			return { success: false, error: message };
 		}
 	});
@@ -140,9 +142,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 				newState: { 'AI Role': input.role },
 			});
 
-			console.log(
-				`${LOG_CONTEXT} pm:setRole projectItem=${claim.projectItemId} role=${input.role}`
-			);
+			logger.info(`pm:setRole projectItem=${claim.projectItemId} role=${input.role}`, LOG_CONTEXT);
 			return {
 				success: true,
 				data: {
@@ -153,7 +153,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			console.error(`${LOG_CONTEXT} pm:setRole failed:`, message);
+			logger.error(`pm:setRole failed: ${message}`, LOG_CONTEXT);
 			return { success: false, error: message };
 		}
 	});
@@ -194,8 +194,9 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 				reason: input.reason,
 			});
 
-			console.log(
-				`${LOG_CONTEXT} pm:setBlocked projectItem=${claim.projectItemId} reason="${input.reason}"`
+			logger.info(
+				`pm:setBlocked projectItem=${claim.projectItemId} reason="${input.reason}"`,
+				LOG_CONTEXT
 			);
 			return {
 				success: true,
@@ -207,7 +208,7 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			console.error(`${LOG_CONTEXT} pm:setBlocked failed:`, message);
+			logger.error(`pm:setBlocked failed: ${message}`, LOG_CONTEXT);
 			return { success: false, error: message };
 		}
 	});
@@ -218,14 +219,16 @@ export function registerPmToolsHandlers(deps: PmToolsHandlerDependencies): void 
 async function tryDeleteBranch(projectPath: string, projectItemId: string): Promise<void> {
 	try {
 		await sweepMergedBranches(projectPath, 'main', { graceDays: 0, dryRun: false });
-		console.log(
-			`${LOG_CONTEXT} merger-done: branch sweep attempted for projectItem=${projectItemId}`
+		logger.info(
+			`merger-done: branch sweep attempted for projectItem=${projectItemId}`,
+			LOG_CONTEXT
 		);
 	} catch (err) {
-		console.warn(
-			`${LOG_CONTEXT} merger-done: branch sweep failed for projectItem=${projectItemId}: ${
+		logger.warn(
+			`merger-done: branch sweep failed for projectItem=${projectItemId}: ${
 				err instanceof Error ? err.message : String(err)
-			}`
+			}`,
+			LOG_CONTEXT
 		);
 	}
 }
