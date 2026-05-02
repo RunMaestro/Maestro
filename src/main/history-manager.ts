@@ -569,13 +569,28 @@ export class HistoryManager {
 			// fs.watch emits 'error' when the watched directory becomes unavailable
 			// (removed, permission change, network volume disconnect). Without a listener
 			// the EventEmitter throws as an unhandled exception and crashes the main process.
+			// Expected/recoverable codes get a quiet warn; everything else goes to Sentry
+			// so we keep visibility into novel failure modes in production.
 			this.watcher.on('error', (err) => {
+				const code = (err as NodeJS.ErrnoException | undefined)?.code;
+				if (code === 'ENOENT' || code === 'EPERM' || code === 'UNKNOWN') {
+					logger.warn(`History watcher error (${code}): ${String(err)}`, LOG_CONTEXT);
+					return;
+				}
+				void captureException(err, {
+					operation: 'history:watch:error',
+					historyDir: this.historyDir,
+				});
 				logger.warn(`History watcher error: ${String(err)}`, LOG_CONTEXT);
 			});
 
 			logger.info('Started watching history directory', LOG_CONTEXT);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			void captureException(error, {
+				operation: 'history:watch:start',
+				historyDir: this.historyDir,
+			});
 			logger.warn(`Failed to start history watcher: ${message}`, LOG_CONTEXT);
 			this.watcher = null;
 		}
