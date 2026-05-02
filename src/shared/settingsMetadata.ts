@@ -155,13 +155,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	showWorktreePill: {
 		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'appearance',
 	},
 	showWorktreeBranchName: {
 		description: 'Show the branch name beneath worktree child agents in the left panel.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'appearance',
 	},
 	fileExplorerIconTheme: {
