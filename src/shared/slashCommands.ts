@@ -79,144 +79,21 @@ export const SLASH_COMMAND_REGISTRY: SlashCommandDefinition[] = [
 
 	// -------------------------------------------------------------------------
 	// /PM namespace — project management suite
-	// Gated by the `conversationalPrd` encore feature (shares gate with Conv-PRD).
+	// Gated by the `pmSuite` encore feature flag.
+	// Two commands only: /PM enters PM mode (conversation-driven), /PM-init bootstraps the repo.
+	// The 17 verb-specific commands were removed; the agent handles all verbs via conversation.
 	// -------------------------------------------------------------------------
 	{
 		verb: '/PM',
-		description: 'Start a new feature end-to-end: Conv-PRD → Epic → Tasks → GitHub',
-		args: '<idea>',
+		description: 'Enter PM mode — plan features, run standups, check status, find next work',
+		args: '[direction]',
 		surfaces: ['desktop', 'web'],
 		aiOnly: true,
 		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:orchestrate',
-	},
-	{
-		verb: '/PM prd-new',
-		description: 'Open the Conversational PRD planner seeded with a name',
-		args: '<name>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:prd-new',
-	},
-	{
-		verb: '/PM prd-list',
-		description: 'List all PRDs for the current project',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:prd-list',
-	},
-	{
-		verb: '/PM next',
-		description: 'Show the next eligible work item ready for implementation',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:next',
-	},
-	{
-		verb: '/PM status',
-		description: 'Show a current project board snapshot',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:status',
-	},
-	{
-		verb: '/PM standup',
-		description: 'Generate a standup summary for the current project',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:standup',
+		handler: 'builtin:pm-mode',
 	},
 
-	// PRD edit / status / parse verbs (#436)
-	{
-		verb: '/PM prd-edit',
-		description: 'Open the Conv-PRD modal in edit mode for an existing PRD',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:prd-edit',
-	},
-	{
-		verb: '/PM prd-status',
-		description: 'Quick status lookup for a PRD',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:prd-status',
-	},
-	{
-		verb: '/PM prd-parse',
-		description: 'Convert a PRD into structured Delivery Planner input',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:prd-parse',
-	},
-
-	// Epic verbs (#436)
-	{
-		verb: '/PM epic-decompose',
-		description: 'Decompose a PRD into an epic + tasks via Delivery Planner',
-		args: '<prd-id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-decompose',
-	},
-	{
-		verb: '/PM epic-edit',
-		description: 'Open the Delivery Planner with an epic preloaded for editing',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-edit',
-	},
-	{
-		verb: '/PM epic-list',
-		description: 'Show a table of all epics in the Work Graph',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-list',
-	},
-	{
-		verb: '/PM epic-show',
-		description: 'Show full detail for an epic including task list',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-show',
-	},
-	{
-		verb: '/PM epic-sync',
-		description: 'Push an epic to GitHub via the Delivery Planner sync channel',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-sync',
-	},
-	{
-		verb: '/PM epic-start',
-		description: 'Kick the Planning Pipeline for an epic',
-		args: '<id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:epic-start',
-	},
-
-	// Repo bootstrap verb (#445)
+	// Repo bootstrap verb (real IPC action, not a prompt)
 	{
 		verb: '/PM-init',
 		description: 'Bootstrap GitHub Projects v2 AI custom fields for this repo (idempotent)',
@@ -227,42 +104,14 @@ export const SLASH_COMMAND_REGISTRY: SlashCommandDefinition[] = [
 		handler: 'ipc:pm:initRepo',
 	},
 
-	// Issue / task verbs (#436)
+	// Label migration (real IPC action — migrates legacy agent:* labels to AI Status field)
 	{
-		verb: '/PM issue-start',
-		description: 'Manually claim a task into Agent Dispatch',
-		args: '<task-id>',
+		verb: '/PM migrate-labels',
+		description: 'Migrate legacy agent:* labels to AI Status custom field (run once per repo)',
 		surfaces: ['desktop', 'web'],
 		aiOnly: true,
 		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:issue-start',
-	},
-	{
-		verb: '/PM issue-show',
-		description: 'Show full detail for a task',
-		args: '<task-id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:issue-show',
-	},
-	{
-		verb: '/PM issue-status',
-		description: 'Quick status check for a task',
-		args: '<task-id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:issue-status',
-	},
-	{
-		verb: '/PM issue-sync',
-		description: 'GitHub roundtrip sync for a task',
-		args: '<task-id>',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:issue-sync',
+		handler: 'ipc:pm:migrateLegacyLabels',
 	},
 ];
 

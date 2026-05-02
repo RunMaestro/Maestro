@@ -2,6 +2,45 @@
 
 Agent Dispatch documentation for the Maestro codebase. For the main guide, see [[CLAUDE.md]].
 
+---
+
+## State Source-of-Truth: AI Status Custom Field, NOT Legacy Labels
+
+**This project uses GitHub Projects v2 custom fields as the sole source of truth for all dispatch state.**
+
+| Custom field        | Purpose                                            |
+| ------------------- | -------------------------------------------------- |
+| `AI Status`         | Work item lifecycle (Tasks Ready → Done)           |
+| `AI Role`           | Pipeline role (runner / fixer / reviewer / merger) |
+| `AI Stage`          | Planning stage (prd / epic / task)                 |
+| `AI Priority`       | Priority tier (P0–P3)                              |
+| `AI Assigned Slot`  | Which slot owns the current claim                  |
+| `AI Last Heartbeat` | Liveness timestamp for stale-claim detection       |
+
+### Legacy `agent:*` labels
+
+The old Symphony fork-runner used GitHub **labels** (`agent:ready`, `agent:running`, `agent:review`, `agent:failed-validation`) to represent dispatch state. **These labels are decorative and completely ignored by this dispatch system.** The AI Status custom field is the only value the engine reads and writes.
+
+If a repository still has issues labelled with `agent:*` labels:
+
+- The dispatch engine logs a console warning (does NOT fail the dispatch).
+- Run **`/PM migrate-labels`** once per repo to convert legacy labels to the corresponding AI Status values and remove the labels from issues:
+
+  | Legacy label              | AI Status value |
+  | ------------------------- | --------------- |
+  | `agent:ready`             | `Tasks Ready`   |
+  | `agent:running`           | `In Progress`   |
+  | `agent:review`            | `In Review`     |
+  | `agent:failed-validation` | `Blocked`       |
+
+- After migration, the `agent:*` labels can be deleted from the repo's label list entirely.
+
+**IPC channel:** `pm:migrateLegacyLabels({ projectPath })` → `{ success, migrated, errors }`.  
+Requires `deliveryPlanner` encore feature flag.  
+Implemented in `src/main/ipc/handlers/pm-migrate-labels.ts`.
+
+---
+
 Agent Dispatch is the subsystem that selects an agent session, claims a GitHub issue, runs Auto Run documents, and releases the claim when work is done. It lives entirely inside the **Symphony** feature.
 
 > **v2 simpler 4-slot model (post-#429):** The per-project Roles tab implements the canonical 1-slot-per-role design. Each slot references an existing Left Bar agent by its `Session.id` (`agentId`-based). When a work item is claimed, `executeSlot()` in `src/main/agent-dispatch/slot-executor.ts` resolves that session's config and spawns a fresh process via ProcessManager — mirroring the Cue executor pattern. FleetRegistry's complex eligibility queries are dead code slated for removal in #433.

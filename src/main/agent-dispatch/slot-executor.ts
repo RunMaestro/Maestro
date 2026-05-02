@@ -32,6 +32,19 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 
 const LOG_CONTEXT = '[SlotExecutor]';
 
+/**
+ * Legacy Symphony-runner labels that are meaningless to this dispatch system.
+ * The AI Status custom field on GitHub Projects v2 is the sole source of truth.
+ * Presence of these labels on a work item is logged as a warning so operators
+ * know to run `/PM migrate-labels` to clean up.
+ */
+const LEGACY_AGENT_LABEL_NAMES = [
+	'agent:ready',
+	'agent:running',
+	'agent:review',
+	'agent:failed-validation',
+];
+
 // ---------------------------------------------------------------------------
 // Web client broadcast hook (#448)
 //
@@ -267,6 +280,16 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 
 	const workItemId = workItem.id;
 	const agentId = slotAssignment.agentId;
+
+	// Legacy-label warning: agent:* labels are ignored — AI Status field is the source of truth.
+	const legacyLabels = LEGACY_AGENT_LABEL_NAMES.filter((l) => workItem.tags?.includes(l));
+	if (legacyLabels.length > 0) {
+		logger.warn(
+			`Legacy label(s) detected on issue/item "${workItemId}": [${legacyLabels.join(', ')}]. ` +
+				`These are ignored. Use /PM migrate-labels to convert legacy labels to AI Status field values.`,
+			LOG_CONTEXT
+		);
+	}
 
 	// Derive a stable session id for this dispatch invocation
 	const claimId = workItem.claim?.id ?? workItemId;

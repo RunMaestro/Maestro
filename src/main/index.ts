@@ -83,6 +83,7 @@ import {
 	registerPmHeartbeatHandlers,
 	registerPmResolveGithubProjectHandlers,
 	registerPmInitHandlers,
+	registerPmMigrateLabelsHandlers,
 	registerProjectRolesHandlers,
 	registerPmOrchestratorHandlers,
 	initConversationalPrdStore,
@@ -1555,6 +1556,8 @@ function setupIpcHandlers() {
 	registerPmResolveGithubProjectHandlers({ settingsStore: store });
 	// pm-init — /PM-init idempotent field bootstrap (#445)
 	registerPmInitHandlers({ settingsStore: store });
+	// pm-migrate-labels — one-time legacy agent:* label → AI Status field migration
+	registerPmMigrateLabelsHandlers({ settingsStore: store });
 	registerProjectRolesHandlers(store as never);
 }
 

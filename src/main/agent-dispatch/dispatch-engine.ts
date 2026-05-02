@@ -280,6 +280,11 @@ export class AgentDispatchEngine {
 			throw new Error('Manual assignment requires an explicit user-initiated action');
 		}
 
+		// Legacy-label warning: agent:* labels are ignored by this dispatch system.
+		// The AI Status custom field on GitHub Projects v2 is the only source of truth.
+		// If a work item still carries legacy labels in its tags, warn but do not fail.
+		warnIfLegacyLabels(input.workItemId, input.workItem.tags);
+
 		// Backlog gate (#439) — hard-block before any other checks.
 		if (input.workItem.status === 'backlog') {
 			return {
@@ -607,6 +612,32 @@ function toOwner(entry: AgentDispatchFleetEntry): WorkItemOwner {
 
 function uniqueSorted(values: string[]): string[] {
 	return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+}
+
+/**
+ * Emit a console warning when a work item's tags contain legacy Symphony-runner
+ * `agent:*` labels.  These labels are ignored by this dispatch system — the
+ * AI Status custom field on GitHub Projects v2 is the sole source of truth.
+ *
+ * Run `/PM migrate-labels` once per repo to convert legacy labels to AI Status
+ * field values and remove the labels from the issues.
+ */
+const LEGACY_AGENT_LABELS = [
+	'agent:ready',
+	'agent:running',
+	'agent:review',
+	'agent:failed-validation',
+];
+
+function warnIfLegacyLabels(workItemId: string, tags: string[]): void {
+	if (!tags || tags.length === 0) return;
+	const found = tags.filter((t) => LEGACY_AGENT_LABELS.includes(t));
+	if (found.length === 0) return;
+	console.warn(
+		`[DispatchEngine] Legacy label(s) detected on issue/item "${workItemId}": [${found.join(', ')}]. ` +
+			`These are ignored — the AI Status custom field on GitHub Projects v2 is the source of truth. ` +
+			`Run /PM migrate-labels to convert legacy labels to AI Status field values.`
+	);
 }
 
 /**

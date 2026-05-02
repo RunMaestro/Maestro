@@ -97,6 +97,11 @@ import {
 } from './pm-resolve-github-project';
 // pm-commands — load /PM verb prompts for customAICommands dispatch path
 import { registerPmCommandsHandlers } from './pm-commands';
+// pm-migrate-labels — one-time migration of legacy agent:* labels → AI Status field
+import {
+	registerPmMigrateLabelsHandlers,
+	PmMigrateLabelsHandlerDependencies,
+} from './pm-migrate-labels';
 import type { AgentDispatchRuntime } from '../../agent-dispatch/runtime';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -175,6 +180,8 @@ export type { PmHeartbeatHandlerDependencies };
 export { registerPmResolveGithubProjectHandlers };
 export type { PmResolveGithubProjectHandlerDependencies };
 export { registerPmCommandsHandlers };
+export { registerPmMigrateLabelsHandlers };
+export type { PmMigrateLabelsHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -403,6 +410,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmResolveGithubProjectHandlers({ settingsStore: deps.settingsStore });
 	// Register PM Commands handler: pm:loadCommands for customAICommands dispatch path
 	registerPmCommandsHandlers();
+	// Register PM migrate-labels handler: pm:migrateLegacyLabels one-time label migration
+	registerPmMigrateLabelsHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }
