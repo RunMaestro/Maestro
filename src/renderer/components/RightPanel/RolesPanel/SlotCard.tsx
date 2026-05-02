@@ -81,7 +81,8 @@ export function SlotCard({
 	activeRemoteId,
 }: SlotCardProps) {
 	// -----------------------------------------------------------------------
-	// Filter sessions to those on the same project + host as the active session
+	// Filter sessions to those on the same project + host as the active session.
+	// For the runner role, also exclude SSH-remote agents (#440).
 	// -----------------------------------------------------------------------
 	const eligibleSessions = useMemo(() => {
 		if (!activeProjectRoot) return [];
@@ -96,9 +97,14 @@ export function SlotCard({
 				? (s.sessionSshRemoteConfig.remoteId ?? null)
 				: null;
 
-			return sessionRemoteId === activeRemoteId;
+			if (sessionRemoteId !== activeRemoteId) return false;
+
+			// Runner must be local-only (#440)
+			if (role === 'runner' && s.sessionSshRemoteConfig?.enabled) return false;
+
+			return true;
 		});
-	}, [sessions, activeProjectRoot, activeRemoteId]);
+	}, [sessions, activeProjectRoot, activeRemoteId, role]);
 
 	// -----------------------------------------------------------------------
 	// Derived state
@@ -293,7 +299,7 @@ export function SlotCard({
 					{assignment && (
 						<button
 							onClick={handleToggleEnabled}
-							className="text-[10px] px-1.5 py-0.5 rounded font-medium border"
+							className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium border"
 							style={{
 								backgroundColor: slotEnabled
 									? `${theme.colors.accent}20`
@@ -304,11 +310,20 @@ export function SlotCard({
 							}}
 							title={
 								slotEnabled
-									? 'Slot is On — click to disable (drain mode)'
-									: 'Slot is Off — click to enable'
+									? 'On: accepting new dispatch claims. Click to disable (drain mode).'
+									: 'Off: finishing current claim, taking no new work. Click to enable.'
 							}
 						>
-							{slotEnabled ? 'On' : 'Off'}
+							<span
+								className="rounded-full shrink-0"
+								style={{
+									width: '6px',
+									height: '6px',
+									backgroundColor: slotEnabled ? '#4ade80' : theme.colors.textDim,
+									display: 'inline-block',
+								}}
+							/>
+							{slotEnabled ? 'On' : 'Off (Draining)'}
 						</button>
 					)}
 				</div>
@@ -344,6 +359,11 @@ export function SlotCard({
 							</option>
 						))}
 					</select>
+				)}
+				{role === 'runner' && (
+					<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+						Runner must run locally — SSH agents hidden.
+					</p>
 				)}
 			</div>
 

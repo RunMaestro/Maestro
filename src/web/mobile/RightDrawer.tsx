@@ -301,6 +301,14 @@ interface FilesTabContentProps {
 
 /**
  * Files tab content - file explorer tree
+ *
+ * TODO(#432): SessionBroadcastData does not expose sessionSshRemoteConfig to
+ * web clients, so the UI cannot surface a banner when the agent is SSH-remote.
+ * The backend already routes get_file_tree through buildSshFileTree for SSH
+ * sessions (web-server-factory.ts), so file listing works correctly — but
+ * displaying an informational note ("files are on remote host X") requires
+ * plumbing sshRemoteConfig through SessionBroadcastData → useWebSocket →
+ * FilesTabContent props. Deferred: low user-visible impact given backend routing.
  */
 function FilesTabContent({
 	sessionId,

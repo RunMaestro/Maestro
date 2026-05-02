@@ -1459,6 +1459,12 @@ export default function MobileApp() {
 					);
 				}
 			},
+			// TODO(#432): Terminal PTY for SSH-remote agents spawns an SSH PTY
+			// on the backend (web-server-factory setSpawnTerminalForWebCallback).
+			// The web client cannot currently display a banner indicating the
+			// terminal is connected to a remote host because sessionSshRemoteConfig
+			// is not included in SessionBroadcastData. Deferred: the SSH session
+			// is functional; only the informational banner is missing.
 			onTerminalData: (sessionId, data) => {
 				const inputMode = (activeSession?.inputMode as InputMode | undefined) || 'ai';
 				if (sessionId !== activeSessionId || inputMode !== 'terminal') return;

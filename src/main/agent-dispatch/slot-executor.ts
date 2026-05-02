@@ -332,8 +332,32 @@ export async function executeSlot(ctx: SlotExecutorContext): Promise<SlotExecuto
 	let sshStdinScript: string | undefined;
 	let resolvedPrompt: string | undefined = prompt;
 
-	// 3. Apply SSH wrapping when the agent's session has SSH remote enabled
+	// 3. Apply SSH wrapping when the agent's session has SSH remote enabled.
+	// Runner role is local-only (#440): refuse to spawn a runner via SSH.
 	const sshConfig = sessionConfig.sessionSshRemoteConfig;
+	if (role === 'runner' && sshConfig?.enabled) {
+		const msg = `Runner role requires a local agent — SSH-remote agent (${agentId}) is not allowed. Skipping spawn.`;
+		logger.warn(msg, LOG_CONTEXT, { agentId, role, workItemId });
+		auditLog({
+			kind: 'spawn-error',
+			workItemId,
+			role,
+			agentId,
+			sessionId: dispatchSessionId,
+			detail: msg,
+			timestamp: new Date().toISOString(),
+		});
+		await releaseClaim(workItemId, { note: msg }).catch(() => {});
+		safeSendToRenderer('agentDispatch:claimEnded', {
+			projectPath: workItem.projectPath,
+			role,
+			agentId,
+			sessionId: dispatchSessionId,
+			exitCode: 1,
+		});
+		_onClaimEnded?.({ projectPath: workItem.projectPath, role });
+		return { success: false, error: msg };
+	}
 	if (sshConfig?.enabled && sshStore) {
 		const sshWrapped = await wrapSpawnWithSsh(
 			{
