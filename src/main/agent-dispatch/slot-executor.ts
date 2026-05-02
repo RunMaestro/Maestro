@@ -234,10 +234,10 @@ export interface SlotExecutorResult {
 // ---------------------------------------------------------------------------
 
 function getPromptsDir(): string {
-	// Packaged extraResources mapping copies src/prompts to resources/prompts.
+	// Packaged extraResources copies src/prompts/*.md to resources/prompts/core/.
 	// In dev, walk up from dist/main/agent-dispatch/ to repo root /src/prompts.
 	if (app.isPackaged) {
-		return path.join(process.resourcesPath, 'prompts');
+		return path.join(process.resourcesPath, 'prompts', 'core');
 	}
 	return path.join(__dirname, '..', '..', '..', 'src', 'prompts');
 }
