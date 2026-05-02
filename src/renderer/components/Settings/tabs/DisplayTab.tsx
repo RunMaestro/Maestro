@@ -70,6 +70,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUseNativeTitleBar,
 		autoHideMenuBar,
 		setAutoHideMenuBar,
+		showAgentName,
+		setShowAgentName,
 		showSessionIdPill,
 		setShowSessionIdPill,
 		showSessionCostPill,
@@ -352,8 +354,40 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						backgroundColor: theme.colors.bgMain,
 					}}
 				>
-					{/* Show session ID pill */}
+					{/* Show agent name */}
 					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show agent name
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the agent name in the main header.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowAgentName(!showAgentName)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showAgentName ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showAgentName}
+							aria-label="Show agent name"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showAgentName ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show session ID pill */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
 						<div>
 							<p className="text-sm" style={{ color: theme.colors.textMain }}>
 								Show session ID pill

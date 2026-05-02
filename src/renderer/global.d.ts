@@ -1648,6 +1648,12 @@ interface MaestroAPI {
 			relativePath: string,
 			sshRemoteId?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		replaceImage: (
+			folderPath: string,
+			relativePath: string,
+			base64Data: string,
+			sshRemoteId?: string
+		) => Promise<{ success: boolean; relativePath?: string; error?: string }>;
 		listImages: (
 			folderPath: string,
 			docName: string,

@@ -24,7 +24,7 @@ import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
-import { clampTooltipToViewport } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 interface YearInPixelsStripProps {
 	data: StatsAggregation;
@@ -212,10 +212,15 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 		return null;
 	}
 
+	// Pointer-anchored tooltip for mouse hovers (close to cursor). Keyboard /
+	// focus paths fall back to the cell's bounding rect since there's no cursor
+	// to anchor to in those cases.
 	const handleEnter = (cell: DayCell, e: MouseEvent<HTMLDivElement>) => {
 		setHovered(cell);
-		const rect = e.currentTarget.getBoundingClientRect();
-		setAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+		setAnchor({ x: e.clientX, y: e.clientY });
+	};
+	const handleMove = (e: MouseEvent<HTMLDivElement>) => {
+		setAnchor({ x: e.clientX, y: e.clientY });
 	};
 	const handleLeave = () => {
 		setHovered(null);
@@ -280,6 +285,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 								transition: 'background-color 0.3s ease, outline 0.15s ease',
 							}}
 							onMouseEnter={(e) => handleEnter(cell, e)}
+							onMouseMove={handleMove}
 							onMouseLeave={handleLeave}
 							onFocus={(e) => handleFocus(cell, e)}
 							onBlur={handleLeave}
@@ -314,39 +320,17 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 				</div>
 			</div>
 
-			{hovered &&
-				anchor &&
-				(() => {
-					const tooltipWidth = 220;
-					const tooltipHeight = 56;
-					const { left, top } = clampTooltipToViewport({
-						anchorX: anchor.x,
-						anchorY: anchor.y - 8,
-						width: tooltipWidth,
-						height: tooltipHeight,
-						transform: 'top-center',
-					});
-					return (
-						<div
-							className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-							style={{
-								left,
-								top,
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-						>
-							<div className="font-medium mb-1">{hovered.displayDate}</div>
-							<div style={{ color: theme.colors.textDim }}>
-								<div>
-									{formatNumber(hovered.count)} {hovered.count === 1 ? 'query' : 'queries'}
-								</div>
-								{hovered.duration > 0 && <div>{formatDuration(hovered.duration)}</div>}
-							</div>
+			{hovered && (
+				<ChartTooltip anchor={anchor} theme={theme} width={220} height={56}>
+					<div className="font-medium mb-1">{hovered.displayDate}</div>
+					<div style={{ color: theme.colors.textDim }}>
+						<div>
+							{formatNumber(hovered.count)} {hovered.count === 1 ? 'query' : 'queries'}
 						</div>
-					);
-				})()}
+						{hovered.duration > 0 && <div>{formatDuration(hovered.duration)}</div>}
+					</div>
+				</ChartTooltip>
+			)}
 		</div>
 	);
 });

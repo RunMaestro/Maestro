@@ -35,6 +35,7 @@ import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -296,6 +297,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handlePaste,
 		handleFileSelect,
 		handleRemoveAttachment,
+		replaceAttachment,
 		openLightboxByFilename,
 		closeLightbox,
 		handleLightboxNavigate,
@@ -312,6 +314,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		lastUndoSnapshotRef,
 		sshRemoteId,
 	});
+
+	// Open the image annotator for an existing attachment; on save, overwrite the
+	// original file in place via replaceAttachment (preserves markdown references).
+	const handleAnnotateAttachment = useCallback(
+		(filename: string) => {
+			const dataUrl = attachmentPreviews.get(filename);
+			if (!dataUrl) return;
+			useImageAnnotatorStore
+				.getState()
+				.openAnnotator(dataUrl, (newDataUrl) => replaceAttachment(filename, newDataUrl));
+		},
+		[attachmentPreviews, replaceAttachment]
+	);
 
 	// Helper function to count completed tasks (used by useImperativeHandle before taskCounts is defined)
 	const getCompletedTaskCountFromContent = useCallback(() => {
@@ -590,6 +605,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					onToggleExpanded={() => setAttachmentsExpanded(!attachmentsExpanded)}
 					onRemoveAttachment={handleRemoveAttachment}
 					onImageClick={openLightboxByFilename}
+					onAnnotateAttachment={handleAnnotateAttachment}
 				/>
 			)}
 
@@ -820,6 +836,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				onClose={closeLightbox}
 				onNavigate={handleLightboxNavigate}
 				onDelete={handleLightboxDelete}
+				onAnnotate={handleAnnotateAttachment}
 			/>
 		</div>
 	);

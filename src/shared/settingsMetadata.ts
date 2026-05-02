@@ -133,6 +133,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showAgentName: {
+		description: 'Show the agent name in the main header.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	showSessionIdPill: {
 		description:
 			'Show the provider session ID pill (short hash, e.g. "B778BF42") in the main header.',
@@ -149,13 +155,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	showWorktreePill: {
 		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'appearance',
 	},
 	showWorktreeBranchName: {
 		description: 'Show the branch name beneath worktree child agents in the left panel.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'appearance',
 	},
 	fileExplorerIconTheme: {
@@ -168,6 +174,51 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Disable confetti animations for badge unlocks and achievements.',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	annotatorPenColor: {
+		description:
+			'Default pen color (hex string) for the image annotator. Seeds from theme accent on first run; user-selected color persists thereafter.',
+		type: 'string',
+		default: '#9146FF',
+		category: 'appearance',
+	},
+	annotatorPenSize: {
+		description: 'Default pen size (in pixels) for the image annotator stroke.',
+		type: 'number',
+		default: 10,
+		category: 'appearance',
+	},
+	annotatorThinning: {
+		description:
+			'Image annotator stroke thinning (0–1). Controls how much pressure affects stroke width.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorSmoothing: {
+		description: 'Image annotator stroke smoothing (0–1). Higher values produce smoother curves.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorStreamline: {
+		description:
+			'Image annotator stroke streamline (0–1). Higher values dampen pointer jitter for steadier lines.',
+		type: 'number',
+		default: 0.5,
+		category: 'appearance',
+	},
+	annotatorTaperStart: {
+		description: 'Image annotator taper distance at the start of a stroke (in pixels).',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	annotatorTaperEnd: {
+		description: 'Image annotator taper distance at the end of a stroke (in pixels).',
+		type: 'number',
+		default: 0,
 		category: 'appearance',
 	},
 

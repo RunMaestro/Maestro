@@ -38,6 +38,7 @@ import { ContextWarningSash } from './ContextWarningSash';
 import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { NotificationPopover } from './NotificationPopover';
+import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 import { filterSlashCommands, highlightSlashCommand } from '../utils/search';
@@ -278,6 +279,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const effortMenuRef = useRef<HTMLDivElement>(null);
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
+	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -550,6 +552,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										maxWidth: '200px',
 									}}
 								/>
+							</button>
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									openAnnotator(img, (newDataUrl) =>
+										setStagedImages((prev) => prev.map((s, i) => (i === idx ? newDataUrl : s)))
+									);
+								}}
+								title="Annotate image"
+								className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded-full p-1 shadow-md hover:bg-black/80 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
+							>
+								<PenLine className="w-3 h-3" />
 							</button>
 							<button
 								onClick={(e) => {

@@ -16,7 +16,7 @@ import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
-import { clampTooltipToViewport } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 type RadialMode = 'hours' | 'weekday';
 
@@ -178,8 +178,10 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 
 	const handleMouseEnter = (index: number, e: React.MouseEvent<SVGPathElement>) => {
 		setHoveredIndex(index);
-		const rect = e.currentTarget.getBoundingClientRect();
-		setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top });
+		setTooltipPos({ x: e.clientX, y: e.clientY });
+	};
+	const handleMouseMove = (e: React.MouseEvent<SVGPathElement>) => {
+		setTooltipPos({ x: e.clientX, y: e.clientY });
 	};
 	const handleMouseLeave = () => {
 		setHoveredIndex(null);
@@ -260,6 +262,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 									fill={accent}
 									opacity={opacity}
 									onMouseEnter={(e) => handleMouseEnter(slice.index, e)}
+									onMouseMove={handleMouseMove}
 									onMouseLeave={handleMouseLeave}
 									style={{ transition: 'opacity 0.2s ease', cursor: 'pointer' }}
 								/>
@@ -321,41 +324,19 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 					</svg>
 				)}
 
-				{hovered &&
-					tooltipPos &&
-					(() => {
-						const tooltipWidth = 220;
-						const tooltipHeight = 60;
-						const { left, top } = clampTooltipToViewport({
-							anchorX: tooltipPos.x,
-							anchorY: tooltipPos.y - 8,
-							width: tooltipWidth,
-							height: tooltipHeight,
-							transform: 'top-center',
-						});
-						return (
-							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-								style={{
-									left,
-									top,
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-							>
-								<div className="font-medium mb-1">
-									{mode === 'hours'
-										? `${formatHour12(hovered.index)}–${formatHour12((hovered.index + 1) % 24)}`
-										: WEEKDAY_FULL[hovered.index]}
-								</div>
-								<div style={{ color: theme.colors.textDim }}>
-									<div>{formatNumber(hovered.count)} events</div>
-									{hovered.duration > 0 && <div>{formatDuration(hovered.duration)} total</div>}
-								</div>
-							</div>
-						);
-					})()}
+				{hovered && (
+					<ChartTooltip anchor={tooltipPos} theme={theme} width={220} height={60}>
+						<div className="font-medium mb-1">
+							{mode === 'hours'
+								? `${formatHour12(hovered.index)}–${formatHour12((hovered.index + 1) % 24)}`
+								: WEEKDAY_FULL[hovered.index]}
+						</div>
+						<div style={{ color: theme.colors.textDim }}>
+							<div>{formatNumber(hovered.count)} events</div>
+							{hovered.duration > 0 && <div>{formatDuration(hovered.duration)} total</div>}
+						</div>
+					</ChartTooltip>
+				)}
 			</div>
 			<div
 				className="mt-3 pt-3 border-t text-xs text-center"

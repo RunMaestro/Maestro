@@ -148,6 +148,12 @@ beforeEach(() => {
 		stats: mockStats,
 		dialog: mockDialog,
 		fs: mockFs,
+		// Minimum surface needed by `useGlobalAgentStats` (called from the
+		// dashboard's Achievement share image flow).
+		agentSessions: {
+			getGlobalStats: vi.fn().mockResolvedValue(null),
+			onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		},
 	};
 
 	// Reset mocks with default data
@@ -333,18 +339,15 @@ describe('Usage Dashboard State Transition Animations', () => {
 		it('applies staggered delays to overview sections', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
 
+			// Overview no longer contains activity-heatmap or duration-trends
+			// (they moved to the Activity tab). Verify the staggered animation
+			// runs on the sections that ARE in overview.
 			await waitFor(() => {
-				// Summary cards: 0ms
 				const summaryCards = screen.getByTestId('section-summary-cards');
 				expect(summaryCards).toHaveStyle({ animationDelay: '0ms' });
 
-				// Activity heatmap: 200ms
-				const heatmap = screen.getByTestId('section-activity-heatmap');
-				expect(heatmap).toHaveStyle({ animationDelay: '200ms' });
-
-				// Duration trends: 300ms
-				const trends = screen.getByTestId('section-duration-trends');
-				expect(trends).toHaveStyle({ animationDelay: '300ms' });
+				const agentComparison = screen.getByTestId('section-agent-comparison');
+				expect(agentComparison).toHaveStyle({ animationDelay: '100ms' });
 			});
 		});
 
@@ -358,9 +361,9 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Agent Overview view (5 tabs total now; index 2)
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[2]);
+			// Switch to Agent Overview tab. Look up by exact name to avoid
+			// the substring match for "Agents" picking up the wrong tab.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agent Overview' }));
 
 			await waitFor(() => {
 				// Session stats is the first section in agent-overview view
@@ -513,8 +516,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			fireEvent.keyDown(tabs, { key: 'ArrowRight' });
 
 			await waitFor(() => {
-				const agentsTab = screen.getByRole('tab', { name: /agents/i });
-				expect(agentsTab).toHaveAttribute('aria-selected', 'true');
+				// ArrowRight from Overview now lands on "Agent Overview" (it
+				// was inserted between Overview and Agents). Look up by exact
+				// name — `/agents/i` matches both tabs.
+				const nextTab = screen.getByRole('tab', { name: 'Agent Overview' });
+				expect(nextTab).toHaveAttribute('aria-selected', 'true');
 			});
 		});
 

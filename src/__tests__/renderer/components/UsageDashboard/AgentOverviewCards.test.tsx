@@ -101,23 +101,18 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-		const cards = screen.getAllByTestId('agent-card');
-		const dots = cards.map((c) => c.querySelector('[data-testid="agent-card-status-dot"]'));
+		// Cards sort alphabetically by name — look up by content rather than
+		// index so the test isn't coupled to the ordering.
+		const cardByName = (name: string) =>
+			(screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement) ?? null;
+		const dotIn = (name: string) =>
+			cardByName(name).querySelector('[data-testid="agent-card-status-dot"]') as HTMLElement;
 
-		// Hex → JSDOM-normalised rgb()
-		const hexToRgb = (hex: string) => {
-			const v = hex.replace('#', '');
-			const r = parseInt(v.slice(0, 2), 16);
-			const g = parseInt(v.slice(2, 4), 16);
-			const b = parseInt(v.slice(4, 6), 16);
-			return `rgb(${r}, ${g}, ${b})`;
-		};
-
-		expect((dots[0] as HTMLElement).style.backgroundColor).toBe(hexToRgb(theme.colors.success));
-		expect((dots[1] as HTMLElement).style.backgroundColor).toBe(hexToRgb(theme.colors.warning));
-		expect((dots[2] as HTMLElement).style.backgroundColor).toBe(hexToRgb(theme.colors.error));
+		expect(dotIn('Idle').style.backgroundColor).toBe(hexToRgb(theme.colors.success));
+		expect(dotIn('Busy').style.backgroundColor).toBe(hexToRgb(theme.colors.warning));
+		expect(dotIn('Err').style.backgroundColor).toBe(hexToRgb(theme.colors.error));
 		// `waiting_input` → textDim fallback
-		expect((dots[3] as HTMLElement).style.backgroundColor).toBe(hexToRgb(theme.colors.textDim));
+		expect(dotIn('Wait').style.backgroundColor).toBe(hexToRgb(theme.colors.textDim));
 	});
 
 	it('animates the status dot only when the session is busy', () => {
@@ -128,12 +123,13 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-		const cards = screen.getAllByTestId('agent-card');
-		const idleDot = cards[0].querySelector('[data-testid="agent-card-status-dot"]') as HTMLElement;
-		const busyDot = cards[1].querySelector('[data-testid="agent-card-status-dot"]') as HTMLElement;
+		const cardByName = (name: string) =>
+			screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
+		const dotIn = (name: string) =>
+			cardByName(name).querySelector('[data-testid="agent-card-status-dot"]') as HTMLElement;
 
-		expect(idleDot.style.animation).toBe('');
-		expect(busyDot.style.animation).toContain('status-pulse');
+		expect(dotIn('Idle').style.animation).toBe('');
+		expect(dotIn('Busy').style.animation).toContain('status-pulse');
 	});
 
 	it('renders the WT badge, branch row, and dashed border for worktree children', () => {
@@ -149,19 +145,20 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-		const cards = screen.getAllByTestId('agent-card');
+		const cardByName = (name: string) =>
+			screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
 
-		// Worktree card
-		expect(cards[0].querySelector('[data-testid="agent-card-wt-badge"]')).not.toBeNull();
-		expect(cards[0].querySelector('[data-testid="agent-card-branch"]')?.textContent).toBe(
+		const worktreeCard = cardByName('Worktree One');
+		expect(worktreeCard.querySelector('[data-testid="agent-card-wt-badge"]')).not.toBeNull();
+		expect(worktreeCard.querySelector('[data-testid="agent-card-branch"]')?.textContent).toBe(
 			'feature/awesome'
 		);
-		expect(cards[0].style.border).toContain('dashed');
+		expect(worktreeCard.style.border).toContain('dashed');
 
-		// Parent (non-worktree) card
-		expect(cards[1].querySelector('[data-testid="agent-card-wt-badge"]')).toBeNull();
-		expect(cards[1].querySelector('[data-testid="agent-card-branch"]')).toBeNull();
-		expect(cards[1].style.border).toContain('solid');
+		const parentCard = cardByName('Parent One');
+		expect(parentCard.querySelector('[data-testid="agent-card-wt-badge"]')).toBeNull();
+		expect(parentCard.querySelector('[data-testid="agent-card-branch"]')).toBeNull();
+		expect(parentCard.style.border).toContain('solid');
 	});
 
 	it('uses bySessionByDay totals for the query count when present', () => {
@@ -286,15 +283,19 @@ describe('AgentOverviewCards', () => {
 				/>
 			);
 
-			const cards = screen.getAllByTestId('agent-card');
+			const cardByName = (name: string) =>
+				screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
+
 			// Parent claude-code card should be selected
-			expect(cards[0].dataset.selected).toBe('true');
-			expect(cards[0].style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
+			const parent = cardByName('Claude');
+			expect(parent.dataset.selected).toBe('true');
+			expect(parent.style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
 			// codex card should not be selected
-			expect(cards[1].dataset.selected).toBeUndefined();
+			expect(cardByName('Codex').dataset.selected).toBeUndefined();
 			// Worktree of claude-code should NOT match the bare provider key
-			expect(cards[2].dataset.selected).toBeUndefined();
-			expect(cards[2].style.border).toContain('dashed');
+			const worktree = cardByName('Claude WT');
+			expect(worktree.dataset.selected).toBeUndefined();
+			expect(worktree.style.border).toContain('dashed');
 		});
 
 		it('highlights only worktree cards when filter key has __worktree suffix', () => {

@@ -429,11 +429,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Main Header Panel',
-		description: 'Toggle the session ID and session cost pills shown in the main header',
+		description:
+			'Toggle the agent name, session ID, and session cost pills shown in the main header',
 		keywords: [
 			'header',
 			'main header',
 			'panel',
+			'agent name',
+			'session name',
 			'session id',
 			'session uuid',
 			'uuid',

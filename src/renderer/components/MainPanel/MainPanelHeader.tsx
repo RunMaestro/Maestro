@@ -90,6 +90,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const showAgentName = useSettingsStore((s) => s.showAgentName);
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -111,7 +112,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			<div className="flex items-center gap-4 min-w-0 overflow-hidden">
 				<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
 					{/* Session name - hidden at narrow widths via CSS container query */}
-					<span className="header-session-name truncate">{activeSession.name}</span>
+					{showAgentName && (
+						<span className="header-session-name truncate">{activeSession.name}</span>
+					)}
 					{activeSession.bookmarked && (
 						<Bookmark
 							className="w-3.5 h-3.5 shrink-0"

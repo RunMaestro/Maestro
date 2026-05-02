@@ -750,6 +750,69 @@ export function registerAutorunHandlers(
 		)
 	);
 
+	// Replace an existing image at relativePath by overwriting it in place.
+	// Used by the image annotator to save edits back to the original file.
+	ipcMain.handle(
+		'autorun:replaceImage',
+		createIpcHandler(
+			handlerOpts('replaceImage'),
+			async (
+				folderPath: string,
+				relativePath: string,
+				base64Data: string,
+				sshRemoteId?: string
+			) => {
+				// Sanitize relativePath to prevent directory traversal
+				const normalizedPath = path.normalize(relativePath);
+				const normalizedPathPosix = normalizedPath.replace(/\\/g, '/');
+				if (
+					normalizedPath.includes('..') ||
+					path.isAbsolute(normalizedPath) ||
+					!normalizedPathPosix.startsWith('images/')
+				) {
+					throw new Error('Invalid image path');
+				}
+
+				const imageBuffer = Buffer.from(base64Data, 'base64');
+
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+
+					const remotePath = `${folderPath}/${normalizedPathPosix}`;
+					logger.debug(`${LOG_CONTEXT} replaceImage via SSH: ${remotePath}`, LOG_CONTEXT);
+
+					const result = await writeFileRemote(remotePath, imageBuffer, sshConfig);
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to write remote image file');
+					}
+
+					logger.info(`Replaced remote Auto Run image: ${relativePath}`, LOG_CONTEXT);
+					return { relativePath: normalizedPathPosix };
+				}
+
+				const filePath = path.join(folderPath, normalizedPath);
+				const resolvedPath = path.resolve(filePath);
+				const resolvedFolder = path.resolve(folderPath);
+				if (!resolvedPath.startsWith(resolvedFolder)) {
+					throw new Error('Invalid file path');
+				}
+
+				try {
+					await fs.access(filePath);
+				} catch {
+					throw new Error('Image file not found');
+				}
+
+				await fs.writeFile(filePath, imageBuffer);
+				logger.info(`Replaced Auto Run image: ${relativePath}`, LOG_CONTEXT);
+				return { relativePath: normalizedPathPosix };
+			}
+		)
+	);
+
 	// List images for a document (by prefix match)
 	ipcMain.handle(
 		'autorun:listImages',

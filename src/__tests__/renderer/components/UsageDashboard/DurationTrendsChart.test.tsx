@@ -311,7 +311,8 @@ describe('DurationTrendsChart', () => {
 				fireEvent.mouseEnter(circles[0]);
 
 				// Tooltip should appear with date
-				const tooltip = container.querySelector('.fixed.z-50');
+				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 				expect(tooltip).toBeInTheDocument();
 			}
 		});
@@ -327,7 +328,8 @@ describe('DurationTrendsChart', () => {
 				fireEvent.mouseEnter(circles[0]);
 				fireEvent.mouseLeave(circles[0]);
 
-				const tooltip = container.querySelector('.fixed.z-50');
+				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 				expect(tooltip).not.toBeInTheDocument();
 			}
 		});

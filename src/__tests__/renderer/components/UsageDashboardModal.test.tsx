@@ -105,6 +105,12 @@ const mockMaestro = {
 	fs: {
 		writeFile: mockWriteFile,
 	},
+	// Minimum surface needed by `useGlobalAgentStats` (called from the
+	// dashboard's Achievement share image flow).
+	agentSessions: {
+		getGlobalStats: vi.fn().mockResolvedValue(null),
+		onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+	},
 };
 
 // Set up window.maestro mock
@@ -229,8 +235,8 @@ describe('UsageDashboardModal', () => {
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs).toHaveLength(5);
 				expect(tabs[0]).toHaveTextContent('Overview');
-				expect(tabs[1]).toHaveTextContent('Agents');
-				expect(tabs[2]).toHaveTextContent('Agent Overview');
+				expect(tabs[1]).toHaveTextContent('Agent Overview');
+				expect(tabs[2]).toHaveTextContent('Agents');
 				expect(tabs[3]).toHaveTextContent('Activity');
 				expect(tabs[4]).toHaveTextContent('Auto Run');
 			});
@@ -1672,7 +1678,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Check for focusable chart sections
+			// Overview retains summary cards, provider comparison, the two
+			// distribution donuts, the radial activity chart, and the activity
+			// heatmap. Duration trends moved to the Activity tab.
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('tabIndex', '0');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute('role', 'region');
 			expect(screen.getByTestId('section-summary-cards')).toHaveAttribute(
@@ -1697,12 +1705,6 @@ describe('UsageDashboardModal', () => {
 				'aria-label',
 				'Activity Heatmap'
 			);
-
-			expect(screen.getByTestId('section-duration-trends')).toHaveAttribute('tabIndex', '0');
-			expect(screen.getByTestId('section-duration-trends')).toHaveAttribute(
-				'aria-label',
-				'Duration Trends Chart'
-			);
 		});
 
 		it('renders tabpanel with proper ARIA attributes', async () => {
@@ -1723,9 +1725,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Click on Agents tab - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Click on the "Agents" tab by name — its index drifted when
+			// "Agent Overview" was inserted above it, so look up by label.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
 			await waitFor(() => {
 				const tabpanel = screen.getByRole('tabpanel');
@@ -1779,11 +1781,13 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			const durationSection = screen.getByTestId('section-duration-trends');
+			// Use the Activity Heatmap — last section in overview view (after
+			// duration trends moved to the Activity tab).
+			const heatmapSection = screen.getByTestId('section-activity-heatmap');
 
 			// Focus last section and press Home
-			durationSection.focus();
-			fireEvent.keyDown(durationSection, { key: 'Home' });
+			heatmapSection.focus();
+			fireEvent.keyDown(heatmapSection, { key: 'Home' });
 
 			// Should focus first section (year-in-pixels — added as the new hero strip)
 			await waitFor(() => {
@@ -1800,13 +1804,13 @@ describe('UsageDashboardModal', () => {
 
 			const summarySection = screen.getByTestId('section-summary-cards');
 
-			// Focus first section and press End
+			// Focus first section and press End. Last section in overview is
+			// the Activity Heatmap (duration-trends moved to the Activity tab).
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'End' });
 
-			// Should focus last section (duration trends)
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-duration-trends'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-activity-heatmap'));
 			});
 		});
 
@@ -1836,9 +1840,9 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Agents view - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Switch to the "Agents" tab by name — index-based clicks broke
+			// when "Agent Overview" was inserted above it.
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
 			// Agents tab now contains a single AgentOverviewCards section. The
 			// previous agent-comparison/session-stats charts moved to the new
@@ -1965,9 +1969,9 @@ describe('UsageDashboardModal', () => {
 				expect(document.activeElement).toBe(screen.getByTestId('section-agent-comparison'));
 			});
 
-			// Switch to Agents view - use getAllByRole('tab') to avoid "multiple elements" error
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[1]); // Agents is the 2nd tab (index 1)
+			// Switch to Agents view by name (its index drifted when "Agent
+			// Overview" was inserted above it).
+			fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
 
 			await waitFor(() => {
 				// Agents view's only section is agent-overview-cards. It should not

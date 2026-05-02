@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import type { Theme } from '../../../../renderer/types';
 
@@ -170,6 +170,12 @@ Object.defineProperty(window, 'maestro', {
 		},
 		dialog: { saveFile: mockSaveFile },
 		fs: { writeFile: mockWriteFile },
+		// Minimum surface needed by `useGlobalAgentStats` (called from the
+		// dashboard's Achievement share image flow).
+		agentSessions: {
+			getGlobalStats: vi.fn().mockResolvedValue(null),
+			onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		},
 	},
 	writable: true,
 });
@@ -771,6 +777,13 @@ describe('UsageDashboard Responsive Layout', () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+
+			// Duration trends moved to the Activity tab — switch to it before checking.
+			fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+
+			await waitFor(() => {
 				const trendsSection = screen.getByTestId('section-duration-trends');
 				expect(trendsSection).toHaveStyle({ minHeight: '280px' });
 			});
@@ -840,8 +853,9 @@ describe('UsageDashboard Responsive Layout', () => {
 
 			// Switch to agents — its single section is now agent-overview-cards
 			// (the previous agent-comparison chart moved to the new "Agent
-			// Overview" tab).
-			const agentsTab = screen.getAllByRole('tab')[1];
+			// Overview" tab). Look up by label, not index, since the order
+			// changed when "Agent Overview" was inserted above "Agents".
+			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
 			act(() => {
 				agentsTab.click();
 			});

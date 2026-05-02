@@ -1434,14 +1434,24 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			) : (
 				<>
 					{/* Show loading progress when file tree is actively loading */}
-					{session.fileTreeLoading && (
-						<FileTreeLoadingProgress
-							theme={theme}
-							progress={session.fileTreeLoadingProgress}
-							isRemote={!!(session.sshRemoteId || session.sessionSshRemoteConfig?.enabled)}
-							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
-						/>
-					)}
+					{session.fileTreeLoading &&
+						(() => {
+							const isRemote = !!(session.sshRemoteId || session.sessionSshRemoteConfig?.enabled);
+							return (
+								<FileTreeLoadingProgress
+									theme={theme}
+									progress={session.fileTreeLoadingProgress}
+									isRemote={isRemote}
+									// Cancel only meaningful for SSH — local scans complete fast and the
+									// button just causes confusion when the tree never appears to "stop".
+									onCancel={
+										isRemote && cancelFileTreeLoad
+											? () => cancelFileTreeLoad(session.id)
+											: undefined
+									}
+								/>
+							);
+						})()}
 					{/* Truncation banner - scan hit the entry cap and stopped early. */}
 					{!session.fileTreeLoading && session.fileTreeTruncated && (
 						<FileTreeTruncatedBanner

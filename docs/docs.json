@@ -52,6 +52,7 @@
 					"document-graph",
 					"git-worktrees",
 					"group-chat",
+					"image-annotator",
 					"remote-control",
 					"ssh-remote-execution",
 					"feedback",

@@ -18,6 +18,7 @@ import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-typ
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { AgentOverviewCards } from './AgentOverviewCards';
+import { AgentDetailModal } from './AgentDetailModal';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
 import { SourceDistributionChart } from './SourceDistributionChart';
@@ -51,6 +52,7 @@ import {
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useGlobalAgentStats } from '../../hooks/stats/useGlobalAgentStats';
 import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
@@ -63,7 +65,6 @@ const OVERVIEW_SECTIONS = [
 	'location-distribution',
 	'radial-activity',
 	'activity-heatmap',
-	'duration-trends',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 const AGENT_OVERVIEW_SECTIONS = [
@@ -142,8 +143,8 @@ const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
 // View mode tabs (base list — Cue is appended dynamically when the Encore flag is on)
 const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
-	{ value: 'agents', label: 'Agents' },
 	{ value: 'agent-overview', label: 'Agent Overview' },
+	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
 ];
@@ -158,11 +159,18 @@ export function UsageDashboardModal({
 	defaultTimeRange = 'week',
 	sessions = EMPTY_SESSIONS,
 	autoRunStats,
-	globalStats,
+	globalStats: globalStatsProp,
 	usageStats,
 	handsOnTimeMs,
 	leaderboardRegistration,
 }: UsageDashboardModalProps) {
+	// The Achievement share image (in this modal's header) needs cross-provider
+	// session/token totals. About Modal fetches them on mount via the shared
+	// hook; mirror that here so callers don't have to thread the prop through.
+	// Only fetch while the modal is actually open — the lazy-loaded modal
+	// stays mounted across opens once the user opens it the first time.
+	const { globalStats: fetchedGlobalStats } = useGlobalAgentStats(isOpen && !globalStatsProp);
+	const globalStats = globalStatsProp ?? fetchedGlobalStats;
 	// Tab visibility must match the IPC handler's gating: both Encore flags
 	// have to be on, otherwise the renderer hits a generic error/retry state
 	// instead of the friendly disabled note.
@@ -185,6 +193,7 @@ export function UsageDashboardModal({
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
+	const [detailSession, setDetailSession] = useState<Session | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -992,34 +1001,6 @@ export function UsageDashboardModal({
 											/>
 										</ChartErrorBoundary>
 									</div>
-
-									{/* Duration Trends Chart - Full width */}
-									<div
-										ref={setSectionRef('duration-trends')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('duration-trends')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'duration-trends')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '280px',
-											boxShadow:
-												focusedSection === 'duration-trends'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '300ms',
-										}}
-										data-testid="section-duration-trends"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Duration Trends">
-											<DurationTrendsChart
-												data={data}
-												timeRange={timeRange}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-											/>
-										</ChartErrorBoundary>
-									</div>
 								</>
 							)}
 
@@ -1042,7 +1023,12 @@ export function UsageDashboardModal({
 								>
 									{sessions.some((s) => s.toolType !== 'terminal') ? (
 										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
-											<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
+											<AgentOverviewCards
+												sessions={sessions}
+												data={data}
+												theme={theme}
+												onShowAgentDetails={setDetailSession}
+											/>
 										</ChartErrorBoundary>
 									) : (
 										<div
@@ -1379,6 +1365,16 @@ export function UsageDashboardModal({
 					<span style={{ opacity: 0.7 }}>Press Esc to close</span>
 				</div>
 			</div>
+
+			{detailSession && data && (
+				<AgentDetailModal
+					session={detailSession}
+					data={data}
+					theme={theme}
+					allSessions={sessions}
+					onClose={() => setDetailSession(null)}
+				/>
+			)}
 		</div>
 	);
 }

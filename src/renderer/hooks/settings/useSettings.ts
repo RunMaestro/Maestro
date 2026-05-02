@@ -350,6 +350,8 @@ export interface UseSettingsReturn {
 	setAutoHideMenuBar: (value: boolean) => void;
 
 	// Main header panel pill toggles
+	showAgentName: boolean;
+	setShowAgentName: (value: boolean) => void;
 	showSessionIdPill: boolean;
 	setShowSessionIdPill: (value: boolean) => void;
 	showSessionCostPill: boolean;

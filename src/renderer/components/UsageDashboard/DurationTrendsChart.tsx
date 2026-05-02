@@ -18,7 +18,7 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { clampTooltipToViewport } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 // Data point for the chart
 interface DataPoint {
@@ -228,18 +228,19 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 		return `${pathStart} L ${lastX} ${baseline} L ${firstX} ${baseline} Z`;
 	}, [chartData, xScale, yScale, chartHeight, padding.bottom]);
 
-	// Handle mouse events for tooltip
+	// Anchor the tooltip to the cursor (not the data point's bounding rect) so
+	// it stays close to the user's pointer regardless of where in the chart
+	// they hover.
 	const handleMouseEnter = useCallback(
 		(point: DataPoint, event: React.MouseEvent<SVGCircleElement>) => {
 			setHoveredPoint(point);
-			const rect = event.currentTarget.getBoundingClientRect();
-			setTooltipPos({
-				x: rect.left + rect.width / 2,
-				y: rect.top,
-			});
+			setTooltipPos({ x: event.clientX, y: event.clientY });
 		},
 		[]
 	);
+	const handleMouseMove = useCallback((event: React.MouseEvent<SVGCircleElement>) => {
+		setTooltipPos({ x: event.clientX, y: event.clientY });
+	}, []);
 
 	const handleMouseLeave = useCallback(() => {
 		setHoveredPoint(null);
@@ -448,6 +449,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 											'cx 0.5s cubic-bezier(0.4, 0, 0.2, 1), cy 0.5s cubic-bezier(0.4, 0, 0.2, 1), r 0.15s ease',
 									}}
 									onMouseEnter={(e) => handleMouseEnter(point, e)}
+									onMouseMove={handleMouseMove}
 									onMouseLeave={handleMouseLeave}
 									role="graphics-symbol"
 									aria-label={`${point.formattedDate}: Average duration ${formatDuration(point.displayDuration)}, ${point.count} ${point.count === 1 ? 'query' : 'queries'}`}
@@ -474,58 +476,37 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 				{/* Tooltip — clamped to viewport so chart points near the right/top
 				    edge don't get cropped. Estimated width/height match the rendered
 				    box; if content changes substantially, revisit these. */}
-				{hoveredPoint &&
-					tooltipPos &&
-					(() => {
-						const hasRawRow =
-							showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration;
-						const tooltipWidth = 220;
-						const tooltipHeight = hasRawRow ? 98 : 80;
-						const { left, top } = clampTooltipToViewport({
-							anchorX: tooltipPos.x,
-							anchorY: tooltipPos.y - 8,
-							width: tooltipWidth,
-							height: tooltipHeight,
-							transform: 'top-center',
-						});
-						return (
-							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs pointer-events-none shadow-lg"
-								style={{
-									left,
-									top,
-									width: tooltipWidth,
-									maxWidth: tooltipWidth,
-									whiteSpace: 'normal',
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-							>
-								<div className="font-medium mb-1">{hoveredPoint.formattedDate}</div>
-								<div style={{ color: theme.colors.textDim }}>
-									<div>
-										Avg Duration:{' '}
-										<span style={{ color: theme.colors.textMain }}>
-											{formatDuration(hoveredPoint.displayDuration)}
-										</span>
-									</div>
-									{showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration && (
-										<div>
-											Raw:{' '}
-											<span style={{ color: theme.colors.textMain }}>
-												{formatDuration(hoveredPoint.rawDuration)}
-											</span>
-										</div>
-									)}
-									<div>
-										Queries:{' '}
-										<span style={{ color: theme.colors.textMain }}>{hoveredPoint.count}</span>
-									</div>
-								</div>
+				{hoveredPoint && (
+					<ChartTooltip
+						anchor={tooltipPos}
+						theme={theme}
+						width={220}
+						height={
+							showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration ? 98 : 80
+						}
+					>
+						<div className="font-medium mb-1">{hoveredPoint.formattedDate}</div>
+						<div style={{ color: theme.colors.textDim }}>
+							<div>
+								Avg Duration:{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{formatDuration(hoveredPoint.displayDuration)}
+								</span>
 							</div>
-						);
-					})()}
+							{showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration && (
+								<div>
+									Raw:{' '}
+									<span style={{ color: theme.colors.textMain }}>
+										{formatDuration(hoveredPoint.rawDuration)}
+									</span>
+								</div>
+							)}
+							<div>
+								Queries: <span style={{ color: theme.colors.textMain }}>{hoveredPoint.count}</span>
+							</div>
+						</div>
+					</ChartTooltip>
+				)}
 			</div>
 
 			{/* Legend */}

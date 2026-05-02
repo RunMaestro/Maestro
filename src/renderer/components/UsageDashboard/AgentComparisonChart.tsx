@@ -17,12 +17,8 @@ import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import {
-	findSessionByStatId,
-	isWorktreeAgent,
-	buildNameMap,
-	clampTooltipToViewport,
-} from './chartUtils';
+import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 interface AgentData {
 	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
@@ -267,14 +263,14 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		return Math.max(...agentData.map((d) => d.duration));
 	}, [agentData]);
 
-	// Handle mouse events for tooltip
+	// Anchor the tooltip to the cursor (not the bar's bounding rect) so it
+	// stays close to the user's pointer regardless of which bar they hover.
 	const handleMouseEnter = useCallback((agent: string, event: React.MouseEvent<HTMLDivElement>) => {
 		setHoveredAgent(agent);
-		const rect = event.currentTarget.getBoundingClientRect();
-		setTooltipPos({
-			x: rect.right + 8,
-			y: rect.top + rect.height / 2,
-		});
+		setTooltipPos({ x: event.clientX, y: event.clientY });
+	}, []);
+	const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+		setTooltipPos({ x: event.clientX, y: event.clientY });
 	}, []);
 
 	const handleMouseLeave = useCallback(() => {
@@ -350,6 +346,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 										transition: 'opacity 0.2s ease',
 									}}
 									onMouseEnter={(e) => handleMouseEnter(agent.key, e)}
+									onMouseMove={handleMouseMove}
 									onMouseLeave={handleMouseLeave}
 									onClick={isClickable ? () => handleAgentClick(agent.key, agent.label) : undefined}
 									onKeyDown={
@@ -468,48 +465,23 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 					</div>
 				)}
 
-				{/* Tooltip — anchored to the right of the bar with `left-center`, then
-				    clamped to the viewport so wide tooltips on narrow modals don't
-				    extend off-screen. */}
-				{hoveredAgentData &&
-					tooltipPos &&
-					(() => {
-						const tooltipWidth = 200;
-						const tooltipHeight = 64;
-						const { left, top } = clampTooltipToViewport({
-							anchorX: tooltipPos.x,
-							anchorY: tooltipPos.y,
-							width: tooltipWidth,
-							height: tooltipHeight,
-							transform: 'left-center',
-						});
-						return (
+				{hoveredAgentData && (
+					<ChartTooltip anchor={tooltipPos} theme={theme} width={200} height={64}>
+						<div className="font-medium mb-1 flex items-center gap-2">
 							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-								style={{
-									left,
-									top,
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-							>
-								<div className="font-medium mb-1 flex items-center gap-2">
-									<div
-										className="w-2 h-2 rounded-full"
-										style={{ backgroundColor: hoveredAgentData.color }}
-									/>
-									{hoveredAgentData.label}
-								</div>
-								<div style={{ color: theme.colors.textDim }}>
-									<div>
-										{hoveredAgentData.count} {hoveredAgentData.count === 1 ? 'query' : 'queries'}
-									</div>
-									<div>{formatDuration(hoveredAgentData.duration)} total</div>
-								</div>
+								className="w-2 h-2 rounded-full"
+								style={{ backgroundColor: hoveredAgentData.color }}
+							/>
+							{hoveredAgentData.label}
+						</div>
+						<div style={{ color: theme.colors.textDim }}>
+							<div>
+								{hoveredAgentData.count} {hoveredAgentData.count === 1 ? 'query' : 'queries'}
 							</div>
-						);
-					})()}
+							<div>{formatDuration(hoveredAgentData.duration)} total</div>
+						</div>
+					</ChartTooltip>
+				)}
 			</div>
 
 			{/* Legend */}

@@ -804,7 +804,28 @@ app.whenReady().then(async () => {
 					},
 				],
 			},
-			{ role: 'editMenu' },
+			{
+				// Custom Edit menu — equivalent to `role: 'editMenu'` minus
+				// `undo` / `redo`. Those built-in roles register Cmd+Z /
+				// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
+				// keystroke at the OS layer before the renderer can see it
+				// (same trap as `role: 'close'` eating Cmd+W — see the note
+				// above the appMenu block). Native text inputs still handle
+				// Cmd+Z internally via the AppKit responder chain, so removing
+				// the menu items has no effect on text-field undo or
+				// copy/paste; it frees Cmd+Z for the image annotator's
+				// stroke-undo handler.
+				label: 'Edit',
+				submenu: [
+					{ role: 'cut' },
+					{ role: 'copy' },
+					{ role: 'paste' },
+					{ role: 'pasteAndMatchStyle' },
+					{ role: 'delete' },
+					{ type: 'separator' },
+					{ role: 'selectAll' },
+				],
+			},
 			{
 				label: 'Window',
 				submenu: [{ role: 'minimize' }, { role: 'zoom' }],

@@ -947,6 +947,7 @@ function MaestroConsoleInner() {
 		handleCloseLightbox,
 		handleNavigateLightbox,
 		handleDeleteLightboxImage,
+		handleUpdateLightboxImage,
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
@@ -2837,6 +2838,7 @@ function MaestroConsoleInner() {
 					onCloseLightbox={handleCloseLightbox}
 					onNavigateLightbox={handleNavigateLightbox}
 					onDeleteLightboxImage={lightboxAllowDelete ? handleDeleteLightboxImage : undefined}
+					onUpdateLightboxImage={lightboxAllowDelete ? handleUpdateLightboxImage : undefined}
 					gitDiffPreview={gitDiffPreview}
 					gitViewerCwd={gitViewerCwd}
 					onCloseGitDiff={handleCloseGitDiff}

@@ -215,6 +215,9 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
+	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
 
@@ -244,6 +247,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Save markdown modal */
 	SAVE_MARKDOWN: 160,
+
+	/** Image annotator modal - above lightbox so Escape closes annotator first */
+	IMAGE_ANNOTATOR: 165,
 
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,

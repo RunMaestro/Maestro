@@ -282,6 +282,7 @@
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "^1.1.0",
+		"perfect-freehand": "^1.2.3",
 		"picomatch": "^4.0.3",
 		"qrcode": "^1.5.4",
 		"qrcode.react": "^4.2.0",
