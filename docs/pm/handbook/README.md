@@ -20,6 +20,7 @@ The `/PM` mode system prompt loads `pm-mode-system.md` and appends the paths to 
 | [08-blocked-and-recovery.md](08-blocked-and-recovery.md)   | Blocked items, audit, /PM migrate-labels, unstick procedures                        |
 | [09-state-source-of-truth.md](09-state-source-of-truth.md) | Field-vs-label rule, anti-patterns, examples                                        |
 | [10-cheatsheet.md](10-cheatsheet.md)                       | gh CLI quick reference for every common operation                                   |
+| [11-dispatch-health.md](11-dispatch-health.md)             | Check / repair dispatch from PM mode — what you can see vs. what you can't          |
 
 ---
 

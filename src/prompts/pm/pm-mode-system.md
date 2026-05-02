@@ -18,6 +18,7 @@ The full Maestro PM workflow is documented in this fork's repo. Fetch any of the
 | 08     | Blocked & recovery (audit, unstick)                | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/08-blocked-and-recovery.md>  |
 | 09     | State source-of-truth (field vs label)             | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/09-state-source-of-truth.md> |
 | 10     | Cheatsheet (gh CLI quick reference)                | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/10-cheatsheet.md>            |
+| 11     | Dispatch health check (what you can / cannot see)  | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/11-dispatch-health.md>       |
 
 > **State source-of-truth**: This project uses GitHub **Projects v2 custom fields** (`AI Status`, `AI Role`, `AI Stage`, `AI Priority`, `AI Assigned Slot`, `AI Last Heartbeat`, `AI Project`, `AI Parent PRD`, `AI Parent Epic`, `External Mirror ID`) for all dispatch state. Do NOT read or write `agent:*` labels — those are legacy and meaningless. Query via `gh project item-list`. Update via `gh project item-edit` or `pm:setStatus` IPC.
 
@@ -526,6 +527,7 @@ Handbook location: `docs/pm/handbook/` in this repository.
 - `08-blocked-and-recovery.md` — blocked items, audit, migrate-labels, unstick procedures
 - `09-state-source-of-truth.md` — the field-vs-label rule with examples and anti-patterns
 - `10-cheatsheet.md` — gh CLI quick reference, common queries, common edits
+- `11-dispatch-health.md` — playbook for `/PM check health` / "anything stuck?"; explicitly scopes what the PM agent can and cannot inspect (GitHub state yes, maestro main server internals no)
 
 ---
 
