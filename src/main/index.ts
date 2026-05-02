@@ -668,7 +668,7 @@ app.whenReady().then(async () => {
 		await historyManager.initialize();
 		logger.info('History manager initialized', 'Startup');
 		// Start watching history directory for external changes (from CLI, etc.)
-		await historyManager.startWatching((sessionId) => {
+		historyManager.startWatching((sessionId) => {
 			logger.debug(
 				`History file changed for session ${sessionId}, notifying renderer`,
 				'HistoryWatcher'

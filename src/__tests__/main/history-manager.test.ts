@@ -1233,7 +1233,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			await manager.startWatching(callback);
+			manager.startWatching(callback);
 
 			expect(mockWatch).toHaveBeenCalledWith(
 				path.join('/mock/userData', 'history'),
@@ -1246,7 +1246,7 @@ describe('HistoryManager', () => {
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(false);
 
-			await manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
 
 			expect(mockMkdirSync).toHaveBeenCalledWith(path.join('/mock/userData', 'history'), {
 				recursive: true,
@@ -1263,7 +1263,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			await manager.startWatching(callback);
+			manager.startWatching(callback);
 
 			// Simulate a file change event
 			watchCallback('change', 'session_1.json');
@@ -1281,7 +1281,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			await manager.startWatching(callback);
+			manager.startWatching(callback);
 
 			watchCallback('change', 'readme.txt');
 			expect(callback).not.toHaveBeenCalled();
@@ -1297,7 +1297,7 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(true);
 
 			const callback = vi.fn();
-			await manager.startWatching(callback);
+			manager.startWatching(callback);
 
 			watchCallback('change', null);
 			expect(callback).not.toHaveBeenCalled();
@@ -1308,8 +1308,8 @@ describe('HistoryManager', () => {
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
-			await manager.startWatching(vi.fn());
-			await manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
 
 			expect(mockWatch).toHaveBeenCalledTimes(1);
 		});
@@ -1319,7 +1319,7 @@ describe('HistoryManager', () => {
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
-			await manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
 			manager.stopWatching();
 
 			expect(mockWatcher.close).toHaveBeenCalled();
@@ -1331,9 +1331,9 @@ describe('HistoryManager', () => {
 			mockWatch.mockReturnValueOnce(mockWatcher1).mockReturnValueOnce(mockWatcher2);
 			mockExistsSync.mockReturnValue(true);
 
-			await manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
 			manager.stopWatching();
-			await manager.startWatching(vi.fn());
+			manager.startWatching(vi.fn());
 
 			expect(mockWatch).toHaveBeenCalledTimes(2);
 		});
@@ -1341,6 +1341,30 @@ describe('HistoryManager', () => {
 		it('should be safe to call stopWatching when not watching', async () => {
 			// Should not throw
 			expect(() => manager.stopWatching()).not.toThrow();
+		});
+
+		it('should register an error handler on the watcher to prevent unhandled rejections', () => {
+			const onSpy = vi.fn();
+			const mockWatcher = { close: vi.fn(), on: onSpy } as unknown as fs.FSWatcher;
+			mockWatch.mockReturnValue(mockWatcher);
+			mockExistsSync.mockReturnValue(true);
+
+			manager.startWatching(vi.fn());
+
+			expect(onSpy).toHaveBeenCalledWith('error', expect.any(Function));
+		});
+
+		it('should log and not throw if fs.watch itself throws', () => {
+			mockWatch.mockImplementation(() => {
+				throw new Error('EBUSY: resource busy');
+			});
+			mockExistsSync.mockReturnValue(true);
+
+			expect(() => manager.startWatching(vi.fn())).not.toThrow();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to start history watcher'),
+				expect.any(String)
+			);
 		});
 	});
 
