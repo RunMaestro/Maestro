@@ -160,9 +160,11 @@ import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
 // pm-reverse-sync poller removed (#444): GitHub-as-truth, no local DB to sync to
 import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
 import { startDispatchPoller, stopDispatchPoller } from './agent-dispatch/dispatch-poller';
-import { getGithubClient } from './agent-dispatch/github-client';
+import { getGithubClient, GithubClient } from './agent-dispatch/github-client';
 import { getClaimTracker } from './agent-dispatch/claim-tracker';
 import { auditLog } from './agent-dispatch/dispatch-audit-log';
+import { executeSlot } from './agent-dispatch/slot-executor';
+import type { ProjectRoleSlots } from '../shared/project-roles-types';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -767,13 +769,268 @@ app.whenReady().then(async () => {
 					const slotsMap = store.get('projectRoleSlots', {}) as Record<string, unknown>;
 					return Object.keys(slotsMap).map((projectPath) => ({ projectPath }));
 				},
-				runAutoPickup: async (_projectPath: string) => {
-					// The AgentDispatchRuntime is not yet wired to a live runtime in this
-					// branch (getRuntime returns null in registerAgentDispatchHandlers).
-					// When the runtime is wired up, replace the body with:
-					//   await runtime?.engine.runAutoPickup('poller');
-					// For now the poller tick is a no-op so the interval + gating logic
-					// can be validated independently of the runtime wiring.
+				runAutoPickup: async (projectPath: string) => {
+					// (#443) Real auto-pickup: query GitHub for eligible work items and
+					// claim them via the configured runner slot.
+					const LOG = '[DispatchPoller]';
+
+					// 1. Look up per-project GitHub coordinates from the settings cache.
+					//    Without a mapping we cannot query Projects v2 — skip silently and
+					//    let the next tick retry (discovery happens via /PM-init or the
+					//    pm:resolveGithubProject IPC handler).
+					const githubMap = store.get('projectGithubMap', {}) as Record<
+						string,
+						{ owner: string; projectNumber: number; projectTitle?: string }
+					>;
+					const projectCoords = githubMap[projectPath];
+					if (!projectCoords) {
+						logger.debug(
+							`${LOG} No GitHub project mapping for "${projectPath}" — skipping tick`,
+							'Startup'
+						);
+						return;
+					}
+
+					// 2. Resolve runner slot configuration for this project.
+					const slotsMap = store.get('projectRoleSlots', {}) as Record<string, ProjectRoleSlots>;
+					const slots: ProjectRoleSlots = slotsMap[projectPath] ?? {};
+					const runnerSlot = slots.runner;
+					if (!runnerSlot?.agentId) {
+						logger.debug(
+							`${LOG} No runner slot configured for "${projectPath}" — skipping tick`,
+							'Startup'
+						);
+						return;
+					}
+					if (runnerSlot.enabled === false) {
+						logger.debug(
+							`${LOG} Runner slot disabled (drain mode) for "${projectPath}" — skipping tick`,
+							'Startup'
+						);
+						return;
+					}
+
+					// 3. Query GitHub Projects v2 for items that are Tasks Ready and have
+					//    no AI Assigned Slot set (i.e. unclaimed).
+					const client = new GithubClient({
+						projectOwner: projectCoords.owner,
+						projectNumber: projectCoords.projectNumber,
+					});
+					let eligibleItems;
+					try {
+						eligibleItems = await client.listProjectItems({
+							statusIn: ['Tasks Ready'],
+							assignedSlotMatches: '',
+						});
+					} catch (err) {
+						// GitHub query failure: log + skip this project for this tick.
+						// Error code surfaced per #447 structured-error conventions.
+						logger.warn(
+							`${LOG} GitHub query failed for "${projectPath}": ${err instanceof Error ? err.message : String(err)}`,
+							'Startup'
+						);
+						return;
+					}
+
+					if (eligibleItems.length === 0) {
+						logger.debug(`${LOG} No eligible items for "${projectPath}"`, 'Startup');
+						return;
+					}
+
+					logger.info(
+						`${LOG} Found ${eligibleItems.length} eligible item(s) for "${projectPath}"`,
+						'Startup'
+					);
+
+					// 4. Resolve the session config and agent definition for the slot agent.
+					const storedSessions = sessionsStore.get('sessions', []) as Array<
+						Record<string, unknown>
+					>;
+					const slotSession = storedSessions.find(
+						(s: Record<string, unknown>) => s['id'] === runnerSlot.agentId
+					);
+					if (!slotSession) {
+						logger.warn(
+							`${LOG} Runner slot agent "${runnerSlot.agentId}" not found in sessions for "${projectPath}" — skipping tick`,
+							'Startup'
+						);
+						return;
+					}
+					const agentDef = getAgentDefinition(slotSession['toolType'] as string);
+					if (!agentDef) {
+						logger.warn(
+							`${LOG} No agent definition for toolType "${slotSession['toolType']}" (session "${runnerSlot.agentId}") — skipping tick`,
+							'Startup'
+						);
+						return;
+					}
+
+					const agentConfigValues = getAgentConfigForAgent(agentDef.id);
+					const sshStore = createSshRemoteStoreAdapter(store);
+					const claimTracker = getClaimTracker();
+					let projectId: string;
+					try {
+						projectId = await client.readProjectId();
+					} catch (err) {
+						logger.warn(
+							`${LOG} Failed to read project ID for "${projectPath}": ${err instanceof Error ? err.message : String(err)}`,
+							'Startup'
+						);
+						return;
+					}
+
+					// 5. For each eligible item, claim it and spawn the runner agent.
+					let claimed = 0;
+					for (const item of eligibleItems) {
+						// Skip if already tracked in memory (concurrent tick or prior claim).
+						if (item.id && claimTracker.getByProjectItemId(item.id)) {
+							continue;
+						}
+
+						try {
+							// Write AI Assigned Slot to GitHub — this is the durable claim.
+							await client.setItemFieldValue(
+								projectId,
+								item.id,
+								'AI Assigned Slot',
+								runnerSlot.agentId
+							);
+						} catch (err) {
+							logger.warn(
+								`${LOG} Failed to set AI Assigned Slot for item ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+								'Startup'
+							);
+							continue;
+						}
+
+						const claimedAt = new Date().toISOString();
+
+						// Register in-memory claim so heartbeat + pm-tools can resolve it.
+						claimTracker.addClaim({
+							claimId: `poller-${item.id}`,
+							projectPath,
+							role: 'runner',
+							issueNumber: item.issueNumber ?? 0,
+							issueTitle: item.title ?? item.id,
+							projectItemId: item.id,
+							projectId,
+							agentSessionId: runnerSlot.agentId,
+							claimedAt,
+							lastHeartbeatAt: claimedAt,
+						});
+
+						auditLog('claim', {
+							actor: 'dispatch-poller',
+							workItemId: item.id,
+							newState: {
+								'AI Assigned Slot': runnerSlot.agentId,
+								projectPath,
+								role: 'runner',
+							},
+						});
+
+						// Construct a minimal WorkItem for the executor.
+						const workItem = {
+							id: item.id,
+							type: 'task' as const,
+							status: 'claimed' as const,
+							title: item.title ?? `Work item ${item.id}`,
+							projectPath,
+							gitPath: projectPath,
+							source: 'github' as const,
+							readonly: false,
+							tags: ['agent-ready'],
+							version: 0,
+							createdAt: claimedAt,
+							updatedAt: claimedAt,
+							github: item.issueNumber
+								? {
+										owner: projectCoords.owner,
+										repo: item.fields?.['Repository'] ?? '',
+										repository: `${projectCoords.owner}/${item.fields?.['Repository'] ?? ''}`,
+										issueNumber: item.issueNumber,
+										projectOwner: projectCoords.owner,
+										projectNumber: projectCoords.projectNumber,
+										projectItemId: item.id,
+									}
+								: undefined,
+						};
+
+						const sessionConfig = {
+							id: slotSession['id'] as string,
+							toolType: slotSession['toolType'] as string,
+							customPath: slotSession['customPath'] as string | undefined,
+							customArgs: slotSession['customArgs'] as string | undefined,
+							customEnvVars: slotSession['customEnvVars'] as Record<string, string> | undefined,
+							customModel: slotSession['customModel'] as string | undefined,
+							customEffort: slotSession['customEffort'] as string | undefined,
+							sessionSshRemoteConfig: slotSession['sessionSshRemoteConfig'] as
+								| { enabled: boolean; remoteId: string | null }
+								| undefined,
+						};
+
+						// Spawn the agent — fire-and-forget from the poller's perspective.
+						// The slot executor handles the full lifecycle: spawn → pipeline-advance → release.
+						void executeSlot({
+							workItem,
+							role: 'runner',
+							slotAssignment: runnerSlot,
+							sessionConfig,
+							// Cast: AgentDefinition.configOptions uses discriminated union
+							// argBuilder types that are wider than SlotExecutorContext's
+							// inline type.  The slot executor itself casts as well.
+							agentDef: agentDef as Parameters<typeof executeSlot>[0]['agentDef'],
+							agentConfigValues,
+							processManager: processManager!,
+							sshStore,
+							releaseClaim: async (workItemId, opts) => {
+								try {
+									await client.setItemFieldValue(projectId, workItemId, 'AI Assigned Slot', '');
+									await client.setItemFieldValue(projectId, workItemId, 'AI Status', 'Tasks Ready');
+									claimTracker.removeClaim(runnerSlot.agentId, 'runner');
+									auditLog('release', {
+										actor: opts?.actor ? String(opts.actor.id) : 'dispatch-poller',
+										workItemId,
+										reason: opts?.note,
+									});
+								} catch (releaseErr) {
+									logger.warn(
+										`${LOG} Failed to release claim for item ${workItemId}: ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
+										'Startup'
+									);
+								}
+							},
+							advancePipeline: async (_wi, _event, _actor) => {
+								// Pipeline advancement is a no-op for the basic runner path;
+								// pm:setStatus handles field updates when the agent self-reports.
+							},
+							auditLog: (event) => {
+								auditLog(
+									event.kind === 'spawn-start'
+										? 'claim'
+										: event.kind === 'claim-released'
+											? 'release'
+											: 'status_change',
+									{
+										actor: event.sessionId ?? event.agentId,
+										workItemId: event.workItemId,
+										reason: event.detail,
+									}
+								);
+							},
+						}).catch((spawnErr) => {
+							logger.warn(
+								`${LOG} executeSlot failed for item ${item.id}: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`,
+								'Startup'
+							);
+						});
+
+						claimed++;
+					}
+
+					if (claimed > 0) {
+						logger.info(`${LOG} Claimed ${claimed} item(s) for "${projectPath}"`, 'Startup');
+					}
 				},
 				logger: {
 					info: (msg) => logger.info(msg, 'Startup'),
