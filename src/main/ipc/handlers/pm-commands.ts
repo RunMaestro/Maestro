@@ -10,6 +10,13 @@
  * The verb-specific prompt files (pm-prd-new.md, pm-epic-decompose.md, etc.) remain on
  * disk as reference content the agent can read mid-conversation but are NOT loaded as
  * separate slash commands.
+ *
+ * The handbook files in docs/pm/handbook/ are appended as absolute paths at the bottom
+ * of the loaded prompt so the agent can Read them on demand during a PM conversation.
+ *
+ * TODO: Switch handbook paths from the hardcoded fork root to
+ *   `${activeSession.projectRoot}/docs/pm/handbook/`
+ * once the IPC can pass projectRoot through to loadPmCommands.
  */
 
 import { ipcMain } from 'electron';
@@ -40,6 +47,48 @@ function getPmPromptsDir(): string {
 	return path.join(__dirname, '..', '..', '..', 'src', 'prompts', 'pm');
 }
 
+/**
+ * Returns the absolute path to the PM handbook directory.
+ *
+ * Temporarily hardcoded to the fork root at /opt/Maestro-fork so the agent
+ * can Read handbook files during development on this clone.
+ *
+ * TODO: Switch to `${activeSession.projectRoot}/docs/pm/handbook/` once
+ * projectRoot is threaded through the loadPmCommands IPC call.
+ */
+function getPmHandbookDir(): string {
+	// Hardcoded fork root — dev only.
+	return '/opt/Maestro-fork/docs/pm/handbook';
+}
+
+/** Build the handbook table-of-contents appendix for the /PM system prompt. */
+function buildHandbookAppendix(): string {
+	const handbookDir = getPmHandbookDir();
+	const files = [
+		'01-prd-creation.md',
+		'02-epic-decomposition.md',
+		'03-task-breakdown.md',
+		'04-github-sync.md',
+		'05-dispatch-claim.md',
+		'06-review-merge.md',
+		'07-status-and-standup.md',
+		'08-blocked-and-recovery.md',
+		'09-state-source-of-truth.md',
+		'10-cheatsheet.md',
+	];
+
+	const lines = [
+		'',
+		'---',
+		'',
+		'## Handbook (read these as needed mid-conversation)',
+		'',
+		...files.map((f) => `- ${path.join(handbookDir, f)}`),
+	];
+
+	return lines.join('\n');
+}
+
 /** Strip YAML/markdown frontmatter if present (lines between leading ---). */
 function stripFrontmatter(content: string): string {
 	const trimmed = content.trimStart();
@@ -58,7 +107,8 @@ async function loadPmCommands(): Promise<PmCommand[]> {
 	const filePath = path.join(dir, 'pm-mode-system.md');
 	try {
 		const raw = await fs.readFile(filePath, 'utf-8');
-		const prompt = stripFrontmatter(raw);
+		const basePrompt = stripFrontmatter(raw);
+		const prompt = basePrompt + buildHandbookAppendix();
 		return [
 			{
 				id: 'mode',
