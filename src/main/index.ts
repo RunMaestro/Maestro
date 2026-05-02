@@ -162,7 +162,7 @@ import { startBranchHygieneCron } from './pm-branch-hygiene/cron';
 // pm-reverse-sync poller removed (#444): GitHub-as-truth, no local DB to sync to
 import { startStaleClaimSweeper } from './pm-heartbeat/stale-sweeper';
 import { startDispatchPoller, stopDispatchPoller } from './agent-dispatch/dispatch-poller';
-import { getGithubClient, GithubClient } from './agent-dispatch/github-client';
+import { getGithubClient, getGithubClientForProject } from './agent-dispatch/github-client';
 import { getClaimTracker } from './agent-dispatch/claim-tracker';
 import { auditLog } from './agent-dispatch/dispatch-audit-log';
 import { executeSlot } from './agent-dispatch/slot-executor';
@@ -814,7 +814,7 @@ app.whenReady().then(async () => {
 
 					// 3. Query GitHub Projects v2 for items that are Tasks Ready and have
 					//    no AI Assigned Slot set (i.e. unclaimed).
-					const client = new GithubClient({
+					const client = getGithubClientForProject({
 						projectOwner: projectCoords.owner,
 						projectNumber: projectCoords.projectNumber,
 					});

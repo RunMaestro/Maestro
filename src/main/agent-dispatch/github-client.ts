@@ -38,6 +38,9 @@ const LEGACY_FALLBACK_PROJECT_NUMBER = LEGACY_HUMPFTECH_PROJECT_NUMBER;
 
 const LOG_CONTEXT = '[GithubClient]';
 
+let sharedRateLimitRemaining = Infinity;
+let sharedRateLimitCheckedAt = 0;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -81,8 +84,6 @@ export class GithubClient {
 	private readonly ttlMs: number;
 	private readonly rateLimitLow: number;
 	private readonly itemListCache = new Map<string, CacheEntry<GithubProjectItem[]>>();
-	private rateLimitRemaining = Infinity;
-	private rateLimitCheckedAt = 0;
 	// How often to re-check the rate limit (10 min)
 	private readonly rateLimitCheckIntervalMs = 10 * 60 * 1000;
 	/** Per-project GitHub project owner (#447). */
@@ -113,46 +114,36 @@ export class GithubClient {
 	 */
 	async listProjectItems(filters?: GithubProjectItemFilters): Promise<GithubProjectItem[]> {
 		const cacheKey = JSON.stringify(filters ?? {});
+		const rootKey = JSON.stringify({});
 		const now = Date.now();
 
 		const cached = this.itemListCache.get(cacheKey);
-		const isStale = !cached || now - cached.fetchedAt > this.ttlMs;
+		const rootCached = this.itemListCache.get(rootKey);
+		const cachedIsFresh = cached && now - cached.fetchedAt <= this.ttlMs;
+		const rootIsFresh = rootCached && now - rootCached.fetchedAt <= this.ttlMs;
 
-		// If rate-limited and we have a cached copy (even stale), return it.
-		if (!isStale || (await this.isRateLimited(now))) {
-			if (cached) {
-				return cached.data;
-			}
+		if (cachedIsFresh) {
+			return cached.data;
+		}
+
+		if (rootIsFresh) {
+			const items = this.applyFilters(rootCached.data, filters);
+			this.itemListCache.set(cacheKey, { data: items, fetchedAt: now });
+			return items;
+		}
+
+		// If rate-limited and we have any cached copy, serve it even if stale.
+		if (await this.isRateLimited(now)) {
+			if (cached) return cached.data;
+			if (rootCached) return this.applyFilters(rootCached.data, filters);
 		}
 
 		const raw = await this.fetchAllProjectItems();
-		let items = raw;
+		const items = this.applyFilters(raw, filters);
 
-		// Apply filters in-process (avoids N+1 gh calls)
-		if (filters?.statusIn && filters.statusIn.length > 0) {
-			const statusSet = new Set(filters.statusIn.map((s) => s.toLowerCase()));
-			items = items.filter((item) => {
-				const status = (item.fields['AI Status'] ?? '').toLowerCase();
-				return statusSet.has(status);
-			});
-		}
-		if (filters?.assignedSlotMatches !== undefined) {
-			const pattern = filters.assignedSlotMatches;
-			items = items.filter((item) => {
-				const slot = item.fields['AI Assigned Slot'] ?? '';
-				return pattern === '' ? slot === '' : slot.includes(pattern);
-			});
-		}
-
-		// Cache the unfiltered result; filtered views are sub-queries
 		this.itemListCache.set(cacheKey, { data: items, fetchedAt: now });
-		// Also cache the unfiltered root result for re-use
-		const rootKey = JSON.stringify({});
 		if (cacheKey !== rootKey) {
-			const rootCached = this.itemListCache.get(rootKey);
-			if (!rootCached || now - rootCached.fetchedAt > this.ttlMs) {
-				this.itemListCache.set(rootKey, { data: raw, fetchedAt: now });
-			}
+			this.itemListCache.set(rootKey, { data: raw, fetchedAt: now });
 		}
 
 		return items;
@@ -251,6 +242,28 @@ export class GithubClient {
 	// Internal helpers
 	// -------------------------------------------------------------------------
 
+	private applyFilters(
+		items: GithubProjectItem[],
+		filters?: GithubProjectItemFilters
+	): GithubProjectItem[] {
+		let filtered = items;
+		if (filters?.statusIn && filters.statusIn.length > 0) {
+			const statusSet = new Set(filters.statusIn.map((s) => s.toLowerCase()));
+			filtered = filtered.filter((item) => {
+				const status = (item.fields['AI Status'] ?? '').toLowerCase();
+				return statusSet.has(status);
+			});
+		}
+		if (filters?.assignedSlotMatches !== undefined) {
+			const pattern = filters.assignedSlotMatches;
+			filtered = filtered.filter((item) => {
+				const slot = item.fields['AI Assigned Slot'] ?? '';
+				return pattern === '' ? slot === '' : slot.includes(pattern);
+			});
+		}
+		return filtered;
+	}
+
 	private async fetchAllProjectItems(): Promise<GithubProjectItem[]> {
 		const result = await this.runGh([
 			'project',
@@ -344,8 +357,8 @@ export class GithubClient {
 	}
 
 	private async isRateLimited(now: number): Promise<boolean> {
-		if (now - this.rateLimitCheckedAt < this.rateLimitCheckIntervalMs) {
-			return this.rateLimitRemaining < this.rateLimitLow;
+		if (now - sharedRateLimitCheckedAt < this.rateLimitCheckIntervalMs) {
+			return sharedRateLimitRemaining < this.rateLimitLow;
 		}
 
 		try {
@@ -361,14 +374,14 @@ export class GithubClient {
 			// Project commands use GraphQL; fall back to core for non-project paths.
 			const graphqlRemaining = parsed.resources?.graphql?.remaining;
 			const coreRemaining = parsed.resources?.core?.remaining ?? parsed.rate?.remaining;
-			this.rateLimitRemaining = Math.min(graphqlRemaining ?? Infinity, coreRemaining ?? Infinity);
-			this.rateLimitCheckedAt = now;
+			sharedRateLimitRemaining = Math.min(graphqlRemaining ?? Infinity, coreRemaining ?? Infinity);
+			sharedRateLimitCheckedAt = now;
 		} catch {
 			// If we can't check, assume we're not rate-limited.
-			this.rateLimitRemaining = Infinity;
+			sharedRateLimitRemaining = Infinity;
 		}
 
-		return this.rateLimitRemaining < this.rateLimitLow;
+		return sharedRateLimitRemaining < this.rateLimitLow;
 	}
 
 	private async runGh(args: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -388,8 +401,8 @@ export class GithubClient {
 				// so the next isRateLimited() call re-queries the meta endpoint
 				// (rate_limit doesn't consume budget) and naturally recovers when
 				// the window resets.
-				this.rateLimitRemaining = 0;
-				this.rateLimitCheckedAt = 0;
+				sharedRateLimitRemaining = 0;
+				sharedRateLimitCheckedAt = 0;
 				throw new Error(`gh ${args[0]} ${args[1] ?? ''} rate-limited (GraphQL): ${stderr}`);
 			}
 			throw new Error(`gh ${args[0]} ${args[1] ?? ''} failed: ${stderr}`);
@@ -431,10 +444,26 @@ function extractIssueNumber(url: string): number | undefined {
 // ---------------------------------------------------------------------------
 
 let _defaultClient: GithubClient | undefined;
+const _projectClients = new Map<string, GithubClient>();
 
 export function getGithubClient(): GithubClient {
 	if (!_defaultClient) {
 		_defaultClient = new GithubClient();
 	}
 	return _defaultClient;
+}
+
+export function getGithubClientForProject(options: {
+	projectOwner: string;
+	projectNumber: number;
+	ttlMs?: number;
+	rateLimitLow?: number;
+}): GithubClient {
+	const cacheKey = `${options.projectOwner}:${options.projectNumber}`;
+	let client = _projectClients.get(cacheKey);
+	if (!client) {
+		client = new GithubClient(options);
+		_projectClients.set(cacheKey, client);
+	}
+	return client;
 }
