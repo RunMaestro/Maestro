@@ -163,7 +163,8 @@ export interface MessageHandlerCallbacks {
 		command: string,
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
-		force?: boolean
+		force?: boolean,
+		images?: string[]
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -593,20 +594,31 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// Optional base64 data URLs pasted from the web client. Threaded through
+		// to the renderer so AI tabs can include them in the agent prompt.
+		const images = Array.isArray(message.images)
+			? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
+			: undefined;
 
 		logger.info(
-			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
+			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}, images=${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
-		if (!sessionId || !command) {
+		// Image-only sends are valid in AI mode (the composer lets users paste
+		// images and submit without typing), so the guard accepts either a
+		// non-empty command OR at least one image. Normalize a missing command
+		// to '' so the renderer's downstream LogEntry.text stays a string.
+		const hasImages = !!images && images.length > 0;
+		if (!sessionId || (!command && !hasImages)) {
 			logger.warn(
-				`[Web Command] Missing sessionId or command: sessionId=${sessionId}, commandLen=${command?.length}`,
+				`[Web Command] Missing sessionId or command/images: sessionId=${sessionId}, commandLen=${command?.length}, images=${images?.length ?? 0}`,
 				LOG_CONTEXT
 			);
 			this.sendError(client, 'Missing sessionId or command');
 			return;
 		}
+		const effectiveCommand = command ?? '';
 
 		// Get session details to check state and determine how to handle
 		const sessionDetail = this.callbacks.getSessionDetail?.(sessionId);
@@ -640,7 +652,7 @@ export class WebSocketMessageHandler {
 
 		// Log all web interface commands prominently
 		logger.info(
-			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${command}`,
+			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${effectiveCommand} | Images: ${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
@@ -660,7 +672,7 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
+				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',

@@ -244,10 +244,11 @@ export class CallbackRegistry {
 		command: string,
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
-		force?: boolean
+		force?: boolean,
+		images?: string[]
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force, images);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {

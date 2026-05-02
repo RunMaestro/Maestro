@@ -370,7 +370,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -388,7 +389,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				// proprietary code, or PII; the full prompt goes to debug, which is
 				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | CommandLength: ${command.length}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
 					'WebServer'
 				);
 				logger.debug(
@@ -405,7 +406,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					command,
 					inputMode,
 					tabId,
-					force
+					force,
+					images
 				);
 				return true;
 			}

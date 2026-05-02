@@ -87,7 +87,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => {
 				// Log metadata only at info level — remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
@@ -99,6 +100,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					inputMode,
 					tabId,
 					force,
+					imageCount: images?.length ?? 0,
 				});
 				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
 					sessionId,
@@ -164,6 +166,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					inputMode,
 					tabId,
 					force,
+					imageCount: images?.length ?? 0,
 				});
 				logger.debug(
 					'[useRemoteIntegration] Dispatching maestro:remoteCommand preview:',
@@ -172,7 +175,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force },
+						detail: { sessionId, command, inputMode, tabId, force, images },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');

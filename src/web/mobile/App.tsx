@@ -1946,19 +1946,35 @@ export default function MobileApp() {
 
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
-		(command: string) => {
+		(command: string, images?: string[]) => {
 			if (!activeSessionId) return;
 
 			// Find the active session to get input mode
 			const currentMode = currentInputMode;
+			// Images are AI-mode only — terminal commands have no image concept.
+			const effectiveImages =
+				currentMode === 'ai' && images && images.length > 0 ? images : undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
 
-			// Add user message to session logs immediately for display
-			addUserLogEntry(command, currentMode);
+			// Offline path: refuse to queue when images are staged. Our offline
+			// queue can't carry image payloads, so silently dropping them
+			// would mislead the user. Bail out early so the composer keeps
+			// the staged images for retry once the connection is back.
+			if ((isOffline || !isActuallyConnected) && effectiveImages?.length) {
+				webLogger.warn(
+					'Cannot queue pasted images while offline. Reconnect and resend with images.',
+					'Mobile'
+				);
+				return;
+			}
 
-			// If offline or not connected, queue the command for later
+			// Add user message to session logs immediately for display
+			addUserLogEntry(command, currentMode, effectiveImages);
+
+			// If offline or not connected, queue the (image-free) command for
+			// later. Image-bearing sends were rejected above.
 			if (isOffline || !isActuallyConnected) {
 				const queued = queueCommand(activeSessionId, command, currentMode);
 				if (queued) {
@@ -1976,9 +1992,10 @@ export default function MobileApp() {
 					sessionId: activeSessionId,
 					command,
 					inputMode: currentMode,
+					...(effectiveImages ? { images: effectiveImages } : {}),
 				});
 				webLogger.info(
-					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId}`,
+					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId} images=${effectiveImages?.length ?? 0}`,
 					'Mobile'
 				);
 			}

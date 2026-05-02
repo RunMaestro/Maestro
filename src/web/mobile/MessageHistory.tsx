@@ -24,6 +24,10 @@ export interface LogEntry {
 	content?: string;
 	source?: 'user' | 'stdout' | 'stderr' | 'system' | 'thinking' | 'tool';
 	type?: string;
+	/** Base64 data URLs attached to a user message (e.g. pasted images).
+	 *  Rendered inline as thumbnails in the user-message bubble so the
+	 *  optimistic local chat shows the same attachments the agent receives. */
+	images?: string[];
 	metadata?: {
 		toolState?: {
 			name?: string;
@@ -463,6 +467,36 @@ export function MessageHistory({
 									textAlign: 'left',
 								}}
 							>
+								{/* Pasted-image attachments — only meaningful on user messages
+								    in AI mode. Rendered inline so the optimistic local chat
+								    shows the same thumbnails the user staged before send,
+								    matching the desktop transcript. */}
+								{isUser && entry.images && entry.images.length > 0 && (
+									<div
+										style={{
+											display: 'flex',
+											flexWrap: 'wrap',
+											gap: '6px',
+											marginBottom: '6px',
+										}}
+									>
+										{entry.images.map((dataUrl, imgIdx) => (
+											<img
+												key={`${messageKey}-img-${imgIdx}`}
+												src={dataUrl}
+												alt={`Attached image ${imgIdx + 1}`}
+												style={{
+													maxWidth: '160px',
+													maxHeight: '160px',
+													objectFit: 'contain',
+													borderRadius: '6px',
+													border: `1px solid ${colors.border}`,
+													display: 'block',
+												}}
+											/>
+										))}
+									</div>
+								)}
 								{inputMode === 'terminal' || isUser ? (
 									// Terminal output and user input: render as plain monospace text
 									<div
