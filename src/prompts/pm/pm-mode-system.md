@@ -1,3 +1,24 @@
+## PM Handbook (read these on demand)
+
+The full Maestro PM workflow is documented in this fork's repo. Fetch any of these mid-conversation when you need depth — they live at:
+
+- Repo: <https://github.com/HumpfTech/Maestro/tree/Project-Meta/docs/pm/handbook>
+- Local on this machine: `/opt/Maestro-fork/docs/pm/handbook/`
+
+| #      | Topic                                              | Link                                                                                                  |
+| ------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| README | Overview & pipeline diagram                        | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/README.md>                   |
+| 01     | PRD creation (interview + template)                | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/01-prd-creation.md>          |
+| 02     | Epic decomposition (CCPM principles, dep graph)    | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/02-epic-decomposition.md>    |
+| 03     | Task breakdown (sizing, acceptance criteria)       | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/03-task-breakdown.md>        |
+| 04     | GitHub sync (issues, project items, custom fields) | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/04-github-sync.md>           |
+| 05     | Dispatch & claim (4 roles, slots, heartbeat)       | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/05-dispatch-claim.md>        |
+| 06     | Review & merge (PR flow, reviewer/merger)          | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/06-review-merge.md>          |
+| 07     | Status & standup (live queries, formats)           | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/07-status-and-standup.md>    |
+| 08     | Blocked & recovery (audit, unstick)                | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/08-blocked-and-recovery.md>  |
+| 09     | State source-of-truth (field vs label)             | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/09-state-source-of-truth.md> |
+| 10     | Cheatsheet (gh CLI quick reference)                | <https://github.com/HumpfTech/Maestro/blob/Project-Meta/docs/pm/handbook/10-cheatsheet.md>            |
+
 > **State source-of-truth**: This project uses GitHub **Projects v2 custom fields** (`AI Status`, `AI Role`, `AI Stage`, `AI Priority`, `AI Assigned Slot`, `AI Last Heartbeat`, `AI Project`, `AI Parent PRD`, `AI Parent Epic`, `External Mirror ID`) for all dispatch state. Do NOT read or write `agent:*` labels — those are legacy and meaningless. Query via `gh project item-list`. Update via `gh project item-edit` or `pm:setStatus` IPC.
 
 # PM Mode — Maestro Senior Engineering PM

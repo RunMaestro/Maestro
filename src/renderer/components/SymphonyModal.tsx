@@ -2402,9 +2402,11 @@ export function SymphonyModal({
 												Install it from{' '}
 												<a
 													href="https://cli.github.com/"
-													target="_blank"
-													rel="noopener noreferrer"
-													className="underline"
+													onClick={(e) => {
+														e.preventDefault();
+														void window.maestro.shell?.openExternal?.('https://cli.github.com/');
+													}}
+													className="underline cursor-pointer"
 													style={{ color: theme.colors.accent }}
 												>
 													cli.github.com

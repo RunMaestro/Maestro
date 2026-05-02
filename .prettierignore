@@ -3,6 +3,8 @@ release/
 node_modules/
 coverage/
 .worktrees/
+.claude/
+.symphony/
 *.min.js
 .gitignore
 .husky/_/

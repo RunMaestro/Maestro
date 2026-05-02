@@ -116,9 +116,11 @@ export function EmptyState({
 			{helpHref && (
 				<a
 					href={helpHref}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="inline-flex items-center gap-1 mt-4 text-xs transition-opacity hover:opacity-80"
+					onClick={(e) => {
+						e.preventDefault();
+						void window.maestro.shell?.openExternal?.(helpHref);
+					}}
+					className="inline-flex items-center gap-1 mt-4 text-xs transition-opacity hover:opacity-80 cursor-pointer"
 					style={{ color: theme.colors.accent }}
 				>
 					{helpLabel}
