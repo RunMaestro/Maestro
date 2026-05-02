@@ -240,125 +240,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Conversational PRD planner system prompt',
 		category: 'conversational-prd',
 	},
-	// PM slash-command suite (#428 + #436)
+	// PM suite — two registered prompts: mode system (loaded by /PM) and init (loaded by /PM-init).
+	// The verb-specific prompt files (pm-prd-new.md, pm-epic-decompose.md, etc.) remain on disk as
+	// reference content the agent can read mid-conversation, but they are not registered as
+	// separate slash commands.
 	{
-		id: 'pm-orchestrator',
-		filename: 'pm/pm-orchestrator.md',
-		description: '/PM <idea> orchestrator primer',
-		category: 'pm',
-	},
-	{
-		id: 'pm-prd-new',
-		filename: 'pm/pm-prd-new.md',
-		description: '/PM prd-new seed prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-prd-edit',
-		filename: 'pm/pm-prd-edit.md',
-		description: '/PM prd-edit seed prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-prd-status',
-		filename: 'pm/pm-prd-status.md',
-		description: '/PM prd-status display prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-prd-parse',
-		filename: 'pm/pm-prd-parse.md',
-		description: '/PM prd-parse conversion prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-prd-list',
-		filename: 'pm/pm-prd-list.md',
-		description: '/PM prd-list display prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-decompose',
-		filename: 'pm/pm-epic-decompose.md',
-		description: '/PM epic-decompose prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-edit',
-		filename: 'pm/pm-epic-edit.md',
-		description: '/PM epic-edit prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-list',
-		filename: 'pm/pm-epic-list.md',
-		description: '/PM epic-list display prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-show',
-		filename: 'pm/pm-epic-show.md',
-		description: '/PM epic-show display prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-sync',
-		filename: 'pm/pm-epic-sync.md',
-		description: '/PM epic-sync GitHub sync prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-epic-start',
-		filename: 'pm/pm-epic-start.md',
-		description: '/PM epic-start pipeline kick prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-issue-start',
-		filename: 'pm/pm-issue-start.md',
-		description: '/PM issue-start claim prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-issue-show',
-		filename: 'pm/pm-issue-show.md',
-		description: '/PM issue-show display prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-issue-status',
-		filename: 'pm/pm-issue-status.md',
-		description: '/PM issue-status quick status prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-issue-sync',
-		filename: 'pm/pm-issue-sync.md',
-		description: '/PM issue-sync GitHub roundtrip prompt',
+		id: 'pm-mode-system',
+		filename: 'pm/pm-mode-system.md',
+		description: '/PM mode system prompt — comprehensive PM persona and workflow reference',
 		category: 'pm',
 	},
 	{
 		id: 'pm-init',
 		filename: 'pm/pm-init.md',
 		description: '/PM-init idempotent field bootstrap prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-next',
-		filename: 'pm/pm-next.md',
-		description: '/PM next eligible work item prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-status',
-		filename: 'pm/pm-status.md',
-		description: '/PM status board snapshot prompt',
-		category: 'pm',
-	},
-	{
-		id: 'pm-standup',
-		filename: 'pm/pm-standup.md',
-		description: '/PM standup summary prompt',
 		category: 'pm',
 	},
 ];
@@ -401,27 +296,9 @@ export const PROMPT_IDS = {
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
 	// Conversational PRD Planner
 	CONVERSATIONAL_PRD_PLANNER: 'conversational-prd-planner',
-	// PM slash-command suite (#428 + #436)
-	PM_ORCHESTRATOR: 'pm-orchestrator',
-	PM_PRD_NEW: 'pm-prd-new',
-	PM_PRD_EDIT: 'pm-prd-edit',
-	PM_PRD_STATUS: 'pm-prd-status',
-	PM_PRD_PARSE: 'pm-prd-parse',
-	PM_PRD_LIST: 'pm-prd-list',
-	PM_EPIC_DECOMPOSE: 'pm-epic-decompose',
-	PM_EPIC_EDIT: 'pm-epic-edit',
-	PM_EPIC_LIST: 'pm-epic-list',
-	PM_EPIC_SHOW: 'pm-epic-show',
-	PM_EPIC_SYNC: 'pm-epic-sync',
-	PM_EPIC_START: 'pm-epic-start',
-	PM_ISSUE_START: 'pm-issue-start',
-	PM_ISSUE_SHOW: 'pm-issue-show',
-	PM_ISSUE_STATUS: 'pm-issue-status',
-	PM_ISSUE_SYNC: 'pm-issue-sync',
+	// PM suite — /PM loads the mode system prompt, /PM-init loads pm-init
+	PM_MODE_SYSTEM: 'pm-mode-system',
 	PM_INIT: 'pm-init',
-	PM_NEXT: 'pm-next',
-	PM_STATUS: 'pm-status',
-	PM_STANDUP: 'pm-standup',
 } as const;
 
 export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];

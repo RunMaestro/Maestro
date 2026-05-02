@@ -1,112 +1,117 @@
 # CLAUDE-PM-COMMANDS.md
 
-The `/PM` slash-command suite for project management brings Maestro's end-to-end delivery workflow to the chat input.
+The `/PM` slash-command surface has been simplified to two commands: `/PM` (enters PM mode) and `/PM-init` (one-time repo bootstrap). The 19+ verb-specific commands that previously existed have been consolidated — the agent in PM mode handles all workflows via natural conversation.
 
-## Architecture Overview
+## Two-Command Surface
 
-The `/PM` namespace lives under the `pmSuite` encore feature flag. When enabled, six verbs become available in AI chat input:
+| Command                 | Handler           | Purpose                                                                                             |
+| ----------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
+| `/PM [direction]`       | `builtin:pm-mode` | Enter PM mode. Agent greets as PM, asks what to work on, and drives the conversation.               |
+| `/PM-init [owner/repo]` | `ipc:pm:initRepo` | One-time idempotent setup: discover GitHub project, ensure AI custom fields exist, persist mapping. |
 
-- **`/PM <idea>`** — Orchestrator: kicks off the entire PM pipeline (Conv-PRD → Epic → Tasks → GitHub)
-- **`/PM prd-new <name>`** — Seed a new Conversational PRD with a title
-- **`/PM prd-list`** — List all PRDs for the current project (stub, awaits Work Graph integration)
-- **`/PM next`** — Show the next eligible work item ready for implementation (stub)
-- **`/PM status`** — Display a project board snapshot (stub)
-- **`/PM standup`** — Generate a standup summary (stub)
+There is also `/PM migrate-labels` (`ipc:pm:migrateLegacyLabels`) for one-off migration of legacy `agent:*` labels to the `AI Status` custom field.
 
-### IPC Dispatch Flow
+## How /PM Mode Works
 
-1. **Renderer** (`src/renderer/hooks/input/useInputProcessing.ts`) intercepts slash commands typed into the chat input
-2. **Registry lookup** via `src/shared/slashCommands.ts` to confirm the command exists and is enabled
-3. **IPC dispatch** to main process channels under the `pm:*` namespace (e.g., `pm:orchestrate`, `pm:prd-new`)
-4. **Handler response** from `src/main/pm-orchestrator.ts` returns a markdown message + optional data
-5. **Renderer callback** appends the AI log entry and executes any side effects (e.g., `'pm:openPlanningPrompt'` event)
+When the user types `/PM` (with or without trailing text):
 
-### Orchestrator Magic
+1. The renderer loads `src/prompts/pm/pm-mode-system.md` via the `pm:loadCommands` IPC channel
+2. The prompt is injected as the system context, and any text after `/PM` is passed as `{{ARGS}}`
+3. The agent greets as a project manager and drives the conversation from there
 
-The `/PM <idea>` verb performs **full orchestration**:
+The agent in PM mode knows:
 
-1. Accepts the user's feature idea as free-text
-2. Dispatches `'pm:openPlanningPrompt'` event to renderer
-3. Renderer opens the Conversational PRD modal seeded with the idea
-4. User refines the PRD in the modal (Con-PRD engine)
-5. After PRD completion, the pipeline continues to Epic → Tasks → GitHub sync (when Delivery Planner is available)
+- **Persona**: experienced engineering PM — concise, skeptical of scope creep, one question at a time
+- **Workflows**: Plan → Conv-PRD → Epic decompose → GitHub issues → Dispatch claim → PR → merge
+- **State truth**: `AI Status` custom field, never labels
+- **Tools**: `gh` CLI for project queries/edits, Maestro IPC for Conv-PRD, Delivery Planner, Agent Dispatch
+- **When to ask vs. act**: asks for ambiguous/irreversible actions, acts immediately for read-only/bounded requests
 
-## Verb-by-Verb Summary
+## /PM-init
 
-| Verb           | Handler Channel  | Prompt File             | Status     | Notes                                    |
-| -------------- | ---------------- | ----------------------- | ---------- | ---------------------------------------- |
-| `/PM <idea>`   | `pm:orchestrate` | `pm/pm-orchestrator.md` | Functional | Opens Con-PRD modal with idea pre-filled |
-| `/PM prd-new`  | `pm:prd-new`     | `pm/pm-prd-new.md`      | Functional | Seeds new PRD by name                    |
-| `/PM prd-list` | `pm:prd-list`    | `pm/pm-prd-list.md`     | Stub       | Awaits Work Graph backend                |
-| `/PM next`     | `pm:next`        | `pm/pm-next.md`         | Stub       | Awaits Delivery Planner integration      |
-| `/PM status`   | `pm:status`      | `pm/pm-status.md`       | Stub       | Awaits project board service             |
-| `/PM standup`  | `pm:standup`     | `pm/pm-standup.md`      | Stub       | Awaits task tracking backend             |
+`/PM-init` is a **real IPC action** (not a prompt). It calls `window.maestro.pmInit.initRepo()` directly in the renderer (`useInputProcessing.ts`) and idempotently creates the following GitHub Projects v2 custom fields:
 
-## Implementation Files
+| Field              | Type          | Options                                                                                  |
+| ------------------ | ------------- | ---------------------------------------------------------------------------------------- |
+| AI Status          | Single-select | Backlog, Idea, PRD Draft, Refinement, Tasks Ready, In Progress, In Review, Blocked, Done |
+| AI Role            | Single-select | runner, fixer, reviewer, merger                                                          |
+| AI Stage           | Single-select | prd, epic, task                                                                          |
+| AI Priority        | Single-select | P0, P1, P2, P3                                                                           |
+| AI Parent PRD      | Text          | —                                                                                        |
+| AI Parent Epic     | Text          | —                                                                                        |
+| AI Assigned Slot   | Text          | —                                                                                        |
+| AI Last Heartbeat  | Text          | —                                                                                        |
+| AI Project         | Text          | —                                                                                        |
+| External Mirror ID | Text          | —                                                                                        |
 
-### Registry & Definitions
+Run once per repo before using `/PM` or any other project management workflows.
 
-- **`src/shared/slashCommands.ts`** — Single source of truth: `SLASH_COMMAND_REGISTRY` array with all `/PM` verbs, `encoreFlag: 'pmSuite'`, handler names, and visibility rules
-- **`src/shared/promptDefinitions.ts`** — Prompt definitions for `CORE_PROMPTS` array; IDs like `'pm-orchestrator'`, `'pm-prd-new'`, etc.
+## Architecture
 
-### Backend (Main Process)
+### Files
 
-- **`src/main/pm-orchestrator.ts`** — Registers the six `pm:*` IPC channels; handles routing, feature gating, and response formatting
-- **`src/main/preload/pm.ts`** — Secure preload bridge; exposes `window.maestro.pm` namespace with `orchestrate()`, `prdNew()`, etc.
+| File                                             | Role                                                                                             |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `src/shared/slashCommands.ts`                    | Registry — two `/PM` entries, `encoreFlag: 'pmSuite'`                                            |
+| `src/shared/promptDefinitions.ts`                | Prompt IDs — `PM_MODE_SYSTEM` + `PM_INIT`                                                        |
+| `src/prompts/pm/pm-mode-system.md`               | The comprehensive PM persona + workflow system prompt                                            |
+| `src/prompts/pm/pm-init.md`                      | /PM-init bootstrap description (displayed by agent when explaining the command)                  |
+| `src/prompts/pm/pm-*.md`                         | Reference prompts — on disk for agent to read mid-conversation, NOT registered as slash commands |
+| `src/main/ipc/handlers/pm-commands.ts`           | Loads pm-mode-system.md via `pm:loadCommands` IPC channel                                        |
+| `src/renderer/services/pm.ts`                    | Renderer service calling `pm:loadCommands`                                                       |
+| `src/renderer/hooks/ui/useAppInitialization.ts`  | Loads PM commands at startup, puts them in `pmCommands`                                          |
+| `src/renderer/App.tsx`                           | Maps `pmCommands` → `allCustomCommands` for autocomplete dispatch                                |
+| `src/renderer/hooks/input/useInputProcessing.ts` | `/PM-init` real handler; `/PM` falls through to customAICommands path                            |
+| `src/main/preload/pmInit.ts`                     | Preload bridge for `window.maestro.pmInit`                                                       |
+| `src/main/ipc/handlers/pm-init.ts`               | Main process handler for `pm:initRepo`                                                           |
 
-### Frontend (Renderer)
+### Dispatch Flow
 
-- **`src/renderer/hooks/input/useInputProcessing.ts`** — Intercepts `/PM` verbs in chat input; dispatches via IPC; handles `'pm:openPlanningPrompt'` event
-- **`src/renderer/slashCommands.ts`** — Derives visible slash commands from registry, filters by encore flags and surfaces
-- **`src/renderer/App.tsx`** — Filters `/PM` commands by `pmSuite` feature flag before rendering autocomplete
+For `/PM`:
 
-### Prompts (Editable)
+1. User types `/PM` or `/PM <text>` in chat input
+2. `useInputProcessing` checks for `/PM-init` first (no match)
+3. Falls through to `customAICommands` lookup — finds the single `/PM` entry loaded from pm-mode-system.md
+4. Sends the pm-mode-system prompt with `{{ARGS}}` = user's trailing text to the agent
+5. Agent responds in PM mode
 
-All prompt templates live in `src/prompts/pm/`:
+For `/PM-init`:
 
-- `pm-orchestrator.md` — Seed text for the orchestrator flow
-- `pm-prd-new.md` — PRD seed prompt
-- `pm-prd-list.md` — Display stub message (lists available PRDs)
-- `pm-next.md` — Next-item eligibility and retrieval
-- `pm-status.md` — Board snapshot rendering
-- `pm-standup.md` — Daily/weekly summary generation
-
-Edit via **Maestro Prompts** tab in Settings, or modify files directly in the repo and reload.
+1. `useInputProcessing` detects the `/PM-init` prefix
+2. Calls `window.maestro.pmInit.initRepo({ repo })` directly (IPC action, no prompt)
+3. Shows toast on completion/failure
 
 ## Feature Gate
 
-All `/PM` verbs are hidden when the `pmSuite` encore feature is **disabled**. Enable via:
+All `/PM` verbs are hidden when the `pmSuite` encore feature is disabled. Enable via:
 
 1. **Settings** → **Encore Features** → toggle **PM Suite**
 2. Or CLI: `maestro-cli settings set encoreFeatures.pmSuite true`
 
-When disabled, `/PM` is not shown in the autocomplete list.
+## Reference Prompt Files
 
-## Stub Verbs & Future Integration
+The following files in `src/prompts/pm/` are NOT registered slash commands. They are reference content — the agent in PM mode may surface their instructions when relevant:
 
-**Functional (v0.1):**
-
-- `/PM <idea>` — Full orchestration with Conv-PRD modal
-- `/PM prd-new` — Seeded PRD creation
-
-**Stubs (awaiting backend systems):**
-
-- `/PM prd-list` — Returns instructive message pointing to Work Graph
-- `/PM next` — Returns message indicating Delivery Planner integration pending
-- `/PM status` — Returns board snapshot stub (awaits project state service)
-- `/PM standup` — Returns summary stub (awaits task aggregation service)
-
-Once the Delivery Planner, Work Graph, and other PM subsystems land, these will transition from stubs to full implementations. See [[CLAUDE-PLANNING-PIPELINE.md]] and [[CLAUDE-DELIVERY-PLANNER.md]] for context.
-
-## Testing & Validation
-
-- Ensure `pmSuite` encore flag is enabled
-- Type `/PM` in AI chat input → autocomplete should list all six verbs
-- Select `/PM <idea>` → should trigger `'pm:openPlanningPrompt'` event
-- Select `/PM prd-new` → should accept a name argument and confirm seeding
-- Stub verbs should return instructive markdown messages (not errors)
-- Type `/PM` with flag disabled → no autocomplete suggestions
+- `pm-orchestrator.md` — legacy orchestrator primer (superseded by pm-mode-system.md)
+- `pm-prd-new.md` — seeding a new PRD
+- `pm-prd-edit.md` — editing an existing PRD
+- `pm-prd-list.md` — listing PRDs
+- `pm-prd-status.md` — quick PRD status
+- `pm-prd-parse.md` — converting a PRD to Delivery Planner input
+- `pm-epic-decompose.md` — CCPM-style epic decomposition
+- `pm-epic-edit.md` — editing an epic
+- `pm-epic-list.md` — listing epics
+- `pm-epic-show.md` — full epic detail
+- `pm-epic-sync.md` — syncing an epic to GitHub
+- `pm-epic-start.md` — kicking the Planning Pipeline
+- `pm-issue-start.md` — manually claiming a task
+- `pm-issue-show.md` — task detail
+- `pm-issue-status.md` — quick task status
+- `pm-issue-sync.md` — GitHub roundtrip for a task
+- `pm-next.md` — next eligible work item
+- `pm-status.md` — board snapshot
+- `pm-standup.md` — standup summary
 
 ---
 
-See [[CLAUDE-PATTERNS.md]] for ensemble feature flag patterns, and [[CLAUDE-DELIVERY-PLANNER.md]] for the downstream epic/task pipeline details.
+See [[CLAUDE-DELIVERY-PLANNER.md]] for the downstream epic/task pipeline, [[CLAUDE-CONVERSATIONAL-PRD.md]] for Conv-PRD architecture, and [[CLAUDE-AGENT-DISPATCH.md]] for task claiming.

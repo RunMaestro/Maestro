@@ -1,12 +1,15 @@
 /**
  * PM Commands IPC Handler
  *
- * Provides the `pm:loadCommands` channel that loads all /PM verb prompts
- * from bundled `src/prompts/pm/pm-*.md` files and returns them as
- * PmCommand objects for the renderer's customAICommands path.
+ * Provides the `pm:loadCommands` channel that loads the /PM mode system prompt
+ * and returns it as a single PmCommand object for the renderer's customAICommands path.
  *
- * This lets the renderer map PM commands into the same Spec-Kit/customAICommand
- * dispatch path instead of the old log-only IPC dispatch block.
+ * The renderer maps this onto the builtin:pm-mode dispatch path so that typing `/PM`
+ * (with or without trailing text) loads pm-mode-system.md and enters PM mode.
+ *
+ * The verb-specific prompt files (pm-prd-new.md, pm-epic-decompose.md, etc.) remain on
+ * disk as reference content the agent can read mid-conversation but are NOT loaded as
+ * separate slash commands.
  */
 
 import { ipcMain } from 'electron';
@@ -19,114 +22,15 @@ import { createIpcHandler } from '../../utils/ipcHandler';
 const LOG_CONTEXT = '[PMCommands]';
 
 export interface PmCommand {
-	/** Verb-only slug, e.g. "prd-new" or "" for the bare /PM orchestrator */
+	/** Slug for the command, e.g. "mode" for the bare /PM entry */
 	id: string;
-	/** Full slash command string, e.g. "/PM prd-new" or "/PM" */
+	/** Full slash command string, e.g. "/PM" */
 	command: string;
 	/** Short description for autocomplete */
 	description: string;
 	/** Full prompt text (frontmatter stripped) */
 	prompt: string;
 }
-
-/** All /PM verbs and the prompt file that backs each one. */
-const PM_VERB_MAP: Array<{ verb: string; file: string; description: string }> = [
-	{
-		verb: '',
-		file: 'pm-orchestrator.md',
-		description: 'Start a new feature end-to-end: Conv-PRD → Epic → Tasks → GitHub',
-	},
-	{
-		verb: 'prd-new',
-		file: 'pm-prd-new.md',
-		description: 'Open the Conversational PRD planner seeded with a name',
-	},
-	{
-		verb: 'prd-edit',
-		file: 'pm-prd-edit.md',
-		description: 'Open the Conv-PRD modal in edit mode for an existing PRD',
-	},
-	{
-		verb: 'prd-status',
-		file: 'pm-prd-status.md',
-		description: 'Quick status lookup for a PRD',
-	},
-	{
-		verb: 'prd-parse',
-		file: 'pm-prd-parse.md',
-		description: 'Convert a PRD into structured Delivery Planner input',
-	},
-	{
-		verb: 'prd-list',
-		file: 'pm-prd-list.md',
-		description: 'List all PRDs for the current project',
-	},
-	{
-		verb: 'epic-decompose',
-		file: 'pm-epic-decompose.md',
-		description: 'Decompose a PRD into an epic + tasks via Delivery Planner',
-	},
-	{
-		verb: 'epic-edit',
-		file: 'pm-epic-edit.md',
-		description: 'Open the Delivery Planner with an epic preloaded for editing',
-	},
-	{
-		verb: 'epic-list',
-		file: 'pm-epic-list.md',
-		description: 'Show a table of all epics in the Work Graph',
-	},
-	{
-		verb: 'epic-show',
-		file: 'pm-epic-show.md',
-		description: 'Show full detail for an epic including task list',
-	},
-	{
-		verb: 'epic-sync',
-		file: 'pm-epic-sync.md',
-		description: 'Push an epic to GitHub via the Delivery Planner sync channel',
-	},
-	{
-		verb: 'epic-start',
-		file: 'pm-epic-start.md',
-		description: 'Kick the Planning Pipeline for an epic',
-	},
-	{
-		verb: 'issue-start',
-		file: 'pm-issue-start.md',
-		description: 'Manually claim a task into Agent Dispatch',
-	},
-	{
-		verb: 'issue-show',
-		file: 'pm-issue-show.md',
-		description: 'Show full detail for a task',
-	},
-	{
-		verb: 'issue-status',
-		file: 'pm-issue-status.md',
-		description: 'Quick status check for a task',
-	},
-	{
-		verb: 'issue-sync',
-		file: 'pm-issue-sync.md',
-		description: 'GitHub roundtrip sync for a task',
-	},
-	{
-		verb: 'next',
-		file: 'pm-next.md',
-		description: 'Show the next eligible work item ready for implementation',
-	},
-	{
-		verb: 'status',
-		file: 'pm-status.md',
-		description: 'Show a current project board snapshot',
-	},
-	{
-		verb: 'standup',
-		file: 'pm-standup.md',
-		description: 'Generate a standup summary for the current project',
-	},
-];
 
 function getPmPromptsDir(): string {
 	if (app.isPackaged) {
@@ -150,32 +54,30 @@ function stripFrontmatter(content: string): string {
 
 async function loadPmCommands(): Promise<PmCommand[]> {
 	const dir = getPmPromptsDir();
-	const commands: PmCommand[] = [];
-
-	for (const entry of PM_VERB_MAP) {
-		const filePath = path.join(dir, entry.file);
-		try {
-			const raw = await fs.readFile(filePath, 'utf-8');
-			const prompt = stripFrontmatter(raw);
-			commands.push({
-				id: entry.verb === '' ? 'orchestrate' : entry.verb,
-				command: entry.verb === '' ? '/PM' : `/PM ${entry.verb}`,
-				description: entry.description,
+	const filePath = path.join(dir, 'pm-mode-system.md');
+	try {
+		const raw = await fs.readFile(filePath, 'utf-8');
+		const prompt = stripFrontmatter(raw);
+		return [
+			{
+				id: 'mode',
+				command: '/PM',
+				description: 'Enter PM mode — plan features, run standups, check status, find next work',
 				prompt,
-			});
-		} catch (error) {
-			logger.warn(`Failed to load PM prompt ${entry.file}: ${error}`, LOG_CONTEXT);
-			// Still include the entry with a minimal placeholder so autocomplete works
-			commands.push({
-				id: entry.verb === '' ? 'orchestrate' : entry.verb,
-				command: entry.verb === '' ? '/PM' : `/PM ${entry.verb}`,
-				description: entry.description,
-				prompt: `# /PM ${entry.verb}\n\n{{ARGS}}`,
-			});
-		}
+			},
+		];
+	} catch (error) {
+		logger.warn(`Failed to load PM mode system prompt: ${error}`, LOG_CONTEXT);
+		return [
+			{
+				id: 'mode',
+				command: '/PM',
+				description: 'Enter PM mode — plan features, run standups, check status, find next work',
+				prompt:
+					'# PM Mode\n\nYou are a project manager. Ask the user what they want to work on.\n\n{{ARGS}}',
+			},
+		];
 	}
-
-	return commands;
 }
 
 /**
