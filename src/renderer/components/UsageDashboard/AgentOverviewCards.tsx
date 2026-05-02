@@ -11,6 +11,7 @@
  */
 
 import { memo, useMemo } from 'react';
+import { BarChart2 } from 'lucide-react';
 import type { Session, SessionState, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { Sparkline } from './Sparkline';
@@ -113,6 +114,10 @@ interface AgentCardProps {
 	isSelected: boolean;
 	/** All visible sessions; needed to disambiguate the provider-fallback count */
 	visibleSessions: Session[];
+	/** Click handler for the per-card "view stats" icon button. When provided, a
+	 *  BarChart2 icon renders in the card header and clicking it opens the
+	 *  per-agent stats sub-modal. */
+	onShowDetails?: (session: Session) => void;
 }
 
 const AgentCard = memo(function AgentCard({
@@ -122,6 +127,7 @@ const AgentCard = memo(function AgentCard({
 	animationIndex,
 	isSelected,
 	visibleSessions,
+	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
 	const isBusy = session.state === 'busy';
@@ -193,6 +199,30 @@ const AgentCard = memo(function AgentCard({
 						WT
 					</span>
 				)}
+				{onShowDetails && (
+					<button
+						type="button"
+						onClick={() => onShowDetails(session)}
+						className="flex-shrink-0 p-0.5 rounded transition-colors"
+						style={{
+							color: theme.colors.textDim,
+							backgroundColor: 'transparent',
+						}}
+						onMouseEnter={(e) => {
+							e.currentTarget.style.color = theme.colors.accent;
+							e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
+						}}
+						onMouseLeave={(e) => {
+							e.currentTarget.style.color = theme.colors.textDim;
+							e.currentTarget.style.backgroundColor = 'transparent';
+						}}
+						title={`View detailed stats for ${session.name}`}
+						aria-label={`View detailed stats for ${session.name}`}
+						data-testid="agent-card-details-button"
+					>
+						<BarChart2 className="w-3.5 h-3.5" />
+					</button>
+				)}
 			</div>
 			{isWorktree && session.worktreeBranch && (
 				<div
@@ -241,6 +271,9 @@ interface AgentOverviewCardsProps {
 	 * the top of the dashboard. `null` means no filter is active.
 	 */
 	activeFilterKey?: string | null;
+	/** Click handler for the per-card "view stats" icon — opens the per-agent
+	 *  stats sub-modal. When omitted, the icon is not rendered. */
+	onShowAgentDetails?: (session: Session) => void;
 }
 
 export const AgentOverviewCards = memo(function AgentOverviewCards({
@@ -248,19 +281,18 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	data,
 	theme,
 	activeFilterKey = null,
+	onShowAgentDetails,
 }: AgentOverviewCardsProps) {
 	// Terminal sessions aren't "agents" — exclude them so the card row
 	// matches the agent count shown elsewhere in the dashboard. Sort by
-	// query count desc so the most-used agents lead the grid (stable for
-	// ties — relies on Array.prototype.sort stability per ES2019).
+	// agent name (case-insensitive, locale-aware) so the grid is easy to
+	// scan in alphabetical order.
 	const activeSessions = useMemo(() => {
-		const filtered = sessions.filter((s) => s.toolType !== 'terminal');
-		return filtered
+		return sessions
+			.filter((s) => s.toolType !== 'terminal')
 			.slice()
-			.sort(
-				(a, b) => getSessionQueryCount(b, data, filtered) - getSessionQueryCount(a, data, filtered)
-			);
-	}, [sessions, data]);
+			.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+	}, [sessions]);
 
 	if (activeSessions.length === 0) return null;
 
@@ -283,6 +315,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					animationIndex={index}
 					isSelected={isSessionHighlighted(session, activeFilterKey)}
 					visibleSessions={activeSessions}
+					onShowDetails={onShowAgentDetails}
 				/>
 			))}
 		</div>

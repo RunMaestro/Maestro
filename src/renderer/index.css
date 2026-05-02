@@ -391,7 +391,7 @@ textarea::placeholder {
 	}
 	100% {
 		opacity: 1;
-		transform: translateY(0);
+		transform: none;
 	}
 }
 
@@ -406,7 +406,11 @@ textarea::placeholder {
 	}
 }
 
-/* Usage Dashboard - Staggered card entrance animation */
+/* Usage Dashboard - Staggered card entrance animation.
+   Final keyframe must use `transform: none` (not translateY(0) scale(1)) so
+   the resting state doesn't leave a non-none transform behind — that would
+   create a stacking context per card and trap sibling chart tooltips
+   (z-50, fixed) underneath later sections. */
 @keyframes card-enter {
 	0% {
 		opacity: 0;
@@ -414,7 +418,7 @@ textarea::placeholder {
 	}
 	100% {
 		opacity: 1;
-		transform: translateY(0) scale(1);
+		transform: none;
 	}
 }
 
@@ -442,7 +446,11 @@ textarea::placeholder {
 	}
 }
 
-/* Usage Dashboard - Chart section enter animation */
+/* Usage Dashboard - Chart section enter animation.
+   Final keyframe uses `transform: none` (not translateY(0)) so the resting
+   state doesn't create a per-section stacking context — otherwise chart
+   tooltips (fixed, z-50) inside the first section get trapped underneath
+   later sections like SummaryCards. */
 @keyframes dashboard-section-enter {
 	0% {
 		opacity: 0;
@@ -450,7 +458,7 @@ textarea::placeholder {
 	}
 	100% {
 		opacity: 1;
-		transform: translateY(0);
+		transform: none;
 	}
 }
 

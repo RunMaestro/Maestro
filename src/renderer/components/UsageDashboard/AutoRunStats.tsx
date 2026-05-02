@@ -18,7 +18,7 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { clampTooltipToViewport } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -202,21 +202,22 @@ export const AutoRunStats = memo(function AutoRunStats({
 		return Math.max(...tasksByDate.map((d) => Math.max(d.successCount, d.count)));
 	}, [tasksByDate]);
 
-	// Handle mouse events for tooltip
+	// Handle mouse events for tooltip. Anchor to the cursor (not the bar's
+	// bounding rect) so the tooltip stays close to the user's pointer — short
+	// bars used to leave the tooltip stranded near the chart's bottom edge.
 	const handleMouseEnter = useCallback(
 		(
 			data: { date: string; count: number; successCount: number },
 			event: React.MouseEvent<HTMLDivElement>
 		) => {
 			setHoveredBar(data);
-			const rect = event.currentTarget.getBoundingClientRect();
-			setTooltipPos({
-				x: rect.left + rect.width / 2,
-				y: rect.top - 8,
-			});
+			setTooltipPos({ x: event.clientX, y: event.clientY });
 		},
 		[]
 	);
+	const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+		setTooltipPos({ x: event.clientX, y: event.clientY });
+	}, []);
 
 	const handleMouseLeave = useCallback(() => {
 		setHoveredBar(null);
@@ -390,6 +391,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 											opacity: isHovered ? 1 : 0.7 + successRatio * 0.3,
 										}}
 										onMouseEnter={(e) => handleMouseEnter(day, e)}
+										onMouseMove={handleMouseMove}
 										onMouseLeave={handleMouseLeave}
 										onKeyDown={(e) => {
 											if (e.key === 'Enter' || e.key === ' ') {
@@ -410,66 +412,55 @@ export const AutoRunStats = memo(function AutoRunStats({
 							})}
 						</div>
 
-						{/* X-axis labels (show first, middle, last) */}
+						{/* X-axis labels — must mirror the bar grid (flex-1 + max-w-[40px] +
+						    gap-1) so each label slot lines up with its bar. We previously
+						    used `flex justify-between` across the full container width,
+						    which floated the middle/last labels into the empty space on
+						    the right when bars hit their `max-w-[40px]` cap. */}
 						<div
-							className="flex justify-between mt-2 text-xs"
+							className="flex gap-1 mt-2 text-xs"
 							style={{ color: theme.colors.textDim }}
+							aria-hidden="true"
 						>
-							{tasksByDate.length > 0 && (
-								<>
-									<span>{formatDateLabel(tasksByDate[0].date)}</span>
-									{tasksByDate.length > 2 && (
-										<span>
-											{formatDateLabel(tasksByDate[Math.floor(tasksByDate.length / 2)].date)}
-										</span>
-									)}
-									{tasksByDate.length > 1 && (
-										<span>{formatDateLabel(tasksByDate[tasksByDate.length - 1].date)}</span>
-									)}
-								</>
-							)}
-						</div>
-
-						{/* Tooltip — clamped to viewport so bars near the right edge don't
-						    push the tooltip off-screen. */}
-						{hoveredBar &&
-							tooltipPos &&
-							(() => {
-								const tooltipWidth = 220;
-								const tooltipHeight = 70;
-								const { left, top } = clampTooltipToViewport({
-									anchorX: tooltipPos.x,
-									anchorY: tooltipPos.y,
-									width: tooltipWidth,
-									height: tooltipHeight,
-									transform: 'top-center',
-								});
+							{tasksByDate.map((day, i) => {
+								const isFirst = i === 0;
+								const isLast = i === tasksByDate.length - 1;
+								const isMiddle = tasksByDate.length > 2 && i === Math.floor(tasksByDate.length / 2);
+								const showLabel = isFirst || isLast || isMiddle;
+								// Anchor first/last labels to their bar's outer edge so the
+								// label text doesn't drift past the bar; middle stays centered.
+								const textAlign = isFirst ? 'left' : isLast ? 'right' : 'center';
 								return (
 									<div
-										className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+										key={day.date}
+										className="flex-1 min-w-[16px] max-w-[40px]"
 										style={{
-											left,
-											top,
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textMain,
-											border: `1px solid ${theme.colors.border}`,
+											textAlign,
+											overflow: 'visible',
+											whiteSpace: 'nowrap',
 										}}
-										data-testid="task-bar-tooltip"
 									>
-										<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
-										<div style={{ color: theme.colors.textDim }}>
-											<div>{hoveredBar.count} tasks attempted</div>
-											<div>
-												{hoveredBar.successCount} successful (
-												{hoveredBar.count > 0
-													? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
-													: 0}
-												%)
-											</div>
-										</div>
+										{showLabel ? formatDateLabel(day.date) : ''}
 									</div>
 								);
-							})()}
+							})}
+						</div>
+
+						{hoveredBar && (
+							<ChartTooltip anchor={tooltipPos} theme={theme} testId="task-bar-tooltip">
+								<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
+								<div style={{ color: theme.colors.textDim }}>
+									<div>{hoveredBar.count} tasks attempted</div>
+									<div>
+										{hoveredBar.successCount} successful (
+										{hoveredBar.count > 0
+											? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
+											: 0}
+										%)
+									</div>
+								</div>
+							</ChartTooltip>
+						)}
 					</div>
 				) : (
 					<div

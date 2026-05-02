@@ -14,13 +14,14 @@
  * - Limits display to top 10 agents by query count
  */
 
-import React, { memo, useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
+import React, { memo, useState, useMemo, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { buildNameMap, clampTooltipToViewport } from './chartUtils';
+import { buildNameMap } from './chartUtils';
+import { ChartTooltip } from './ChartTooltip';
 
 // 10 distinct colors for agents
 const AGENT_COLORS = [
@@ -137,11 +138,6 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; agent?: string } | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
-	// Measure the actual rendered tooltip so the viewport clamp uses real
-	// width/height — the static estimates below are starting points and the
-	// `whitespace-nowrap` content can grow wider with long agent names.
-	const tooltipRef = useRef<HTMLDivElement>(null);
-	const [tooltipDims, setTooltipDims] = useState<{ width: number; height: number } | null>(null);
 
 	// Chart dimensions
 	const chartWidth = 600;
@@ -290,44 +286,23 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		return paths;
 	}, [agents, chartData, xScale, yScale, metricMode]);
 
-	// Handle mouse events
+	// Anchor the tooltip to the cursor (not the dot's bounding rect) so it stays
+	// next to the user's pointer regardless of where on the chart they hover.
 	const handleMouseEnter = useCallback(
 		(dayIndex: number, agent: string, event: React.MouseEvent<SVGCircleElement>) => {
 			setHoveredDay({ dayIndex, agent });
-			const rect = event.currentTarget.getBoundingClientRect();
-			setTooltipPos({
-				x: rect.left + rect.width / 2,
-				y: rect.top,
-			});
+			setTooltipPos({ x: event.clientX, y: event.clientY });
 		},
 		[]
 	);
+	const handleMouseMove = useCallback((event: React.MouseEvent<SVGCircleElement>) => {
+		setTooltipPos({ x: event.clientX, y: event.clientY });
+	}, []);
 
 	const handleMouseLeave = useCallback(() => {
 		setHoveredDay(null);
 		setTooltipPos(null);
 	}, []);
-
-	// Measure the tooltip after each render and feed the result back into the
-	// clamp so wide content (long agent names + counts) doesn't push the
-	// tooltip past the right edge of the viewport. `useLayoutEffect` runs
-	// before paint, so the correctly clamped position is what the user sees.
-	useLayoutEffect(() => {
-		if (!hoveredDay || !tooltipPos) {
-			if (tooltipDims !== null) setTooltipDims(null);
-			return;
-		}
-		const node = tooltipRef.current;
-		if (!node) return;
-		const r = node.getBoundingClientRect();
-		if (
-			!tooltipDims ||
-			Math.abs(tooltipDims.width - r.width) > 0.5 ||
-			Math.abs(tooltipDims.height - r.height) > 0.5
-		) {
-			setTooltipDims({ width: r.width, height: r.height });
-		}
-	}, [hoveredDay, tooltipPos, tooltipDims]);
 
 	// Forward legend clicks to the dashboard's drill-down handler. Toggle
 	// behavior (clicking the active legend item clears the filter) is owned by
@@ -508,6 +483,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 											transition: 'r 0.15s ease, opacity 0.2s ease',
 										}}
 										onMouseEnter={(e) => handleMouseEnter(dayIdx, agent, e)}
+										onMouseMove={handleMouseMove}
 										onMouseLeave={handleMouseLeave}
 									/>
 								);
@@ -529,39 +505,19 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					</svg>
 				)}
 
-				{/* Tooltip — clamped to viewport so points near the chart edges don't
-				    push the tooltip off-screen. The first paint uses size estimates;
-				    `useLayoutEffect` then measures the real rendered rect and re-clamps
-				    before the browser paints, so dynamic content (long agent labels,
-				    many lines) stays fully on-screen. */}
 				{hoveredDay &&
-					tooltipPos &&
 					allDates[hoveredDay.dayIndex] &&
 					(() => {
 						const visibleAgents = agents.filter((agent) => {
 							const dayData = allDates[hoveredDay.dayIndex].agents[agent];
 							return dayData && (dayData.count > 0 || dayData.duration > 0);
 						});
-						const fallbackWidth = 280;
-						const fallbackHeight = 32 + visibleAgents.length * 18;
-						const { left, top } = clampTooltipToViewport({
-							anchorX: tooltipPos.x,
-							anchorY: tooltipPos.y - 8,
-							width: tooltipDims?.width ?? fallbackWidth,
-							height: tooltipDims?.height ?? fallbackHeight,
-							transform: 'top-center',
-						});
 						return (
-							<div
-								ref={tooltipRef}
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-								style={{
-									left,
-									top,
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
+							<ChartTooltip
+								anchor={tooltipPos}
+								theme={theme}
+								width={280}
+								height={32 + visibleAgents.length * 18}
 							>
 								<div className="font-medium mb-1">
 									{allDates[hoveredDay.dayIndex].formattedDate}
@@ -584,7 +540,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 										);
 									})}
 								</div>
-							</div>
+							</ChartTooltip>
 						);
 					})()}
 			</div>
