@@ -239,12 +239,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to fetch history entries
 		// Uses HistoryManager for per-session storage
-		server.setGetHistoryCallback((projectPath?: string, sessionId?: string) => {
+		server.setGetHistoryCallback(async (projectPath?: string, sessionId?: string) => {
 			const historyManager = getHistoryManager();
 
 			if (sessionId) {
 				// Get entries for specific session
-				const entries = historyManager.getEntries(sessionId);
+				const entries = await historyManager.getEntries(sessionId);
 				// Sort by timestamp descending
 				entries.sort((a, b) => b.timestamp - a.timestamp);
 				return entries;
@@ -2087,7 +2087,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 				const historyManager = getHistoryManager();
 				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Build session name map
 				const storedSessions = sessionsStore.get('sessions', []) as Array<{
@@ -2108,12 +2108,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				let entryCount = 0;
 
 				for (const sessionId of sessionIds) {
-					const filePath = historyManager.getHistoryFilePath(sessionId);
+					const filePath = await historyManager.getHistoryFilePath(sessionId);
 					if (!filePath) continue;
 					const displayName = sessionNameMap.get(sessionId) || sessionId;
 					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
 
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					let agentHasEntries = false;
 					for (const entry of entries) {
 						if (entry.timestamp >= cutoffTime) {

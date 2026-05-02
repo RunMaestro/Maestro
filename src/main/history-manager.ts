@@ -9,9 +9,15 @@
  * - Context passing: History files can be passed directly to AI agents
  * - Better isolation: Sessions don't pollute each other's history
  * - Simpler queries: No filtering needed when reading a session's history
+ *
+ * I/O is async (fs/promises) so reads/writes don't block the main process's
+ * IPC and event loops. The cold-start migration path uses Promise.all where
+ * step ordering allows; sequential reads/writes preserve ordering where step
+ * N depends on step N-1's write being on disk. See PR-C 1.6.
  */
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { app } from 'electron';
 import { logger } from './utils/logger';
@@ -30,6 +36,22 @@ import {
 } from '../shared/history';
 
 const LOG_CONTEXT = '[HistoryManager]';
+
+/**
+ * Best-effort fs.access: resolves true if the path is readable, false on
+ * ENOENT. Other errors propagate to the caller (or are caught at the
+ * outer try in the public method).
+ */
+async function pathExists(p: string): Promise<boolean> {
+	try {
+		await fsp.access(p, fs.constants.F_OK);
+		return true;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT') return false;
+		throw err;
+	}
+}
 
 /**
  * HistoryManager handles per-session history storage with automatic migration
@@ -54,13 +76,11 @@ export class HistoryManager {
 	 */
 	async initialize(): Promise<void> {
 		// Ensure history directory exists
-		if (!fs.existsSync(this.historyDir)) {
-			fs.mkdirSync(this.historyDir, { recursive: true });
-			logger.debug('Created history directory', LOG_CONTEXT);
-		}
+		await fsp.mkdir(this.historyDir, { recursive: true });
+		logger.debug('Created history directory', LOG_CONTEXT);
 
 		// Check if migration is needed
-		if (this.needsMigration()) {
+		if (await this.needsMigration()) {
 			await this.migrateFromLegacy();
 		}
 	}
@@ -68,16 +88,17 @@ export class HistoryManager {
 	/**
 	 * Check if migration from legacy format is needed
 	 */
-	private needsMigration(): boolean {
+	private async needsMigration(): Promise<boolean> {
 		// If marker exists, migration was already done
-		if (fs.existsSync(this.migrationMarkerPath)) {
+		if (await pathExists(this.migrationMarkerPath)) {
 			return false;
 		}
 
 		// If legacy file exists with entries, need to migrate
-		if (fs.existsSync(this.legacyFilePath)) {
+		if (await pathExists(this.legacyFilePath)) {
 			try {
-				const data = JSON.parse(fs.readFileSync(this.legacyFilePath, 'utf-8'));
+				const raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
+				const data = JSON.parse(raw);
 				return data.entries && data.entries.length > 0;
 			} catch {
 				return false;
@@ -90,8 +111,8 @@ export class HistoryManager {
 	/**
 	 * Check if migration has been completed
 	 */
-	hasMigrated(): boolean {
-		return fs.existsSync(this.migrationMarkerPath);
+	async hasMigrated(): Promise<boolean> {
+		return pathExists(this.migrationMarkerPath);
 	}
 
 	/**
@@ -101,7 +122,8 @@ export class HistoryManager {
 		logger.info('Starting history migration from legacy format', LOG_CONTEXT);
 
 		try {
-			const legacyData = JSON.parse(fs.readFileSync(this.legacyFilePath, 'utf-8'));
+			const raw = await fsp.readFile(this.legacyFilePath, 'utf-8');
+			const legacyData = JSON.parse(raw);
 			const entries: HistoryEntry[] = legacyData.entries || [];
 
 			// Group entries by sessionId (skip entries without sessionId)
@@ -125,33 +147,39 @@ export class HistoryManager {
 				logger.info(`Skipped ${skippedCount} orphaned entries (no sessionId)`, LOG_CONTEXT);
 			}
 
-			// Write per-session files
-			let sessionsMigrated = 0;
-			for (const [sessionId, sessionEntries] of entriesBySession) {
-				const projectPath = sessionEntries[0]?.projectPath || '';
-				const fileData: HistoryFileData = {
-					version: HISTORY_VERSION,
-					sessionId,
-					projectPath,
-					entries: sessionEntries.slice(0, MAX_ENTRIES_PER_SESSION),
-				};
-				const filePath = this.getSessionFilePath(sessionId);
-				fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
-				sessionsMigrated++;
-				logger.debug(
-					`Migrated ${sessionEntries.length} entries for session ${sessionId}`,
-					LOG_CONTEXT
-				);
-			}
+			// Write per-session files in parallel — independent writes to
+			// distinct paths.
+			const writes = Array.from(entriesBySession.entries()).map(
+				async ([sessionId, sessionEntries]) => {
+					const projectPath = sessionEntries[0]?.projectPath || '';
+					const fileData: HistoryFileData = {
+						version: HISTORY_VERSION,
+						sessionId,
+						projectPath,
+						entries: sessionEntries.slice(0, MAX_ENTRIES_PER_SESSION),
+					};
+					const filePath = this.getSessionFilePath(sessionId);
+					await fsp.writeFile(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
+					logger.debug(
+						`Migrated ${sessionEntries.length} entries for session ${sessionId}`,
+						LOG_CONTEXT
+					);
+				}
+			);
+			await Promise.all(writes);
+			const sessionsMigrated = entriesBySession.size;
 
-			// Write migration marker
+			// Migration-marker write must happen AFTER all per-session writes
+			// have settled — otherwise a crash mid-migration could leave the
+			// marker in place with partial data on disk. Sequential here is
+			// load-bearing.
 			const marker: MigrationMarker = {
 				migratedAt: Date.now(),
 				version: HISTORY_VERSION,
 				legacyEntryCount: entries.length,
 				sessionsMigrated,
 			};
-			fs.writeFileSync(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
+			await fsp.writeFile(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
 
 			logger.info(
 				`History migration complete: ${entries.length} entries -> ${sessionsMigrated} session files`,
@@ -174,15 +202,15 @@ export class HistoryManager {
 	/**
 	 * Read history for a specific session
 	 */
-	getEntries(sessionId: string): HistoryEntry[] {
+	async getEntries(sessionId: string): Promise<HistoryEntry[]> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
-			return [];
-		}
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const raw = await fsp.readFile(filePath, 'utf-8');
+			const data: HistoryFileData = JSON.parse(raw);
 			return data.entries || [];
 		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return []; // Cold-cache miss is expected
 			logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 			captureException(error, { operation: 'history:read', sessionId });
 			return [];
@@ -194,19 +222,33 @@ export class HistoryManager {
 	 * @param maxEntries - Maximum entries to retain (defaults to MAX_ENTRIES_PER_SESSION).
 	 *                     Pass the user's maxLogBuffer setting to unify the cap.
 	 */
-	addEntry(sessionId: string, projectPath: string, entry: HistoryEntry, maxEntries?: number): void {
+	async addEntry(
+		sessionId: string,
+		projectPath: string,
+		entry: HistoryEntry,
+		maxEntries?: number
+	): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
 		let data: HistoryFileData;
 		const limit = maxEntries ?? MAX_ENTRIES_PER_SESSION;
 
-		if (fs.existsSync(filePath)) {
-			try {
-				data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-			} catch {
+		try {
+			const raw = await fsp.readFile(filePath, 'utf-8');
+			data = JSON.parse(raw);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') {
+				// New session — start with empty file.
+				data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
+			} else {
+				// Malformed JSON or other read error: start fresh rather than
+				// blocking writes. Log so we know it happened.
+				logger.warn(
+					`Failed to read existing history for session ${sessionId}, starting fresh: ${error}`,
+					LOG_CONTEXT
+				);
 				data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 			}
-		} else {
-			data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 		}
 
 		// Add to beginning (most recent first)
@@ -221,7 +263,7 @@ export class HistoryManager {
 		data.projectPath = projectPath;
 
 		try {
-			fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+			await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 			logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
 		} catch (error) {
 			logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
@@ -232,14 +274,20 @@ export class HistoryManager {
 	/**
 	 * Delete a specific entry from a session's history
 	 */
-	deleteEntry(sessionId: string, entryId: string): boolean {
+	async deleteEntry(sessionId: string, entryId: string): Promise<boolean> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
+
+		let raw: string;
+		try {
+			raw = await fsp.readFile(filePath, 'utf-8');
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return false;
 			return false;
 		}
 
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const data: HistoryFileData = JSON.parse(raw);
 			const originalLength = data.entries.length;
 			data.entries = data.entries.filter((e) => e.id !== entryId);
 
@@ -248,7 +296,7 @@ export class HistoryManager {
 			}
 
 			try {
-				fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+				await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 				return true;
 			} catch (writeError) {
 				logger.error(
@@ -266,14 +314,24 @@ export class HistoryManager {
 	/**
 	 * Update a specific entry in a session's history
 	 */
-	updateEntry(sessionId: string, entryId: string, updates: Partial<HistoryEntry>): boolean {
+	async updateEntry(
+		sessionId: string,
+		entryId: string,
+		updates: Partial<HistoryEntry>
+	): Promise<boolean> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
+
+		let raw: string;
+		try {
+			raw = await fsp.readFile(filePath, 'utf-8');
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return false;
 			return false;
 		}
 
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const data: HistoryFileData = JSON.parse(raw);
 			const index = data.entries.findIndex((e) => e.id === entryId);
 
 			if (index === -1) {
@@ -282,7 +340,7 @@ export class HistoryManager {
 
 			data.entries[index] = { ...data.entries[index], ...updates };
 			try {
-				fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+				await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 				return true;
 			} catch (writeError) {
 				logger.error(
@@ -300,38 +358,40 @@ export class HistoryManager {
 	/**
 	 * Clear all history for a session
 	 */
-	clearSession(sessionId: string): void {
+	async clearSession(sessionId: string): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (fs.existsSync(filePath)) {
-			try {
-				fs.unlinkSync(filePath);
-				logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
-			} catch (error) {
-				logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
-				captureException(error, { operation: 'history:clear', sessionId });
-			}
+		try {
+			await fsp.unlink(filePath);
+			logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return; // Already gone is fine
+			logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+			captureException(error, { operation: 'history:clear', sessionId });
 		}
 	}
 
 	/**
 	 * List all sessions that have history files
 	 */
-	listSessionsWithHistory(): string[] {
-		if (!fs.existsSync(this.historyDir)) {
-			return [];
+	async listSessionsWithHistory(): Promise<string[]> {
+		try {
+			const files = await fsp.readdir(this.historyDir);
+			return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return [];
+			throw error;
 		}
-		return fs
-			.readdirSync(this.historyDir)
-			.filter((f) => f.endsWith('.json'))
-			.map((f) => f.replace('.json', ''));
 	}
 
 	/**
-	 * Get the file path for a session's history (for passing to AI as context)
+	 * Get the file path for a session's history (for passing to AI as context).
+	 * Returns the path if the file exists, null otherwise.
 	 */
-	getHistoryFilePath(sessionId: string): string | null {
+	async getHistoryFilePath(sessionId: string): Promise<string | null> {
 		const filePath = this.getSessionFilePath(sessionId);
-		return fs.existsSync(filePath) ? filePath : null;
+		return (await pathExists(filePath)) ? filePath : null;
 	}
 
 	/**
@@ -339,15 +399,11 @@ export class HistoryManager {
 	 * Returns entries sorted by timestamp (most recent first)
 	 * @deprecated Use getAllEntriesPaginated for large datasets
 	 */
-	getAllEntries(limit?: number): HistoryEntry[] {
-		const sessions = this.listSessionsWithHistory();
-		const allEntries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
-			allEntries.push(...entries);
-		}
-
+	async getAllEntries(limit?: number): Promise<HistoryEntry[]> {
+		const sessions = await this.listSessionsWithHistory();
+		// Parallel reads — independent files.
+		const allEntriesArrays = await Promise.all(sessions.map((sid) => this.getEntries(sid)));
+		const allEntries = allEntriesArrays.flat();
 		const sorted = sortEntriesByTimestamp(allEntries);
 		return limit ? sorted.slice(0, limit) : sorted;
 	}
@@ -356,15 +412,12 @@ export class HistoryManager {
 	 * Get all entries across all sessions with pagination support
 	 * Returns entries sorted by timestamp (most recent first)
 	 */
-	getAllEntriesPaginated(options?: PaginationOptions): PaginatedResult<HistoryEntry> {
-		const sessions = this.listSessionsWithHistory();
-		const allEntries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
-			allEntries.push(...entries);
-		}
-
+	async getAllEntriesPaginated(
+		options?: PaginationOptions
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const sessions = await this.listSessionsWithHistory();
+		const allEntriesArrays = await Promise.all(sessions.map((sid) => this.getEntries(sid)));
+		const allEntries = allEntriesArrays.flat();
 		const sorted = sortEntriesByTimestamp(allEntries);
 		return paginateEntries(sorted, options);
 	}
@@ -373,49 +426,37 @@ export class HistoryManager {
 	 * Get entries filtered by project path
 	 * @deprecated Use getEntriesByProjectPathPaginated for large datasets
 	 */
-	getEntriesByProjectPath(projectPath: string): HistoryEntry[] {
-		const sessions = this.listSessionsWithHistory();
+	async getEntriesByProjectPath(projectPath: string): Promise<HistoryEntry[]> {
+		const sessions = await this.listSessionsWithHistory();
+		const allEntriesArrays = await Promise.all(sessions.map((sid) => this.getEntries(sid)));
 		const entries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const sessionEntries = this.getEntries(sessionId);
+		for (const sessionEntries of allEntriesArrays) {
 			if (sessionEntries.length > 0 && sessionEntries[0].projectPath === projectPath) {
 				entries.push(...sessionEntries);
 			}
 		}
-
 		return sortEntriesByTimestamp(entries);
 	}
 
 	/**
 	 * Get entries filtered by project path with pagination support
 	 */
-	getEntriesByProjectPathPaginated(
+	async getEntriesByProjectPathPaginated(
 		projectPath: string,
 		options?: PaginationOptions
-	): PaginatedResult<HistoryEntry> {
-		const sessions = this.listSessionsWithHistory();
-		const entries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const sessionEntries = this.getEntries(sessionId);
-			if (sessionEntries.length > 0 && sessionEntries[0].projectPath === projectPath) {
-				entries.push(...sessionEntries);
-			}
-		}
-
-		const sorted = sortEntriesByTimestamp(entries);
-		return paginateEntries(sorted, options);
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const entries = await this.getEntriesByProjectPath(projectPath);
+		return paginateEntries(entries, options);
 	}
 
 	/**
 	 * Get entries for a specific session with pagination support
 	 */
-	getEntriesPaginated(
+	async getEntriesPaginated(
 		sessionId: string,
 		options?: PaginationOptions
-	): PaginatedResult<HistoryEntry> {
-		const entries = this.getEntries(sessionId);
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const entries = await this.getEntries(sessionId);
 		return paginateEntries(entries, options);
 	}
 
@@ -423,30 +464,45 @@ export class HistoryManager {
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
 	 */
-	updateSessionNameByClaudeSessionId(agentSessionId: string, sessionName: string): number {
-		const sessions = this.listSessionsWithHistory();
+	async updateSessionNameByClaudeSessionId(
+		agentSessionId: string,
+		sessionName: string
+	): Promise<number> {
+		const sessions = await this.listSessionsWithHistory();
 		let updatedCount = 0;
 
+		// Sequential per-session — each session is read-modify-write, so
+		// can't safely parallelize without a lock.
 		for (const sessionId of sessions) {
 			const filePath = this.getSessionFilePath(sessionId);
-			if (!fs.existsSync(filePath)) continue;
+			let raw: string;
+			try {
+				raw = await fsp.readFile(filePath, 'utf-8');
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code === 'ENOENT') continue; // file gone since listing — skip
+				logger.warn(`Failed to read session ${sessionId}: ${error}`, LOG_CONTEXT);
+				continue;
+			}
 
 			try {
-				const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+				const data: HistoryFileData = JSON.parse(raw);
 				let modified = false;
+				let perSessionUpdates = 0;
 
 				for (const entry of data.entries) {
 					if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
 						entry.sessionName = sessionName;
 						modified = true;
-						updatedCount++;
+						perSessionUpdates++;
 					}
 				}
 
 				if (modified) {
-					fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+					await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+					updatedCount += perSessionUpdates;
 					logger.debug(
-						`Updated ${updatedCount} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
+						`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
 						LOG_CONTEXT
 					);
 				}
@@ -462,24 +518,26 @@ export class HistoryManager {
 	/**
 	 * Clear all sessions for a specific project
 	 */
-	clearByProjectPath(projectPath: string): void {
-		const sessions = this.listSessionsWithHistory();
-		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
+	async clearByProjectPath(projectPath: string): Promise<void> {
+		const sessions = await this.listSessionsWithHistory();
+		// Read all in parallel, then clear matching ones in parallel.
+		const allEntriesArrays = await Promise.all(sessions.map((sid) => this.getEntries(sid)));
+		const toDelete: string[] = [];
+		sessions.forEach((sid, i) => {
+			const entries = allEntriesArrays[i];
 			if (entries.length > 0 && entries[0].projectPath === projectPath) {
-				this.clearSession(sessionId);
+				toDelete.push(sid);
 			}
-		}
+		});
+		await Promise.all(toDelete.map((sid) => this.clearSession(sid)));
 	}
 
 	/**
 	 * Clear all history (all session files)
 	 */
-	clearAll(): void {
-		const sessions = this.listSessionsWithHistory();
-		for (const sessionId of sessions) {
-			this.clearSession(sessionId);
-		}
+	async clearAll(): Promise<void> {
+		const sessions = await this.listSessionsWithHistory();
+		await Promise.all(sessions.map((sid) => this.clearSession(sid)));
 		logger.info('Cleared all history', LOG_CONTEXT);
 	}
 
@@ -487,14 +545,17 @@ export class HistoryManager {
 	 * Start watching the history directory for external changes.
 	 * Dispatches events with the affected sessionId so renderers can
 	 * decide whether to reload.
+	 *
+	 * Synchronous body: this is called once at app init, not a hot path,
+	 * and callers (including tests) treat the watcher as available
+	 * immediately after the call returns.
 	 */
 	startWatching(onExternalChange: (sessionId: string) => void): void {
 		if (this.watcher) return; // Already watching
 
-		// Ensure directory exists before watching
-		if (!fs.existsSync(this.historyDir)) {
-			fs.mkdirSync(this.historyDir, { recursive: true });
-		}
+		// Ensure directory exists before watching. mkdirSync with recursive
+		// is idempotent and only runs once per app lifetime.
+		fs.mkdirSync(this.historyDir, { recursive: true });
 
 		try {
 			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {

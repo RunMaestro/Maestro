@@ -590,7 +590,9 @@ app.whenReady().then(async () => {
 								// exist on the remote host.
 							});
 				const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-				historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+				// Fire-and-forget: this is on the Cue execution path; the
+				// caller doesn't need to wait for the disk write to settle.
+				void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
 				return cmdResult;
 			}
 
@@ -658,7 +660,7 @@ app.whenReady().then(async () => {
 				projectRoot,
 				autoRunFolderPath: storedSession.autoRunFolderPath,
 			});
-			historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+			void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
 			return result;
 		},
 		onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),

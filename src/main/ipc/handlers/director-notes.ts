@@ -65,20 +65,25 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Cheap (no bucketing) but unavoidable on cache hit because the bucket
  * cache schema only stores per-type counts.
  */
-function countAgentsAndSessions(
+async function countAgentsAndSessions(
 	historyManager: ReturnType<typeof getHistoryManager>,
 	sessionIds: string[]
-): { agentCount: number; sessionCount: number } {
+): Promise<{ agentCount: number; sessionCount: number }> {
 	const agentSet = new Set<string>();
 	const providerSessionSet = new Set<string>();
-	for (const sid of sessionIds) {
-		const entries = historyManager.getEntries(sid);
-		if (entries.length === 0) continue;
+	// Parallel reads — independent files. Falls through to flat() so we can
+	// associate each result with its sessionId in the loop below.
+	const allEntriesArrays = await Promise.all(
+		sessionIds.map((sid) => historyManager.getEntries(sid))
+	);
+	sessionIds.forEach((sid, i) => {
+		const entries = allEntriesArrays[i];
+		if (entries.length === 0) return;
 		agentSet.add(sid);
 		for (const e of entries) {
 			if (e.agentSessionId) providerSessionSet.add(e.agentSessionId);
 		}
-	}
+	});
 	return { agentCount: agentSet.size, sessionCount: providerSessionSet.size };
 }
 
@@ -191,7 +196,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
 				// Get all session IDs from history manager
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Resolve Maestro session names (the names shown in the left bar)
 				const sessionNameMap = buildSessionNameMap();
@@ -218,7 +223,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				}
 
 				for (const sessionId of sessionIds) {
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					const maestroSessionName = sessionNameMap.get(sessionId);
 
 					for (const entry of entries) {
@@ -321,10 +326,11 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const safeBucketCount = Math.max(1, bucketCount | 0);
 				const lookbackMs =
 					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
-				const sessionIds = historyManager.listSessionsWithHistory();
-				const filePaths = sessionIds
-					.map((sid) => historyManager.getHistoryFilePath(sid))
-					.filter((p): p is string => Boolean(p));
+				const sessionIds = await historyManager.listSessionsWithHistory();
+				const filePathsRaw = await Promise.all(
+					sessionIds.map((sid) => historyManager.getHistoryFilePath(sid))
+				);
+				const filePaths = filePathsRaw.filter((p): p is string => Boolean(p));
 
 				const cache = getHistoryBucketCache();
 				const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
@@ -335,11 +341,14 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				// aggregate. Compute them once per cache miss; on hit, derive
 				// what we can from the cached aggregate and re-walk only when
 				// stats are stale (rare — they invalidate with the buckets).
-				const hit = cache.get(cacheKey, fp);
+				const hit = await cache.get(cacheKey, fp);
 				if (hit) {
 					// agent/session counts aren't in the cache schema — re-walk
 					// once. Cheap relative to bucketing.
-					const { agentCount, sessionCount } = countAgentsAndSessions(historyManager, sessionIds);
+					const { agentCount, sessionCount } = await countAgentsAndSessions(
+						historyManager,
+						sessionIds
+					);
 					return {
 						buckets: hit.buckets,
 						bucketCount: hit.bucketCount,
@@ -364,8 +373,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const allEntries: HistoryEntry[] = [];
 				const agentSet = new Set<string>();
 				const providerSessionSet = new Set<string>();
-				for (const sid of sessionIds) {
-					const entries = historyManager.getEntries(sid);
+				const sessionEntries = await Promise.all(
+					sessionIds.map((sid) => historyManager.getEntries(sid))
+				);
+				for (let i = 0; i < sessionIds.length; i++) {
+					const sid = sessionIds[i];
+					const entries = sessionEntries[i];
 					if (entries.length === 0) continue;
 					agentSet.add(sid);
 					for (const e of entries) {
@@ -375,7 +388,9 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				}
 
 				const agg = buildBucketAggregate(allEntries, safeBucketCount, { lookbackMs });
-				cache.set({
+				// Fire-and-forget the disk write — the renderer doesn't need to
+				// wait for it; the in-memory cache layer was already updated.
+				void cache.set({
 					version: HISTORY_BUCKET_CACHE_VERSION,
 					cacheKey,
 					sourceFingerprint: fp,
@@ -426,14 +441,17 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				timestamp: number,
 				options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
 			): Promise<number> => {
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 				const lookback = options?.lookbackDays ?? 0;
 				const filter = options?.filter ?? null;
 				const cutoff = lookback > 0 ? Date.now() - lookback * 24 * 60 * 60 * 1000 : 0;
 
 				const all: HistoryEntry[] = [];
-				for (const sid of sessionIds) {
-					for (const e of historyManager.getEntries(sid)) {
+				const entriesArrays = await Promise.all(
+					sessionIds.map((sid) => historyManager.getEntries(sid))
+				);
+				for (const entries of entriesArrays) {
+					for (const e of entries) {
 						if (cutoff > 0 && e.timestamp < cutoff) continue;
 						if (filter && e.type !== filter) continue;
 						all.push(e);
@@ -477,7 +495,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 
 				// Build file-path manifest so the agent reads history files directly
 				const cutoffTime = Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 				const sessionNameMap = buildSessionNameMap();
 
 				const sessionManifest: Array<{
@@ -491,13 +509,13 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				let entryCount = 0;
 
 				for (const sessionId of sessionIds) {
-					const filePath = historyManager.getHistoryFilePath(sessionId);
+					const filePath = await historyManager.getHistoryFilePath(sessionId);
 					if (!filePath) continue;
 					const displayName = sessionNameMap.get(sessionId) || sessionId;
 					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
 
 					// Count entries in lookback window and track which agents contributed
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					let agentHasEntries = false;
 					for (const entry of entries) {
 						if (entry.timestamp >= cutoffTime) {
