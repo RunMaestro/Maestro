@@ -261,7 +261,7 @@ const hash = markdownMirrorHash(markdownString);
 
 **File:** `src/main/delivery-planner/github-sync.ts`
 
-This file is legacy mirror code. PM execution, dispatch, status, heartbeat, audit, and `/PM` commands must not call it. GitHub is only used for git hosting mechanics such as branches, commits, PRs, reviews, and merges.
+This file is legacy mirror code. PM execution, dispatch, status, heartbeat, and audit must not call it. GitHub is only used for git hosting mechanics such as branches, commits, PRs, reviews, and merges.
 
 ### Fork Safety Constants
 
@@ -321,11 +321,11 @@ Labels applied: `delivery-planner`, plus any of `external-mirror`, `symphony`, `
 
 > **Runtime state is NOT in labels or GitHub Projects fields — status lives in Work Graph.**
 
-Work item state is tracked in local Work Graph / Maestro Board. GitHub is used for git hosting mechanics such as branches, commits, PRs, reviews, and merges; dispatch and PM commands must not depend on external tracker items or project boards.
+Work item state is tracked in local Work Graph / Maestro Board. GitHub is used for git hosting mechanics such as branches, commits, PRs, reviews, and merges; dispatch and PM runtime must not depend on external tracker items or project boards.
 
 ### Local PM Fields
 
-`/PM-init` idempotently initializes local PM tags and conventions. Core state:
+Local PM bootstrap idempotently initializes local PM tags and conventions. Core state:
 
 | Work Graph state                 | Purpose                                                                                                  |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -355,7 +355,7 @@ Field updates are local Work Graph mutations. They do not call GitHub Projects, 
 | `review`          | Ready for review/PR checks |
 | `done`            | Completed                  |
 
-> **#439 — Backlog gate:** items with `status === 'backlog'` are excluded from both auto-pickup and manual assignment; promote them (via `/PM prd-new` finalise or planner decompose) before assigning.
+> **#439 — Backlog gate:** items with `status === 'backlog'` are excluded from both auto-pickup and manual assignment; promote them through planner/board actions before assigning.
 
 ### Agent-Callable pm-tools Channels
 
@@ -376,11 +376,9 @@ Implementation files:
 - `src/main/ipc/handlers/pm-tools.ts` — IPC handler registration
 - `src/main/preload/pmTools.ts` — preload bridge (`createPmToolsApi`)
 
-**DO NOT** wire slash commands here — that is #428's job.
-
 ### Legacy Label Migration
 
-`/PM migrate-labels` is now a compatibility no-op. Legacy GitHub labels are not part of PM state, and local Work Graph status is authoritative.
+Legacy GitHub labels are not part of PM state, and local Work Graph status is authoritative.
 
 ---
 

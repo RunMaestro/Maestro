@@ -266,7 +266,7 @@ export class DeliveryPlannerGithubSync {
 	}
 
 	/**
-	 * Public entry-point for /PM-init (#445).
+	 * Public entry-point for local PM project bootstrap (#445).
 	 *
 	 * Idempotently ensures all REQUIRED_PROJECT_FIELDS exist on the project.
 	 * Returns a structured report suitable for the pm:initRepo IPC response.

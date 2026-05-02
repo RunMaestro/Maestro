@@ -43,4 +43,3 @@ export {
 } from './conversationalPrdRoutes';
 export { registerProjectRolesRoutes, ProjectRolesRouteDependencies } from './projectRolesRoutes';
 export { registerWorkGraphRoutes, WorkGraphRouteDependencies } from './workGraphRoutes';
-export { registerAiWikiRoutes, AiWikiRouteDependencies } from './aiWikiRoutes';

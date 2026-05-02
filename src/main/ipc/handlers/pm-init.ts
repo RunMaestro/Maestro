@@ -1,8 +1,8 @@
 /**
  * pm:initRepo IPC Handler — #445
  *
- * Implements the /PM-init slash command: idempotently initializes the local
- * Maestro Board / Work Graph PM surface for the active project.
+ * Idempotently initializes the local Maestro Board / Work Graph PM surface
+ * for the active project.
  *
  * Channel:
  *   pm:initRepo  ({ repo?: string })  → PmInitResult

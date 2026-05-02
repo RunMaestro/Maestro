@@ -106,10 +106,6 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		const server = new WebServer(port, securityToken);
 
-		if (deps.userDataPath) {
-			server.setAiWikiDeps({ userDataPath: deps.userDataPath });
-		}
-
 		// Set up callback for web server to fetch sessions list
 		server.setGetSessionsCallback(() => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);

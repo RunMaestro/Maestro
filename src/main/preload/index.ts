@@ -62,11 +62,9 @@ import { createDeliveryPlannerApi } from './deliveryPlanner';
 import { createPlanningPipelineApi } from './planningPipeline';
 import { createConversationalPrdApi } from './conversationalPrd';
 import { createWorkGraphApi } from './workGraph';
-import { createAiWikiApi } from './aiWiki';
 import { createPmToolsApi } from './pmTools';
 import { createPmAuditApi } from './pmAudit';
 import { createPmHeartbeatApi } from './pmHeartbeat';
-import { createPmApi } from './pm';
 import { createPmInitApi } from './pmInit';
 import { createPmResolveGithubProjectApi } from './pmResolveGithubProject';
 
@@ -246,9 +244,6 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Work Graph API (durable local PM/Maestro Board state)
 	workGraph: createWorkGraphApi(),
 
-	// AI Wiki API (project memory/context storage)
-	aiWiki: createAiWikiApi(),
-
 	// pm-tools API (agent-callable status/role/blocked field updates, #430)
 	pmTools: createPmToolsApi(),
 
@@ -258,10 +253,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// pm-heartbeat API (#435): agent liveness signal for stale-claim sweeper
 	pmHeartbeat: createPmHeartbeatApi(),
 
-	// PM slash-command suite (#428 + #436): /PM orchestrate, prd-*, epic-*, issue-*, standup, status
-	pm: createPmApi(),
-
-	// PM Init API (#445): /PM-init idempotent field bootstrap
+	// PM Init API (#445): idempotent local PM state bootstrap
 	pmInit: createPmInitApi(),
 
 	// PM Resolve GitHub Project API (#447): per-project GitHub project mapping
@@ -354,8 +346,6 @@ export {
 	createMemoryApi,
 	// Agent Dispatch (#444: createWorkGraphApi removed)
 	createAgentDispatchApi,
-	// AI Wiki
-	createAiWikiApi,
 	// Project Roles
 	createProjectRolesApi,
 	// Delivery Planner
@@ -368,8 +358,6 @@ export {
 	createPmToolsApi,
 	// pm-heartbeat
 	createPmHeartbeatApi,
-	// PM slash-command suite
-	createPmApi,
 	// pm-init
 	createPmInitApi,
 	// pm-resolve-github-project

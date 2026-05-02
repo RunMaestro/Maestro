@@ -83,23 +83,18 @@ import {
 	PlanningPipelineHandlerDependencies,
 } from './planning-pipeline';
 import { registerWorkGraphHandlers } from './work-graph';
-import { registerAiWikiHandlers, AiWikiHandlerDependencies } from './ai-wiki';
-// PM Orchestrator — /PM slash-command handlers (pm:orchestrate, pm:prd-new, etc.)
-import { registerPmOrchestratorHandlers } from '../../pm-orchestrator';
 // pm-tools — agent-callable pm:setStatus / pm:setRole / pm:setBlocked (#430)
 import { registerPmToolsHandlers, PmToolsHandlerDependencies } from './pm-tools';
 // pm-audit — rule-based in-flight work sweep (#434)
 import { registerPmAuditHandlers, PmAuditHandlerDependencies } from './pm-audit';
 import { registerPmHeartbeatHandlers, PmHeartbeatHandlerDependencies } from './pm-heartbeat';
-// pm-init — /PM-init idempotent field bootstrap (#445)
+// pm-init — idempotent local PM state bootstrap (#445)
 import { registerPmInitHandlers, PmInitHandlerDependencies } from './pm-init';
 // pm-resolve-github-project — per-project GitHub project mapping (#447)
 import {
 	registerPmResolveGithubProjectHandlers,
 	PmResolveGithubProjectHandlerDependencies,
 } from './pm-resolve-github-project';
-// pm-commands — load /PM verb prompts for customAICommands dispatch path
-import { registerPmCommandsHandlers } from './pm-commands';
 // pm-migrate-labels — one-time migration of legacy agent:* labels → AI Status field
 import {
 	registerPmMigrateLabelsHandlers,
@@ -174,20 +169,16 @@ export type { DeliveryPlannerHandlerDependencies };
 export { registerPlanningPipelineHandlers };
 export type { PlanningPipelineHandlerDependencies };
 export { registerWorkGraphHandlers };
-export { registerAiWikiHandlers };
-export type { AiWikiHandlerDependencies };
 export { registerPmToolsHandlers };
 export type { PmToolsHandlerDependencies };
 export { registerPmAuditHandlers };
 export type { PmAuditHandlerDependencies };
 export { registerPmHeartbeatHandlers };
-export { registerPmOrchestratorHandlers };
 export { registerPmInitHandlers };
 export type { PmInitHandlerDependencies };
 export type { PmHeartbeatHandlerDependencies };
 export { registerPmResolveGithubProjectHandlers };
 export type { PmResolveGithubProjectHandlerDependencies };
-export { registerPmCommandsHandlers };
 export { registerPmMigrateLabelsHandlers };
 export type { PmMigrateLabelsHandlerDependencies };
 export type { AgentsHandlerDependencies };
@@ -408,13 +399,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPlanningPipelineHandlers({ settingsStore: deps.settingsStore });
 	// Register Work Graph handlers (durable local PM/Maestro Board state)
 	registerWorkGraphHandlers({ getMainWindow: deps.getMainWindow });
-	// Register AI Wiki handlers (project memory/context storage under userData)
-	registerAiWikiHandlers({ app: deps.app });
-	// Register PM Orchestrator handlers (/PM slash-command suite, gated by conversationalPrd flag)
-	registerPmOrchestratorHandlers({
-		settingsStore: deps.settingsStore,
-		getMainWindow: deps.getMainWindow,
-	});
 	// Register pm-tools IPC handlers (#430): pm:setStatus, pm:setRole, pm:setBlocked
 	registerPmToolsHandlers({ settingsStore: deps.settingsStore });
 	// Register PM Audit handlers (#434): pmAudit:run
@@ -425,8 +409,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPmInitHandlers({ settingsStore: deps.settingsStore });
 	// Register legacy PM Resolve GitHub Project handler (#447): compatibility no-op, no discovery
 	registerPmResolveGithubProjectHandlers({ settingsStore: deps.settingsStore });
-	// Register PM Commands handler: pm:loadCommands for customAICommands dispatch path
-	registerPmCommandsHandlers();
 	// Register PM migrate-labels handler: pm:migrateLegacyLabels one-time label migration
 	registerPmMigrateLabelsHandlers({ settingsStore: deps.settingsStore });
 	// Setup logger event forwarding to renderer

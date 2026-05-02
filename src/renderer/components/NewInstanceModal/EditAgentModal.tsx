@@ -55,7 +55,6 @@ export function EditAgentModal({
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
 	const [copiedId, setCopiedId] = useState(false);
-	const [aiWikiEnabled, setAiWikiEnabled] = useState(false);
 	// Agent Dispatch — full profile editor state
 	const [dispatchProfileDraft, setDispatchProfileDraft] = useState<AgentDispatchProfile>(
 		DEFAULT_AGENT_DISPATCH_PROFILE
@@ -250,7 +249,6 @@ export function EditAgentModal({
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
-			setAiWikiEnabled(session.aiWikiEnabled ?? false);
 			setDispatchProfileDraft({
 				autoPickupEnabled:
 					session.dispatchProfile?.autoPickupEnabled ??
@@ -357,8 +355,7 @@ export function EditAgentModal({
 			modelValue,
 			contextWindowValue,
 			sessionSshRemoteConfig,
-			dispatchProfile,
-			aiWikiEnabled
+			dispatchProfile
 		);
 		onClose();
 	}, [
@@ -378,7 +375,6 @@ export function EditAgentModal({
 		existingSessions,
 		dispatchProfileDraft,
 		agentDispatchEnabled,
-		aiWikiEnabled,
 	]);
 
 	// Refresh available models
@@ -692,37 +688,6 @@ export function EditAgentModal({
 						/>
 					</div>
 				)}
-
-				{/* Project Wiki & PM opt-in. State is project-scoped on the main Maestro server. */}
-				<div>
-					<label
-						className="flex items-start gap-3 p-3 rounded border cursor-pointer"
-						style={{
-							borderColor: aiWikiEnabled ? theme.colors.accent + '80' : theme.colors.border,
-							backgroundColor: aiWikiEnabled ? theme.colors.accent + '10' : theme.colors.bgActivity,
-						}}
-					>
-						<input
-							type="checkbox"
-							checked={aiWikiEnabled}
-							onChange={(e) => setAiWikiEnabled(e.target.checked)}
-							className="mt-0.5"
-						/>
-						<span className="min-w-0">
-							<span
-								className="block text-xs font-bold uppercase"
-								style={{ color: theme.colors.textMain }}
-							>
-								Project Wiki & PM
-							</span>
-							<span className="block text-xs mt-1" style={{ color: theme.colors.textDim }}>
-								Maintain wiki and PM context for this project on the main Maestro server. Agents
-								with the same project root and SSH remote share one context; it is not written into
-								the repo by default.
-							</span>
-						</span>
-					</label>
-				</div>
 
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered (not gated on sshRemotes.length) because the

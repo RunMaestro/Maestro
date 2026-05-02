@@ -13,7 +13,6 @@ import {
 	Wrench,
 	Eye,
 	GitMerge,
-	BookOpen,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
@@ -106,8 +105,6 @@ export interface SessionItemProps {
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
-	aiWikiEnabled?: boolean; // Whether this agent's project is opted into main-server Project Wiki & PM
-	aiWikiUpdating?: boolean; // Whether the Project Wiki & PM writer/updater is active for this project
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
 	dispatchRoles?: DispatchRole[]; // Roles this agent is configured for in the active project's slots (#426/#442)
 	dispatchActiveRoles?: Set<DispatchRole>; // Subset of roles currently holding an active claim
@@ -154,8 +151,6 @@ export const SessionItem = memo(function SessionItem({
 	jumpNumber,
 	cueSubscriptionCount,
 	cueActiveRun,
-	aiWikiEnabled,
-	aiWikiUpdating,
 	worktreeChildCount,
 	dispatchRoles,
 	dispatchActiveRoles,
@@ -314,14 +309,6 @@ export const SessionItem = memo(function SessionItem({
 								title={`Maestro Cue ${cueActiveRun ? 'running' : 'active'} (${cueSubscriptionCount} subscription${cueSubscriptionCount === 1 ? '' : 's'})`}
 							>
 								<Zap className="w-3 h-3" style={{ color: '#2dd4bf' }} fill="#2dd4bf" />
-							</span>
-						)}
-						{aiWikiEnabled && (
-							<span
-								className={`shrink-0 flex items-center${aiWikiUpdating ? ' animate-pulse' : ''}`}
-								title={`Project Wiki & PM ${aiWikiUpdating ? 'updating' : 'enabled'}`}
-							>
-								<BookOpen className="w-3 h-3" style={{ color: '#60a5fa' }} />
 							</span>
 						)}
 						{dispatchRoles && dispatchRoles.length > 0 && (

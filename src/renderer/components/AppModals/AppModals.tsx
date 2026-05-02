@@ -127,8 +127,7 @@ export interface AppModalsProps {
 			remoteId: string | null;
 			workingDirOverride?: string;
 		},
-		dispatchProfile?: AgentDispatchProfile,
-		aiWikiEnabled?: boolean
+		dispatchProfile?: AgentDispatchProfile
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;

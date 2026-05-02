@@ -16,7 +16,6 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
-import { notifyToast } from '../../stores/notificationStore';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -273,64 +272,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return;
 				}
 
-				// Handle /PM-init (#445) — must appear before the generic /PM block
-				// because /PM-init starts with the /PM prefix.
-				if (!isTerminalMode && commandText.startsWith('/PM-init')) {
-					const repoArg = commandText.slice('/PM-init'.length).trim() || undefined;
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('');
-					if (inputRef.current) inputRef.current.style.height = 'auto';
-
-					notifyToast({
-						color: 'theme',
-						title: '/PM-init',
-						message: 'Initializing Project Meta fields…',
-					});
-
-					window.maestro.pmInit
-						.initRepo({ repo: repoArg })
-						.then((res) => {
-							const { created, existing, errors } = res;
-							if (errors.length > 0) {
-								notifyToast({
-									color: 'red',
-									title: '/PM-init failed',
-									message: errors.join('; '),
-									dismissible: true,
-								});
-								return;
-							}
-							const parts: string[] = [];
-							if (created.length > 0)
-								parts.push(`Created ${created.length} field${created.length !== 1 ? 's' : ''}`);
-							if (existing.length > 0) parts.push(`${existing.length} already existed`);
-							notifyToast({
-								color: 'green',
-								title: '/PM-init complete',
-								message: parts.join(', ') || 'No fields needed',
-							});
-						})
-						.catch((err: unknown) => {
-							notifyToast({
-								color: 'red',
-								title: '/PM-init error',
-								message: err instanceof Error ? err.message : String(err),
-								dismissible: true,
-							});
-						});
-
-					return;
-				}
-
 				// Check for custom AI commands (only in AI mode)
 				if (!isTerminalMode) {
 					// Parse command and arguments.
 					// For single-word commands (e.g. "/speckit.plan Blah blah"):
 					//   baseCommand="/speckit.plan", commandArgs="Blah blah"
-					// For multi-word commands (e.g. "/PM prd-new <name>"):
-					//   Try the longest matching prefix first so "/PM prd-new" is preferred
-					//   over "/PM" when the user types "/PM prd-new some name".
+					// For multi-word commands, try the longest matching prefix first.
 					const firstSpaceIndex = commandText.indexOf(' ');
 					const baseCommand =
 						firstSpaceIndex === -1 ? commandText : commandText.substring(0, firstSpaceIndex);

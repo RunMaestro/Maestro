@@ -21,7 +21,7 @@ export type SlashCommandHandler =
 	| `ipc:${string}`; // handled by ipcMain channel
 
 export interface SlashCommandDefinition {
-	/** Full command text including leading slash, e.g. "/PM prd-new" */
+	/** Full command text including leading slash, e.g. "/speckit.plan" */
 	verb: string;
 	/** Short description shown in the autocomplete list */
 	description: string;
@@ -48,7 +48,7 @@ export interface SlashCommandDefinition {
  * before any IPC is involved.  IPC commands (handler: 'ipc:*') are forwarded to
  * the main process via the pm namespace (or the relevant namespace).
  *
- * Ordering: built-ins first, then /PM namespace, then reserved slots.
+ * Ordering: built-ins first, then reserved slots.
  */
 export const SLASH_COMMAND_REGISTRY: SlashCommandDefinition[] = [
 	// -------------------------------------------------------------------------
@@ -75,43 +75,6 @@ export const SLASH_COMMAND_REGISTRY: SlashCommandDefinition[] = [
 		surfaces: ['desktop', 'web'],
 		aiOnly: true,
 		handler: 'builtin:skills',
-	},
-
-	// -------------------------------------------------------------------------
-	// /PM namespace — project management suite
-	// Gated by the `pmSuite` encore feature flag.
-	// Two commands only: /PM enters PM mode (conversation-driven), /PM-init bootstraps the repo.
-	// The 17 verb-specific commands were removed; the agent handles all verbs via conversation.
-	// -------------------------------------------------------------------------
-	{
-		verb: '/PM',
-		description: 'Enter PM mode — plan features, run standups, check status, find next work',
-		args: '[direction]',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'builtin:pm-mode',
-	},
-
-	// Repo bootstrap verb (real IPC action, not a prompt)
-	{
-		verb: '/PM-init',
-		description: 'Bootstrap local Maestro Board / Work Graph PM state for this repo (idempotent)',
-		args: '[owner/repo]',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:initRepo',
-	},
-
-	// Label migration compatibility action for older workflows.
-	{
-		verb: '/PM migrate-labels',
-		description: 'Migrate legacy agent:* labels to local PM state (run once per repo)',
-		surfaces: ['desktop', 'web'],
-		aiOnly: true,
-		encoreFlag: 'pmSuite',
-		handler: 'ipc:pm:migrateLegacyLabels',
 	},
 ];
 

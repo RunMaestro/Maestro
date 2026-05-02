@@ -87,9 +87,7 @@ import {
 	registerPmResolveGithubProjectHandlers,
 	registerPmInitHandlers,
 	registerPmMigrateLabelsHandlers,
-	registerPmCommandsHandlers,
 	registerProjectRolesHandlers,
-	registerPmOrchestratorHandlers,
 	initConversationalPrdStore,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -171,8 +169,6 @@ import { auditLog } from './agent-dispatch/dispatch-audit-log';
 import { executeSlot } from './agent-dispatch/slot-executor';
 import { createLocalPmService } from './local-pm';
 import type { ProjectRoleSlots } from '../shared/project-roles-types';
-import { AiWikiService } from './ai-wiki/service';
-import { startAiWikiPoller, stopAiWikiPoller } from './ai-wiki/poller';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -342,7 +338,6 @@ let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let dispatchPollerTimer: NodeJS.Timeout | null = null;
-let aiWikiPollerTimer: NodeJS.Timeout | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -1092,20 +1087,6 @@ app.whenReady().then(async () => {
 	// Maestro Board / Work Graph is the durable PM state. GitHub mirror work must
 	// never run in the dispatch startup path.
 
-	try {
-		const aiWikiService = new AiWikiService({ userDataPath: app.getPath('userData') });
-		aiWikiPollerTimer = startAiWikiPoller({
-			service: aiWikiService,
-			getSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
-			logger,
-		});
-	} catch (err) {
-		logger.warn(
-			`AI Wiki poller failed to start: ${err instanceof Error ? err.message : String(err)}`,
-			'Startup'
-		);
-	}
-
 	// Start stale-claim sweeper (#435): auto-releases local claims with no heartbeat for >5 min.
 	// Not gated — sweeper is lightweight and handles absence of deliveryPlanner gracefully.
 	startStaleClaimSweeper();
@@ -1276,10 +1257,6 @@ const quitHandler = createQuitHandler({
 		if (dispatchPollerTimer !== null) {
 			stopDispatchPoller(dispatchPollerTimer);
 			dispatchPollerTimer = null;
-		}
-		if (aiWikiPollerTimer !== null) {
-			stopAiWikiPoller(aiWikiPollerTimer);
-			aiWikiPollerTimer = null;
 		}
 	},
 	stopSettingsWatcher: () => settingsWatcher.stop(),
@@ -1632,17 +1609,14 @@ function setupIpcHandlers() {
 
 	// pm-audit — rule-based in-flight work sweep (#434)
 	registerPmAuditHandlers({ settingsStore: store });
-	registerPmOrchestratorHandlers({ settingsStore: store, getMainWindow: () => mainWindow });
 
 	// pm-heartbeat — agent liveness signal for stale-claim sweeper (#435)
 	registerPmHeartbeatHandlers({ settingsStore: store });
 	registerPmResolveGithubProjectHandlers({ settingsStore: store });
-	// pm-init — /PM-init idempotent field bootstrap (#445)
+	// pm-init — idempotent local PM state bootstrap (#445)
 	registerPmInitHandlers({ settingsStore: store });
 	// pm-migrate-labels — one-time legacy agent:* label → AI Status field migration
 	registerPmMigrateLabelsHandlers({ settingsStore: store });
-	// pm-commands — load /PM mode system prompt for customAICommands dispatch path
-	registerPmCommandsHandlers();
 	registerProjectRolesHandlers(store as never);
 }
 

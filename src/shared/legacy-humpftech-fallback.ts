@@ -9,8 +9,8 @@
  *   These fallbacks only activate when the `projectGithubMap` settings store
  *   is empty AND auto-discovery fails for a non-actionable reason (e.g. network
  *   error, not missing auth). They ensure the HumpfTech/Maestro fork continues
- *   to work out-of-the-box before a user runs /PM-init to persist a proper
- *   mapping. Auto-discovery should normally supply values from `projectGithubMap`;
+ *   to work out-of-the-box before project repository mapping is persisted.
+ *   Auto-discovery should normally supply values from `projectGithubMap`;
  *   these literals are the last-resort guard, not the active code path.
  *
  * TODO: remove once auto-discovery is universal and every active install has a

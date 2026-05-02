@@ -650,8 +650,6 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
-					aiWikiEnabled={session.aiWikiEnabled}
-					aiWikiUpdating={session.aiWikiUpdating}
 					worktreeChildCount={worktreeChildren.length}
 					dispatchRoles={dispatchSessionMap.get(session.id)?.roles}
 					dispatchActiveRoles={dispatchSessionMap.get(session.id)?.activeRoles}
@@ -705,8 +703,6 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
-										aiWikiEnabled={child.aiWikiEnabled}
-										aiWikiUpdating={child.aiWikiUpdating}
 										dispatchRoles={dispatchSessionMap.get(child.id)?.roles}
 										dispatchActiveRoles={dispatchSessionMap.get(child.id)?.activeRoles}
 										onSelect={selectHandlers.get(child.id)!}

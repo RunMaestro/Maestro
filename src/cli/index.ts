@@ -66,7 +66,6 @@ import {
 	convPrdArchive,
 } from './commands/conv-prd';
 import { pmWorkList, pmWorkCreate, pmWorkUpdate } from './commands/pm-work';
-import { aiWikiStatus, aiWikiRefresh, aiWikiContext } from './commands/ai-wiki';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -715,59 +714,6 @@ pmWork
 			parent: options.parent,
 			priority: options.priority,
 			expectedVersion: options.expectedVersion,
-			json: options.json,
-		})
-	);
-
-// AI Wiki commands - trigger and inspect the app-owned project wiki writer.
-const aiWiki = program
-	.command('ai-wiki')
-	.description('Trigger and inspect AI Wiki files managed by the running Maestro app');
-
-aiWiki
-	.command('status')
-	.description('Show AI Wiki status for a project')
-	.requiredOption('-p, --project <path>', 'Project root path')
-	.option('--ssh-remote <id>', 'SSH remote ID for remote project access')
-	.option('--project-id <id>', 'Override derived wiki project ID')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) =>
-		aiWikiStatus({
-			project: options.project,
-			sshRemote: options.sshRemote,
-			projectId: options.projectId,
-			json: options.json,
-		})
-	);
-
-aiWiki
-	.command('refresh')
-	.description('Refresh AI Wiki files for a project')
-	.requiredOption('-p, --project <path>', 'Project root path')
-	.option('--ssh-remote <id>', 'SSH remote ID for remote project access')
-	.option('--project-id <id>', 'Override derived wiki project ID')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) =>
-		aiWikiRefresh({
-			project: options.project,
-			sshRemote: options.sshRemote,
-			projectId: options.projectId,
-			json: options.json,
-		})
-	);
-
-aiWiki
-	.command('context')
-	.description('Print the compact AI Wiki context packet for a project')
-	.requiredOption('-p, --project <path>', 'Project root path')
-	.option('--ssh-remote <id>', 'SSH remote ID for remote project access')
-	.option('--project-id <id>', 'Override derived wiki project ID')
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) =>
-		aiWikiContext({
-			project: options.project,
-			sshRemote: options.sshRemote,
-			projectId: options.projectId,
 			json: options.json,
 		})
 	);

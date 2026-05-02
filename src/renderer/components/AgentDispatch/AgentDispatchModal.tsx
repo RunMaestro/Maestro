@@ -33,7 +33,7 @@ export function AgentDispatchModal({
 }: AgentDispatchModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-	const title = mode === 'pm-chat' ? 'Project Wiki & PM' : 'Maestro Board';
+	const title = mode === 'pm-chat' ? 'Project PM' : 'Maestro Board';
 
 	useModalLayer(MODAL_PRIORITIES.AGENT_DISPATCH, title, () => onCloseRef.current(), {
 		enabled: isOpen,

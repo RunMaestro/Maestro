@@ -23,7 +23,7 @@ The old Symphony fork-runner used GitHub **labels** (`agent:ready`, `agent:runni
 If a repository still has issues labelled with `agent:*` labels:
 
 - The dispatch engine logs a console warning (does NOT fail the dispatch).
-- Run **`/PM migrate-labels`** once per repo to convert legacy labels to the corresponding Work Graph status values and remove the labels from issues:
+- Convert legacy labels to the corresponding Work Graph status values and remove the labels from issues:
 
   | Legacy label              | Work Graph status |
   | ------------------------- | ----------------- |
@@ -74,7 +74,7 @@ Work Graph is the durable state layer for Agent Dispatch. GitHub Projects may ex
 | Durable PM state           | Work Graph items, statuses, claims, events                             |
 | Live renderer state        | In-memory `ClaimTracker` (`Map<agentSessionId, Map<role, ClaimInfo>>`) |
 | Dispatch pickup            | `createLocalPmAutoPickupCoordinator()` over `LocalPmService`           |
-| `/PM-init`                 | Initializes local PM tags/conventions                                  |
+| PM bootstrap               | Initializes local PM tags/conventions                                  |
 | pm tools                   | `setLocalPmStatus`, `setLocalPmRole`, `setLocalPmBlocked`              |
 | heartbeat/stale recovery   | Renews/releases Work Graph claims                                      |
 | Optional GitHub visibility | Mirror/sync layer only; never required for dispatch runtime            |

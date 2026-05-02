@@ -71,8 +71,7 @@ export interface EditAgentModalProps {
 		customModel?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: SessionSshRemoteConfig,
-		dispatchProfile?: AgentDispatchProfile,
-		aiWikiEnabled?: boolean
+		dispatchProfile?: AgentDispatchProfile
 	) => void;
 	theme: Theme;
 	session: Session | null;

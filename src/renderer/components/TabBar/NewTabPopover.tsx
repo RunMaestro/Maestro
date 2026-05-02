@@ -170,7 +170,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 									className="w-3.5 h-3.5"
 									style={{ color: theme.colors.textDim }}
 								/>
-								Open PM Chat
+								Open Project PM
 							</button>
 						)}
 						<button

@@ -40,8 +40,6 @@ export interface UseRemoteHandlersDeps {
 	openspecCommandsRef: React.MutableRefObject<CustomAICommand[]>;
 	/** BMAD commands ref */
 	bmadCommandsRef?: React.MutableRefObject<CustomAICommand[]>;
-	/** PM commands ref */
-	pmCommandsRef?: React.MutableRefObject<CustomAICommand[]>;
 	/** Toggle global live mode (web interface) */
 	toggleGlobalLive: () => Promise<void>;
 	/** Whether live/remote mode is active */
@@ -78,7 +76,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 		speckitCommandsRef,
 		openspecCommandsRef,
 		bmadCommandsRef,
-		pmCommandsRef,
 		toggleGlobalLive,
 		isLiveMode,
 		sshRemoteConfigs,
@@ -321,14 +318,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const matchingBmadCommand = bmadCommandsRef?.current.find(
 					(cmd) => cmd.command === commandText
 				);
-				const matchingPmCommand = pmCommandsRef?.current.find((cmd) => cmd.command === commandText);
-
 				const matchingCommand =
 					matchingCustomCommand ||
 					matchingSpeckitCommand ||
 					matchingOpenspecCommand ||
-					matchingBmadCommand ||
-					matchingPmCommand;
+					matchingBmadCommand;
 
 				if (matchingCommand) {
 					logger.info('[Remote] Found matching command:', undefined, [
@@ -339,9 +333,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								? '(openspec)'
 								: matchingBmadCommand
 									? '(bmad)'
-									: matchingPmCommand
-										? '(pm)'
-										: '(custom)',
+									: '(custom)',
 					]);
 
 					// Get git branch for template substitution

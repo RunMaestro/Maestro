@@ -36,8 +36,7 @@ const LOG_CONTEXT = '[SlotExecutor]';
 /**
  * Legacy Symphony-runner labels that are meaningless to this dispatch system.
  * Work Graph status and claim rows are the source of truth.
- * Presence of these labels on a work item is logged as a warning so operators
- * know to run `/PM migrate-labels` to clean up.
+ * Presence of these labels on a work item is logged as a warning for cleanup.
  */
 const LEGACY_AGENT_LABEL_NAMES = [
 	'agent:ready',

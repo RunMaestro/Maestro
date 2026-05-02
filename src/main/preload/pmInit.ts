@@ -1,8 +1,8 @@
 /**
  * Preload API for the pm:initRepo IPC channel (#445).
  *
- * Exposes window.maestro.pmInit.initRepo() so the renderer can invoke
- * the /PM-init slash command without touching ipcRenderer directly.
+ * Exposes window.maestro.pmInit.initRepo() for local PM state bootstrap
+ * without touching ipcRenderer directly.
  */
 
 import { ipcRenderer } from 'electron';

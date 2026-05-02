@@ -258,9 +258,8 @@ export class AgentDispatchEngine {
 	 * Manually assign a work item to a specific fleet agent.
 	 *
 	 * Backlog gate (#439): items with `status === 'backlog'` are unapproved and
-	 * are hard-blocked from both auto-pickup and manual assignment.  Promote the
-	 * item out of backlog first (e.g. via `/PM prd-new` finalise or planner
-	 * decompose) before assigning it.
+	 * are hard-blocked from both auto-pickup and manual assignment. Promote the
+	 * item out of backlog first before assigning it.
 	 *
 	 * Role enforcement (#427): when the work item has a `pipeline` field, the
 	 * agent's `dispatchProfile.roles` must include `pipeline.currentRole`.
@@ -620,8 +619,8 @@ function uniqueSorted(values: string[]): string[] {
  * `agent:*` labels. These labels are ignored by this dispatch system; Work
  * Graph status and claims are the source of truth.
  *
- * Run `/PM migrate-labels` once per repo to convert legacy labels to local PM
- * state and remove the labels from the issues.
+ * Clean up legacy labels by updating local Work Graph state and removing the
+ * labels from the source items.
  */
 const LEGACY_AGENT_LABELS = [
 	'agent:ready',
@@ -636,8 +635,7 @@ function warnIfLegacyLabels(workItemId: string, tags: string[]): void {
 	if (found.length === 0) return;
 	logger.warn(
 		`Legacy label(s) detected on issue/item "${workItemId}": [${found.join(', ')}]. ` +
-			`These are ignored — Work Graph status and claims are the source of truth. ` +
-			`Run /PM migrate-labels to convert legacy labels to local PM state.`,
+			`These are ignored — Work Graph status and claims are the source of truth.`,
 		'DispatchEngine'
 	);
 }

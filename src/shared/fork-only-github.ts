@@ -11,8 +11,8 @@
  * The fork repository is read from the settings store at runtime
  * (`deliveryPlannerGithub.owner` / `.repo`). When the settings store has not
  * been populated yet, `assertForkRepo`-style guards become no-ops and log a
- * warning instead of throwing — this prevents blocking installs that have not
- * run /PM-init yet.
+ * warning instead of throwing — this prevents blocking installs before project
+ * repository mapping has been configured.
  *
  * Legacy compile-time constants (`FORK_GITHUB_OWNER`, `FORK_GITHUB_REPO`,
  * `FORK_GITHUB_REPOSITORY`) are retained for callers that use them as string
@@ -36,7 +36,8 @@ import {
  * Identifies a GitHub repository (owner + repo) that this fork is permitted
  * to write to.  At runtime this is read from the settings store
  * (`deliveryPlannerGithub.owner` / `.repo`).  When unset the guard becomes a
- * warning-only no-op to avoid breaking installs that haven't run /PM-init.
+ * warning-only no-op to avoid breaking installs before project repository mapping
+ * has been configured.
  */
 export interface ForkRepository {
 	owner: string;
@@ -163,7 +164,7 @@ export function assertForkRepoWithConfig(
 		console.warn(
 			`[fork-only-github] assertForkRepoWithConfig: fork repository not configured in ` +
 				`settings (deliveryPlannerGithub). Skipping write guard for "${owner}/${repo}". ` +
-				`Run /PM-init to persist proper mapping and enable the guard.`
+				`Configure project repository mapping to enable the guard.`
 		);
 		return;
 	}

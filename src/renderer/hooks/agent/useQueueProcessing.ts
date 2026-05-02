@@ -17,7 +17,6 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
-	PmCommand,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -40,8 +39,6 @@ export interface UseQueueProcessingDeps {
 	openspecCommandsRef: React.RefObject<OpenSpecCommand[]>;
 	/** Ref to current BMAD commands */
 	bmadCommandsRef?: React.RefObject<BmadCommand[]>;
-	/** Ref to current PM commands */
-	pmCommandsRef?: React.RefObject<PmCommand[]>;
 }
 
 // ============================================================================
@@ -68,7 +65,6 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		speckitCommandsRef,
 		openspecCommandsRef,
 		bmadCommandsRef,
-		pmCommandsRef,
 	} = deps;
 
 	// --- Reactive subscriptions ---
@@ -92,10 +88,9 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 				speckitCommands: speckitCommandsRef.current ?? [],
 				openspecCommands: openspecCommandsRef.current ?? [],
 				bmadCommands: bmadCommandsRef?.current ?? [],
-				pmCommands: pmCommandsRef?.current ?? [],
 			});
 		},
-		[conductorProfile, bmadCommandsRef, pmCommandsRef]
+		[conductorProfile, bmadCommandsRef]
 	);
 
 	// Update ref for processQueuedItem so batch exit handler can use it

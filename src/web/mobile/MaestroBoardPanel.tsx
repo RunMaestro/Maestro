@@ -430,8 +430,8 @@ export function MaestroBoardPanel({
 			)}
 			{!loading && !error && items.length === 0 && (
 				<p style={{ color: colors.textDim, fontSize: '13px' }}>
-					The board loaded successfully, but Work Graph has no items for this project yet. Run
-					`/PM-init`, then create tasks from PM or Delivery Planner.
+					The board loaded successfully, but Work Graph has no items for this project yet. Open
+					Project PM or Delivery Planner to create board items.
 				</p>
 			)}
 

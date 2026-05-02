@@ -246,7 +246,6 @@ export interface KanbanBoardProps {
 export const KanbanBoard = memo(function KanbanBoard({
 	theme,
 	projectPath,
-	sshRemoteId,
 	mode = 'board',
 }: KanbanBoardProps) {
 	const activeSession = useSessionStore(selectActiveSession);
@@ -255,9 +254,6 @@ export const KanbanBoard = memo(function KanbanBoard({
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [fleetWarning, setFleetWarning] = useState<string | null>(null);
-	const [wikiContextStatus, setWikiContextStatus] = useState<
-		'idle' | 'loading' | 'ready' | 'unavailable'
-	>('idle');
 	const [filters, setFilters] = useState<KanbanFilters>(EMPTY_FILTERS);
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
@@ -267,12 +263,6 @@ export const KanbanBoard = memo(function KanbanBoard({
 		projectPath === undefined
 			? (activeSession?.projectRoot ?? activeSession?.cwd ?? null)
 			: projectPath;
-	const effectiveSshRemoteId =
-		sshRemoteId === undefined
-			? activeSession?.sessionSshRemoteConfig?.enabled
-				? activeSession.sessionSshRemoteConfig.remoteId
-				: (activeSession?.sshRemoteId ?? null)
-			: sshRemoteId;
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -305,35 +295,6 @@ export const KanbanBoard = memo(function KanbanBoard({
 	useEffect(() => {
 		void load();
 	}, [load]);
-
-	useEffect(() => {
-		if (mode !== 'pm-chat' || !effectiveProjectPath) {
-			setWikiContextStatus('idle');
-			return;
-		}
-
-		let cancelled = false;
-		setWikiContextStatus('loading');
-
-		// PM Chat context stays server-backed: AI Wiki is fetched by
-		// projectRoot + sshRemoteId, while Work Graph items are loaded above
-		// with the projectPath filter.
-		void window.maestro.aiWiki
-			.getContextPacket({
-				projectRoot: effectiveProjectPath,
-				sshRemoteId: effectiveSshRemoteId ?? null,
-			})
-			.then((result) => {
-				if (!cancelled) setWikiContextStatus(result.success ? 'ready' : 'unavailable');
-			})
-			.catch(() => {
-				if (!cancelled) setWikiContextStatus('unavailable');
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [mode, effectiveProjectPath, effectiveSshRemoteId]);
 
 	// ---------------------------------------------------------------------------
 	// Derived data
@@ -454,7 +415,7 @@ export const KanbanBoard = memo(function KanbanBoard({
 			>
 				<div className="flex items-center gap-2">
 					<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-						{mode === 'pm-chat' ? 'Project Wiki & PM' : 'Maestro Board'}
+						{mode === 'pm-chat' ? 'Project PM' : 'Maestro Board'}
 					</span>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						{effectiveProjectPath
@@ -468,11 +429,6 @@ export const KanbanBoard = memo(function KanbanBoard({
 							title={effectiveProjectPath}
 						>
 							{effectiveProjectPath}
-						</span>
-					)}
-					{mode === 'pm-chat' && wikiContextStatus !== 'idle' && (
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
-							Wiki context {wikiContextStatus === 'ready' ? 'ready' : wikiContextStatus}
 						</span>
 					)}
 				</div>
@@ -539,6 +495,40 @@ export const KanbanBoard = memo(function KanbanBoard({
 						</span>{' '}
 						Work Graph items are still loaded. Claims and auto-assignment require Dev Crew
 						Automation. {fleetWarning}
+					</div>
+				</div>
+			)}
+
+			{mode === 'pm-chat' && !error && (
+				<div
+					className="border-b px-4 py-3 text-xs"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgSidebar,
+						color: theme.colors.textDim,
+					}}
+				>
+					<div className="font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+						PM kickoff
+					</div>
+					<div>
+						Start by telling PM where the project docs live, or ask PM to inspect the project repo
+						directly. PM should use the docs and repository files for context, then create or update
+						Work Graph items so they appear on Maestro Board.
+					</div>
+					<div className="mt-2 flex flex-wrap gap-2">
+						<span
+							className="rounded border px-2 py-1"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						>
+							Docs path: docs/
+						</span>
+						<span
+							className="rounded border px-2 py-1"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						>
+							Repo scan: {effectiveProjectPath ?? 'select an agent project'}
+						</span>
 					</div>
 				</div>
 			)}
