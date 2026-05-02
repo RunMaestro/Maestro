@@ -52,7 +52,6 @@ export function useClaimHeartbeat(workItemId: string | null | undefined): void {
 			clearInterval(handle);
 		};
 		// Re-run only when the claimed item changes (new claim or release).
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [workItemId]);
 }
 
