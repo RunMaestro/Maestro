@@ -589,6 +589,11 @@ export const RightPanel = memo(
 										? (session.sessionSshRemoteConfig.remoteId ?? null)
 										: null
 								}
+								activeSshRemoteId={
+									session.sessionSshRemoteConfig?.enabled
+										? (session.sessionSshRemoteConfig.remoteId ?? null)
+										: null
+								}
 							/>
 						</div>
 					)}

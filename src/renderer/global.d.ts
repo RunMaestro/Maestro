@@ -3758,9 +3758,17 @@ interface MaestroAPI {
 		 * Resolve (or discover) the GitHub Projects v2 mapping for a project path.
 		 * Returns a cached result if one exists in settings; runs discovery otherwise.
 		 *
-		 * @param input - { projectPath, forceRefresh? }
+		 * Pass `sshRemoteId` when the session's project lives on an SSH remote so
+		 * that git commands run on that host rather than the Maestro install machine.
+		 *
+		 * @param input - { projectPath, forceRefresh?, sshRemoteId? }
 		 */
-		resolve: (input: { projectPath: string; forceRefresh?: boolean }) => Promise<
+		resolve: (input: {
+			projectPath: string;
+			forceRefresh?: boolean;
+			/** SSH remote ID for the active session (null/undefined = local). */
+			sshRemoteId?: string | null;
+		}) => Promise<
 			| {
 					success: true;
 					data: {

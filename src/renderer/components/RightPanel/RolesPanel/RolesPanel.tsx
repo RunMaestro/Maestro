@@ -123,9 +123,21 @@ interface RolesPanelProps {
 	sessions: Session[];
 	/** SSH remote ID of the active session (null = local). */
 	activeRemoteId: string | null;
+	/**
+	 * Full SSH remote config for the active session.
+	 * Passed to pm:resolveGithubProject so git runs on the remote host for
+	 * sessions whose project lives on an SSH remote.
+	 */
+	activeSshRemoteId?: string | null;
 }
 
-export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: RolesPanelProps) {
+export function RolesPanel({
+	theme,
+	projectPath,
+	sessions,
+	activeRemoteId,
+	activeSshRemoteId,
+}: RolesPanelProps) {
 	const [slots, setSlots] = useState<ProjectRoleSlots>({});
 	// Renderer-local claim state: role → claim info
 	const [activeClaims, setActiveClaims] = useState<Map<string, ActiveClaimInfo>>(new Map());
@@ -163,7 +175,7 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 			setGithubProjectLoading(true);
 			setGithubProjectError(null);
 			window.maestro.pmResolveGithubProject
-				.resolve({ projectPath, forceRefresh })
+				.resolve({ projectPath, forceRefresh, sshRemoteId: activeSshRemoteId ?? null })
 				.then((res) => {
 					if (res.success) {
 						setGithubProject({
@@ -187,7 +199,7 @@ export function RolesPanel({ theme, projectPath, sessions, activeRemoteId }: Rol
 				})
 				.finally(() => setGithubProjectLoading(false));
 		},
-		[projectPath]
+		[projectPath, activeSshRemoteId]
 	);
 
 	// Resolve GitHub project mapping on mount / projectPath change (#447)

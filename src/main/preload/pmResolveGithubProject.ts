@@ -16,6 +16,9 @@ export function createPmResolveGithubProjectApi() {
 		/**
 		 * Resolve the GitHub Projects v2 mapping for a project path.
 		 * Returns cached result if available; runs discovery otherwise.
+		 *
+		 * Pass `sshRemoteId` when the session's project lives on an SSH remote so
+		 * git commands are run on that host rather than the Maestro install machine.
 		 */
 		resolve: (input: ResolveGithubProjectInput): Promise<ResolveGithubProjectResult> =>
 			ipcRenderer.invoke('pm:resolveGithubProject', input),

@@ -30,6 +30,7 @@ import type {
 	RawProject,
 } from '../../delivery-planner/github-project-discovery';
 import { discoverGithubProject } from '../../delivery-planner/github-project-discovery';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 
 const LOG_CONTEXT = '[PmResolveGithubProject]';
 
@@ -48,6 +49,12 @@ export interface ResolveGithubProjectInput {
 	projectPath: string;
 	/** When true, ignore any cached mapping and re-run discovery. */
 	forceRefresh?: boolean;
+	/**
+	 * SSH remote ID for the active session.
+	 * When provided and the remote is enabled, git commands run on that host
+	 * instead of the local filesystem — required for projects on SSH remotes.
+	 */
+	sshRemoteId?: string | null;
 }
 
 export type ResolveGithubProjectResult =
@@ -81,7 +88,7 @@ export function registerPmResolveGithubProjectHandlers(
 			if (gateError)
 				return { success: false, code: 'FEATURE_DISABLED', error: 'Feature not enabled' };
 
-			const { projectPath, forceRefresh = false } = input ?? {};
+			const { projectPath, forceRefresh = false, sshRemoteId } = input ?? {};
 			if (!projectPath) {
 				return { success: false, code: 'INVALID_INPUT', error: 'projectPath is required' };
 			}
@@ -95,8 +102,17 @@ export function registerPmResolveGithubProjectHandlers(
 				return { success: true, data: map[projectPath], fromCache: true };
 			}
 
-			// 2. Discover
-			const result = await discoverGithubProject(projectPath);
+			// 2. Build SSH config when the session uses an SSH remote.
+			// git runs on the remote host; gh CLI stays local (it has the user's GitHub auth).
+			const sshRemoteConfig = sshRemoteId ? { enabled: true, remoteId: sshRemoteId } : undefined;
+			const sshStore = createSshRemoteStoreAdapter(deps.settingsStore);
+
+			// 3. Discover
+			const result = await discoverGithubProject({
+				projectPath,
+				sshRemoteConfig,
+				sshStore,
+			});
 
 			if (!result.ok) {
 				const { code, message, detail, candidates } = result.error;

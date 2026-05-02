@@ -19,8 +19,11 @@
  */
 
 import { execFileNoThrow } from '../utils/execFile';
-import * as fs from 'fs';
-import * as path from 'path';
+import type { ExecResult } from '../utils/execFile';
+import type { AgentSshRemoteConfig } from '../../shared/types';
+import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { getSshRemoteConfig } from '../utils/ssh-remote-resolver';
+import { buildSshCommand } from '../utils/ssh-command-builder';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,20 +68,39 @@ export type DiscoveryResult =
 // discoverGithubProject
 // ---------------------------------------------------------------------------
 
+export interface DiscoverGithubProjectOptions {
+	projectPath: string;
+	/** When set, git commands are run on the SSH remote instead of the local host. */
+	sshRemoteConfig?: AgentSshRemoteConfig;
+	/** Required when sshRemoteConfig is provided — used to resolve the SshRemoteConfig. */
+	sshStore?: SshRemoteSettingsStore;
+}
+
 /**
  * Discover the GitHub Projects v2 project for the git repo rooted at `projectPath`.
  *
  * Returns a DiscoveryResult — never throws for expected failure modes.
  * Does NOT persist the result — callers (IPC handler) are responsible for saving
  * the mapping to the settings store.
+ *
+ * Pass `sshRemoteConfig` + `sshStore` to probe git on an SSH-remote host instead
+ * of the local filesystem (required for sessions whose project lives on a remote).
+ * The `gh` CLI calls always run locally — gh holds the user's GitHub auth.
  */
-export async function discoverGithubProject(projectPath: string): Promise<DiscoveryResult> {
+export async function discoverGithubProject(
+	optsOrPath: DiscoverGithubProjectOptions | string
+): Promise<DiscoveryResult> {
+	// Support both legacy string form and new options object
+	const opts: DiscoverGithubProjectOptions =
+		typeof optsOrPath === 'string' ? { projectPath: optsOrPath } : optsOrPath;
+	const { projectPath, sshRemoteConfig, sshStore } = opts;
+
 	// 0. Pre-flight: gh CLI present and authenticated
 	const preflight = await checkGhPreflight();
 	if (!preflight.ok) return { ok: false, error: preflight.error };
 
 	// 1. Resolve owner + repo from git remote
-	const remoteResult = await parseGitRemote(projectPath);
+	const remoteResult = await parseGitRemote(projectPath, sshRemoteConfig, sshStore);
 	if (!remoteResult.ok) return { ok: false, error: remoteResult.error };
 	const { owner, repo } = remoteResult.coords;
 
@@ -183,16 +205,54 @@ async function checkGhPreflight(): Promise<PreflightResult> {
 }
 
 /**
+ * Run `git -C <cwd> <args>` either locally or via SSH on a remote host.
+ *
+ * Returns the same shape as execFileNoThrow so callers are agnostic to local/remote.
+ */
+async function runGit(
+	args: string[],
+	cwd: string,
+	sshRemoteConfig?: AgentSshRemoteConfig,
+	sshStore?: SshRemoteSettingsStore
+): Promise<ExecResult> {
+	if (sshRemoteConfig?.enabled && sshStore) {
+		const sshResult = getSshRemoteConfig(sshStore, { sessionSshConfig: sshRemoteConfig });
+		if (sshResult.config) {
+			const sshCmd = await buildSshCommand(sshResult.config, {
+				command: 'git',
+				args: ['-C', cwd, ...args],
+			});
+			return execFileNoThrow(sshCmd.command, sshCmd.args);
+		}
+	}
+	// Local fallback: use -C flag so we don't need to change cwd
+	return execFileNoThrow('git', ['-C', cwd, ...args]);
+}
+
+/**
  * Verify the path is a git repository and parse owner/repo from `git remote get-url origin`.
  *
  * Handles both:
  *   - https://github.com/owner/repo.git
  *   - git@github.com:owner/repo.git
+ *
+ * When sshRemoteConfig/sshStore are provided, git commands run on the remote host instead
+ * of the local filesystem (so we never hit local fs.existsSync false-positives).
  */
-async function parseGitRemote(cwd: string): Promise<RemoteResult> {
-	// Check if .git directory exists first (fast path, no subprocess needed)
-	const gitDir = path.join(cwd, '.git');
-	if (!fs.existsSync(gitDir)) {
+async function parseGitRemote(
+	cwd: string,
+	sshRemoteConfig?: AgentSshRemoteConfig,
+	sshStore?: SshRemoteSettingsStore
+): Promise<RemoteResult> {
+	// Verify the path is a git repo by running `git rev-parse --is-inside-work-tree`.
+	// This works both locally and via SSH without needing filesystem access.
+	const revParse = await runGit(
+		['rev-parse', '--is-inside-work-tree'],
+		cwd,
+		sshRemoteConfig,
+		sshStore
+	);
+	if (revParse.exitCode !== 0 || revParse.stdout.trim() !== 'true') {
 		return {
 			ok: false,
 			error: {
@@ -203,7 +263,7 @@ async function parseGitRemote(cwd: string): Promise<RemoteResult> {
 		};
 	}
 
-	const result = await execFileNoThrow('git', ['remote', 'get-url', 'origin'], cwd);
+	const result = await runGit(['remote', 'get-url', 'origin'], cwd, sshRemoteConfig, sshStore);
 
 	if (result.exitCode !== 0 || !result.stdout.trim()) {
 		return {
