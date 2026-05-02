@@ -384,9 +384,12 @@ export class GithubClient {
 				/api rate limit/i.test(stderr)
 			) {
 				// Pin the rate-limit guard so subsequent reads serve from cache
-				// instead of hammering the exhausted endpoint.
+				// instead of hammering the exhausted endpoint. Reset checkedAt to 0
+				// so the next isRateLimited() call re-queries the meta endpoint
+				// (rate_limit doesn't consume budget) and naturally recovers when
+				// the window resets.
 				this.rateLimitRemaining = 0;
-				this.rateLimitCheckedAt = Date.now();
+				this.rateLimitCheckedAt = 0;
 				throw new Error(`gh ${args[0]} ${args[1] ?? ''} rate-limited (GraphQL): ${stderr}`);
 			}
 			throw new Error(`gh ${args[0]} ${args[1] ?? ''} failed: ${stderr}`);
