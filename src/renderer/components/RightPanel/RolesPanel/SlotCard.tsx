@@ -63,6 +63,10 @@ export interface SlotCardProps {
 	 * eligible agents for the picker.
 	 */
 	activeRemoteId: string | null;
+	/** GitHub owner for the active project (from projectGithubMap). */
+	githubOwner?: string;
+	/** GitHub repo for the active project (from projectGithubMap). */
+	githubRepo?: string;
 }
 
 /** Normalise a path for comparison (trailing slash removed, lower-case on case-insensitive OSes). */
@@ -79,6 +83,8 @@ export function SlotCard({
 	sessions,
 	activeProjectRoot,
 	activeRemoteId,
+	githubOwner,
+	githubRepo,
 }: SlotCardProps) {
 	// -----------------------------------------------------------------------
 	// Filter sessions to those on the same project + host as the active session.
@@ -177,12 +183,13 @@ export function SlotCard({
 		: null;
 
 	const openGithub = useCallback(() => {
-		if (githubNumber) {
-			void window.maestro.shell.openExternal(
-				`https://github.com/${LEGACY_HUMPFTECH_OWNER}/${LEGACY_HUMPFTECH_REPO}/issues/${githubNumber}`
-			);
-		}
-	}, [githubNumber]);
+		if (!githubNumber) return;
+		const owner = githubOwner ?? LEGACY_HUMPFTECH_OWNER;
+		const repo = githubRepo ?? LEGACY_HUMPFTECH_REPO;
+		void window.maestro.shell.openExternal(
+			`https://github.com/${owner}/${repo}/issues/${githubNumber}`
+		);
+	}, [githubNumber, githubOwner, githubRepo]);
 
 	// -----------------------------------------------------------------------
 	// Shared styles

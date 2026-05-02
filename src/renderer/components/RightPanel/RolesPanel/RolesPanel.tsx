@@ -233,6 +233,10 @@ export function RolesPanel({
 				const map = new Map<string, ActiveClaimInfo>();
 				for (const item of items) {
 					if (!item.role) continue;
+					// Scope to this panel's project — the global ClaimTracker has
+					// claims from every project, but each RolesPanel instance only
+					// shows its own.
+					if (projectPath && item.projectPath !== projectPath) continue;
 					map.set(item.role, {
 						projectPath: item.projectPath ?? '',
 						role: item.role,
@@ -251,6 +255,8 @@ export function RolesPanel({
 	// Subscribe to live claim events from DispatchEngine (#444)
 	useEffect(() => {
 		const unsubStart = window.maestro.agentDispatch.onClaimStarted((event) => {
+			// Ignore events for other projects — each RolesPanel only mirrors its own.
+			if (projectPath && event.projectPath !== projectPath) return;
 			setActiveClaims((prev) => {
 				const next = new Map(prev);
 				next.set(event.role, event);
@@ -259,6 +265,7 @@ export function RolesPanel({
 		});
 
 		const unsubEnd = window.maestro.agentDispatch.onClaimEnded((event) => {
+			if (projectPath && event.projectPath !== projectPath) return;
 			setActiveClaims((prev) => {
 				const next = new Map(prev);
 				next.delete(event.role);
@@ -270,7 +277,7 @@ export function RolesPanel({
 			unsubStart();
 			unsubEnd();
 		};
-	}, []);
+	}, [projectPath]);
 
 	const handleAssignmentChange = useCallback(
 		(role: DispatchRole, assignment: RoleSlotAssignment | undefined) => {
@@ -487,6 +494,8 @@ export function RolesPanel({
 					sessions={sessions}
 					activeProjectRoot={projectPath}
 					activeRemoteId={activeRemoteId}
+					githubOwner={githubProject?.owner}
+					githubRepo={githubProject?.repo}
 				/>
 			))}
 
