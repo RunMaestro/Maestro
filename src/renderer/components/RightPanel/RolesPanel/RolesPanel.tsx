@@ -421,9 +421,13 @@ export function RolesPanel({
 							<>
 								<a
 									href={`https://github.com/${githubProject.owner}/${githubProject.repo}`}
-									target="_blank"
-									rel="noreferrer"
-									className="font-medium hover:underline"
+									onClick={(e) => {
+										e.preventDefault();
+										void window.maestro.shell?.openExternal?.(
+											`https://github.com/${githubProject.owner}/${githubProject.repo}`
+										);
+									}}
+									className="font-medium hover:underline cursor-pointer"
 									style={{ color: theme.colors.textMain ?? theme.colors.textDim }}
 								>
 									{githubProject.owner}/{githubProject.repo}
@@ -437,9 +441,15 @@ export function RolesPanel({
 									? `https://github.com/orgs/${githubProject.owner}/projects/${githubProject.projectNumber}`
 									: '#'
 							}
-							target="_blank"
-							rel="noreferrer"
-							className="hover:underline"
+							onClick={(e) => {
+								e.preventDefault();
+								if (githubProject.owner) {
+									void window.maestro.shell?.openExternal?.(
+										`https://github.com/orgs/${githubProject.owner}/projects/${githubProject.projectNumber}`
+									);
+								}
+							}}
+							className="hover:underline cursor-pointer"
 							style={{ color: theme.colors.textMain ?? theme.colors.textDim }}
 						>
 							Project #{githubProject.projectNumber} '{githubProject.projectTitle}'

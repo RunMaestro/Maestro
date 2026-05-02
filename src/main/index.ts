@@ -84,6 +84,7 @@ import {
 	registerPmResolveGithubProjectHandlers,
 	registerPmInitHandlers,
 	registerPmMigrateLabelsHandlers,
+	registerPmCommandsHandlers,
 	registerProjectRolesHandlers,
 	registerPmOrchestratorHandlers,
 	initConversationalPrdStore,
@@ -1558,6 +1559,8 @@ function setupIpcHandlers() {
 	registerPmInitHandlers({ settingsStore: store });
 	// pm-migrate-labels — one-time legacy agent:* label → AI Status field migration
 	registerPmMigrateLabelsHandlers({ settingsStore: store });
+	// pm-commands — load /PM mode system prompt for customAICommands dispatch path
+	registerPmCommandsHandlers();
 	registerProjectRolesHandlers(store as never);
 }
 

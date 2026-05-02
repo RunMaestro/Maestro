@@ -351,10 +351,17 @@ export class GithubClient {
 		try {
 			const result = await this.runGh(['api', 'rate_limit']);
 			type RateLimitResponse = {
+				resources?: {
+					core?: { remaining?: number };
+					graphql?: { remaining?: number };
+				};
 				rate?: { remaining?: number; limit?: number; reset?: number };
 			};
 			const parsed = this.parseJson<RateLimitResponse>(result.stdout, 'rate_limit');
-			this.rateLimitRemaining = parsed.rate?.remaining ?? Infinity;
+			// Project commands use GraphQL; fall back to core for non-project paths.
+			const graphqlRemaining = parsed.resources?.graphql?.remaining;
+			const coreRemaining = parsed.resources?.core?.remaining ?? parsed.rate?.remaining;
+			this.rateLimitRemaining = Math.min(graphqlRemaining ?? Infinity, coreRemaining ?? Infinity);
 			this.rateLimitCheckedAt = now;
 		} catch {
 			// If we can't check, assume we're not rate-limited.
@@ -367,7 +374,18 @@ export class GithubClient {
 	private async runGh(args: string[]): Promise<{ stdout: string; stderr: string }> {
 		const result = await execFileNoThrow('gh', args);
 		if (result.exitCode !== 0) {
-			throw new Error(`gh ${args[0]} ${args[1] ?? ''} failed: ${result.stderr.trim()}`);
+			const stderr = result.stderr.trim();
+			// gh CLI returns the misleading "unknown owner type" string when the
+			// GraphQL rate limit is exhausted. Detect and surface a clear error so
+			// the poller can log "rate-limited" instead of "unknown owner type".
+			if (
+				/unknown owner type/i.test(stderr) ||
+				/rate limit (already )?exceeded/i.test(stderr) ||
+				/api rate limit/i.test(stderr)
+			) {
+				throw new Error(`gh ${args[0]} ${args[1] ?? ''} rate-limited (GraphQL): ${stderr}`);
+			}
+			throw new Error(`gh ${args[0]} ${args[1] ?? ''} failed: ${stderr}`);
 		}
 		return { stdout: result.stdout, stderr: result.stderr };
 	}
