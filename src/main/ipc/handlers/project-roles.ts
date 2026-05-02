@@ -13,7 +13,6 @@ import { ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { ProjectRoleSlots } from '../../../shared/project-roles-types';
 import { logger } from '../../utils/logger';
-import { getSessionsStore } from '../../stores';
 
 const LOG_CONTEXT = '[IPC:ProjectRoles]';
 
@@ -38,26 +37,9 @@ export function registerProjectRolesHandlers(settingsStore: Store): void {
 		'projectRoles:set',
 		async (_event, projectPath: string, slots: ProjectRoleSlots) => {
 			try {
-				// Runner role must be local-only (#440): reject SSH-remote agents.
-				if (slots.runner?.agentId) {
-					const sessionsStore = getSessionsStore();
-					const sessions = sessionsStore
-						? (sessionsStore.get('sessions', []) as Array<{
-								id: string;
-								sessionSshRemoteConfig?: { enabled?: boolean };
-							}>)
-						: [];
-					const runnerSession = sessions.find((s) => s.id === slots.runner!.agentId);
-					if (runnerSession?.sessionSshRemoteConfig?.enabled === true) {
-						return {
-							success: false,
-							code: 'RUNNER_MUST_BE_LOCAL',
-							error:
-								'Runner role requires a local agent. SSH-remote agents are not allowed for runners.',
-						};
-					}
-				}
-
+				// Runner can be SSH-remote — projects whose source lives on a remote
+				// host need the runner to spawn there. SSH wrapping happens in
+				// slot-executor via wrapSpawnWithSsh.
 				const map = (settingsStore.get(STORE_KEY, {}) as ProjectRoleSlotsMap) ?? {};
 				const updated: ProjectRoleSlotsMap = { ...map, [projectPath]: slots };
 				settingsStore.set(STORE_KEY, updated);

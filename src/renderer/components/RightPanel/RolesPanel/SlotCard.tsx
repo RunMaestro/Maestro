@@ -99,9 +99,6 @@ export function SlotCard({
 
 			if (sessionRemoteId !== activeRemoteId) return false;
 
-			// Runner must be local-only (#440)
-			if (role === 'runner' && s.sessionSshRemoteConfig?.enabled) return false;
-
 			return true;
 		});
 	}, [sessions, activeProjectRoot, activeRemoteId, role]);
@@ -359,11 +356,6 @@ export function SlotCard({
 							</option>
 						))}
 					</select>
-				)}
-				{role === 'runner' && (
-					<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
-						Runner must run locally — SSH agents hidden.
-					</p>
 				)}
 			</div>
 
