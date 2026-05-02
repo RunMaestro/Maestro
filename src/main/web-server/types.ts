@@ -437,6 +437,75 @@ export type GetBionifyReadingModeCallback = () => boolean;
  */
 export type GetCustomCommandsCallback = () => CustomAICommand[];
 
+// =============================================================================
+// External Session Inspection (maestro-cli session list / session show)
+// =============================================================================
+
+/**
+ * Single open AI tab surfaced by `maestro-cli session list`.
+ *
+ * `tabId` is the addressable identifier consumers (Maestro-Discord, Cue) pass
+ * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
+ * an alias kept for symmetry with `dispatch`'s response shape — the duplicate
+ * field lets polling consumers use whichever name they prefer.
+ */
+export interface DesktopSessionEntry {
+	tabId: string;
+	sessionId: string;
+	/** Maestro agent (LeftBar entity) ID this tab belongs to. */
+	agentId: string;
+	agentName: string;
+	toolType: string;
+	/** User-defined tab name; null when the user hasn't named the tab. */
+	name: string | null;
+	/** Provider session id (e.g. Claude `session_id`) bound to this tab. */
+	agentSessionId: string | null;
+	state: 'idle' | 'busy';
+	createdAt: number;
+	starred: boolean;
+}
+
+/**
+ * One message in a session-history response.
+ *
+ * `role` is a coarse derived label intended for conversational consumers
+ * (Discord bots etc.). `source` preserves the raw `LogEntry.source` so callers
+ * that need finer detail (e.g. distinguishing tool output from assistant text)
+ * can still discriminate.
+ */
+export interface SessionHistoryMessage {
+	id: string;
+	role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'error' | 'unknown';
+	source: string;
+	content: string;
+	/** ISO-8601 timestamp. */
+	timestamp: string;
+}
+
+export interface SessionHistoryResult {
+	tabId: string;
+	sessionId: string;
+	agentId: string;
+	agentSessionId: string | null;
+	messages: SessionHistoryMessage[];
+}
+
+export interface GetSessionHistoryOptions {
+	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */
+	sinceMs?: number;
+	/** After other filters, keep only the last N messages. */
+	tail?: number;
+}
+
+/** Callback to enumerate all open AI tabs across all desktop agents. */
+export type ListDesktopSessionsCallback = () => DesktopSessionEntry[];
+
+/** Callback to fetch a tab's full conversation history by tabId. */
+export type GetSessionHistoryCallback = (
+	tabId: string,
+	options?: GetSessionHistoryOptions
+) => SessionHistoryResult | null;
+
 /**
  * Callback type for fetching history entries.
  * Uses HistoryEntry from shared/types.ts as the canonical type.

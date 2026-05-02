@@ -132,6 +132,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
 		notifyToast: vi.fn().mockResolvedValue(true),
 		notifyCenterFlash: vi.fn().mockResolvedValue(true),
+		listDesktopSessions: vi.fn().mockReturnValue([]),
+		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
 }
 
@@ -1831,6 +1833,143 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('create_gist_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not configured');
+		});
+	});
+
+	// PR2 of the CLI surface refactor: read-only session inspection used by
+	// `maestro-cli session list` and `session show <tabId>`. The handlers here
+	// are deliberately stateless so external pollers (Maestro-Discord, Cue
+	// follow-ups) can call them at arbitrary cadence.
+	describe('List Desktop Sessions (CLI → Desktop)', () => {
+		it('returns the desktop_sessions_list payload from the callback', () => {
+			(callbacks.listDesktopSessions as any).mockReturnValue([
+				{
+					tabId: 'tab-1',
+					sessionId: 'tab-1',
+					agentId: 'agent-a',
+					agentName: 'Backend',
+					toolType: 'claude-code',
+					name: 'Refactor parser',
+					agentSessionId: 'claude-uuid-1',
+					state: 'idle',
+					createdAt: 1714268000000,
+					starred: false,
+				},
+			]);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('desktop_sessions_list');
+			expect(response.success).toBe(true);
+			expect(response.sessions).toHaveLength(1);
+			expect(response.sessions[0].tabId).toBe('tab-1');
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('returns an empty list when the callback is unconfigured rather than echoing', () => {
+			// Unknown-type echo would confuse the CLI's request/response pairing
+			// (`MaestroClient` matches by responseType). Returning the empty
+			// success shape keeps the wire contract intact even when the desktop
+			// hasn't wired up the callback yet — older builds on a newer CLI.
+			callbacks.listDesktopSessions = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('desktop_sessions_list');
+			expect(response.success).toBe(true);
+			expect(response.sessions).toEqual([]);
+		});
+	});
+
+	describe('Get Session History (CLI → Desktop)', () => {
+		const mockHistory = {
+			tabId: 'tab-1',
+			sessionId: 'tab-1',
+			agentId: 'agent-a',
+			agentSessionId: 'claude-uuid-1',
+			messages: [
+				{
+					id: 'log-1',
+					role: 'user' as const,
+					source: 'user',
+					content: 'Hello',
+					timestamp: '2026-04-28T10:00:00.000Z',
+				},
+			],
+		};
+
+		it('forwards tabId / sinceMs / tail to the callback and returns the result', () => {
+			(callbacks.getSessionHistory as any).mockReturnValue(mockHistory);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-1',
+				sinceMs: 1714268000000,
+				tail: 5,
+				requestId: 'req-2',
+			});
+
+			expect(callbacks.getSessionHistory).toHaveBeenCalledWith('tab-1', {
+				sinceMs: 1714268000000,
+				tail: 5,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBe('tab-1');
+			expect(response.messages).toHaveLength(1);
+			expect(response.requestId).toBe('req-2');
+		});
+
+		it('emits MISSING_TAB_ID when tabId is omitted', () => {
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				requestId: 'req-2',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(false);
+			expect(response.code).toBe('MISSING_TAB_ID');
+			expect(callbacks.getSessionHistory).not.toHaveBeenCalled();
+		});
+
+		it('emits TAB_NOT_FOUND when the desktop has no matching tab', () => {
+			(callbacks.getSessionHistory as any).mockReturnValue(null);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-bogus',
+				requestId: 'req-3',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(false);
+			expect(response.code).toBe('TAB_NOT_FOUND');
+		});
+
+		it('coerces a negative tail to undefined rather than passing it through', () => {
+			// Negative tail would silently invert `slice(-N)` semantics on the
+			// desktop side ("everything except the last N" instead of "last N").
+			// Drop it at the boundary so a buggy caller can never poison the
+			// desktop's read.
+			(callbacks.getSessionHistory as any).mockReturnValue(mockHistory);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-1',
+				tail: -3,
+			});
+
+			expect(callbacks.getSessionHistory).toHaveBeenCalledWith('tab-1', {
+				sinceMs: undefined,
+				tail: undefined,
+			});
 		});
 	});
 });

@@ -175,6 +175,109 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// `maestro-cli session list` — flatten all open AI tabs into addressable
+		// entries. The CLI does not need group/cwd metadata; the structurally
+		// smaller payload keeps polling cheap. Reads straight from the persisted
+		// session store (same source the renderer pushes to via `sessions:save`),
+		// so the data is as fresh as the desktop's own state.
+		server.setListDesktopSessionsCallback(() => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const entries = [];
+			for (const s of sessions) {
+				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				for (const tab of aiTabs) {
+					if (!tab || typeof tab.id !== 'string') continue;
+					entries.push({
+						tabId: tab.id,
+						sessionId: tab.id,
+						agentId: s.id,
+						agentName: s.name,
+						toolType: s.toolType,
+						name: typeof tab.name === 'string' ? tab.name : null,
+						agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+						state: tab.state === 'busy' ? ('busy' as const) : ('idle' as const),
+						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
+						starred: tab.starred === true,
+					});
+				}
+			}
+			return entries;
+		});
+
+		// `maestro-cli session show <tabId>` — return the tab's conversation
+		// history with optional `--since` (poll cursor) and `--tail` (cap)
+		// filters applied here so the CLI never receives more than it asked for.
+		// `LogEntry.source` values map to a coarse `role` for conversational
+		// consumers (Discord bots); the raw `source` is preserved alongside so
+		// callers that want finer detail (tool vs assistant text) can still
+		// discriminate. `stdout` is treated as `assistant` because legacy /
+		// non-AI agent flows store assistant replies under that source.
+		server.setGetSessionHistoryCallback((tabId, options) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			for (const s of sessions) {
+				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				const tab = aiTabs.find((t) => t && t.id === tabId);
+				if (!tab) continue;
+				const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
+				let logs = rawLogs;
+				if (options?.sinceMs !== undefined) {
+					const cutoff = options.sinceMs;
+					logs = logs.filter((l) => typeof l.timestamp === 'number' && l.timestamp > cutoff);
+				}
+				if (options?.tail !== undefined && options.tail >= 0) {
+					// `slice(-0)` is identical to `slice(0)` (because `-0 === 0`),
+					// which would silently return the full transcript when the
+					// caller asked for zero messages. Compute the start index
+					// explicitly so `tail: 0` yields `[]`.
+					logs = logs.slice(Math.max(logs.length - options.tail, 0));
+				}
+				const messages = logs.map((l) => {
+					const source = typeof l.source === 'string' ? l.source : 'unknown';
+					const tsMs = typeof l.timestamp === 'number' ? l.timestamp : 0;
+					let role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'error' | 'unknown';
+					switch (source) {
+						case 'user':
+							role = 'user';
+							break;
+						case 'ai':
+						case 'stdout':
+							role = 'assistant';
+							break;
+						case 'thinking':
+							role = 'thinking';
+							break;
+						case 'tool':
+							role = 'tool';
+							break;
+						case 'system':
+							role = 'system';
+							break;
+						case 'error':
+						case 'stderr':
+							role = 'error';
+							break;
+						default:
+							role = 'unknown';
+					}
+					return {
+						id: typeof l.id === 'string' ? l.id : `${tab.id}-${tsMs}`,
+						role,
+						source,
+						content: typeof l.text === 'string' ? l.text : '',
+						timestamp: new Date(tsMs).toISOString(),
+					};
+				});
+				return {
+					tabId,
+					sessionId: tabId,
+					agentId: s.id,
+					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+					messages,
+				};
+			}
+			return null;
+		});
+
 		// Set up callback for web server to fetch single session details
 		// Optional tabId param allows fetching logs for a specific tab (avoids race conditions)
 		server.setGetSessionDetailCallback((sessionId: string, tabId?: string) => {

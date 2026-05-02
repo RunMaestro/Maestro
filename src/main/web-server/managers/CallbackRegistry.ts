@@ -81,6 +81,11 @@ import type {
 	NotifyCenterFlashCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
+	ListDesktopSessionsCallback,
+	GetSessionHistoryCallback,
+	GetSessionHistoryOptions,
+	DesktopSessionEntry,
+	SessionHistoryResult,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -148,6 +153,8 @@ export interface WebServerCallbacks {
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	listDesktopSessions: ListDesktopSessionsCallback | null;
+	getSessionHistory: GetSessionHistoryCallback | null;
 }
 
 export class CallbackRegistry {
@@ -211,6 +218,8 @@ export class CallbackRegistry {
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
 		notifyCenterFlash: null,
+		listDesktopSessions: null,
+		getSessionHistory: null,
 	};
 
 	// ============ Getter Methods ============
@@ -576,6 +585,17 @@ export class CallbackRegistry {
 		return this.callbacks.notifyCenterFlash(params);
 	}
 
+	listDesktopSessions(): DesktopSessionEntry[] {
+		return this.callbacks.listDesktopSessions?.() ?? [];
+	}
+
+	getSessionHistory(
+		tabId: string,
+		options?: GetSessionHistoryOptions
+	): SessionHistoryResult | null {
+		return this.callbacks.getSessionHistory?.(tabId, options) ?? null;
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -818,6 +838,14 @@ export class CallbackRegistry {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
+		this.callbacks.listDesktopSessions = callback;
+	}
+
+	setGetSessionHistoryCallback(callback: GetSessionHistoryCallback): void {
+		this.callbacks.getSessionHistory = callback;
 	}
 
 	// ============ Check Methods ============
