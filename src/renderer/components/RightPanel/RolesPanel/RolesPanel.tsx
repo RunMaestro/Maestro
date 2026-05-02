@@ -24,6 +24,11 @@ import type {
 	RoleSlotAssignment,
 } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLES } from '../../../../shared/project-roles-types';
+import {
+	type ActiveDispatchClaim,
+	selectClaimsForProject,
+	useDispatchClaimsStore,
+} from '../../../stores/dispatchClaimsStore';
 import { SlotCard } from './SlotCard';
 
 /** Resolved GitHub project info, shown in the panel header (#447). */
@@ -105,17 +110,6 @@ function describeDiscoveryError(err: GithubProjectError): { label: string; actio
 	}
 }
 
-/** Minimal claim shape needed to show busy state on a SlotCard. */
-interface ActiveClaimInfo {
-	projectPath: string;
-	role: string;
-	agentId: string;
-	sessionId: string;
-	issueNumber?: number;
-	issueTitle?: string;
-	claimedAt: string;
-}
-
 interface RolesPanelProps {
 	theme: Theme;
 	projectPath: string | null;
@@ -139,8 +133,7 @@ export function RolesPanel({
 	activeSshRemoteId,
 }: RolesPanelProps) {
 	const [slots, setSlots] = useState<ProjectRoleSlots>({});
-	// Renderer-local claim state: role → claim info
-	const [activeClaims, setActiveClaims] = useState<Map<string, ActiveClaimInfo>>(new Map());
+	const activeClaims = useDispatchClaimsStore(selectClaimsForProject(projectPath));
 	const [loading, setLoading] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	// GitHub project mapping (#447)
@@ -213,71 +206,9 @@ export function RolesPanel({
 		resolveGithubProject(false);
 	}, [projectPath, resolveGithubProject]);
 
-	// Hydrate initial claim state from in-memory ClaimTracker (no GitHub query).
-	// ClaimInfo from getBoard uses agentSessionId rather than agentId/sessionId,
-	// so we normalise the shape here for the renderer-local map.
 	useEffect(() => {
-		window.maestro.agentDispatch
-			.getBoard()
-			.then((res) => {
-				if (!res.success) return;
-				type BoardItem = {
-					role?: string;
-					projectPath?: string;
-					agentSessionId?: string;
-					issueNumber?: number;
-					issueTitle?: string;
-					claimedAt?: string;
-				};
-				const items = (res.data as { items?: BoardItem[] }).items ?? [];
-				const map = new Map<string, ActiveClaimInfo>();
-				for (const item of items) {
-					if (!item.role) continue;
-					// Scope to this panel's project — the global ClaimTracker has
-					// claims from every project, but each RolesPanel instance only
-					// shows its own.
-					if (projectPath && item.projectPath !== projectPath) continue;
-					map.set(item.role, {
-						projectPath: item.projectPath ?? '',
-						role: item.role,
-						agentId: item.agentSessionId ?? '',
-						sessionId: item.agentSessionId ?? '',
-						issueNumber: item.issueNumber,
-						issueTitle: item.issueTitle,
-						claimedAt: item.claimedAt ?? new Date().toISOString(),
-					});
-				}
-				setActiveClaims(map);
-			})
-			.catch(() => {});
+		useDispatchClaimsStore.getState().initialize();
 	}, []);
-
-	// Subscribe to live claim events from DispatchEngine (#444)
-	useEffect(() => {
-		const unsubStart = window.maestro.agentDispatch.onClaimStarted((event) => {
-			// Ignore events for other projects — each RolesPanel only mirrors its own.
-			if (projectPath && event.projectPath !== projectPath) return;
-			setActiveClaims((prev) => {
-				const next = new Map(prev);
-				next.set(event.role, event);
-				return next;
-			});
-		});
-
-		const unsubEnd = window.maestro.agentDispatch.onClaimEnded((event) => {
-			if (projectPath && event.projectPath !== projectPath) return;
-			setActiveClaims((prev) => {
-				const next = new Map(prev);
-				next.delete(event.role);
-				return next;
-			});
-		});
-
-		return () => {
-			unsubStart();
-			unsubEnd();
-		};
-	}, [projectPath]);
 
 	const handleAssignmentChange = useCallback(
 		(role: DispatchRole, assignment: RoleSlotAssignment | undefined) => {
@@ -306,10 +237,10 @@ export function RolesPanel({
 
 	/**
 	 * Find the busy claim info for a role slot.
-	 * Matched by role name against the renderer-local claim map.
+	 * Matched by role name against the central dispatch claims store.
 	 */
-	function busyClaimForRole(role: DispatchRole): ActiveClaimInfo | undefined {
-		return activeClaims.get(role);
+	function busyClaimForRole(role: DispatchRole): ActiveDispatchClaim | undefined {
+		return activeClaims?.get(role);
 	}
 
 	if (!projectPath) {
@@ -329,7 +260,7 @@ export function RolesPanel({
 					className="text-xs font-bold uppercase tracking-wide"
 					style={{ color: theme.colors.textDim }}
 				>
-					Dev Crew
+					Dev Crew Status
 				</span>
 				{loading && (
 					<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
@@ -496,11 +427,13 @@ export function RolesPanel({
 					activeRemoteId={activeRemoteId}
 					githubOwner={githubProject?.owner}
 					githubRepo={githubProject?.repo}
+					readOnly
 				/>
 			))}
 
 			<p className="text-[10px] mt-2 px-1" style={{ color: theme.colors.textDim }}>
-				Busy state updates via live events from DispatchEngine (#444).
+				Role assignments are configured in Settings → Dev Teams. Busy state updates via live events
+				from DispatchEngine (#444).
 			</p>
 		</div>
 	);

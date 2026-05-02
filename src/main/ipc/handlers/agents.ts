@@ -13,6 +13,12 @@ import {
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
 } from '../../agents';
+import {
+	DEFAULT_AGENT_DISPATCH_PROFILE,
+	DEFAULT_AGENT_DISPATCH_SETTINGS,
+	type AgentDispatchProfile,
+	type AgentDispatchSettings,
+} from '../../../shared/agent-dispatch-types';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -29,6 +35,8 @@ import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
+const DISPATCH_SETTINGS_KEY = 'dispatchSettings';
+const DISPATCH_PROFILE_KEY = 'dispatchProfile';
 
 // Helper to create handler options with consistent context
 const handlerOpts = (
@@ -764,6 +772,8 @@ async function discoverOpenCodeSlashCommandsRemote(
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const requireSettingsStore = () =>
+		requireDependency(() => settingsStore ?? null, 'Settings store');
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -1009,6 +1019,78 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			logger.debug(`Getting capabilities for agent: ${agentId}`, LOG_CONTEXT);
 			return getAgentCapabilities(agentId);
 		})
+	);
+
+	ipcMain.handle(
+		'agents:getDispatchSettings',
+		withIpcErrorLogging(handlerOpts('getDispatchSettings', CONFIG_LOG_CONTEXT), async () => {
+			const store = requireSettingsStore();
+			return store.get(
+				DISPATCH_SETTINGS_KEY,
+				DEFAULT_AGENT_DISPATCH_SETTINGS
+			) as AgentDispatchSettings;
+		})
+	);
+
+	ipcMain.handle(
+		'agents:setDispatchSettings',
+		withIpcErrorLogging(
+			handlerOpts('setDispatchSettings', CONFIG_LOG_CONTEXT),
+			async (settings: AgentDispatchSettings) => {
+				requireSettingsStore().set(DISPATCH_SETTINGS_KEY, settings);
+				return true;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getDispatchProfiles',
+		withIpcErrorLogging(handlerOpts('getDispatchProfiles', CONFIG_LOG_CONTEXT), async () => {
+			const sessions = ((requireSettingsStore().get('sessions', []) as Array<{
+				id?: string;
+				dispatchProfile?: AgentDispatchProfile;
+			}>) ?? []) as Array<{ id?: string; dispatchProfile?: AgentDispatchProfile }>;
+			const profiles: Record<string, AgentDispatchProfile> = {};
+			for (const session of sessions) {
+				if (!session.id) continue;
+				profiles[session.id] = session.dispatchProfile ?? DEFAULT_AGENT_DISPATCH_PROFILE;
+			}
+			return profiles;
+		})
+	);
+
+	ipcMain.handle(
+		'agents:getDispatchProfile',
+		withIpcErrorLogging(
+			handlerOpts('getDispatchProfile', CONFIG_LOG_CONTEXT),
+			async (agentId: string) => {
+				const sessions = ((requireSettingsStore().get('sessions', []) as Array<{
+					id?: string;
+					dispatchProfile?: AgentDispatchProfile;
+				}>) ?? []) as Array<{ id?: string; dispatchProfile?: AgentDispatchProfile }>;
+				return (
+					sessions.find((session) => session.id === agentId)?.dispatchProfile ??
+					DEFAULT_AGENT_DISPATCH_PROFILE
+				);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:setDispatchProfile',
+		withIpcErrorLogging(
+			handlerOpts('setDispatchProfile', CONFIG_LOG_CONTEXT),
+			async (agentId: string, profile: AgentDispatchProfile) => {
+				const store = requireSettingsStore();
+				const sessions = ((store.get('sessions', []) as Array<Record<string, unknown>>) ??
+					[]) as Array<Record<string, unknown>>;
+				const updated = sessions.map((session) =>
+					session.id === agentId ? { ...session, [DISPATCH_PROFILE_KEY]: profile } : session
+				);
+				store.set('sessions', updated);
+				return true;
+			}
+		)
 	);
 
 	// Get all configuration for an agent

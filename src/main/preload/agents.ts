@@ -10,6 +10,10 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
+import type {
+	AgentDispatchProfile,
+	AgentDispatchSettings,
+} from '../../shared/agent-dispatch-types';
 
 // Re-export for consumers that import from preload
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
@@ -52,6 +56,21 @@ export function createAgentsApi() {
 		 */
 		getCapabilities: (agentId: string): Promise<AgentCapabilities> =>
 			ipcRenderer.invoke('agents:getCapabilities', agentId),
+
+		getDispatchSettings: (): Promise<AgentDispatchSettings> =>
+			ipcRenderer.invoke('agents:getDispatchSettings'),
+
+		setDispatchSettings: (settings: AgentDispatchSettings): Promise<boolean> =>
+			ipcRenderer.invoke('agents:setDispatchSettings', settings),
+
+		getDispatchProfiles: (): Promise<Record<string, AgentDispatchProfile>> =>
+			ipcRenderer.invoke('agents:getDispatchProfiles'),
+
+		getDispatchProfile: (agentId: string): Promise<AgentDispatchProfile> =>
+			ipcRenderer.invoke('agents:getDispatchProfile', agentId),
+
+		setDispatchProfile: (agentId: string, profile: AgentDispatchProfile): Promise<boolean> =>
+			ipcRenderer.invoke('agents:setDispatchProfile', agentId, profile),
 
 		/**
 		 * Get an agent's full configuration

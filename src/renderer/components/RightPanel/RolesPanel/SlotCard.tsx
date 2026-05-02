@@ -48,6 +48,7 @@ export interface SlotCardProps {
 	activeClaim?: ActiveClaimInfo;
 	theme: Theme;
 	onAssignmentChange: (role: DispatchRole, assignment: RoleSlotAssignment | undefined) => void;
+	readOnly?: boolean;
 	/**
 	 * All Left Bar sessions — filtered inside SlotCard to those matching the
 	 * active project and host before populating the agent picker dropdown.
@@ -85,6 +86,7 @@ export function SlotCard({
 	activeRemoteId,
 	githubOwner,
 	githubRepo,
+	readOnly = false,
 }: SlotCardProps) {
 	// -----------------------------------------------------------------------
 	// Filter sessions to those on the same project + host as the active session.
@@ -303,6 +305,7 @@ export function SlotCard({
 					{assignment && (
 						<button
 							onClick={handleToggleEnabled}
+							disabled={readOnly}
 							className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium border"
 							style={{
 								backgroundColor: slotEnabled
@@ -310,7 +313,7 @@ export function SlotCard({
 									: `${theme.colors.textDim}15`,
 								color: slotEnabled ? theme.colors.accent : theme.colors.textDim,
 								borderColor: slotEnabled ? `${theme.colors.accent}50` : `${theme.colors.textDim}40`,
-								cursor: 'pointer',
+								cursor: readOnly ? 'default' : 'pointer',
 							}}
 							title={
 								slotEnabled
@@ -342,13 +345,22 @@ export function SlotCard({
 				</label>
 				{!activeProjectRoot ? (
 					<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
-						Open a project to configure role slots.
+						Open a project to view role slots.
 					</p>
 				) : eligibleSessions.length === 0 ? (
 					<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
-						No agents configured for this project on this host. Create a dispatch agent in the Left
-						Bar pointing at this project root, then come back.
+						No agents configured for this project on this host.
 					</p>
+				) : readOnly ? (
+					<div
+						className="rounded border px-2 py-1 min-h-[24px]"
+						style={{
+							borderColor: theme.colors.border,
+							color: selectedSession ? theme.colors.textMain : theme.colors.textDim,
+						}}
+					>
+						{selectedSession?.name ?? 'Unassigned'}
+					</div>
 				) : (
 					<select
 						value={assignment?.agentId ?? ''}
@@ -367,7 +379,7 @@ export function SlotCard({
 			</div>
 
 			{/* Model override — shown when an agent is selected */}
-			{assignment?.agentId && (
+			{assignment?.agentId && !readOnly && (
 				<div className="mb-2">
 					<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
 						Model override{' '}
@@ -387,7 +399,7 @@ export function SlotCard({
 			)}
 
 			{/* Effort override — shown when an agent is selected */}
-			{assignment?.agentId && (
+			{assignment?.agentId && !readOnly && (
 				<div className="mb-2">
 					<label className="block text-[10px] mb-1" style={{ color: theme.colors.textDim }}>
 						Effort override{' '}
@@ -407,7 +419,7 @@ export function SlotCard({
 			)}
 
 			{/* Empty state hint */}
-			{!assignment && activeProjectRoot && eligibleSessions.length > 0 && (
+			{!assignment && activeProjectRoot && eligibleSessions.length > 0 && !readOnly && (
 				<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
 					Select an agent above to fill this slot.
 				</p>

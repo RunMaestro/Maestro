@@ -14,6 +14,10 @@ export function createProjectRolesApi() {
 		): Promise<{ success: true; data: ProjectRoleSlots } | { success: false; error: string }> =>
 			ipcRenderer.invoke('projectRoles:get', projectPath),
 
+		list: (): Promise<
+			{ success: true; data: Record<string, ProjectRoleSlots> } | { success: false; error: string }
+		> => ipcRenderer.invoke('projectRoles:list'),
+
 		set: (
 			projectPath: string,
 			slots: ProjectRoleSlots

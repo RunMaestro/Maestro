@@ -23,6 +23,7 @@ export interface SearchableSetting {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'devteams'
 		| 'ssh'
 		| 'environment'
 		| 'encore'
@@ -677,6 +678,32 @@ export const AI_COMMANDS_SETTINGS: SearchableSetting[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Dev Teams Tab
+// ---------------------------------------------------------------------------
+export const DEV_TEAMS_SETTINGS: SearchableSetting[] = [
+	{
+		id: 'devteams-roster',
+		tab: 'devteams',
+		tabLabel: 'Dev Teams',
+		label: 'Dev Teams',
+		description:
+			'Configure per-project runner, fixer, reviewer, and merger role assignments for Agent Dispatch',
+		keywords: [
+			'dev crew',
+			'roles',
+			'agent dispatch',
+			'runner',
+			'fixer',
+			'reviewer',
+			'merger',
+			'auto pickup',
+			'team',
+			'project',
+		],
+	},
+];
+
+// ---------------------------------------------------------------------------
 // SSH Hosts Tab
 // ---------------------------------------------------------------------------
 export const SSH_SETTINGS: SearchableSetting[] = [
@@ -854,6 +881,7 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...THEME_SETTINGS,
 	...NOTIFICATION_SETTINGS,
 	...AI_COMMANDS_SETTINGS,
+	...DEV_TEAMS_SETTINGS,
 	...SSH_SETTINGS,
 	...ENVIRONMENT_SETTINGS,
 	...ENCORE_SETTINGS,

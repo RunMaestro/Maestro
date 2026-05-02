@@ -36,6 +36,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useDispatchClaimsStore } from '../../stores/dispatchClaimsStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
@@ -239,75 +240,9 @@ function SessionListInner(props: SessionListProps) {
 			cancelled = true;
 		};
 	}, [projectPaths]);
-	// Renderer-local active claim map: projectPath → role → agentId
-	// Populated by agentDispatch:claimStarted/Ended IPC events from SlotExecutor.
-	const [activeClaimsByProject, setActiveClaimsByProject] = useState<
-		Map<string, Map<string, string>>
-	>(new Map());
+	const activeClaimsByProject = useDispatchClaimsStore((s) => s.claimsByProject);
 	useEffect(() => {
-		const api = (
-			window as unknown as {
-				maestro?: {
-					agentDispatch?: {
-						onClaimStarted?: (
-							cb: (ev: { projectPath: string; role: string; agentId: string }) => void
-						) => () => void;
-						onClaimEnded?: (cb: (ev: { projectPath: string; role: string }) => void) => () => void;
-						getBoard?: () => Promise<{
-							success: boolean;
-							data?: {
-								items?: Array<{ projectPath: string; role: string; agentSessionId?: string }>;
-							};
-						}>;
-					};
-				};
-			}
-		).maestro?.agentDispatch;
-		if (!api?.onClaimStarted || !api?.onClaimEnded) return;
-		// Rehydrate active claims from the in-memory ClaimTracker so the icon
-		// reflects reality after a restart instead of waiting for the next
-		// claimStarted event.
-		void api.getBoard?.().then((res) => {
-			if (!res?.success) return;
-			const items = res.data?.items ?? [];
-			if (items.length === 0) return;
-			setActiveClaimsByProject((prev) => {
-				const next = new Map(prev);
-				for (const it of items) {
-					if (!it.projectPath || !it.role || !it.agentSessionId) continue;
-					const byRole = new Map(next.get(it.projectPath) ?? []);
-					byRole.set(it.role, it.agentSessionId);
-					next.set(it.projectPath, byRole);
-				}
-				return next;
-			});
-		});
-		const unsubStart = api.onClaimStarted((ev) => {
-			setActiveClaimsByProject((prev) => {
-				const next = new Map(prev);
-				const byRole = new Map(next.get(ev.projectPath) ?? []);
-				byRole.set(ev.role, ev.agentId);
-				next.set(ev.projectPath, byRole);
-				return next;
-			});
-		});
-		const unsubEnd = api.onClaimEnded((ev) => {
-			setActiveClaimsByProject((prev) => {
-				const next = new Map(prev);
-				const byRole = new Map(next.get(ev.projectPath) ?? []);
-				byRole.delete(ev.role);
-				if (byRole.size === 0) {
-					next.delete(ev.projectPath);
-				} else {
-					next.set(ev.projectPath, byRole);
-				}
-				return next;
-			});
-		});
-		return () => {
-			unsubStart();
-			unsubEnd();
-		};
+		useDispatchClaimsStore.getState().initialize();
 	}, []);
 
 	const dispatchSessionMap = useMemo(() => {
@@ -323,7 +258,7 @@ function SessionListInner(props: SessionListProps) {
 				if (slots[role]?.agentId === session.id) {
 					matched.push(role);
 					const claimAgentId = activeClaimsByProject.get(session.projectRoot)?.get(role);
-					if (claimAgentId === session.id) active.add(role);
+					if (claimAgentId?.agentId === session.id) active.add(role);
 				}
 			}
 			if (matched.length > 0) map.set(session.id, { roles: matched, activeRoles: active });

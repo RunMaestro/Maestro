@@ -33,6 +33,16 @@ export function registerProjectRolesHandlers(settingsStore: Store): void {
 		}
 	});
 
+	ipcMain.handle('projectRoles:list', async () => {
+		try {
+			const map = (settingsStore.get(STORE_KEY, {}) as ProjectRoleSlotsMap) ?? {};
+			return { success: true, data: map };
+		} catch (err) {
+			logger.error(`projectRoles:list error: ${err}`, LOG_CONTEXT);
+			return { success: false, error: String(err) };
+		}
+	});
+
 	ipcMain.handle(
 		'projectRoles:set',
 		async (_event, projectPath: string, slots: ProjectRoleSlots) => {

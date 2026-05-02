@@ -41,7 +41,7 @@ export function AgentDispatchProfileEditor({
 	const handleSave = async () => {
 		setSaving(true);
 		try {
-			await window.maestro.agents.setDispatchProfile(entry.agentId, profile);
+			await window.maestro.agents.setDispatchProfile(entry.id, profile);
 			notifyToast({
 				color: 'green',
 				title: 'Profile saved',
