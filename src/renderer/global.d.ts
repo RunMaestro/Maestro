@@ -3773,7 +3773,25 @@ interface MaestroAPI {
 					};
 					fromCache: boolean;
 			  }
-			| { success: false; error: string }
+			| {
+					success: false;
+					error: string;
+					code:
+						| 'GH_CLI_MISSING'
+						| 'GH_AUTH_REQUIRED'
+						| 'NOT_A_GIT_REPO'
+						| 'NO_ORIGIN_REMOTE'
+						| 'NOT_GITHUB'
+						| 'NO_PROJECT_AND_CANNOT_CREATE'
+						| 'MULTIPLE_MATCHES'
+						| 'GH_CLI_OUTPUT_UNRECOGNIZED'
+						| 'GH_PERMISSION_DENIED'
+						| 'UNKNOWN'
+						| 'FEATURE_DISABLED'
+						| 'INVALID_INPUT';
+					detail?: string;
+					candidates?: Array<{ id: string; number: number; title: string }>;
+			  }
 		>;
 	};
 

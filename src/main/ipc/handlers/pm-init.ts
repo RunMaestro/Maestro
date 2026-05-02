@@ -81,9 +81,16 @@ export function registerPmInitHandlers(deps: PmInitHandlerDependencies): void {
 				if (map[input.projectPath]) {
 					projectMapping = map[input.projectPath];
 				} else {
-					projectMapping = await discoverGithubProject(input.projectPath);
-					const updatedMap = { ...map, [input.projectPath]: projectMapping };
-					deps.settingsStore.set('projectGithubMap', updatedMap);
+					const discoveryResult = await discoverGithubProject(input.projectPath);
+					if (discoveryResult.ok) {
+						projectMapping = discoveryResult.mapping;
+						const updatedMap = { ...map, [input.projectPath]: projectMapping };
+						deps.settingsStore.set('projectGithubMap', updatedMap);
+					} else {
+						console.warn(
+							`${LOG_CONTEXT} GitHub project discovery failed [${discoveryResult.error.code}] — using defaults: ${discoveryResult.error.message}`
+						);
+					}
 				}
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

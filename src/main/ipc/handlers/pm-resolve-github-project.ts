@@ -16,12 +16,19 @@
  *   HumpfTech/Maestro project #7 (defensive — only applies to that one repo).
  *
  * Gated by the `deliveryPlanner` encore feature flag.
+ *
+ * All known failure modes return a structured error code so the renderer can
+ * surface a specific message + action instead of a generic string.
  */
 
 import { ipcMain } from 'electron';
 import { requireEncoreFeature } from '../../utils/requireEncoreFeature';
 import type { SettingsStoreInterface } from '../../stores/types';
-import type { GithubProjectMapping } from '../../delivery-planner/github-project-discovery';
+import type {
+	GithubProjectMapping,
+	DiscoveryErrorCode,
+	RawProject,
+} from '../../delivery-planner/github-project-discovery';
 import { discoverGithubProject } from '../../delivery-planner/github-project-discovery';
 
 const LOG_CONTEXT = '[PmResolveGithubProject]';
@@ -45,7 +52,17 @@ export interface ResolveGithubProjectInput {
 
 export type ResolveGithubProjectResult =
 	| { success: true; data: GithubProjectMapping; fromCache: boolean }
-	| { success: false; error: string };
+	| {
+			success: false;
+			/** Human-readable message suitable for display. */
+			error: string;
+			/** Structured code so the renderer can map to a specific action. */
+			code: DiscoveryErrorCode | 'UNKNOWN' | 'FEATURE_DISABLED' | 'INVALID_INPUT';
+			/** Extra detail (e.g. stdout snippet for GH_CLI_OUTPUT_UNRECOGNIZED). */
+			detail?: string;
+			/** Returned when code is MULTIPLE_MATCHES. */
+			candidates?: RawProject[];
+	  };
 
 export interface PmResolveGithubProjectHandlerDependencies {
 	settingsStore: SettingsStoreInterface;
@@ -61,11 +78,12 @@ export function registerPmResolveGithubProjectHandlers(
 		'pm:resolveGithubProject',
 		async (_event, input: ResolveGithubProjectInput): Promise<ResolveGithubProjectResult> => {
 			const gateError = gate();
-			if (gateError) return { success: false, error: 'Feature not enabled' };
+			if (gateError)
+				return { success: false, code: 'FEATURE_DISABLED', error: 'Feature not enabled' };
 
 			const { projectPath, forceRefresh = false } = input ?? {};
 			if (!projectPath) {
-				return { success: false, error: 'projectPath is required' };
+				return { success: false, code: 'INVALID_INPUT', error: 'projectPath is required' };
 			}
 
 			// 1. Cache hit
@@ -78,22 +96,28 @@ export function registerPmResolveGithubProjectHandlers(
 			}
 
 			// 2. Discover
-			try {
-				const discovered = await discoverGithubProject(projectPath);
+			const result = await discoverGithubProject(projectPath);
 
-				// 3. Persist
-				const updatedMap = { ...map, [projectPath]: discovered };
-				deps.settingsStore.set('projectGithubMap', updatedMap);
-
-				return { success: true, data: discovered, fromCache: false };
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				console.error(`${LOG_CONTEXT} discovery failed for "${projectPath}":`, message);
+			if (!result.ok) {
+				const { code, message, detail, candidates } = result.error;
+				console.error(
+					`${LOG_CONTEXT} discovery failed for "${projectPath}" [${code}]:`,
+					message,
+					detail ?? ''
+				);
 
 				// Fallback: if projectGithubMap is completely empty and the path looks like
 				// the HumpfTech/Maestro fork, return the legacy values rather than hard-failing.
+				// Only applies for non-actionable infrastructure errors (not auth/missing-cli).
 				const isEmpty = Object.keys(map).length === 0;
-				if (isEmpty && isLikelyLegacyRepo(projectPath)) {
+				const isFallbackEligible =
+					isEmpty &&
+					isLikelyLegacyRepo(projectPath) &&
+					code !== 'GH_CLI_MISSING' &&
+					code !== 'GH_AUTH_REQUIRED' &&
+					code !== 'MULTIPLE_MATCHES';
+
+				if (isFallbackEligible) {
 					console.warn(
 						`${LOG_CONTEXT} Using legacy fallback for "${projectPath}". Run /PM-init to persist proper mapping.`
 					);
@@ -102,9 +126,19 @@ export function registerPmResolveGithubProjectHandlers(
 
 				return {
 					success: false,
-					error: `GitHub project discovery failed: ${message}. Run /PM-init or reload the Dev Crew tab.`,
+					code,
+					error: message,
+					...(detail !== undefined && { detail }),
+					...(candidates !== undefined && { candidates }),
 				};
 			}
+
+			// 3. Persist
+			const { mapping } = result;
+			const updatedMap = { ...map, [projectPath]: mapping };
+			deps.settingsStore.set('projectGithubMap', updatedMap);
+
+			return { success: true, data: mapping, fromCache: false };
 		}
 	);
 }
