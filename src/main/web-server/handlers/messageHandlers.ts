@@ -593,6 +593,11 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// Optional base64 data URLs pasted from the web client. Threaded through
+		// to the renderer so AI tabs can include them in the agent prompt.
+		const images = Array.isArray(message.images)
+			? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
+			: undefined;
 
 		logger.info(
 			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
@@ -660,7 +665,7 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
+				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force, images)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',

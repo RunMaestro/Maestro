@@ -280,7 +280,8 @@ interface MaestroAPI {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (

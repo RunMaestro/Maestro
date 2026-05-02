@@ -326,6 +326,7 @@ describe('useRemoteIntegration', () => {
 						inputMode: 'ai',
 						tabId: undefined,
 						force: undefined,
+						images: undefined,
 					},
 				})
 			);

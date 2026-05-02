@@ -1946,11 +1946,14 @@ export default function MobileApp() {
 
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
-		(command: string) => {
+		(command: string, images?: string[]) => {
 			if (!activeSessionId) return;
 
 			// Find the active session to get input mode
 			const currentMode = currentInputMode;
+			// Images are AI-mode only — terminal commands have no image concept.
+			const effectiveImages =
+				currentMode === 'ai' && images && images.length > 0 ? images : undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
@@ -1958,7 +1961,10 @@ export default function MobileApp() {
 			// Add user message to session logs immediately for display
 			addUserLogEntry(command, currentMode);
 
-			// If offline or not connected, queue the command for later
+			// If offline or not connected, queue the command for later.
+			// NOTE: the offline queue currently doesn't carry images — pasted
+			// images are dropped on offline send. Acceptable for v1; users can
+			// re-paste when reconnected.
 			if (isOffline || !isActuallyConnected) {
 				const queued = queueCommand(activeSessionId, command, currentMode);
 				if (queued) {
@@ -1976,9 +1982,10 @@ export default function MobileApp() {
 					sessionId: activeSessionId,
 					command,
 					inputMode: currentMode,
+					...(effectiveImages ? { images: effectiveImages } : {}),
 				});
 				webLogger.info(
-					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId}`,
+					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId} images=${effectiveImages?.length ?? 0}`,
 					'Mobile'
 				);
 			}

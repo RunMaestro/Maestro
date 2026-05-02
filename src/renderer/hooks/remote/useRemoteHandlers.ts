@@ -129,6 +129,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  server-side `force` bit so `dispatch --force` can land on a
 				 *  busy session without being dropped at this boundary. */
 				force?: boolean;
+				/** Optional base64 data URLs pasted from a web/mobile client.
+				 *  Forwarded to the agent spawn so AI tabs can render and send
+				 *  them in the prompt, mirroring desktop staged-images. */
+				images?: string[];
 			}>;
 			const {
 				sessionId,
@@ -136,6 +140,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				inputMode: webInputMode,
 				tabId: requestedTabId,
 				force,
+				images,
 			} = customEvent.detail;
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
@@ -417,10 +422,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// exceeding the command line length limit. Remote commands may include
 				// substituted slash command prompts that can be very large.
 				const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
+				const remoteImages = images && images.length > 0 ? images : undefined;
 				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 					isSshSession,
 					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: false, // Remote commands do not send images
+					hasImages: !!remoteImages,
 				});
 
 				logger.info('[Remote] Spawning agent:', undefined, {
@@ -433,6 +439,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend.substring(0, 100),
+					imageCount: remoteImages?.length ?? 0,
 				});
 
 				// Add user message to target tab's logs and set state to busy
@@ -441,6 +448,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					timestamp: Date.now(),
 					source: 'user',
 					text: promptToSend,
+					...(remoteImages && { images: remoteImages }),
 					...(commandMetadata && { aiCommand: commandMetadata }),
 				};
 
@@ -495,6 +503,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
+					images: remoteImages,
 					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,

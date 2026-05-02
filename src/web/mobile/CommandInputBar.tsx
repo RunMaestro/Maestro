@@ -102,8 +102,14 @@ export interface CommandInputBarProps {
 	isConnected: boolean;
 	/** Placeholder text for the input */
 	placeholder?: string;
-	/** Callback when command is submitted */
-	onSubmit?: (command: string) => void;
+	/**
+	 * Callback when command is submitted.
+	 * `images` is an optional array of base64 data URLs from the staged-image
+	 * tray (populated via clipboard paste). Mirrors the desktop `stagedImages`
+	 * shape so the renderer's remote-command path can spawn the agent with
+	 * the same payload.
+	 */
+	onSubmit?: (command: string, images?: string[]) => void;
 	/** Callback when input value changes */
 	onChange?: (value: string) => void;
 	/** Current input value (controlled) */
@@ -200,6 +206,12 @@ export function CommandInputBar({
 	// Internal state for uncontrolled mode
 	const [internalValue, setInternalValue] = useState('');
 	const value = controlledValue !== undefined ? controlledValue : internalValue;
+
+	// Staged images pasted into AI mode. Mirrors desktop's `stagedImages`:
+	// stored as base64 data URLs and shipped alongside the prompt on submit.
+	// Local-only state (the web client doesn't need to round-trip this through
+	// the server) and intentionally cleared on send to avoid double-attaching.
+	const [stagedImages, setStagedImages] = useState<string[]>([]);
 
 	// Determine if input should be disabled (must be before hooks that use it)
 	// In AI mode: NEVER disable the input - user can always prep next message
@@ -333,6 +345,39 @@ export function CommandInputBar({
 	}, [value]);
 
 	/**
+	 * Handle clipboard paste — extract any image items, base64-encode them, and
+	 * push them onto `stagedImages`. Only active in AI mode (terminal mode
+	 * doesn't have a meaningful image-attach concept). Text paste is left to
+	 * the browser default so existing autocomplete/expansion logic stays put.
+	 */
+	const handlePaste = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+			if (inputMode !== 'ai') return;
+			const items = e.clipboardData?.items;
+			if (!items) return;
+			let consumed = false;
+			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
+				if (!item.type.startsWith('image/')) continue;
+				const blob = item.getAsFile();
+				if (!blob) continue;
+				if (!consumed) {
+					e.preventDefault();
+					consumed = true;
+				}
+				const reader = new FileReader();
+				reader.onload = (event) => {
+					const result = event.target?.result;
+					if (typeof result !== 'string') return;
+					setStagedImages((prev) => (prev.includes(result) ? prev : [...prev, result]));
+				};
+				reader.readAsDataURL(blob);
+			}
+		},
+		[inputMode]
+	);
+
+	/**
 	 * Handle textarea change
 	 * Also detects slash commands and shows autocomplete via hook
 	 */
@@ -356,22 +401,25 @@ export function CommandInputBar({
 	const handleSubmit = useCallback(
 		(e: React.FormEvent) => {
 			e.preventDefault();
-			if (!value.trim() || isDisabled) return;
+			const hasImages = stagedImages.length > 0;
+			if (isDisabled) return;
+			if (!value.trim() && !hasImages) return;
 
 			// Trigger haptic feedback on successful send
 			triggerHaptic(25);
 
-			onSubmit?.(value.trim());
+			onSubmit?.(value.trim(), hasImages ? stagedImages : undefined);
 
 			// Clear input after submit (for uncontrolled mode)
 			if (controlledValue === undefined) {
 				setInternalValue('');
 			}
+			setStagedImages([]);
 
 			// Keep focus on textarea after submit
 			textareaRef.current?.focus();
 		},
-		[value, isDisabled, onSubmit, controlledValue]
+		[value, isDisabled, onSubmit, controlledValue, stagedImages]
 	);
 
 	/**
@@ -472,17 +520,20 @@ export function CommandInputBar({
 	const handleMobileSubmit = useCallback(
 		(e: React.FormEvent) => {
 			e.preventDefault();
-			if (!value.trim() || isDisabled || isSendBlocked) return;
+			const hasImages = stagedImages.length > 0;
+			if (isDisabled || isSendBlocked) return;
+			if (!value.trim() && !hasImages) return;
 
 			// Trigger haptic feedback on successful send
 			triggerHaptic(25);
 
-			onSubmit?.(value.trim());
+			onSubmit?.(value.trim(), hasImages ? stagedImages : undefined);
 
 			// Clear input after submit (for uncontrolled mode)
 			if (controlledValue === undefined) {
 				setInternalValue('');
 			}
+			setStagedImages([]);
 
 			// Collapse on mobile after submit
 			if (isMobilePhone && inputMode === 'ai') {
@@ -494,7 +545,16 @@ export function CommandInputBar({
 				textareaRef.current?.focus();
 			}
 		},
-		[value, isDisabled, isSendBlocked, onSubmit, controlledValue, isMobilePhone, inputMode]
+		[
+			value,
+			isDisabled,
+			isSendBlocked,
+			onSubmit,
+			controlledValue,
+			isMobilePhone,
+			inputMode,
+			stagedImages,
+		]
 	);
 
 	// Calculate textarea height for mobile expanded mode
@@ -573,6 +633,68 @@ export function CommandInputBar({
 					/>
 				)}
 
+			{/* Staged images preview — base64 thumbnails of pasted images, with
+			    a remove button per item. AI mode only; matches desktop layout. */}
+			{inputMode === 'ai' && stagedImages.length > 0 && (
+				<div
+					style={{
+						display: 'flex',
+						gap: '8px',
+						overflowX: 'auto',
+						overflowY: 'visible',
+						padding: '0 16px 8px 16px',
+					}}
+				>
+					{stagedImages.map((img, idx) => (
+						<div
+							key={img}
+							style={{
+								position: 'relative',
+								flexShrink: 0,
+							}}
+						>
+							<img
+								src={img}
+								alt={`Staged image ${idx + 1}`}
+								style={{
+									height: '64px',
+									maxWidth: '160px',
+									objectFit: 'contain',
+									borderRadius: '8px',
+									border: `1px solid ${colors.border}`,
+									display: 'block',
+								}}
+							/>
+							<button
+								type="button"
+								onClick={() =>
+									setStagedImages((prev) => prev.filter((existing) => existing !== img))
+								}
+								aria-label={`Remove staged image ${idx + 1}`}
+								style={{
+									position: 'absolute',
+									top: '-6px',
+									right: '-6px',
+									width: '22px',
+									height: '22px',
+									borderRadius: '50%',
+									backgroundColor: 'rgba(239, 68, 68, 0.95)',
+									color: 'white',
+									border: 'none',
+									cursor: 'pointer',
+									fontSize: '14px',
+									lineHeight: '22px',
+									padding: 0,
+									boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+								}}
+							>
+								×
+							</button>
+						</div>
+					))}
+				</div>
+			)}
+
 			{/* Slash command autocomplete popup */}
 			<SlashCommandAutocomplete
 				isOpen={slashCommandOpen}
@@ -607,6 +729,7 @@ export function CommandInputBar({
 						value={value}
 						onChange={handleChange}
 						onKeyDown={handleKeyDown}
+						onPaste={handlePaste}
 						placeholder={getPlaceholder()}
 						disabled={isDisabled}
 						autoComplete="off"
@@ -654,7 +777,7 @@ export function CommandInputBar({
 					{/* Full-width send button below textarea */}
 					<ExpandedModeSendInterruptButton
 						isInterruptMode={inputMode === 'ai' && isSessionBusy}
-						isSendDisabled={isDisabled || !value.trim()}
+						isSendDisabled={isDisabled || (!value.trim() && stagedImages.length === 0)}
 						onInterrupt={handleInterrupt}
 					/>
 				</form>
@@ -752,7 +875,7 @@ export function CommandInputBar({
 							</div>
 							<SendInterruptButton
 								isInterruptMode={false}
-								isSendDisabled={isDisabled || !value.trim()}
+								isSendDisabled={isDisabled || (!value.trim() && stagedImages.length === 0)}
 								onInterrupt={handleInterrupt}
 								sendButtonRef={sendButtonRef}
 								onTouchStart={handleSendButtonTouchStart}
@@ -800,6 +923,7 @@ export function CommandInputBar({
 								value={value}
 								onChange={handleChange}
 								onKeyDown={handleKeyDown}
+								onPaste={handlePaste}
 								placeholder={getPlaceholder()}
 								disabled={isDisabled}
 								autoComplete="off"
@@ -910,7 +1034,7 @@ export function CommandInputBar({
 									<div style={{ marginLeft: 'auto' }}>
 										<SendInterruptButton
 											isInterruptMode={inputMode === 'ai' && isSessionBusy}
-											isSendDisabled={isDisabled || !value.trim()}
+											isSendDisabled={isDisabled || (!value.trim() && stagedImages.length === 0)}
 											onInterrupt={handleInterrupt}
 											sendButtonRef={sendButtonRef}
 											onTouchStart={handleSendButtonTouchStart}
@@ -922,7 +1046,7 @@ export function CommandInputBar({
 							) : (
 								<SendInterruptButton
 									isInterruptMode={inputMode === 'ai' && isSessionBusy}
-									isSendDisabled={isDisabled || !value.trim()}
+									isSendDisabled={isDisabled || (!value.trim() && stagedImages.length === 0)}
 									onInterrupt={handleInterrupt}
 									sendButtonRef={sendButtonRef}
 									onTouchStart={handleSendButtonTouchStart}

@@ -371,9 +371,12 @@ describe('useRemoteHandlers - remote command stdin flags (integration)', () => {
 		expect(spawnCall.sendPromptViaStdin).toBe(false);
 	});
 
-	it('should always pass hasImages=false for remote commands (sendPromptViaStdin is false)', async () => {
-		// Remote commands never send images, so sendPromptViaStdin should always be false
-		// even when the agent supports stream-json input
+	it('passes hasImages=false when the remote command carries no images', async () => {
+		// Remote commands without an `images` array (the typical desktop+CLI
+		// path, and any web client that didn't paste an image) must keep
+		// sendPromptViaStdin=false so the stream-json branch isn't taken.
+		// Web/mobile paste-image flow exercises the with-images branch
+		// elsewhere.
 		(window as any).maestro.agents.get.mockResolvedValue({
 			id: 'claude-code',
 			command: 'claude',
@@ -405,9 +408,53 @@ describe('useRemoteHandlers - remote command stdin flags (integration)', () => {
 		expect((window as any).maestro.process.spawn).toHaveBeenCalled();
 		const spawnCall = (window as any).maestro.process.spawn.mock.calls[0][0];
 
-		// sendPromptViaStdin requires hasImages=true, which remote commands never set
+		// sendPromptViaStdin requires hasImages=true; this command has no images.
 		expect(spawnCall.sendPromptViaStdin).toBe(false);
 		// Raw stdin should be used instead on Windows
 		expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+		// And no images should be threaded into the spawn payload.
+		expect(spawnCall.images).toBeUndefined();
+	});
+
+	it('threads pasted images into the spawn payload when the web client sends them', async () => {
+		// Web/mobile clients can paste images into the chat composer; the
+		// remote-command path forwards those base64 data URLs end-to-end so
+		// the agent can attach them to the prompt, mirroring the desktop
+		// stagedImages flow.
+		(window as any).maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			command: 'claude',
+			path: '/usr/bin/claude',
+			args: [],
+			capabilities: { supportsStreamJsonInput: true },
+		});
+
+		const session = createMockSession();
+		const deps = createMockDeps({
+			sessionsRef: { current: [session] },
+		});
+
+		renderHook(() => useRemoteHandlers(deps));
+		const handler = getRemoteCommandHandler();
+
+		const images = ['data:image/png;base64,abc'];
+		await act(async () => {
+			await handler(
+				new CustomEvent('maestro:remoteCommand', {
+					detail: {
+						sessionId: 'session-1',
+						command: 'what do you see?',
+						inputMode: 'ai',
+						images,
+					},
+				})
+			);
+		});
+
+		expect((window as any).maestro.process.spawn).toHaveBeenCalled();
+		const spawnCall = (window as any).maestro.process.spawn.mock.calls[0][0];
+		expect(spawnCall.images).toEqual(images);
+		// hasImages=true switches the stream-json branch on (when supported).
+		expect(spawnCall.sendPromptViaStdin).toBe(true);
 	});
 });

@@ -498,6 +498,7 @@ describe('web-server/web-server-factory', () => {
 				'test command',
 				'ai',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -518,6 +519,7 @@ describe('web-server/web-server-factory', () => {
 				'follow up',
 				'ai',
 				'tab-7',
+				undefined,
 				undefined
 			);
 		});
@@ -538,7 +540,37 @@ describe('web-server/web-server-factory', () => {
 				'concurrent write',
 				'ai',
 				undefined,
-				true
+				true,
+				undefined
+			);
+		});
+
+		it('forwards images so pasted attachments reach the renderer alongside the prompt', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
+			const result = await callback(
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
+			);
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
 			);
 		});
 
