@@ -292,6 +292,48 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.tabId).toBe('tab-explicit');
 		});
 
+		it('accepts image-only sends in AI mode (no command, images present)', async () => {
+			// The web composer allows submitting in AI mode when only images
+			// are staged (no typed text). The server must not reject those
+			// requests as "missing command" — instead it forwards an empty
+			// command alongside the images so the renderer can attach them
+			// to a default image-only prompt.
+			const images = ['data:image/png;base64,abc'];
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+				images,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'',
+					'ai',
+					undefined,
+					false,
+					images
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('rejects send with neither command nor images', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
 		it('forwards pasted images so the renderer can attach them to the prompt', async () => {
 			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
 			handler.handleMessage(client, {

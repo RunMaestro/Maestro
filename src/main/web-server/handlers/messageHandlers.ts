@@ -601,18 +601,24 @@ export class WebSocketMessageHandler {
 			: undefined;
 
 		logger.info(
-			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
+			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}, images=${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
-		if (!sessionId || !command) {
+		// Image-only sends are valid in AI mode (the composer lets users paste
+		// images and submit without typing), so the guard accepts either a
+		// non-empty command OR at least one image. Normalize a missing command
+		// to '' so the renderer's downstream LogEntry.text stays a string.
+		const hasImages = !!images && images.length > 0;
+		if (!sessionId || (!command && !hasImages)) {
 			logger.warn(
-				`[Web Command] Missing sessionId or command: sessionId=${sessionId}, commandLen=${command?.length}`,
+				`[Web Command] Missing sessionId or command/images: sessionId=${sessionId}, commandLen=${command?.length}, images=${images?.length ?? 0}`,
 				LOG_CONTEXT
 			);
 			this.sendError(client, 'Missing sessionId or command');
 			return;
 		}
+		const effectiveCommand = command ?? '';
 
 		// Get session details to check state and determine how to handle
 		const sessionDetail = this.callbacks.getSessionDetail?.(sessionId);
@@ -646,7 +652,7 @@ export class WebSocketMessageHandler {
 
 		// Log all web interface commands prominently
 		logger.info(
-			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${command}`,
+			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${effectiveCommand} | Images: ${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
@@ -666,7 +672,7 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force, images)
+				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
