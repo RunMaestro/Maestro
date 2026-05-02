@@ -240,47 +240,77 @@ describe('MessageHistory', () => {
 	});
 
 	describe('Message Truncation', () => {
-		const longText = 'A'.repeat(600); // > CHAR_TRUNCATE_THRESHOLD (500)
-		const manyLines = 'Line\n'.repeat(15); // > LINE_TRUNCATE_THRESHOLD (8)
+		// 15 newline-separated lines; > any finite cap we exercise below.
+		const manyLines = Array.from({ length: 15 }, (_, i) => `Line ${i + 1}`).join('\n');
+		// 600 characters on a single line — used to assert that char length alone
+		// does NOT trigger truncation (matches desktop TerminalOutput behavior).
+		const longSingleLine = 'A'.repeat(600);
 
-		it('truncates text longer than 500 characters', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: longText })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
-			expect(screen.getByText('▶ expand')).toBeInTheDocument();
-		});
-
-		it('truncates text with more than 8 lines when a finite line cap is configured', () => {
+		it('truncates by lines when line count exceeds the configured cap', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
-			// With the default "All" cap (Infinity) line-based truncation is off —
-			// mirror the desktop Max Output Lines setting by passing an explicit cap.
 			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();
+			// Should only show first 8 lines.
+			expect(screen.getByText(/Line 1\b/)).toBeInTheDocument();
+			expect(screen.getByText(/Line 8\b/)).toBeInTheDocument();
+			expect(screen.queryByText(/Line 9\b/)).not.toBeInTheDocument();
 		});
 
+		it('does not truncate when line count is at or under the configured cap', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={50} />);
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
+		});
+
+		// Regression: prior to fix/web-chat-expand the component had a 500-char
+		// truncation that fired regardless of the user's "Max Output Lines" choice,
+		// so picking "All" still collapsed long single-line responses.
+		it('does not truncate by character length when maxOutputLines is "All" (Infinity)', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: longSingleLine })];
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={Infinity} />);
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
+		});
+
+		// Regression: even on the multi-line path, "All" must mean no truncation.
 		it('does not truncate by lines when maxOutputLines is "All" (Infinity)', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
 			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={Infinity} />);
-			// 15 lines but only ~75 chars, so char-based truncation does not kick in.
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
+		});
+
+		// Regression: a long single-line response must not collapse just because of
+		// its character count when a finite line cap is configured — only line
+		// counts gate truncation, matching desktop TerminalOutput.
+		it('does not truncate by character length when only a finite line cap is configured', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: longSingleLine })];
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={15} />);
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
+		});
+
+		it('defaults to "All" (no truncation) when maxOutputLines is omitted', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
+			render(<MessageHistory logs={logs} inputMode="ai" />);
 			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
 		});
 
 		it('does not truncate short text', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Short text' })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
 		});
 
 		it('shows "(tap to expand)" hint for truncated messages', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: longText })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
+			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
+			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 			expect(screen.getByText(/tap to expand/)).toBeInTheDocument();
 		});
 
 		it('expands truncated message on click', () => {
-			const logs: LogEntry[] = [createLogEntry({ id: 'expand-test', text: longText })];
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const logs: LogEntry[] = [createLogEntry({ id: 'expand-test', text: manyLines })];
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
-			// Find the message container and click it
 			const messageDiv = container.querySelector('[style*="cursor: pointer"]');
 			expect(messageDiv).toBeInTheDocument();
 
@@ -290,8 +320,10 @@ describe('MessageHistory', () => {
 		});
 
 		it('collapses expanded message on second click', () => {
-			const logs: LogEntry[] = [createLogEntry({ id: 'collapse-test', text: longText })];
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const logs: LogEntry[] = [createLogEntry({ id: 'collapse-test', text: manyLines })];
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
 			const messageDiv = container.querySelector('[style*="cursor: pointer"]');
 
@@ -304,43 +336,24 @@ describe('MessageHistory', () => {
 			expect(screen.getByText('▶ expand')).toBeInTheDocument();
 		});
 
-		it('truncates by lines when line count exceeds the configured cap', () => {
-			const tenLines =
-				'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
-			const logs: LogEntry[] = [createLogEntry({ text: tenLines })];
-			render(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
-
-			// Should show truncation indicator
-			expect(screen.getByText('▶ expand')).toBeInTheDocument();
-			// Should only show first 8 lines
-			expect(screen.getByText(/Line 1/)).toBeInTheDocument();
-			expect(screen.getByText(/Line 8/)).toBeInTheDocument();
-			expect(screen.queryByText(/Line 9/)).not.toBeInTheDocument();
-		});
-
-		it('truncates by character count when under line threshold', () => {
-			// 501 chars but only 1 line
-			const longSingleLine = 'X'.repeat(501);
-			const logs: LogEntry[] = [createLogEntry({ text: longSingleLine })];
-			render(<MessageHistory logs={logs} inputMode="ai" />);
-
-			expect(screen.getByText('▶ expand')).toBeInTheDocument();
-		});
-
 		it('shows full text when expanded', () => {
-			const logs: LogEntry[] = [createLogEntry({ id: 'full-text-test', text: longText })];
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const logs: LogEntry[] = [createLogEntry({ id: 'full-text-test', text: manyLines })];
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
 			const messageDiv = container.querySelector('[style*="cursor: pointer"]');
 			fireEvent.click(messageDiv!);
 
-			// Should show full text (600 As)
-			expect(screen.getByText(longText)).toBeInTheDocument();
+			// All 15 lines should now be visible.
+			expect(screen.getByText(/Line 15\b/)).toBeInTheDocument();
 		});
 
 		it('has pointer cursor for truncatable messages', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: longText })];
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const logs: LogEntry[] = [createLogEntry({ text: manyLines })];
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
 			const messageDiv = container.querySelector('[style*="cursor"]');
 			expect(messageDiv).toHaveStyle({ cursor: 'pointer' });
@@ -373,12 +386,12 @@ describe('MessageHistory', () => {
 
 		it('calls onMessageTap even for truncatable messages', () => {
 			const onMessageTap = vi.fn();
-			const longText = 'A'.repeat(600);
-			const entry = createLogEntry({ text: longText });
+			const manyLines = Array.from({ length: 15 }, (_, i) => `Line ${i + 1}`).join('\n');
+			const entry = createLogEntry({ text: manyLines });
 			const logs: LogEntry[] = [entry];
 
 			const { container } = render(
-				<MessageHistory logs={logs} inputMode="ai" onMessageTap={onMessageTap} />
+				<MessageHistory logs={logs} inputMode="ai" onMessageTap={onMessageTap} maxOutputLines={8} />
 			);
 
 			const messageDiv = container.querySelector('[style*="cursor: pointer"]');
@@ -759,12 +772,13 @@ describe('MessageHistory', () => {
 			expect(screen.getByText('Hello 你好 مرحبا 🎉')).toBeInTheDocument();
 		});
 
-		it('handles very long single-word text', () => {
+		it('handles very long single-word text without truncating when "All"', () => {
+			// Long char count alone must NOT trigger truncation under the
+			// desktop-parity rules — only the line cap drives the collapse.
 			const longWord = 'supercalifragilisticexpialidocious'.repeat(50);
 			const logs: LogEntry[] = [createLogEntry({ text: longWord })];
 			render(<MessageHistory logs={logs} inputMode="ai" />);
-			// Should show truncation due to length
-			expect(screen.getByText('▶ expand')).toBeInTheDocument();
+			expect(screen.queryByText('▶ expand')).not.toBeInTheDocument();
 		});
 
 		it('handles special HTML characters', () => {
@@ -889,14 +903,16 @@ describe('MessageHistory', () => {
 		});
 
 		it('handles expand/collapse during scroll', () => {
-			const longText = 'A'.repeat(600);
+			const manyLines = Array.from({ length: 15 }, (_, i) => `Line ${i + 1}`).join('\n');
 			const logs: LogEntry[] = [
-				createLogEntry({ id: 'msg-1', text: longText }),
+				createLogEntry({ id: 'msg-1', text: manyLines }),
 				createLogEntry({ id: 'msg-2', text: 'Short message' }),
-				createLogEntry({ id: 'msg-3', text: longText }),
+				createLogEntry({ id: 'msg-3', text: manyLines }),
 			];
 
-			const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
 			// Find first truncatable message and expand it
 			const firstExpandable = container.querySelector('[style*="cursor: pointer"]');
@@ -908,10 +924,12 @@ describe('MessageHistory', () => {
 		});
 
 		it('maintains expanded state across re-renders', () => {
-			const longText = 'A'.repeat(600);
-			const logs: LogEntry[] = [createLogEntry({ id: 'persistent', text: longText })];
+			const manyLines = Array.from({ length: 15 }, (_, i) => `Line ${i + 1}`).join('\n');
+			const logs: LogEntry[] = [createLogEntry({ id: 'persistent', text: manyLines })];
 
-			const { container, rerender } = render(<MessageHistory logs={logs} inputMode="ai" />);
+			const { container, rerender } = render(
+				<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />
+			);
 
 			// Expand the message
 			const messageDiv = container.querySelector('[style*="cursor: pointer"]');
@@ -919,7 +937,7 @@ describe('MessageHistory', () => {
 			expect(screen.getByText('▼ collapse')).toBeInTheDocument();
 
 			// Rerender with same logs
-			rerender(<MessageHistory logs={logs} inputMode="ai" />);
+			rerender(<MessageHistory logs={logs} inputMode="ai" maxOutputLines={8} />);
 
 			// Should still be expanded
 			expect(screen.getByText('▼ collapse')).toBeInTheDocument();
