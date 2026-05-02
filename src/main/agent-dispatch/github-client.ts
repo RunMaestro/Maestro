@@ -277,15 +277,31 @@ export class GithubClient {
 		);
 		const rawItems: RawItem[] = Array.isArray(parsed) ? parsed : (parsed.items ?? []);
 
+		// Built-in keys returned by `gh project item-list --format json` that are
+		// NOT custom fields. Everything else at top level is a custom field whose
+		// name has been mangled (first char lowercased, e.g. "AI Status" → "aI Status").
+		const BUILT_IN_KEYS = new Set(['id', 'content', 'repository', 'title', 'status']);
+
 		return rawItems.map((raw): GithubProjectItem => {
-			// Extract field values: try fieldValues map first, fall back to top-level keys.
 			const fields: Record<string, string> = {};
+
+			// Preferred shape: nested fieldValues map (newer gh versions / GraphQL).
 			if (raw.fieldValues && typeof raw.fieldValues === 'object') {
 				for (const [key, val] of Object.entries(raw.fieldValues)) {
 					if (!val) continue;
 					const str = val.name ?? val.text ?? val.date;
 					if (str) fields[key] = str;
 				}
+			}
+
+			// Actual gh CLI shape: custom fields are top-level keys with first
+			// character lowercased (e.g. "aI Status", "aI Role"). Un-mangle by
+			// uppercasing the first char so callers can read fields['AI Status'].
+			for (const [key, val] of Object.entries(raw)) {
+				if (BUILT_IN_KEYS.has(key)) continue;
+				if (typeof val !== 'string') continue;
+				const restored = key.charAt(0).toUpperCase() + key.slice(1);
+				if (!fields[restored]) fields[restored] = val;
 			}
 
 			const issueNumber =
