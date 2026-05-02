@@ -100,6 +100,12 @@ beforeEach(() => {
 		stats: mockStats,
 		dialog: mockDialog,
 		fs: mockFs,
+		// Minimum surface needed by `useGlobalAgentStats` (called from the
+		// dashboard's Achievement share image flow).
+		agentSessions: {
+			getGlobalStats: vi.fn().mockResolvedValue(null),
+			onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		},
 	};
 	mockStats.getAggregation.mockResolvedValue(populatedAggregation);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024);

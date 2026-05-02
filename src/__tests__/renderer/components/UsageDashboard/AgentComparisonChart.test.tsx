@@ -272,7 +272,8 @@ describe('AgentComparisonChart', () => {
 				fireEvent.mouseEnter(barRows[0]);
 
 				// Tooltip should appear
-				const tooltip = container.querySelector('.fixed.z-50');
+				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 				expect(tooltip).toBeInTheDocument();
 			}
 		});
@@ -286,7 +287,8 @@ describe('AgentComparisonChart', () => {
 				fireEvent.mouseEnter(barRows[0]);
 				fireEvent.mouseLeave(barRows[0]);
 
-				const tooltip = container.querySelector('.fixed.z-50');
+				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 				expect(tooltip).not.toBeInTheDocument();
 			}
 		});
@@ -300,7 +302,8 @@ describe('AgentComparisonChart', () => {
 				fireEvent.mouseEnter(barRows[0]);
 
 				// Tooltip should contain queries text and total text
-				const tooltip = container.querySelector('.fixed.z-50');
+				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 				expect(tooltip?.textContent).toContain('queries');
 				expect(tooltip?.textContent).toContain('total');
 			}
@@ -798,7 +801,8 @@ describe('AgentComparisonChart', () => {
 			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
 			fireEvent.mouseEnter(barRows[0]);
 
-			const tooltip = container.querySelector('.fixed.z-50');
+			// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
+			const tooltip = document.body.querySelector('div.fixed.shadow-lg');
 			expect(tooltip?.textContent).toContain('Backend API');
 		});
 	});
