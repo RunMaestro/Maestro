@@ -34,7 +34,8 @@ export interface PmCommand {
 
 function getPmPromptsDir(): string {
 	if (app.isPackaged) {
-		return path.join(process.resourcesPath, 'prompts', 'pm');
+		// Packaged extraResources mapping: src/prompts/pm → prompts/core/pm
+		return path.join(process.resourcesPath, 'prompts', 'core', 'pm');
 	}
 	return path.join(__dirname, '..', '..', '..', 'src', 'prompts', 'pm');
 }
