@@ -897,9 +897,13 @@ app.whenReady().then(async () => {
 								'AI Assigned Slot',
 								runnerSlot.agentId
 							);
+							// Flip AI Status to "In Progress" so the kanban view + the
+							// poller's own statusIn filter exclude this item from being
+							// re-claimed.
+							await client.setItemFieldValue(projectId, item.id, 'AI Status', 'In Progress');
 						} catch (err) {
 							logger.warn(
-								`${LOG} Failed to set AI Assigned Slot for item ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+								`${LOG} Failed to claim item ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
 								'Startup'
 							);
 							continue;
