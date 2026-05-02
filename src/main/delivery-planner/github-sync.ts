@@ -13,13 +13,26 @@ import {
 	makeDeliveryPlannerGithubReference,
 } from './github-safety';
 
-// Legacy fallback constants — kept only for the HumpfTech/Maestro repository
-// when no projectGithubMap entry has been stored yet (defensive migration).
-// All active code now uses the per-project coordinates injected at construction time.
-// See: discoverGithubProject() in github-project-discovery.ts (#447).
-const LEGACY_FALLBACK_OWNER = 'HumpfTech' as const;
-const LEGACY_FALLBACK_PROJECT_NUMBER = 7 as const;
-const LEGACY_FALLBACK_PROJECT_TITLE = 'Humpf Tech Maestro Features' as const;
+import {
+	LEGACY_HUMPFTECH_OWNER,
+	LEGACY_HUMPFTECH_PROJECT_NUMBER,
+	LEGACY_HUMPFTECH_PROJECT_TITLE,
+} from '../../shared/legacy-humpftech-fallback';
+
+/**
+ * Legacy fallback constants — kept only for the HumpfTech/Maestro repository
+ * when no projectGithubMap entry has been stored yet (defensive migration).
+ *
+ * This is a defensive fallback for the HumpfTech/Maestro fork environment;
+ * auto-discovery should normally provide values from `projectGithubMap`.
+ * All active code now uses the per-project coordinates injected at construction time.
+ * See: discoverGithubProject() in github-project-discovery.ts (#447).
+ *
+ * TODO: remove once auto-discovery is universal (#447).
+ */
+const LEGACY_FALLBACK_OWNER = LEGACY_HUMPFTECH_OWNER;
+const LEGACY_FALLBACK_PROJECT_NUMBER = LEGACY_HUMPFTECH_PROJECT_NUMBER;
+const LEGACY_FALLBACK_PROJECT_TITLE = LEGACY_HUMPFTECH_PROJECT_TITLE;
 
 type ProjectFieldName =
 	| 'Maestro Major'

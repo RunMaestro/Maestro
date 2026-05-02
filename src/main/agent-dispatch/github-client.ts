@@ -17,12 +17,24 @@
 
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
+import {
+	LEGACY_HUMPFTECH_OWNER,
+	LEGACY_HUMPFTECH_PROJECT_NUMBER,
+} from '../../shared/legacy-humpftech-fallback';
 
-// Legacy fallback project coordinates (#447): used by GithubClient when no
-// per-project mapping has been resolved. Active code should inject coordinates
-// via GithubClientOptions.projectOwner / projectNumber.
-const LEGACY_FALLBACK_PROJECT_OWNER = 'HumpfTech' as const;
-const LEGACY_FALLBACK_PROJECT_NUMBER = 7 as const;
+/**
+ * Legacy fallback project coordinates (#447): used by GithubClient when no
+ * per-project mapping has been resolved via discoverGithubProject().
+ *
+ * This is a defensive fallback for the HumpfTech/Maestro fork environment;
+ * auto-discovery should normally provide values from `projectGithubMap`.
+ * Active code should always inject coordinates via GithubClientOptions.projectOwner /
+ * projectNumber rather than relying on these defaults.
+ *
+ * TODO: remove once auto-discovery is universal (#447).
+ */
+const LEGACY_FALLBACK_PROJECT_OWNER = LEGACY_HUMPFTECH_OWNER;
+const LEGACY_FALLBACK_PROJECT_NUMBER = LEGACY_HUMPFTECH_PROJECT_NUMBER;
 
 const LOG_CONTEXT = '[GithubClient]';
 

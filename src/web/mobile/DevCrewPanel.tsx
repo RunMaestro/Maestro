@@ -27,6 +27,10 @@ import type {
 import type { ProjectRoleSlots, RoleSlotAssignment } from '../../shared/project-roles-types';
 import { DISPATCH_ROLES, DISPATCH_ROLE_LABELS } from '../../shared/project-roles-types';
 import type { DispatchRole } from '../../shared/project-roles-types';
+import {
+	LEGACY_HUMPFTECH_OWNER,
+	LEGACY_HUMPFTECH_REPO,
+} from '../../shared/legacy-humpftech-fallback';
 
 // ---------------------------------------------------------------------------
 // Role icon + colour registry — mirrors desktop SlotCard.tsx exactly.
@@ -97,7 +101,10 @@ function SlotCard({
 
 	const openGithub = useCallback(() => {
 		if (githubNumber) {
-			window.open(`https://github.com/HumpfTech/Maestro/issues/${githubNumber}`, '_blank');
+			window.open(
+				`https://github.com/${LEGACY_HUMPFTECH_OWNER}/${LEGACY_HUMPFTECH_REPO}/issues/${githubNumber}`,
+				'_blank'
+			);
 		}
 	}, [githubNumber]);
 

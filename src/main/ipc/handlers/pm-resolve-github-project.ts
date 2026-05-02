@@ -31,17 +31,31 @@ import type {
 } from '../../delivery-planner/github-project-discovery';
 import { discoverGithubProject } from '../../delivery-planner/github-project-discovery';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import {
+	LEGACY_HUMPFTECH_OWNER,
+	LEGACY_HUMPFTECH_REPO,
+	LEGACY_HUMPFTECH_PROJECT_NUMBER,
+	LEGACY_HUMPFTECH_PROJECT_TITLE,
+} from '../../../shared/legacy-humpftech-fallback';
 
 const LOG_CONTEXT = '[PmResolveGithubProject]';
 
-// Legacy fallback — used only when projectPath is inside the HumpfTech/Maestro fork
-// AND no mapping has been stored yet.
+/**
+ * Legacy fallback mapping — used only when the projectGithubMap settings store is empty
+ * AND discovery fails for a non-actionable reason.
+ *
+ * This is a defensive fallback for the HumpfTech/Maestro fork environment;
+ * auto-discovery should normally provide values from `projectGithubMap`.
+ * Run /PM-init to persist a proper mapping and suppress this fallback.
+ *
+ * TODO: remove once auto-discovery is universal (#447).
+ */
 const LEGACY_FALLBACK: GithubProjectMapping = {
-	owner: 'HumpfTech',
-	repo: 'Maestro',
-	projectNumber: 7,
+	owner: LEGACY_HUMPFTECH_OWNER,
+	repo: LEGACY_HUMPFTECH_REPO,
+	projectNumber: LEGACY_HUMPFTECH_PROJECT_NUMBER,
 	projectId: '',
-	projectTitle: 'Humpf Tech Maestro Features',
+	projectTitle: LEGACY_HUMPFTECH_PROJECT_TITLE,
 	discoveredAt: '2024-01-01T00:00:00.000Z',
 };
 

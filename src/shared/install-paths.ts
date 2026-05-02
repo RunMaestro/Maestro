@@ -1,5 +1,5 @@
 /**
- * Install-path constants for the HumpfTech Maestro fork environment.
+ * Install-path constants for the local Maestro install environment.
  *
  * These constants distinguish the development source tree from the packaged
  * install destination and the runtime user-data directory. They should be used

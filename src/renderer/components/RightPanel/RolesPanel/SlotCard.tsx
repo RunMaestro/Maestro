@@ -4,9 +4,16 @@ import type { Theme } from '../../../types';
 import type { Session } from '../../../types';
 import type { DispatchRole, RoleSlotAssignment } from '../../../../shared/project-roles-types';
 import { DISPATCH_ROLE_LABELS } from '../../../../shared/project-roles-types';
+import {
+	LEGACY_HUMPFTECH_OWNER,
+	LEGACY_HUMPFTECH_REPO,
+} from '../../../../shared/legacy-humpftech-fallback';
 
 // Role icons + brand colors — match the sidebar SessionItem icons exactly.
-const ROLE_ICON_COMPONENT: Record<DispatchRole, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
+const ROLE_ICON_COMPONENT: Record<
+	DispatchRole,
+	React.ComponentType<{ className?: string; style?: React.CSSProperties }>
+> = {
 	runner: Hammer,
 	fixer: Wrench,
 	reviewer: Eye,
@@ -169,7 +176,7 @@ export function SlotCard({
 	const openGithub = useCallback(() => {
 		if (githubNumber) {
 			void window.maestro.shell.openExternal(
-				`https://github.com/HumpfTech/Maestro/issues/${githubNumber}`
+				`https://github.com/${LEGACY_HUMPFTECH_OWNER}/${LEGACY_HUMPFTECH_REPO}/issues/${githubNumber}`
 			);
 		}
 	}, [githubNumber]);

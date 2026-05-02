@@ -8,7 +8,13 @@
 
 export const WORK_GRAPH_READY_TAG = 'agent-ready' as const;
 export const WORK_GRAPH_AGENT_READY_TAG = WORK_GRAPH_READY_TAG;
-export const WORK_GRAPH_FORK_REPOSITORY = 'HumpfTech/Maestro' as const;
+/**
+ * @deprecated The fork repository slug is now configured at runtime via
+ * `deliveryPlannerGithub` settings. This constant defaults to an empty string
+ * and is retained only for backward-compatibility with callers that used it as
+ * a type annotation or filter value. Read from the settings store instead.
+ */
+export const WORK_GRAPH_FORK_REPOSITORY = '' as string;
 
 export type WorkGraphReadyTag = typeof WORK_GRAPH_READY_TAG;
 
@@ -102,9 +108,9 @@ export interface WorkItemOwner {
 }
 
 export interface WorkItemGithubReference {
-	owner: 'HumpfTech';
-	repo: 'Maestro';
-	repository: typeof WORK_GRAPH_FORK_REPOSITORY;
+	owner: string;
+	repo: string;
+	repository: string;
 	issueNumber?: number;
 	pullRequestNumber?: number;
 	url?: string;
@@ -270,7 +276,7 @@ export interface WorkItemFilters {
 	readonly?: boolean;
 	ownerId?: string;
 	ownerType?: WorkItemOwner['type'];
-	githubRepository?: typeof WORK_GRAPH_FORK_REPOSITORY;
+	githubRepository?: string;
 	githubIssueNumber?: number;
 	githubPullRequestNumber?: number;
 	capabilityRouting?: WorkGraphCapabilityRouting;
