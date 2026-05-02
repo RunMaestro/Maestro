@@ -222,7 +222,10 @@ function SessionListInner(props: SessionListProps) {
 						| Record<string, { agentId?: string }>
 						| null;
 					const slots: Record<string, { agentId?: string }> =
-						res && typeof res === 'object' && 'success' in res && (res as { success?: boolean }).success
+						res &&
+						typeof res === 'object' &&
+						'success' in res &&
+						(res as { success?: boolean }).success
 							? ((res as { data?: Record<string, { agentId?: string }> }).data ?? {})
 							: ((res as Record<string, { agentId?: string }> | null) ?? {});
 					m.set(path, slots);
@@ -250,11 +253,35 @@ function SessionListInner(props: SessionListProps) {
 							cb: (ev: { projectPath: string; role: string; agentId: string }) => void
 						) => () => void;
 						onClaimEnded?: (cb: (ev: { projectPath: string; role: string }) => void) => () => void;
+						getBoard?: () => Promise<{
+							success: boolean;
+							data?: {
+								items?: Array<{ projectPath: string; role: string; agentSessionId?: string }>;
+							};
+						}>;
 					};
 				};
 			}
 		).maestro?.agentDispatch;
 		if (!api?.onClaimStarted || !api?.onClaimEnded) return;
+		// Rehydrate active claims from the in-memory ClaimTracker so the icon
+		// reflects reality after a restart instead of waiting for the next
+		// claimStarted event.
+		void api.getBoard?.().then((res) => {
+			if (!res?.success) return;
+			const items = res.data?.items ?? [];
+			if (items.length === 0) return;
+			setActiveClaimsByProject((prev) => {
+				const next = new Map(prev);
+				for (const it of items) {
+					if (!it.projectPath || !it.role || !it.agentSessionId) continue;
+					const byRole = new Map(next.get(it.projectPath) ?? []);
+					byRole.set(it.role, it.agentSessionId);
+					next.set(it.projectPath, byRole);
+				}
+				return next;
+			});
+		});
 		const unsubStart = api.onClaimStarted((ev) => {
 			setActiveClaimsByProject((prev) => {
 				const next = new Map(prev);

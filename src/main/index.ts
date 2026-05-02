@@ -819,19 +819,63 @@ app.whenReady().then(async () => {
 						projectNumber: projectCoords.projectNumber,
 					});
 					let eligibleItems;
+					let inFlightItems;
 					try {
 						eligibleItems = await client.listProjectItems({
 							statusIn: ['Tasks Ready'],
 							assignedSlotMatches: '',
 						});
+						// Also pull items already In Progress so we can rehydrate the
+						// in-memory claim tracker after a maestro restart and re-emit
+						// claimStarted to the renderer (otherwise the role icon stops
+						// flashing even though the runner is still alive remotely).
+						inFlightItems = await client.listProjectItems({
+							statusIn: ['In Progress'],
+							assignedSlotMatches: runnerSlot.agentId,
+						});
 					} catch (err) {
-						// GitHub query failure: log + skip this project for this tick.
-						// Error code surfaced per #447 structured-error conventions.
 						logger.warn(
 							`${LOG} GitHub query failed for "${projectPath}": ${err instanceof Error ? err.message : String(err)}`,
 							'Startup'
 						);
 						return;
+					}
+
+					// Rehydrate claim tracker for any in-flight items we don't already know about.
+					if (inFlightItems && inFlightItems.length > 0) {
+						const tracker = getClaimTracker();
+						for (const item of inFlightItems) {
+							if (item.id && tracker.getByProjectItemId(item.id)) continue;
+							const claimedAt = new Date().toISOString();
+							tracker.addClaim({
+								claimId: `rehydrate-${item.id}`,
+								projectPath,
+								role: 'runner',
+								issueNumber: item.issueNumber ?? 0,
+								issueTitle: item.title ?? item.id,
+								projectItemId: item.id,
+								projectId: '',
+								agentSessionId: runnerSlot.agentId,
+								claimedAt,
+								lastHeartbeatAt: claimedAt,
+							});
+							const win = BrowserWindow.getAllWindows()[0];
+							if (win && !win.isDestroyed()) {
+								win.webContents.send('agentDispatch:claimStarted', {
+									projectPath,
+									role: 'runner',
+									agentId: runnerSlot.agentId,
+									sessionId: `dispatch-runner-${item.id}`,
+									issueNumber: item.issueNumber,
+									issueTitle: item.title,
+									claimedAt,
+								});
+							}
+							logger.info(
+								`${LOG} Rehydrated in-flight claim for item ${item.id} (#${item.issueNumber ?? '?'}) — slot icon should resume flashing`,
+								'Startup'
+							);
+						}
 					}
 
 					if (eligibleItems.length === 0) {
