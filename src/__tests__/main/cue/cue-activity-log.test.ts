@@ -69,4 +69,27 @@ describe('createCueActivityLog', () => {
 		log.push(makeResult('r2'));
 		expect(snapshot).toHaveLength(1);
 	});
+
+	it('seed replaces the log preserving order', () => {
+		const log = createCueActivityLog();
+		log.push(makeResult('old'));
+		log.seed([makeResult('a'), makeResult('b'), makeResult('c')]);
+		const all = log.getAll();
+		expect(all).toHaveLength(3);
+		expect(all.map((r) => r.runId)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('seed truncates to maxSize keeping the newest entries', () => {
+		const log = createCueActivityLog(2);
+		log.seed([makeResult('a'), makeResult('b'), makeResult('c')]);
+		const all = log.getAll();
+		expect(all.map((r) => r.runId)).toEqual(['b', 'c']);
+	});
+
+	it('seed with empty array clears the log', () => {
+		const log = createCueActivityLog();
+		log.push(makeResult('r1'));
+		log.seed([]);
+		expect(log.getAll()).toHaveLength(0);
+	});
 });

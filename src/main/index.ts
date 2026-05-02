@@ -8,7 +8,11 @@ import crypto from 'crypto';
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
+import { getAgentDefinition } from './agents/definitions';
+import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
+import type { AgentId } from '../shared/agentIds';
 import { CueEngine } from './cue/cue-engine';
+import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
 	executeCuePrompt,
 	recordCueHistoryEntry,
@@ -52,6 +56,7 @@ import {
 	registerContextHandlers,
 	registerMarketplaceHandlers,
 	registerStatsHandlers,
+	registerCueStatsHandlers,
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
@@ -237,6 +242,20 @@ if (crashReportingEnabled && !isDevelopment) {
 				tracesSampleRate: 0,
 				// Filter out sensitive data
 				beforeSend(event) {
+					// Drop unfixable Windows drive-root noise: EBUSY/EPERM on always-locked
+					// system files (pagefile.sys, hiberfil.sys, DumpStack.log.tmp, ...) that
+					// show up when users point watchers at C:\ or similar. See MAESTRO-G5/G6.
+					const firstException = event.exception?.values?.[0];
+					const exceptionValue = firstException?.value ?? '';
+					if (
+						/^(EBUSY|EPERM): [^,]+, lstat /i.test(exceptionValue) &&
+						/(pagefile\.sys|hiberfil\.sys|swapfile\.sys|DumpStack\.log|System Volume Information)/i.test(
+							exceptionValue
+						)
+					) {
+						return null;
+					}
+
 					// Remove any potential sensitive data from the event
 					if (event.user) {
 						delete event.user.ip_address;
@@ -571,7 +590,9 @@ app.whenReady().then(async () => {
 								// exist on the remote host.
 							});
 				const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-				historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+				// Fire-and-forget: this is on the Cue execution path; the
+				// caller doesn't need to wait for the disk write to settle.
+				void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
 				return cmdResult;
 			}
 
@@ -639,7 +660,7 @@ app.whenReady().then(async () => {
 				projectRoot,
 				autoRunFolderPath: storedSession.autoRunFolderPath,
 			});
-			historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+			void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
 			return result;
 		},
 		onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
@@ -652,6 +673,27 @@ app.whenReady().then(async () => {
 		},
 		onPreventSleep: (reason) => powerManager.addBlockReason(reason),
 		onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
+		// Phase 01 — gate cue_events stats lineage writes on the
+		// `encoreFeatures.usageStats` flag. Read on every record so toggling
+		// the Encore flag at runtime takes effect without an app restart.
+		getUsageStatsEnabled: () => {
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return ef.usageStats === true;
+		},
+	});
+
+	// Configure Cue telemetry submitter. Reads installationId / encore flags
+	// on every event so toggling Cue or usageStats at runtime takes effect
+	// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
+	// — both flags required.
+	configureCueTelemetry({
+		getInstallationId: () => store.get('installationId') as string | null,
+		getAppVersion: () => app.getVersion(),
+		getPlatform: () => process.platform,
+		isEncoreEnabled: () => {
+			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			return ef.maestroCue === true && ef.usageStats === true;
+		},
 	});
 
 	logger.info('Core services initialized', 'Startup');
@@ -730,8 +772,12 @@ app.whenReady().then(async () => {
 	if (isMacOS()) {
 		const template: Electron.MenuItemConstructorOptions[] = [
 			{
-				// Explicit appMenu — omits "Quit and Keep Windows" (Opt+Cmd+Q)
-				// which otherwise immediately kills the app without cleanup.
+				// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
+				// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
+				// quit role (as "Quit and Keep Windows"), and that keystroke sits
+				// one modifier away from Opt+Q (Maestro Cue), causing accidental
+				// quits. Click events from accelerators carry modifier flags, so
+				// we can detect Option held and ignore the keystroke entirely.
 				role: 'appMenu',
 				submenu: [
 					{ role: 'about' },
@@ -742,7 +788,20 @@ app.whenReady().then(async () => {
 					{ role: 'hideOthers' },
 					{ role: 'unhide' },
 					{ type: 'separator' },
-					{ role: 'quit' },
+					{
+						label: 'Quit Maestro',
+						accelerator: 'Cmd+Q',
+						click: (_item, _window, event) => {
+							if (event?.altKey) {
+								logger.info(
+									'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
+									'Menu'
+								);
+								return;
+							}
+							app.quit();
+						},
+					},
 				],
 			},
 			{ role: 'editMenu' },
@@ -1019,6 +1078,15 @@ function setupIpcHandlers() {
 		settingsStore: store,
 	});
 
+	// Register Cue Stats handlers for the Cue Dashboard aggregation query.
+	// Pass `getCueEngine` so the handler can fall back to the live cue config
+	// when persisted `pipeline_id` is null (legacy events / events recorded
+	// before lineage tracking was enabled).
+	registerCueStatsHandlers({
+		settingsStore: store,
+		getCueEngine: () => cueEngine,
+	});
+
 	// Register Document Graph handlers for file watching
 	registerDocumentGraphHandlers({
 		getMainWindow: () => mainWindow,
@@ -1194,6 +1262,17 @@ function setupProcessListeners() {
 			isCueEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return !!ef.maestroCue;
+			},
+			getSshRemoteByName: (name: string) => {
+				const remotes = store.get('sshRemotes', []);
+				return remotes.find((r) => r.name === name) ?? null;
+			},
+			getAgentContextWindow: (agentId: string) => {
+				const def = getAgentDefinition(agentId);
+				const contextOpt = def?.configOptions?.find((o) => o.key === 'contextWindow');
+				const fallbackDefault =
+					typeof contextOpt?.default === 'number' ? contextOpt.default : FALLBACK_CONTEXT_WINDOW;
+				return DEFAULT_CONTEXT_WINDOWS[agentId as AgentId] ?? fallbackDefault;
 			},
 		});
 

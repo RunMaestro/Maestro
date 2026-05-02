@@ -997,7 +997,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							))}
 						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
 						<span className="mr-2">{node.emoji}</span>
-						<span className="font-medium flex-1 truncate">{node.label}</span>
+						<span className="font-medium truncate">{node.label}</span>
 						{hasChildren && (
 							<span className="text-xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
 								{node.children!.length}{' '}
@@ -1069,7 +1069,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							className="w-4 h-4 flex-shrink-0"
 							style={{ color: activeCount > 0 ? theme.colors.success : theme.colors.textDim }}
 						/>
-						<span className="flex-1 truncate">{node.label}</span>
+						<span className="truncate">{node.label}</span>
 						<span
 							className="text-xs flex items-center gap-2 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
@@ -1182,9 +1182,9 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								style={{ backgroundColor: theme.colors.success }}
 							/>
 							<span className="text-sm truncate min-w-0">{node.label}</span>
-							{/* Metadata cluster: dim mono, takes remaining space, right-aligns at end */}
+							{/* Metadata cluster: dim mono, sits flush after the label */}
 							<div
-								className="flex items-center gap-3 ml-auto flex-shrink-0 text-xs font-mono"
+								className="flex items-center gap-3 flex-shrink-0 text-xs font-mono"
 								style={{ color: theme.colors.textDim }}
 							>
 								{node.agentSessionId && node.sessionId && onNavigateToSession && (
@@ -1406,7 +1406,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							))}
 						{!hasChildren && <div className="w-4 h-4 flex-shrink-0" />}
 						<span className="mr-2">{node.emoji}</span>
-						<span className="flex-1 truncate">{node.label}</span>
+						<span className="truncate">{node.label}</span>
 						<span
 							className="text-xs flex items-center gap-2 flex-shrink-0"
 							style={{ color: theme.colors.textDim }}
@@ -1950,7 +1950,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 						{/* Footer */}
 						<div
-							className="px-6 py-3 border-t flex items-center justify-between text-xs"
+							className="px-6 py-3 border-t flex items-center gap-4 text-xs"
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textDim,

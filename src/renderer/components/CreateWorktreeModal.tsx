@@ -6,6 +6,7 @@ import type { Theme, Session, GhCliStatus } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { openUrl } from '../utils/openUrl';
+import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
@@ -68,17 +69,9 @@ export function CreateWorktreeModal({
 	};
 
 	const handleCreate = async () => {
-		const trimmedName = branchName.trim();
+		const trimmedName = sanitizeGitBranchName(branchName);
 		if (!trimmedName) {
-			setError('Please enter a branch name');
-			return;
-		}
-
-		// Basic branch name validation
-		if (!/^[\w\-./]+$/.test(trimmedName)) {
-			setError(
-				'Invalid branch name. Use only letters, numbers, hyphens, underscores, dots, and slashes.'
-			);
+			setError('Please enter a valid branch name');
 			return;
 		}
 
@@ -202,7 +195,9 @@ export function CreateWorktreeModal({
 							ref={inputRef}
 							type="text"
 							value={branchName}
-							onChange={(e) => setBranchName(e.target.value)}
+							onChange={(e) =>
+								setBranchName(sanitizeGitBranchName(e.target.value, { allowIncomplete: true }))
+							}
 							onKeyDown={handleKeyDown}
 							placeholder="feature-xyz"
 							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"

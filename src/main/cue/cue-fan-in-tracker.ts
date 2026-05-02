@@ -34,7 +34,10 @@ export interface CueFanInDeps {
 		sub: CueSubscription,
 		event: CueEvent,
 		sourceSessionName: string,
-		chainDepth?: number
+		chainDepth?: number,
+		promptOverride?: string,
+		chainRootId?: string,
+		parentEventId?: string
 	) => number;
 }
 

@@ -54,7 +54,7 @@ export type {
 	ModeratorConfig,
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
-import type { AgentError } from '../../shared/types';
+import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -432,6 +432,8 @@ export interface AITab {
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	customModel?: string; // Per-tab model override; falls back to session.customModel, then agent default
+	customEffort?: string; // Per-tab effort/reasoning override; falls back to session.customEffort, then agent default
 	awaitingSessionId?: boolean; // True when this tab sent a message and is awaiting its session ID
 	thinkingStartTime?: number; // Timestamp when tab started thinking (for elapsed time display)
 	scrollTop?: number; // Saved scroll position for this tab's output view
@@ -667,12 +669,10 @@ export interface Session {
 	batchRunnerPrompt?: string;
 	// Timestamp when the batch runner prompt was last modified
 	batchRunnerPromptModifiedAt?: number;
-	// CLI activity - present when CLI is running a playbook on this session
-	cliActivity?: {
-		playbookId: string;
-		playbookName: string;
-		startedAt: number;
-	};
+	// CLI activity - present when CLI is running a playbook on this session.
+	// Shape lives in shared/types.ts (SessionCliActivity) so the persistence
+	// diff comparator stays in lock-step with this producer's contract.
+	cliActivity?: SessionCliActivity;
 
 	// Tab management for AI mode (multi-tab Claude Code sessions)
 	// Each tab represents a separate Claude Code conversation

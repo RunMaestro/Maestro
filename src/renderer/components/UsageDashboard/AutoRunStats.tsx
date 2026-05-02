@@ -18,6 +18,7 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { clampTooltipToViewport } from './chartUtils';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -82,9 +83,13 @@ function MetricCard({ icon, label, value, subValue, theme }: MetricCardProps) {
 }
 
 /**
- * Group sessions by local date and sum tasksCompleted for the bar chart.
- * Uses session-level tasksCompleted (actual checkboxes) rather than task records
- * (agent invocations), which can batch multiple checkboxes per invocation.
+ * Group sessions by local date for the "Tasks Completed Over Time" chart.
+ *
+ * `count` here is **attempted** task total (kept for the tooltip's "%
+ * successful" math) and `successCount` is the actual number of completed
+ * checkboxes. We drop a day only when *both* are zero — earlier we filtered
+ * on `count > 0`, which silently hid recent days where `tasksTotal` was 0/
+ * null (e.g. ad-hoc autoruns added mid-session) even when work was completed.
  */
 function groupSessionsByDate(
 	sessions: AutoRunSession[]
@@ -104,7 +109,7 @@ function groupSessionsByDate(
 
 	return Object.entries(grouped)
 		.map(([date, stats]) => ({ date, ...stats }))
-		.filter((entry) => entry.count > 0)
+		.filter((entry) => entry.count > 0 || entry.successCount > 0)
 		.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -189,10 +194,12 @@ export const AutoRunStats = memo(function AutoRunStats({
 		return groupSessionsByDate(sessions);
 	}, [sessions]);
 
-	// Max count for bar height calculation
+	// Max for bar height calculation — driven by tasks completed (the chart's
+	// titular metric), not tasks attempted, so days where `tasksTotal` is 0
+	// but real completions exist still scale correctly.
 	const maxCount = useMemo(() => {
 		if (tasksByDate.length === 0) return 0;
-		return Math.max(...tasksByDate.map((d) => d.count));
+		return Math.max(...tasksByDate.map((d) => Math.max(d.successCount, d.count)));
 	}, [tasksByDate]);
 
 	// Handle mouse events for tooltip
@@ -350,7 +357,10 @@ export const AutoRunStats = memo(function AutoRunStats({
 				role="figure"
 				aria-label={`Tasks completed over time chart. ${tasksByDate.length} days of data.`}
 			>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Tasks Completed Over Time
 				</h3>
 
@@ -362,7 +372,11 @@ export const AutoRunStats = memo(function AutoRunStats({
 							aria-label="Tasks completed by date"
 						>
 							{tasksByDate.map((day) => {
-								const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
+								// Bar height tracks the tasks-completed value the chart claims to
+								// show. Fall back to attempted when no completion data exists so
+								// runs that errored out still surface a bar.
+								const barValue = day.successCount > 0 ? day.successCount : day.count;
+								const height = maxCount > 0 ? (barValue / maxCount) * 100 : 0;
 								const successRatio = day.count > 0 ? day.successCount / day.count : 0;
 								const isHovered = hoveredBar?.date === day.date;
 
@@ -416,30 +430,46 @@ export const AutoRunStats = memo(function AutoRunStats({
 							)}
 						</div>
 
-						{/* Tooltip */}
-						{hoveredBar && tooltipPos && (
-							<div
-								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-								style={{
-									left: tooltipPos.x,
-									top: tooltipPos.y,
-									transform: 'translate(-50%, -100%)',
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-								data-testid="task-bar-tooltip"
-							>
-								<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
-								<div style={{ color: theme.colors.textDim }}>
-									<div>{hoveredBar.count} tasks completed</div>
-									<div>
-										{hoveredBar.successCount} successful (
-										{Math.round((hoveredBar.successCount / hoveredBar.count) * 100)}%)
+						{/* Tooltip — clamped to viewport so bars near the right edge don't
+						    push the tooltip off-screen. */}
+						{hoveredBar &&
+							tooltipPos &&
+							(() => {
+								const tooltipWidth = 220;
+								const tooltipHeight = 70;
+								const { left, top } = clampTooltipToViewport({
+									anchorX: tooltipPos.x,
+									anchorY: tooltipPos.y,
+									width: tooltipWidth,
+									height: tooltipHeight,
+									transform: 'top-center',
+								});
+								return (
+									<div
+										className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+										style={{
+											left,
+											top,
+											backgroundColor: theme.colors.bgActivity,
+											color: theme.colors.textMain,
+											border: `1px solid ${theme.colors.border}`,
+										}}
+										data-testid="task-bar-tooltip"
+									>
+										<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
+										<div style={{ color: theme.colors.textDim }}>
+											<div>{hoveredBar.count} tasks attempted</div>
+											<div>
+												{hoveredBar.successCount} successful (
+												{hoveredBar.count > 0
+													? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
+													: 0}
+												%)
+											</div>
+										</div>
 									</div>
-								</div>
-							</div>
-						)}
+								);
+							})()}
 					</div>
 				) : (
 					<div

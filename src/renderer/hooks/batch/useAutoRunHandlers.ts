@@ -14,6 +14,7 @@ import {
 import { captureException } from '../../utils/sentry';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
+import { sanitizeGitBranchName } from '../../../shared/gitUtils';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -108,12 +109,21 @@ async function spawnWorktreeAgentAndDispatch(
 	let branchName: string;
 
 	if (target.mode === 'create-new') {
-		// Step 1: Resolve worktree path
+		// Step 1: Resolve worktree path. Sanitize the branch so user input like
+		// "Cue Dashboard" doesn't blow up `git worktree add` with "not a valid branch name".
+		branchName = sanitizeGitBranchName(target.newBranchName ?? '');
+		if (!branchName) {
+			notifyToast({
+				type: 'error',
+				title: 'Invalid Branch Name',
+				message: `"${target.newBranchName ?? ''}" cannot be used as a git branch name. Try letters, numbers, hyphens, or slashes.`,
+			});
+			return null;
+		}
 		const basePath =
 			parentSession.worktreeConfig?.basePath ||
 			parentSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
-		worktreePath = basePath + '/' + target.newBranchName;
-		branchName = target.newBranchName!;
+		worktreePath = basePath + '/' + branchName;
 
 		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
 		// skips this path and doesn't create a duplicate session.

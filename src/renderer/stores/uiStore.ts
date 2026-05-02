@@ -25,7 +25,6 @@ export interface UIStoreState {
 
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
-	groupChatsExpanded: boolean;
 
 	// Session list filter
 	showUnreadOnly: boolean;
@@ -75,8 +74,6 @@ export interface UIStoreActions {
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
 	toggleBookmarksCollapsed: () => void;
-	setGroupChatsExpanded: (expanded: boolean | ((prev: boolean) => boolean)) => void;
-	toggleGroupChatsExpanded: () => void;
 
 	// Session list filter
 	setShowUnreadOnly: (show: boolean | ((prev: boolean) => boolean)) => void;
@@ -146,7 +143,6 @@ export const useUIStore = create<UIStore>()((set) => ({
 	activeFocus: 'main',
 	activeRightTab: 'files',
 	bookmarksCollapsed: false,
-	groupChatsExpanded: true,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
 	preFilterActiveTabId: null,
@@ -175,9 +171,6 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setBookmarksCollapsed: (v) =>
 		set((s) => ({ bookmarksCollapsed: resolve(v, s.bookmarksCollapsed) })),
 	toggleBookmarksCollapsed: () => set((s) => ({ bookmarksCollapsed: !s.bookmarksCollapsed })),
-	setGroupChatsExpanded: (v) =>
-		set((s) => ({ groupChatsExpanded: resolve(v, s.groupChatsExpanded) })),
-	toggleGroupChatsExpanded: () => set((s) => ({ groupChatsExpanded: !s.groupChatsExpanded })),
 
 	setShowUnreadOnly: (v) => set((s) => ({ showUnreadOnly: resolve(v, s.showUnreadOnly) })),
 	toggleShowUnreadOnly: () => set((s) => ({ showUnreadOnly: !s.showUnreadOnly })),

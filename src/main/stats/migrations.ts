@@ -60,6 +60,12 @@ function getMigrations(): Migration[] {
 			description: 'Add compound indexes on query_events for dashboard query performance',
 			up: (db) => migrateV4(db),
 		},
+		{
+			version: 5,
+			description:
+				'Add is_worktree column to query_events and session_lifecycle for worktree analytics',
+			up: (db) => migrateV5(db),
+		},
 	];
 }
 
@@ -246,4 +252,35 @@ function migrateV4(db: Database.Database): void {
 	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
 
 	logger.debug('Added compound indexes on query_events', LOG_CONTEXT);
+}
+
+/**
+ * Migration v5: Add is_worktree column to query_events and session_lifecycle.
+ *
+ * Uses PRAGMA table_info to check whether the column already exists before
+ * issuing ALTER TABLE — this lets the migration be safely re-applied if a
+ * previous run partially completed before being recorded.
+ */
+function migrateV5(db: Database.Database): void {
+	if (!hasColumn(db, 'query_events', 'is_worktree')) {
+		db.prepare('ALTER TABLE query_events ADD COLUMN is_worktree INTEGER DEFAULT 0').run();
+	}
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_query_is_worktree ON query_events(is_worktree)').run();
+
+	if (!hasColumn(db, 'session_lifecycle', 'is_worktree')) {
+		db.prepare('ALTER TABLE session_lifecycle ADD COLUMN is_worktree INTEGER DEFAULT 0').run();
+	}
+
+	logger.debug(
+		'Added is_worktree column to query_events and session_lifecycle tables',
+		LOG_CONTEXT
+	);
+}
+
+/**
+ * Check whether a column exists on a table using SQLite's PRAGMA table_info.
+ */
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+	const rows = db.pragma(`table_info(${table})`) as Array<{ name: string }> | undefined;
+	return Array.isArray(rows) && rows.some((row) => row.name === column);
 }

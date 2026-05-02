@@ -10,6 +10,9 @@ import {
 import ReactMarkdown from 'react-markdown';
 import rehypeSlug from 'rehype-slug';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
+// Module-level constant — react-markdown re-parses the document if rehypePlugins
+// changes by reference, so the array must be hoisted out of render.
+const REHYPE_PLUGINS = [rehypeSlug];
 import { ResetTasksConfirmModal } from '../ResetTasksConfirmModal';
 import { AutoRunDocumentSelector } from './AutoRunDocumentSelector';
 import { AutoRunLightbox } from './AutoRunLightbox';
@@ -681,7 +684,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							<style>{proseStyles}</style>
 							<ReactMarkdown
 								remarkPlugins={remarkPlugins}
-								rehypePlugins={[rehypeSlug]}
+								rehypePlugins={REHYPE_PLUGINS}
 								components={markdownComponents}
 							>
 								{localContent || '*No content yet. Switch to Edit mode to start writing.*'}

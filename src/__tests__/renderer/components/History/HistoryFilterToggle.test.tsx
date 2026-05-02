@@ -205,4 +205,32 @@ describe('HistoryFilterToggle', () => {
 		const cueButton = screen.getByText('CUE').closest('button')!;
 		expect(cueButton.className).toContain('opacity-40');
 	});
+
+	it('renders pill icons by default', () => {
+		const { container } = render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		// Three pills, each with an SVG icon when not compact.
+		expect(container.querySelectorAll('button svg').length).toBe(3);
+	});
+
+	it('hides pill icons when compact', () => {
+		const { container } = render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				compact
+			/>
+		);
+		expect(container.querySelectorAll('button svg').length).toBe(0);
+		// Labels still render so the controls remain usable in narrow panels.
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
 });

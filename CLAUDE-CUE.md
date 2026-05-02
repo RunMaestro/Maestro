@@ -190,6 +190,42 @@ Single SQLite database, WAL mode. Tables:
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
 - **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
 
+## Telemetry
+
+Telemetry submission to `runmaestro.ai/api/v1/cue/stats` is **gated on both Encore flags** (`encoreFeatures.maestroCue` AND `encoreFeatures.usageStats`) — same predicate as `cue-stats.ts:isCueStatsEnabled`. Older app versions don't have the code path, so back-compat is automatic.
+
+**Two events** cover all server-side rollups:
+
+- `trigger_fired` — emitted from `cue-dispatch-service.ts:dispatchSubscription` ONCE per dispatch (not per fan-out target). Carries the source `event_type`, hashed `subscription_id_hash`, hashed `pipeline_id_hash`, hashed `trigger_id_hash`.
+- `run_completed` — emitted from `cue-engine.ts:onRunCompleted` once per natural completion. Carries `task_kind` (`agent_handoff` | `command_node` | `trigger_action`), hashed `subscription_id_hash`, hashed `pipeline_id_hash`, **raw** `chain_root_id`, `parent_run_id`, `duration_ms`, `status`. Server derives "pipelines executed" via `COUNT(DISTINCT pipeline_id_hash)` and "chains executed" via `COUNT(DISTINCT chain_root_id)`.
+
+**Hashing**: `sha256(installationId + ":" + name).slice(0, 16)`. Stable per-install, not cross-correlatable. `chain_root_id` stays raw (already a random UUID, no PII).
+
+**Outbox** (`cue_telemetry_outbox` table in `cue.db`): events recorded synchronously into SQLite from the dispatch / completion hot paths. Failures to insert are non-fatal — at most one missed event per dropped row.
+
+**Submission cadence** (in priority order):
+
+1. **Primary**: autorun completion (`stats:end-autorun` in `src/main/ipc/handlers/stats.ts`) — the user's natural quiet window, fire-and-forget after the existing `broadcastStatsUpdate`.
+2. **Threshold fallback**: if the outbox grows past 200 rows without an autorun completing, the next `recordTriggerFired` / `recordRunCompleted` triggers an inline flush.
+3. **App-quit flush**: `app-lifecycle/quit-handler.ts:performCleanup` calls `flushTelemetry({ reason: 'app-quit' })` so events captured between the last autorun and shutdown aren't deferred to the next launch.
+
+There is **no timer-based flush** — burning battery on idle installs is not the goal.
+
+**Kill-switches** (both honored):
+
+- `MAESTRO_DISABLE_CUE_TELEMETRY=1` env var → hard local disable.
+- `X-Cue-Telemetry-Backoff: <seconds>` response header → server-side throttle. Honored until the deadline expires; subsequent flushes return `{ ok: false, reason: 'backoff' }`.
+
+**Limits**: 500 events / 256 KB per request. Server returns `202` + `{dropped: N}` on overflow; client also pre-checks payload size and drops half the batch (oldest first) on local overflow rather than retrying forever.
+
+**Failure modes**:
+
+- 2xx → delete submitted rows from the outbox.
+- 4xx → drop the batch (server thinks it's bad and won't accept on retry).
+- 5xx / network error → leave rows in the outbox; next flush retries them.
+
+Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwing — telemetry is best-effort and must not break dispatch or completion. The module returns early on any gate failure (no installationId, Encore off, kill-switch on).
+
 ## Top gotchas (read before editing)
 
 1. **Ownership tie-breaking is silent.** When two agents share a `projectRoot`, the second-registered one's unowned subs vanish from triggers AND completions with no UI. If you add a session and its automation suddenly stops, check ownership. Fix is `agent_id` on every sub OR `settings.owner_agent_id` to pin.

@@ -230,6 +230,7 @@ export function useSymphonyContribution(
 				projectPath: data.localPath,
 				createdAt: Date.now(),
 				isRemote: false,
+				isWorktree: false,
 			});
 
 			// Focus input

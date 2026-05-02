@@ -15,6 +15,7 @@ import {
 	getImageMimeType,
 	isWorktreeAlreadyUsedError,
 	parseWorktreePathForBranch,
+	sanitizeGitBranchName,
 } from '../../shared/gitUtils';
 
 describe('gitUtils', () => {
@@ -381,6 +382,56 @@ describe('gitUtils', () => {
 		it('returns null for empty input', () => {
 			expect(parseWorktreePathForBranch('', 'main')).toBeNull();
 			expect(parseWorktreePathForBranch(sample, '')).toBeNull();
+		});
+	});
+
+	describe('sanitizeGitBranchName', () => {
+		it('replaces internal whitespace with a single hyphen', () => {
+			expect(sanitizeGitBranchName('Cue Dashboard')).toBe('Cue-Dashboard');
+			expect(sanitizeGitBranchName('feature   xyz')).toBe('feature-xyz');
+			expect(sanitizeGitBranchName('  leading and trailing  ')).toBe('leading-and-trailing');
+		});
+
+		it('substitutes characters that git refuses', () => {
+			expect(sanitizeGitBranchName('feat~bad')).toBe('feat-bad');
+			expect(sanitizeGitBranchName('with:colon')).toBe('with-colon');
+			expect(sanitizeGitBranchName('star*name')).toBe('star-name');
+			expect(sanitizeGitBranchName('back\\slash')).toBe('back-slash');
+		});
+
+		it('preserves valid characters and slashes', () => {
+			expect(sanitizeGitBranchName('feature/auth-flow_v2.1')).toBe('feature/auth-flow_v2.1');
+		});
+
+		it('flattens forbidden sequences', () => {
+			expect(sanitizeGitBranchName('a..b')).toBe('a.b');
+			expect(sanitizeGitBranchName('a@{b')).toBe('a-b');
+			expect(sanitizeGitBranchName('a//b')).toBe('a/b');
+		});
+
+		it('strips leading and trailing junk', () => {
+			expect(sanitizeGitBranchName('-leading')).toBe('leading');
+			expect(sanitizeGitBranchName('/leading')).toBe('leading');
+			expect(sanitizeGitBranchName('trailing/')).toBe('trailing');
+			expect(sanitizeGitBranchName('trailing.')).toBe('trailing');
+			expect(sanitizeGitBranchName('feat.lock')).toBe('feat');
+		});
+
+		it('keeps a trailing hyphen because git branch names allow it', () => {
+			expect(sanitizeGitBranchName('cue-dashboard-')).toBe('cue-dashboard-');
+		});
+
+		it('can preserve incomplete suffixes while editing a branch name', () => {
+			expect(sanitizeGitBranchName('cue-', { allowIncomplete: true })).toBe('cue-');
+			expect(sanitizeGitBranchName('feature/', { allowIncomplete: true })).toBe('feature/');
+			expect(sanitizeGitBranchName('release/v1.', { allowIncomplete: true })).toBe('release/v1.');
+			expect(sanitizeGitBranchName('feat.lock', { allowIncomplete: true })).toBe('feat.lock');
+		});
+
+		it('returns an empty string for input that has nothing usable', () => {
+			expect(sanitizeGitBranchName('')).toBe('');
+			expect(sanitizeGitBranchName('   ')).toBe('');
+			expect(sanitizeGitBranchName('///')).toBe('');
 		});
 	});
 });

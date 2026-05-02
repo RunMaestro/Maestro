@@ -39,6 +39,30 @@ const FEATURE_FLAGS = {
 	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Anthropic, Ollama)
 };
 
+type SettingsTabId =
+	| 'general'
+	| 'display'
+	| 'llm'
+	| 'shortcuts'
+	| 'theme'
+	| 'notifications'
+	| 'aicommands'
+	| 'ssh'
+	| 'environment'
+	| 'encore'
+	| 'prompts';
+
+// In-memory only — last tab the user was on. Resets on app restart, so the
+// modal still defaults to General on a fresh launch. Honors any explicit
+// `initialTab` prop (e.g. when a caller deep-links into a specific tab).
+let lastOpenSettingsTab: SettingsTabId | null = null;
+
+// Test-only: reset the remembered tab so suites that assume a fresh open
+// (e.g. "modal opens to General") aren't polluted by prior tests in the file.
+export function __resetLastOpenSettingsTabForTests(): void {
+	lastOpenSettingsTab = null;
+}
+
 interface SettingsModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -180,10 +204,19 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 	useEffect(() => {
 		if (isOpen) {
-			// Set initial tab if provided, otherwise default to 'general'
-			setActiveTab(initialTab || 'general');
+			// Explicit initialTab wins (deep-link). Otherwise restore the last tab the
+			// user viewed in this app session, falling back to 'general' on first open.
+			setActiveTab(initialTab || lastOpenSettingsTab || 'general');
 		}
 	}, [isOpen, initialTab]);
+
+	// Remember the last tab the user viewed so re-opening the modal lands there.
+	// In-memory only — resets on app restart by design.
+	useEffect(() => {
+		if (isOpen) {
+			lastOpenSettingsTab = activeTab;
+		}
+	}, [isOpen, activeTab]);
 
 	// Store onClose in a ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);

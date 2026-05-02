@@ -1210,7 +1210,17 @@ export async function routeModeratorResponse(
 			// Get the group chat folder path for file access permissions
 			const groupChatFolder = getGroupChatDir(groupChatId);
 
-			const participantPrompt = getPrompt('group-chat-participant-request')
+			// When the agent's prior session is being resumed (e.g. Copilot's
+			// `--resume=<id>`), it already has the full identity/role preamble
+			// from the first turn — re-sending it on every moderator turn just
+			// burns tokens and confuses the model. Use the slim continuation
+			// template in that case; full template only on the first turn or
+			// when the agent doesn't support resume.
+			const isResume = Boolean(participant.agentSessionId && agent.resumeArgs);
+			const promptTemplateId = isResume
+				? 'group-chat-participant-continuation'
+				: 'group-chat-participant-request';
+			const participantPrompt = getPrompt(promptTemplateId)
 				.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
 				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)

@@ -261,11 +261,11 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 - **Custom Path** — Override the default executable path
 - **Custom Arguments** — Additional command-line arguments
 - **Environment Variables** — Custom environment variables for the agent process
-- **Model Selection** — Choose a specific model (if the provider supports it)
+- **Model Selection** — Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar — per-tab overrides only affect that tab and don't change the agent default or any other tab.
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, and model.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
 ### Deleting Agents
 

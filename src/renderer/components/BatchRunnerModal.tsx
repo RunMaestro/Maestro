@@ -25,6 +25,7 @@ import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
+import { useBatchStore } from '../stores/batchStore';
 import { useUIStore } from '../stores/uiStore';
 import { getModalActions } from '../stores/modalStore';
 import {
@@ -155,9 +156,26 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Track initial document state for dirty checking
 	const initialDocumentsRef = useRef<string[]>([currentDocument].filter(Boolean));
 
-	// Task counts per document (keyed by filename)
-	const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
-	const [loadingTaskCounts, setLoadingTaskCounts] = useState(true);
+	// Task counts per document (keyed by filename, value = unchecked task count).
+	// Seeded synchronously from the batch store, which is already populated by
+	// useAutoRunDocumentLoader. This avoids redundant per-document SSH `cat`
+	// reads in the modal — critical for SSH-remote sessions where the modal
+	// otherwise stays stuck on "..." while sequential SSH reads pile up.
+	const documentTaskCountsFromStore = useBatchStore((s) => s.documentTaskCounts);
+	const isLoadingDocumentsFromStore = useBatchStore((s) => s.isLoadingDocuments);
+	const seededTaskCounts = useMemo(() => {
+		const out: Record<string, number> = {};
+		documentTaskCountsFromStore.forEach((entry, filename) => {
+			out[filename] = Math.max(0, entry.total - entry.completed);
+		});
+		return out;
+	}, [documentTaskCountsFromStore]);
+	const [taskCounts, setTaskCounts] = useState<Record<string, number>>(seededTaskCounts);
+	const [loadingTaskCounts, setLoadingTaskCounts] = useState(
+		// Only show the loading badge if the store hasn't surfaced any counts yet
+		// AND it's still loading — otherwise we have stale-but-usable data to render.
+		() => isLoadingDocumentsFromStore && Object.keys(seededTaskCounts).length === 0
+	);
 
 	// Loop mode state
 	const [loopEnabled, setLoopEnabled] = useState(false);
@@ -267,26 +285,55 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const getDocumentTaskCountRef = useRef(getDocumentTaskCount);
 	getDocumentTaskCountRef.current = getDocumentTaskCount;
 
-	// Load task counts for all documents (only when document list changes)
+	// Reflect updates from the store (e.g., when a doc's tasks get checked
+	// after the modal opened). For docs covered by the store, this is the
+	// fast path — no IPC needed.
 	useEffect(() => {
-		const loadTaskCounts = async () => {
-			setLoadingTaskCounts(true);
-			const counts: Record<string, number> = {};
-
-			for (const doc of allDocuments) {
-				try {
-					counts[doc] = await getDocumentTaskCountRef.current(doc);
-				} catch {
-					counts[doc] = 0;
+		setTaskCounts((prev) => {
+			let changed = false;
+			const next = { ...prev };
+			for (const [filename, count] of Object.entries(seededTaskCounts)) {
+				if (next[filename] !== count) {
+					next[filename] = count;
+					changed = true;
 				}
 			}
+			return changed ? next : prev;
+		});
+	}, [seededTaskCounts]);
 
-			setTaskCounts(counts);
+	// IPC fallback: read counts only for documents NOT already covered by the
+	// store. On SSH-remote sessions the store is normally pre-populated by
+	// useAutoRunDocumentLoader, so this loop runs zero IPC calls in practice.
+	useEffect(() => {
+		const missing = allDocuments.filter((doc) => !(doc in seededTaskCounts));
+		if (missing.length === 0) {
+			setLoadingTaskCounts(false);
+			return;
+		}
+
+		let cancelled = false;
+		const loadMissing = async () => {
+			setLoadingTaskCounts(true);
+			const additions: Record<string, number> = {};
+			for (const doc of missing) {
+				if (cancelled) return;
+				try {
+					additions[doc] = await getDocumentTaskCountRef.current(doc);
+				} catch {
+					additions[doc] = 0;
+				}
+			}
+			if (cancelled) return;
+			setTaskCounts((prev) => ({ ...prev, ...additions }));
 			setLoadingTaskCounts(false);
 		};
 
-		loadTaskCounts();
-	}, [allDocuments]);
+		loadMissing();
+		return () => {
+			cancelled = true;
+		};
+	}, [allDocuments, seededTaskCounts]);
 
 	// Calculate total tasks across selected documents (excluding missing documents)
 	const totalTaskCount = documents.reduce((sum, doc) => {

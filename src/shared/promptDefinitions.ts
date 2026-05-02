@@ -124,6 +124,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Group chat participant request prompt',
 		category: 'group-chat',
 	},
+	{
+		id: 'group-chat-participant-continuation',
+		filename: 'group-chat-participant-continuation.md',
+		description:
+			'Group chat participant request prompt for resumed sessions (no identity preamble)',
+		category: 'group-chat',
+	},
 	// Context
 	{
 		id: 'context-grooming',
@@ -254,6 +261,7 @@ export const PROMPT_IDS = {
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',
 	GROUP_CHAT_PARTICIPANT: 'group-chat-participant',
 	GROUP_CHAT_PARTICIPANT_REQUEST: 'group-chat-participant-request',
+	GROUP_CHAT_PARTICIPANT_CONTINUATION: 'group-chat-participant-continuation',
 	// Context
 	CONTEXT_GROOMING: 'context-grooming',
 	CONTEXT_TRANSFER: 'context-transfer',

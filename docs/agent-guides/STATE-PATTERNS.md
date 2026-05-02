@@ -113,7 +113,6 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 | `activeFocus`              | `FocusArea`      | `'main'`  | Current keyboard focus area   |
 | `activeRightTab`           | `RightPanelTab`  | `'files'` | Active tab in right panel     |
 | `bookmarksCollapsed`       | `boolean`        | `false`   | Bookmarks section collapsed   |
-| `groupChatsExpanded`       | `boolean`        | `true`    | Group chats section expanded  |
 | `showUnreadOnly`           | `boolean`        | `false`   | Filter session list to unread |
 | `flashNotification`        | `string \| null` | `null`    | Error flash message           |
 | `successFlashNotification` | `string \| null` | `null`    | Success flash message         |
@@ -458,49 +457,54 @@ updateSession: (id, updates) => set(s => {
 
 The `Session` interface (defined in `src/renderer/types/index.ts`) represents an agent in the Left Bar. Key fields:
 
-| Field                    | Type                     | Purpose                                |
-| ------------------------ | ------------------------ | -------------------------------------- |
-| `id`                     | `string`                 | Unique session identifier              |
-| `name`                   | `string`                 | Display name                           |
-| `toolType`               | `ToolType`               | Agent type (claude-code, codex, etc.)  |
-| `state`                  | `SessionState`           | `'idle' \| 'busy' \| 'connecting'`     |
-| `cwd`                    | `string`                 | Working directory                      |
-| `projectRoot`            | `string`                 | Project root path                      |
-| `groupId`                | `string?`                | Group membership                       |
-| `bookmarked`             | `boolean?`               | Bookmark flag                          |
-| `inputMode`              | `'ai' \| 'terminal'`     | Current input mode                     |
-| `aiTabs`                 | `AITab[]`                | AI conversation tabs                   |
-| `activeTabId`            | `string?`                | Active AI tab                          |
-| `filePreviewTabs`        | `FilePreviewTab[]`       | File preview tabs                      |
-| `activeFileTabId`        | `string?`                | Active file tab                        |
-| `unifiedTabOrder`        | `UnifiedTabRef[]`        | Combined tab ordering                  |
-| `agentError`             | `AgentError?`            | Current error state                    |
-| `agentErrorTabId`        | `string?`                | Tab that has the error                 |
-| `sshRemoteId`            | `string?`                | SSH remote config ID (set after spawn) |
-| `sessionSshRemoteConfig` | `AgentSshRemoteConfig?`  | SSH config (set before spawn)          |
-| `customPath`             | `string?`                | Per-session agent path override        |
-| `customArgs`             | `string?`                | Per-session custom args                |
-| `customEnvVars`          | `Record<string,string>?` | Per-session env vars                   |
-| `customModel`            | `string?`                | Per-session model override             |
-| `customContextWindow`    | `number?`                | Per-session context window             |
-| `isGitRepo`              | `boolean?`               | Whether cwd is a git repo              |
-| `contextUsage`           | `number?`                | Context window usage percentage        |
-| `usageStats`             | `UsageStats?`            | Token/cost statistics                  |
+| Field                    | Type                     | Purpose                                                      |
+| ------------------------ | ------------------------ | ------------------------------------------------------------ |
+| `id`                     | `string`                 | Unique session identifier                                    |
+| `name`                   | `string`                 | Display name                                                 |
+| `toolType`               | `ToolType`               | Agent type (claude-code, codex, etc.)                        |
+| `state`                  | `SessionState`           | `'idle' \| 'busy' \| 'connecting'`                           |
+| `cwd`                    | `string`                 | Working directory                                            |
+| `projectRoot`            | `string`                 | Project root path                                            |
+| `groupId`                | `string?`                | Group membership                                             |
+| `bookmarked`             | `boolean?`               | Bookmark flag                                                |
+| `inputMode`              | `'ai' \| 'terminal'`     | Current input mode                                           |
+| `aiTabs`                 | `AITab[]`                | AI conversation tabs                                         |
+| `activeTabId`            | `string?`                | Active AI tab                                                |
+| `filePreviewTabs`        | `FilePreviewTab[]`       | File preview tabs                                            |
+| `activeFileTabId`        | `string?`                | Active file tab                                              |
+| `unifiedTabOrder`        | `UnifiedTabRef[]`        | Combined tab ordering                                        |
+| `agentError`             | `AgentError?`            | Current error state                                          |
+| `agentErrorTabId`        | `string?`                | Tab that has the error                                       |
+| `sshRemoteId`            | `string?`                | SSH remote config ID (set after spawn)                       |
+| `sessionSshRemoteConfig` | `AgentSshRemoteConfig?`  | SSH config (set before spawn)                                |
+| `customPath`             | `string?`                | Per-session agent path override                              |
+| `customArgs`             | `string?`                | Per-session custom args                                      |
+| `customEnvVars`          | `Record<string,string>?` | Per-session env vars                                         |
+| `customModel`            | `string?`                | Per-session model default (tabs inherit; tab override wins)  |
+| `customEffort`           | `string?`                | Per-session effort default (tabs inherit; tab override wins) |
+| `customContextWindow`    | `number?`                | Per-session context window                                   |
+| `isGitRepo`              | `boolean?`               | Whether cwd is a git repo                                    |
+| `contextUsage`           | `number?`                | Context window usage percentage                              |
+| `usageStats`             | `UsageStats?`            | Token/cost statistics                                        |
 
 ### AITab
 
 Each AI tab within a session:
 
-| Field            | Type           | Purpose                        |
-| ---------------- | -------------- | ------------------------------ |
-| `id`             | `string`       | Tab identifier                 |
-| `name`           | `string?`      | Custom tab name                |
-| `logs`           | `LogEntry[]`   | Conversation log entries       |
-| `agentSessionId` | `string?`      | Provider session ID for resume |
-| `state`          | Tab state      | Idle/busy per-tab              |
-| `readOnlyMode`   | `boolean?`     | Read-only/plan mode            |
-| `saveToHistory`  | `boolean`      | Whether to save completions    |
-| `showThinking`   | `ThinkingMode` | `'off' \| 'on' \| 'sticky'`    |
-| `starred`        | `boolean?`     | Starred tab flag               |
-| `hasUnread`      | `boolean?`     | Unread indicator               |
-| `agentError`     | `AgentError?`  | Per-tab error state            |
+| Field            | Type           | Purpose                                                                            |
+| ---------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `id`             | `string`       | Tab identifier                                                                     |
+| `name`           | `string?`      | Custom tab name                                                                    |
+| `logs`           | `LogEntry[]`   | Conversation log entries                                                           |
+| `agentSessionId` | `string?`      | Provider session ID for resume                                                     |
+| `state`          | Tab state      | Idle/busy per-tab                                                                  |
+| `readOnlyMode`   | `boolean?`     | Read-only/plan mode                                                                |
+| `saveToHistory`  | `boolean`      | Whether to save completions                                                        |
+| `showThinking`   | `ThinkingMode` | `'off' \| 'on' \| 'sticky'`                                                        |
+| `customModel`    | `string?`      | Per-tab model override (falls back to `Session.customModel`, then agent default)   |
+| `customEffort`   | `string?`      | Per-tab effort override (falls back to `Session.customEffort`, then agent default) |
+| `starred`        | `boolean?`     | Starred tab flag                                                                   |
+| `hasUnread`      | `boolean?`     | Unread indicator                                                                   |
+| `agentError`     | `AgentError?`  | Per-tab error state                                                                |
+
+**Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` — only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.

@@ -4,21 +4,16 @@ import React from 'react';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
-	const MockIcon = function ({
-		className,
-		style,
-	}: {
-		className?: string;
-		style?: React.CSSProperties;
-	}) {
+	const defaultTestId = `${name
+		.toLowerCase()
+		.replace(/([A-Z])/g, '-$1')
+		.toLowerCase()
+		.replace(/^-/, '')}-icon`;
+	const MockIcon = function (props: Record<string, unknown>) {
+		const { 'data-testid': dataTestId, ...rest } = props;
 		return React.createElement('svg', {
-			'data-testid': `${name
-				.toLowerCase()
-				.replace(/([A-Z])/g, '-$1')
-				.toLowerCase()
-				.replace(/^-/, '')}-icon`,
-			className,
-			style,
+			...rest,
+			'data-testid': dataTestId ?? defaultTestId,
 		});
 	};
 	MockIcon.displayName = name;
@@ -213,6 +208,7 @@ const mockMaestro = {
 		get: vi.fn().mockResolvedValue([]),
 		save: vi.fn().mockResolvedValue(undefined),
 		setAll: vi.fn().mockResolvedValue(undefined),
+		setMany: vi.fn().mockResolvedValue(undefined),
 		getActiveSessionId: vi.fn().mockResolvedValue(''),
 		setActiveSessionId: vi.fn().mockResolvedValue(undefined),
 	},
@@ -572,8 +568,10 @@ const mockMaestro = {
 		getStatus: vi.fn().mockResolvedValue([]),
 		getActiveRuns: vi.fn().mockResolvedValue([]),
 		getActivityLog: vi.fn().mockResolvedValue([]),
+		getEventCount: vi.fn().mockResolvedValue(0),
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
+		setActive: vi.fn().mockResolvedValue(undefined),
 		stopRun: vi.fn().mockResolvedValue(false),
 		stopAll: vi.fn().mockResolvedValue(undefined),
 		refreshSession: vi.fn().mockResolvedValue(undefined),

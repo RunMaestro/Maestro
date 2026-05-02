@@ -17,15 +17,18 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
+import { AgentOverviewCards } from './AgentOverviewCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
 import { SourceDistributionChart } from './SourceDistributionChart';
 import { LocationDistributionChart } from './LocationDistributionChart';
-import { PeakHoursChart } from './PeakHoursChart';
+import { RadialActivityChart } from './RadialActivityChart';
+import { YearInPixelsStrip } from './YearInPixelsStrip';
 import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
@@ -33,23 +36,37 @@ import { LongestAutoRunsTable } from './LongestAutoRunsTable';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
-import type { Theme, Session } from '../../types';
+import { CueStats } from './CueStats';
+import type {
+	Theme,
+	Session,
+	AutoRunStats as AutoRunStatsType,
+	MaestroUsageStats,
+	LeaderboardRegistration,
+} from '../../types';
+import {
+	AchievementShareButton,
+	type AchievementShareGlobalStats,
+} from '../AchievementShareButton';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Section IDs for keyboard navigation
 const OVERVIEW_SECTIONS = [
+	'year-in-pixels',
 	'summary-cards',
 	'agent-comparison',
 	'source-distribution',
 	'location-distribution',
-	'peak-hours',
+	'radial-activity',
 	'activity-heatmap',
 	'duration-trends',
 ] as const;
-const AGENTS_SECTIONS = [
+const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
+const AGENT_OVERVIEW_SECTIONS = [
 	'session-stats',
 	'agent-efficiency',
 	'agent-comparison',
@@ -61,17 +78,17 @@ const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] 
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
 	| (typeof AGENTS_SECTIONS)[number]
+	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
 	| (typeof AUTORUN_SECTIONS)[number];
 
 // Performance metrics instance for dashboard
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 
-// Stats time range type matching the backend API
 // StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
-type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';
+type ViewMode = 'overview' | 'agents' | 'agent-overview' | 'activity' | 'autorun' | 'cue';
 
 interface UsageDashboardModalProps {
 	isOpen: boolean;
@@ -83,6 +100,16 @@ interface UsageDashboardModalProps {
 	defaultTimeRange?: StatsTimeRange;
 	/** Sessions for displaying session statistics in Agents tab */
 	sessions?: Session[];
+	/** Cumulative AutoRun stats — required for the achievement share button. */
+	autoRunStats?: AutoRunStatsType;
+	/** Optional global stats — drives the Sessions/Tokens row in the share image. */
+	globalStats?: AchievementShareGlobalStats | null;
+	/** Maestro peak-usage stats — drives the bottom row of the share image. */
+	usageStats?: MaestroUsageStats | null;
+	/** Global hands-on time, in ms, sourced from settings. */
+	handsOnTimeMs?: number;
+	/** Leaderboard registration (display name + social handles) for personalization. */
+	leaderboardRegistration?: LeaderboardRegistration | null;
 }
 
 /**
@@ -112,10 +139,11 @@ const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
 	{ value: 'all', label: 'All Time' },
 ];
 
-// View mode tabs
-const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
+// View mode tabs (base list — Cue is appended dynamically when the Encore flag is on)
+const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
 	{ value: 'agents', label: 'Agents' },
+	{ value: 'agent-overview', label: 'Agent Overview' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
 ];
@@ -129,7 +157,24 @@ export function UsageDashboardModal({
 	colorBlindMode = false,
 	defaultTimeRange = 'week',
 	sessions = EMPTY_SESSIONS,
+	autoRunStats,
+	globalStats,
+	usageStats,
+	handsOnTimeMs,
+	leaderboardRegistration,
 }: UsageDashboardModalProps) {
+	// Tab visibility must match the IPC handler's gating: both Encore flags
+	// have to be on, otherwise the renderer hits a generic error/retry state
+	// instead of the friendly disabled note.
+	const cueTabEnabled = useSettingsStore(
+		(s) => s.encoreFeatures.maestroCue && s.encoreFeatures.usageStats
+	);
+	const VIEW_MODE_TABS = useMemo<{ value: ViewMode; label: string }[]>(() => {
+		return cueTabEnabled
+			? [...BASE_VIEW_MODE_TABS, { value: 'cue', label: 'Cue' }]
+			: BASE_VIEW_MODE_TABS;
+	}, [cueTabEnabled]);
+
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
 	const [viewMode, setViewMode] = useState<ViewMode>('overview');
 	const [data, setData] = useState<StatsAggregation | null>(null);
@@ -157,11 +202,18 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen, defaultTimeRange]);
 
-	// Register with layer stack for proper Escape handling
-	useModalLayer(MODAL_PRIORITIES.USAGE_DASHBOARD, undefined, () => onCloseRef.current(), {
-		focusTrap: 'lenient',
-		enabled: isOpen,
-	});
+	// Register with layer stack for proper Escape handling.
+	useModalLayer(
+		MODAL_PRIORITIES.USAGE_DASHBOARD,
+		undefined,
+		() => {
+			onCloseRef.current();
+		},
+		{
+			focusTrap: 'lenient',
+			enabled: isOpen,
+		}
+	);
 
 	// Fetch stats data when range changes
 	const fetchStats = useCallback(
@@ -273,7 +325,7 @@ export function UsageDashboardModal({
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [isOpen, switchViewMode]);
+	}, [isOpen, switchViewMode, VIEW_MODE_TABS]);
 
 	// Track container width for responsive layout
 	useEffect(() => {
@@ -322,26 +374,39 @@ export function UsageDashboardModal({
 				return OVERVIEW_SECTIONS;
 			case 'agents':
 				return AGENTS_SECTIONS;
+			case 'agent-overview':
+				return AGENT_OVERVIEW_SECTIONS;
 			case 'activity':
 				return ACTIVITY_SECTIONS;
 			case 'autorun':
 				return AUTORUN_SECTIONS;
+			case 'cue':
+				return [];
 			default:
 				return OVERVIEW_SECTIONS;
 		}
 	}, [viewMode]);
 
+	// Fall back to 'overview' if either Encore flag flips off while the Cue tab is active
+	useEffect(() => {
+		if (!cueTabEnabled && viewMode === 'cue') {
+			switchViewMode('overview');
+		}
+	}, [cueTabEnabled, viewMode, switchViewMode]);
+
 	// Get section label for accessibility
 	const getSectionLabel = useCallback((sectionId: SectionId): string => {
 		const labels: Record<SectionId, string> = {
+			'year-in-pixels': 'Past Year Activity Strip',
 			'summary-cards': 'Summary Cards',
+			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
 			'agent-usage': 'Agent Usage Chart',
 			'source-distribution': 'Session Type Chart',
 			'location-distribution': 'Location Distribution Chart',
-			'peak-hours': 'Peak Hours Chart',
+			'radial-activity': 'Activity by Hour and Day of Week',
 			'activity-heatmap': 'Activity Heatmap',
 			'weekday-comparison': 'Weekday vs Weekend Chart',
 			'duration-trends': 'Duration Trends Chart',
@@ -383,7 +448,7 @@ export function UsageDashboardModal({
 				}
 			}
 		},
-		[viewMode, switchViewMode, currentSections, data, navigateToSection]
+		[viewMode, switchViewMode, currentSections, data, navigateToSection, VIEW_MODE_TABS]
 	);
 
 	// Handle keyboard navigation for chart sections
@@ -588,6 +653,23 @@ export function UsageDashboardModal({
 							Export CSV
 						</button>
 
+						{/* Share Achievements — sits next to Export CSV. Only renders when
+						    we have AutoRun stats (the achievement system requires them);
+						    if the parent didn't thread them in, the button is hidden so
+						    we don't ship a visibly-broken affordance. */}
+						{autoRunStats && (
+							<AchievementShareButton
+								theme={theme}
+								autoRunStats={autoRunStats}
+								globalStats={globalStats}
+								usageStats={usageStats}
+								handsOnTimeMs={handsOnTimeMs}
+								leaderboardRegistration={leaderboardRegistration}
+								variant="header"
+								title="Share achievements"
+							/>
+						)}
+
 						{/* Close Button */}
 						<button
 							onClick={onClose}
@@ -655,7 +737,7 @@ export function UsageDashboardModal({
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
-							viewMode={viewMode}
+							viewMode={viewMode === 'cue' || viewMode === 'agent-overview' ? 'overview' : viewMode}
 							chartGridCols={layout.chartGridCols}
 							summaryCardsCols={layout.summaryCardsCols}
 							autoRunStatsCols={layout.autoRunStatsCols}
@@ -693,6 +775,35 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
+									{/* Year-in-pixels hero strip — single-row signature graphic
+									    showing the past 365 days at a glance. Self-hides when the
+									    user has no activity in the lookback window. */}
+									<div
+										ref={setSectionRef('year-in-pixels')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('year-in-pixels')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'year-in-pixels')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'year-in-pixels'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '0ms',
+										}}
+										data-testid="section-year-in-pixels"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Year In Pixels">
+											<YearInPixelsStrip
+												data={data}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+												timeRange={timeRange}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
 									{/* Summary Stats Cards - Horizontal row at top, responsive */}
 									<div
 										ref={setSectionRef('summary-cards')}
@@ -743,6 +854,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -808,27 +920,49 @@ export function UsageDashboardModal({
 										</div>
 									</div>
 
-									{/* Peak Hours Chart - Full width compact bar chart */}
+									{/* Radial activity pair — replaces the flat Peak Hours bar chart.
+									    Two side-by-side polar charts: one for hour-of-day, one for
+									    day-of-week. Stacks to a single column on narrow viewports. */}
 									<div
-										ref={setSectionRef('peak-hours')}
+										ref={setSectionRef('radial-activity')}
 										tabIndex={0}
 										role="region"
-										aria-label={getSectionLabel('peak-hours')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'peak-hours')}
+										aria-label={getSectionLabel('radial-activity')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'radial-activity')}
 										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
 										style={{
-											minHeight: '180px',
+											minHeight: '320px',
 											boxShadow:
-												focusedSection === 'peak-hours'
+												focusedSection === 'radial-activity'
 													? `0 0 0 2px ${theme.colors.accent}`
 													: 'none',
 											animationDelay: '175ms',
 										}}
-										data-testid="section-peak-hours"
+										data-testid="section-radial-activity"
 									>
-										<ChartErrorBoundary theme={theme} chartName="Peak Hours">
-											<PeakHoursChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
-										</ChartErrorBoundary>
+										<div
+											className="grid gap-6"
+											style={{
+												gridTemplateColumns: `repeat(${layout.chartGridCols}, minmax(0, 1fr))`,
+											}}
+										>
+											<ChartErrorBoundary theme={theme} chartName="Activity by Hour">
+												<RadialActivityChart
+													mode="hours"
+													data={data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											</ChartErrorBoundary>
+											<ChartErrorBoundary theme={theme} chartName="Activity by Day of Week">
+												<RadialActivityChart
+													mode="weekday"
+													data={data}
+													theme={theme}
+													colorBlindMode={colorBlindMode}
+												/>
+											</ChartErrorBoundary>
+										</div>
 									</div>
 
 									{/* Activity Heatmap - Full width */}
@@ -890,6 +1024,41 @@ export function UsageDashboardModal({
 							)}
 
 							{viewMode === 'agents' && (
+								<div
+									ref={setSectionRef('agent-overview-cards')}
+									tabIndex={0}
+									role="region"
+									aria-label={getSectionLabel('agent-overview-cards')}
+									onKeyDown={(e) => handleSectionKeyDown(e, 'agent-overview-cards')}
+									className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+									style={{
+										boxShadow:
+											focusedSection === 'agent-overview-cards'
+												? `0 0 0 2px ${theme.colors.accent}`
+												: 'none',
+										animationDelay: '0ms',
+									}}
+									data-testid="section-agent-overview-cards"
+								>
+									{sessions.some((s) => s.toolType !== 'terminal') ? (
+										<ChartErrorBoundary theme={theme} chartName="Agent Overview">
+											<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
+										</ChartErrorBoundary>
+									) : (
+										<div
+											className="p-6 rounded-lg text-center text-sm"
+											style={{
+												backgroundColor: theme.colors.bgMain,
+												color: theme.colors.textDim,
+											}}
+										>
+											No active agents
+										</div>
+									)}
+								</div>
+							)}
+
+							{viewMode === 'agent-overview' && (
 								<>
 									{/* Agent Statistics */}
 									<div
@@ -917,6 +1086,16 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
+									{/* Worktree Analytics — only shown when at least one worktree
+									    session exists. WorktreeAnalytics provides its own role="region"
+									    + aria-label, so it sits outside the keyboard-navigable sections
+									    (same pattern as AgentOverviewCards in the Overview tab). */}
+									{sessions.some((s) => !!s.parentSessionId) && (
+										<ChartErrorBoundary theme={theme} chartName="Worktree Analytics">
+											<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />
+										</ChartErrorBoundary>
+									)}
+
 									{/* Agent Efficiency */}
 									<div
 										ref={setSectionRef('agent-efficiency')}
@@ -940,6 +1119,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -967,6 +1147,7 @@ export function UsageDashboardModal({
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
+												sessions={sessions}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1159,6 +1340,10 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 								</>
+							)}
+
+							{viewMode === 'cue' && (
+								<CueStats timeRange={timeRange} theme={theme} colorBlindMode={colorBlindMode} />
 							)}
 						</div>
 					)}

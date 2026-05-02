@@ -495,6 +495,13 @@ export function createProcessApi() {
 				duration?: number;
 				dismissible?: boolean;
 				sessionId?: string;
+				tabId?: string;
+				actionUrl?: string;
+				actionLabel?: string;
+				clickAction?:
+					| { kind: 'jump-session'; sessionId: string; tabId?: string }
+					| { kind: 'open-file'; sessionId: string; path: string }
+					| { kind: 'open-url'; url: string };
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);

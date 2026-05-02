@@ -11,6 +11,7 @@ import {
 	Check,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -424,25 +425,20 @@ function QueueItemRow({
 		};
 	}, []);
 
-	// Handle escape key to cancel drag
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && isDragging) {
+	// Handle escape key + global mouseup to cancel/complete drag (only attached
+	// while a drag is in progress).
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') {
 				onDragCancel?.();
 				isDraggingRef.current = false;
 				setIsPressed(false);
 			}
-		};
-
-		if (isDragging) {
-			window.addEventListener('keydown', handleKeyDown);
-			window.addEventListener('mouseup', handleMouseUp);
-			return () => {
-				window.removeEventListener('keydown', handleKeyDown);
-				window.removeEventListener('mouseup', handleMouseUp);
-			};
-		}
-	}, [isDragging, onDragCancel]);
+		},
+		{ enabled: !!isDragging }
+	);
+	useEventListener('mouseup', () => handleMouseUp(), { enabled: !!isDragging });
 
 	// Visual states
 	const showDragReady = canDrag && isHovered && !isDragging && !isAnyDragging;

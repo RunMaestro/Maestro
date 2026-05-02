@@ -7,6 +7,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { TerminalSelectionContextMenu } from '../../../renderer/components/TerminalSelectionContextMenu';
 import type { Theme } from '../../../renderer/types';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 
 const baseTheme: Theme = {
 	id: 'dark',
@@ -105,5 +106,69 @@ describe('TerminalSelectionContextMenu', () => {
 		);
 		fireEvent.keyDown(document, { key: 'Escape' });
 		expect(onDismiss).toHaveBeenCalledTimes(1);
+	});
+
+	it('dismisses on document mousedown outside the menu', () => {
+		const onDismiss = vi.fn();
+		render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={onDismiss}
+				onCopy={vi.fn()}
+				onSendToAgent={vi.fn()}
+			/>
+		);
+		fireEvent.mouseDown(document.body);
+		expect(onDismiss).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores non-Escape keys', () => {
+		const onDismiss = vi.fn();
+		render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={onDismiss}
+				onCopy={vi.fn()}
+				onSendToAgent={vi.fn()}
+			/>
+		);
+		fireEvent.keyDown(document, { key: 'a' });
+		fireEvent.keyDown(document, { key: 'Enter' });
+		expect(onDismiss).not.toHaveBeenCalled();
+	});
+
+	it('does not call onDismiss after unmount', () => {
+		const onDismiss = vi.fn();
+		const { unmount } = render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={onDismiss}
+				onCopy={vi.fn()}
+				onSendToAgent={vi.fn()}
+			/>
+		);
+		unmount();
+		fireEvent.keyDown(document, { key: 'Escape' });
+		fireEvent.mouseDown(document.body);
+		expect(onDismiss).not.toHaveBeenCalled();
+	});
+
+	it('removes its document listeners on unmount (no leak)', () => {
+		const spies = spyOnListeners(document);
+		const { unmount } = render(
+			<TerminalSelectionContextMenu
+				menu={menu}
+				theme={baseTheme}
+				onDismiss={vi.fn()}
+				onCopy={vi.fn()}
+				onSendToAgent={vi.fn()}
+			/>
+		);
+		unmount();
+		expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+		spies.restore();
 	});
 });

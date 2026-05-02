@@ -14,12 +14,13 @@
  * - Limits display to top 10 agents by query count
  */
 
-import React, { memo, useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
+import { buildNameMap, clampTooltipToViewport } from './chartUtils';
 
 // 10 distinct colors for agents
 const AGENT_COLORS = [
@@ -61,6 +62,14 @@ interface AgentUsageChartProps {
 	colorBlindMode?: boolean;
 	/** Current sessions for mapping IDs to names */
 	sessions?: Session[];
+	/** Drill-down click handler — fires with the legend item's session key + display name. */
+	onAgentClick?: (key: string, displayName: string) => void;
+	/**
+	 * Active drill-down filter key. When set, the matching line is rendered with
+	 * a thicker stroke and the legend item is highlighted; non-matching lines
+	 * dim to 15% stroke opacity. `null`/undefined means no filter is active.
+	 */
+	activeFilterKey?: string | null;
 }
 
 /**
@@ -116,43 +125,23 @@ function getAgentColor(index: number, colorBlindMode: boolean): string {
 	return AGENT_COLORS[index % AGENT_COLORS.length];
 }
 
-/**
- * Extract a display name from a session ID
- * Session IDs are in format: "sessionId-ai-tabId" or similar
- * Returns the first 8 chars of the session UUID or the name if found
- */
-function getSessionDisplayName(sessionId: string, sessions?: Session[]): string {
-	// Try to find the session by ID to get its name
-	if (sessions) {
-		// Session IDs in stats may include tab suffixes like "-ai-tabId"
-		// Try to match the base session ID
-		const session = sessions.find((s) => sessionId.startsWith(s.id));
-		if (session?.name) {
-			return session.name;
-		}
-	}
-
-	// Fallback: extract the UUID part and show first 8 chars
-	// Format is typically "uuid-ai-tabId" or just "uuid"
-	const parts = sessionId.split('-');
-	if (parts.length >= 5) {
-		// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-		// Take first segment
-		return parts[0].substring(0, 8).toUpperCase();
-	}
-	return sessionId.substring(0, 8).toUpperCase();
-}
-
 export const AgentUsageChart = memo(function AgentUsageChart({
 	data,
 	timeRange,
 	theme,
 	colorBlindMode = false,
 	sessions,
+	onAgentClick,
+	activeFilterKey = null,
 }: AgentUsageChartProps) {
 	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; agent?: string } | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
+	// Measure the actual rendered tooltip so the viewport clamp uses real
+	// width/height — the static estimates below are starting points and the
+	// `whitespace-nowrap` content can grow wider with long agent names.
+	const tooltipRef = useRef<HTMLDivElement>(null);
+	const [tooltipDims, setTooltipDims] = useState<{ width: number; height: number } | null>(null);
 
 	// Chart dimensions
 	const chartWidth = 600;
@@ -162,7 +151,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 	const innerHeight = chartHeight - padding.top - padding.bottom;
 
 	// Get list of agents and their data (limited to top 10 by total queries)
-	const { agents, chartData, allDates, agentDisplayNames } = useMemo(() => {
+	const { agents, chartData, allDates, agentDisplayNames, worktreeAgents } = useMemo(() => {
 		const bySessionByDay = data.bySessionByDay || {};
 
 		// Calculate total queries per session to rank them
@@ -177,10 +166,21 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		const topSessions = sessionTotals.slice(0, 10);
 		const agentList = topSessions.map((s) => s.sessionId);
 
-		// Build display name map
+		// Resolve session IDs to user-facing display names via the shared
+		// `buildNameMap` utility — keeps name resolution consistent with the
+		// other dashboard charts. Worktree sessions still get a " (WT)" text
+		// suffix on top of the visual dashed-line indicator so they're
+		// distinguishable in tooltips where the line marker isn't visible.
+		const nameMap = buildNameMap(agentList, sessions);
 		const displayNames: Record<string, string> = {};
+		const worktreeSet = new Set<string>();
 		for (const sessionId of agentList) {
-			displayNames[sessionId] = getSessionDisplayName(sessionId, sessions);
+			const resolved = nameMap.get(sessionId);
+			if (!resolved) continue;
+			displayNames[sessionId] = resolved.isWorktree ? `${resolved.name} (WT)` : resolved.name;
+			if (resolved.isWorktree) {
+				worktreeSet.add(sessionId);
+			}
 		}
 
 		// Collect all unique dates from selected agents
@@ -229,6 +229,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			chartData: agentData,
 			allDates: combinedData,
 			agentDisplayNames: displayNames,
+			worktreeAgents: worktreeSet,
 		};
 	}, [data.bySessionByDay, sessions]);
 
@@ -307,6 +308,38 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		setTooltipPos(null);
 	}, []);
 
+	// Measure the tooltip after each render and feed the result back into the
+	// clamp so wide content (long agent names + counts) doesn't push the
+	// tooltip past the right edge of the viewport. `useLayoutEffect` runs
+	// before paint, so the correctly clamped position is what the user sees.
+	useLayoutEffect(() => {
+		if (!hoveredDay || !tooltipPos) {
+			if (tooltipDims !== null) setTooltipDims(null);
+			return;
+		}
+		const node = tooltipRef.current;
+		if (!node) return;
+		const r = node.getBoundingClientRect();
+		if (
+			!tooltipDims ||
+			Math.abs(tooltipDims.width - r.width) > 0.5 ||
+			Math.abs(tooltipDims.height - r.height) > 0.5
+		) {
+			setTooltipDims({ width: r.width, height: r.height });
+		}
+	}, [hoveredDay, tooltipPos, tooltipDims]);
+
+	// Forward legend clicks to the dashboard's drill-down handler. Toggle
+	// behavior (clicking the active legend item clears the filter) is owned by
+	// the dashboard; this component just reports which agent was clicked.
+	const handleAgentClick = useCallback(
+		(agentKey: string, displayName: string) => {
+			if (!onAgentClick) return;
+			onAgentClick(agentKey, displayName);
+		},
+		[onAgentClick]
+	);
+
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -316,7 +349,10 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Agent Usage Over Time
 				</h3>
 				<div className="flex items-center gap-2">
@@ -423,16 +459,25 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 						{/* Lines for each agent */}
 						{agents.map((agent, agentIdx) => {
 							const color = getAgentColor(agentIdx, colorBlindMode);
+							const isWorktree = worktreeAgents.has(agent);
+							const isFiltered = activeFilterKey != null;
+							const isSelected = isFiltered && activeFilterKey === agent;
+							const isDimmed = isFiltered && !isSelected;
 							return (
 								<path
 									key={`line-${agent}`}
 									d={linePaths[agent]}
 									fill="none"
 									stroke={color}
-									strokeWidth={2}
+									strokeWidth={isSelected ? 2.5 : 2}
+									strokeOpacity={isDimmed ? 0.15 : 1}
 									strokeLinecap="round"
 									strokeLinejoin="round"
-									style={{ transition: 'd 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
+									strokeDasharray={isWorktree ? '5 3' : undefined}
+									style={{
+										transition:
+											'd 0.5s cubic-bezier(0.4, 0, 0.2, 1), stroke-opacity 0.2s ease, stroke-width 0.2s ease',
+									}}
 								/>
 							);
 						})}
@@ -440,6 +485,9 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 						{/* Data points for each agent */}
 						{agents.map((agent, agentIdx) => {
 							const color = getAgentColor(agentIdx, colorBlindMode);
+							const isFiltered = activeFilterKey != null;
+							const isSelected = isFiltered && activeFilterKey === agent;
+							const isDimmed = isFiltered && !isSelected;
 							return chartData[agent].map((day, dayIdx) => {
 								const x = xScale(dayIdx);
 								const y = yScale(metricMode === 'count' ? day.count : day.duration);
@@ -454,9 +502,10 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 										fill={isHovered ? color : theme.colors.bgMain}
 										stroke={color}
 										strokeWidth={2}
+										opacity={isDimmed ? 0.15 : 1}
 										style={{
 											cursor: 'pointer',
-											transition: 'r 0.15s ease',
+											transition: 'r 0.15s ease, opacity 0.2s ease',
 										}}
 										onMouseEnter={(e) => handleMouseEnter(dayIdx, agent, e)}
 										onMouseLeave={handleMouseLeave}
@@ -480,54 +529,124 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					</svg>
 				)}
 
-				{/* Tooltip */}
-				{hoveredDay && tooltipPos && allDates[hoveredDay.dayIndex] && (
-					<div
-						className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-						style={{
-							left: tooltipPos.x,
-							top: tooltipPos.y - 8,
-							transform: 'translate(-50%, -100%)',
-							backgroundColor: theme.colors.bgActivity,
-							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						<div className="font-medium mb-1">{allDates[hoveredDay.dayIndex].formattedDate}</div>
-						<div style={{ color: theme.colors.textDim }}>
-							{agents.map((agent, idx) => {
-								const dayData = allDates[hoveredDay.dayIndex].agents[agent];
-								if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
-								const color = getAgentColor(idx, colorBlindMode);
-								return (
-									<div key={agent} className="flex items-center gap-2">
-										<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-										<span>{agentDisplayNames[agent]}:</span>
-										<span style={{ color: theme.colors.textMain }}>
-											{metricMode === 'count'
-												? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
-												: formatDuration(dayData.duration)}
-										</span>
-									</div>
-								);
-							})}
-						</div>
-					</div>
-				)}
+				{/* Tooltip — clamped to viewport so points near the chart edges don't
+				    push the tooltip off-screen. The first paint uses size estimates;
+				    `useLayoutEffect` then measures the real rendered rect and re-clamps
+				    before the browser paints, so dynamic content (long agent labels,
+				    many lines) stays fully on-screen. */}
+				{hoveredDay &&
+					tooltipPos &&
+					allDates[hoveredDay.dayIndex] &&
+					(() => {
+						const visibleAgents = agents.filter((agent) => {
+							const dayData = allDates[hoveredDay.dayIndex].agents[agent];
+							return dayData && (dayData.count > 0 || dayData.duration > 0);
+						});
+						const fallbackWidth = 280;
+						const fallbackHeight = 32 + visibleAgents.length * 18;
+						const { left, top } = clampTooltipToViewport({
+							anchorX: tooltipPos.x,
+							anchorY: tooltipPos.y - 8,
+							width: tooltipDims?.width ?? fallbackWidth,
+							height: tooltipDims?.height ?? fallbackHeight,
+							transform: 'top-center',
+						});
+						return (
+							<div
+								ref={tooltipRef}
+								className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+								style={{
+									left,
+									top,
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div className="font-medium mb-1">
+									{allDates[hoveredDay.dayIndex].formattedDate}
+								</div>
+								<div style={{ color: theme.colors.textDim }}>
+									{agents.map((agent, idx) => {
+										const dayData = allDates[hoveredDay.dayIndex].agents[agent];
+										if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
+										const color = getAgentColor(idx, colorBlindMode);
+										return (
+											<div key={agent} className="flex items-center gap-2">
+												<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+												<span>{agentDisplayNames[agent]}:</span>
+												<span style={{ color: theme.colors.textMain }}>
+													{metricMode === 'count'
+														? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
+														: formatDuration(dayData.duration)}
+												</span>
+											</div>
+										);
+									})}
+								</div>
+							</div>
+						);
+					})()}
 			</div>
 
-			{/* Legend */}
+			{/* Legend — clickable when `onAgentClick` is wired (drill-down filter). */}
 			<div
 				className="flex items-center justify-center gap-4 mt-3 pt-3 border-t flex-wrap"
 				style={{ borderColor: theme.colors.border }}
 			>
 				{agents.map((agent, idx) => {
 					const color = getAgentColor(idx, colorBlindMode);
+					const isWorktree = worktreeAgents.has(agent);
+					const displayName = agentDisplayNames[agent];
+					const isClickable = !!onAgentClick;
+					const isFiltered = activeFilterKey != null;
+					const isSelected = isFiltered && activeFilterKey === agent;
+					const isDimmed = isFiltered && !isSelected;
 					return (
-						<div key={agent} className="flex items-center gap-1.5">
-							<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
+						<div
+							key={agent}
+							className="flex items-center gap-1.5 rounded"
+							style={{
+								padding: isClickable ? '2px 6px' : undefined,
+								margin: isClickable ? '-2px -6px' : undefined,
+								cursor: isClickable ? 'pointer' : undefined,
+								backgroundColor: isSelected ? `${theme.colors.accent}26` : undefined,
+								opacity: isDimmed ? 0.5 : 1,
+								transition: 'background-color 0.2s ease, opacity 0.2s ease',
+							}}
+							onClick={isClickable ? () => handleAgentClick(agent, displayName) : undefined}
+							onKeyDown={
+								isClickable
+									? (e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												handleAgentClick(agent, displayName);
+											}
+										}
+									: undefined
+							}
+							role={isClickable ? 'button' : undefined}
+							tabIndex={isClickable ? 0 : undefined}
+							aria-pressed={isClickable ? isSelected : undefined}
+							aria-label={isClickable ? `${displayName}. Click to filter dashboard.` : undefined}
+						>
+							{isWorktree ? (
+								<svg width={12} height={2} aria-hidden="true">
+									<line
+										x1={0}
+										y1={1}
+										x2={12}
+										y2={1}
+										stroke={color}
+										strokeWidth={2}
+										strokeDasharray="3 2"
+									/>
+								</svg>
+							) : (
+								<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
+							)}
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{agentDisplayNames[agent]}
+								{displayName}
 							</span>
 						</div>
 					);

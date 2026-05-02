@@ -670,10 +670,11 @@ describe('useAgentListeners', () => {
 			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 0);
 		});
 
-		it('treats claude-code session-ID fork as expected (no warning, no context reset)', () => {
-			// Claude Code 2.1.x in batch mode always emits a fresh session_id on every
-			// spawn, even when resume succeeds. Maestro should silently accept the new
-			// ID without flagging it as a context-loss event.
+		it('treats claude-code session-ID fork as expected (preserves original ID, no warning)', () => {
+			// Claude Code 2.1.x in batch mode emits a fresh session_id on every spawn but
+			// keeps appending to the original JSONL. Storing the fork ID would produce a
+			// "no conversation found with session id" error on the next resume since no
+			// JSONL exists under the fork ID. Keep the original; ignore the fork.
 			const deps = createMockDeps();
 			const tab = createMockTab({
 				id: 'tab-1',
@@ -693,6 +694,7 @@ describe('useAgentListeners', () => {
 				toolType: 'claude-code',
 				aiTabs: [tab],
 				activeTabId: 'tab-1',
+				agentSessionId: 'old-session-id',
 			});
 			useSessionStore.setState({
 				sessions: [session],
@@ -701,14 +703,18 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Claude returns a DIFFERENT session ID — expected, not a failure.
-			onSessionIdHandler?.('sess-1-ai-tab-1', 'new-session-id');
+			// Claude returns a DIFFERENT session ID — expected fork, not a failure.
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'fork-session-id');
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
 
-			// New ID accepted to keep batch mode functional.
-			expect(updatedTab?.agentSessionId).toBe('new-session-id');
+			// Original ID preserved on tab — fork ID has no backing JSONL.
+			expect(updatedTab?.agentSessionId).toBe('old-session-id');
+			// Session-level ID also preserved.
+			expect(updated?.agentSessionId).toBe('old-session-id');
+			// Awaiting cleared.
+			expect(updatedTab?.awaitingSessionId).toBe(false);
 			// Usage stats preserved (no false context-loss signal).
 			expect(updatedTab?.usageStats?.cacheReadInputTokens).toBe(50000);
 			// No resume-failure log entry.
@@ -718,6 +724,42 @@ describe('useAgentListeners', () => {
 			expect(hasResumeFailureLog).toBe(false);
 			// Context usage NOT reset.
 			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
+		});
+
+		it('claude-code first-time capture stores tab id but skips session-level write', () => {
+			// On first message in a tab, agentSessionId is empty so the new ID goes onto
+			// the tab. Session-level field is intentionally NOT written for claude-code:
+			// the deprecated session-level field would otherwise accumulate fork IDs from
+			// closed/reset tabs and cause "Session not found" on later spawns.
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: undefined,
+				awaitingSessionId: true,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				agentSessionId: undefined,
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'first-session-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+
+			expect(updatedTab?.agentSessionId).toBe('first-session-id');
+			expect(updatedTab?.awaitingSessionId).toBe(false);
+			// Session-level intentionally not written for claude-code.
+			expect(updated?.agentSessionId).toBeUndefined();
 		});
 
 		it('does not warn on resume success (same session ID returned)', () => {
@@ -794,6 +836,7 @@ describe('useAgentListeners', () => {
 			});
 			const session = createMockSession({
 				id: 'sess-1',
+				toolType: 'codex',
 				aiTabs: [tabB],
 				activeTabId: 'tab-b',
 			});
@@ -815,6 +858,38 @@ describe('useAgentListeners', () => {
 			expect(updatedTabB?.agentSessionId).toBeNull();
 		});
 
+		it('skips session-level write for claude-code when tab was closed', () => {
+			// For claude-code, the session-level agentSessionId is intentionally not
+			// updated from a closed tab's events: the ID may be a fork without a
+			// backing JSONL, and would break a future tab's first resume.
+			const deps = createMockDeps();
+			const tabB = createMockTab({
+				id: 'tab-b',
+				agentSessionId: null,
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				aiTabs: [tabB],
+				activeTabId: 'tab-b',
+				agentSessionId: undefined,
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-1-ai-tab-a', 'orphan-fork-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.agentSessionId).toBeUndefined();
+			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
+			expect(updatedTabB?.agentSessionId).toBeNull();
+		});
+
 		it('does not cross-bind when closed tab had awaitingSessionId and another tab also awaits', () => {
 			const deps = createMockDeps();
 			// Tab B is awaiting its own session ID — must not receive Tab A's
@@ -825,6 +900,7 @@ describe('useAgentListeners', () => {
 			});
 			const session = createMockSession({
 				id: 'sess-1',
+				toolType: 'codex',
 				aiTabs: [tabB],
 				activeTabId: 'tab-b',
 			});
@@ -890,6 +966,7 @@ describe('useAgentListeners', () => {
 			});
 			const session = createMockSession({
 				id: 'sess-1',
+				toolType: 'codex',
 				aiTabs: [tabB],
 				activeTabId: 'tab-b',
 			});

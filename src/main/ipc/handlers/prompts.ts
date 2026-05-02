@@ -15,6 +15,7 @@ import {
 	arePromptsInitialized,
 	getPromptsPath,
 	listPromptFiles,
+	getBundledDefault,
 } from '../../prompt-manager';
 import { logger } from '../../utils/logger';
 
@@ -97,6 +98,21 @@ export function registerPromptsHandlers(): void {
 			return { success: true, path: getPromptsPath() };
 		} catch (error) {
 			logger.error(`Failed to get prompts path: ${error}`, LOG_CONTEXT);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// Get the current bundled (un-customized) content for a prompt — used by the
+	// drift-detection "View current default" affordance.
+	ipcMain.handle('prompts:getBundledDefault', async (_, id: string) => {
+		try {
+			if (!arePromptsInitialized()) {
+				return { success: false, error: 'Prompts not yet initialized' };
+			}
+			const content = await getBundledDefault(id);
+			return { success: true, content };
+		} catch (error) {
+			logger.error(`Failed to get bundled default for ${id}: ${error}`, LOG_CONTEXT);
 			return { success: false, error: String(error) };
 		}
 	});

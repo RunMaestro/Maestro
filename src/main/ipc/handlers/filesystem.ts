@@ -241,6 +241,13 @@ export function registerFilesystemHandlers(): void {
 				if (error?.code === 'ENOENT') {
 					return null;
 				}
+				// EISDIR happens when a caller passes a directory path (e.g., user
+				// clicks an entry that resolved to a folder). Treat like ENOENT —
+				// return null so the renderer can handle the absence cleanly instead
+				// of surfacing an unhandled IPC rejection. Fixes MAESTRO-JP.
+				if (error?.code === 'EISDIR') {
+					return null;
+				}
 				throw new Error(`Failed to read file: ${error}`);
 			}
 		}

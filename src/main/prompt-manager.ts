@@ -24,6 +24,7 @@
  */
 
 import { app } from 'electron';
+import crypto from 'crypto';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
@@ -43,12 +44,25 @@ export interface CorePrompt {
 	category: string;
 	content: string;
 	isModified: boolean;
+	/**
+	 * True when the bundled default has changed since the user last saved their
+	 * customization. Always false for unmodified prompts. False when we lack a
+	 * baseline hash (legacy customizations) — see initializePrompts() for the
+	 * one-time backfill that prevents that state for fresh customizations.
+	 */
+	hasDefaultDrifted: boolean;
 }
 
 interface StoredPrompt {
 	content: string;
 	isModified: boolean;
 	modifiedAt?: string;
+	/**
+	 * SHA256 of the bundled default content captured the last time this
+	 * customization was saved. Compared against the current bundled hash to
+	 * detect drift after app updates.
+	 */
+	originalHash?: string;
 }
 
 interface StoredData {
@@ -59,8 +73,19 @@ interface StoredData {
 // State
 // ============================================================================
 
-const promptCache = new Map<string, { content: string; isModified: boolean }>();
+interface CacheEntry {
+	content: string;
+	isModified: boolean;
+	bundledHash: string;
+	originalHash?: string;
+}
+
+const promptCache = new Map<string, CacheEntry>();
 let initialized = false;
+
+function hashContent(content: string): string {
+	return crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
+}
 
 // Serialize disk writes to prevent concurrent read-modify-write races
 let writeLock: Promise<void> = Promise.resolve();
@@ -137,6 +162,10 @@ export async function initializePrompts(): Promise<void> {
 	logger.info(`Loading ${CORE_PROMPTS.length} prompts from: ${promptsPath}`, LOG_CONTEXT);
 
 	let customizedCount = 0;
+	let driftedCount = 0;
+	let backfilled = false;
+	const workingCustomizations: StoredData = customizations ?? { prompts: {} };
+
 	for (const prompt of CORE_PROMPTS) {
 		const filePath = path.join(promptsPath, prompt.filename);
 
@@ -149,18 +178,44 @@ export async function initializePrompts(): Promise<void> {
 			throw new Error(`Failed to load required prompt: ${prompt.id}`);
 		}
 
+		const bundledHash = hashContent(bundledContent);
+
 		// Check for user customization
-		const customPrompt = customizations?.prompts?.[prompt.id];
+		const customPrompt = workingCustomizations.prompts?.[prompt.id];
 		const isModified = customPrompt?.isModified ?? false;
 		const content = isModified && customPrompt ? customPrompt.content : bundledContent;
 
-		if (isModified) customizedCount++;
-		promptCache.set(prompt.id, { content, isModified });
+		// Backfill legacy customizations (saved before drift tracking existed) with
+		// the current bundled hash. Without a baseline we can't detect drift — the
+		// honest choice is "treat current bundled state as the baseline going
+		// forward" rather than false-flag every legacy entry as drifted.
+		let originalHash = customPrompt?.originalHash;
+		if (isModified && customPrompt && !originalHash) {
+			originalHash = bundledHash;
+			customPrompt.originalHash = bundledHash;
+			backfilled = true;
+		}
+
+		if (isModified) {
+			customizedCount++;
+			if (originalHash && originalHash !== bundledHash) driftedCount++;
+		}
+		promptCache.set(prompt.id, { content, isModified, bundledHash, originalHash });
+	}
+
+	if (backfilled) {
+		try {
+			await saveUserCustomizations(workingCustomizations);
+		} catch (error) {
+			// Backfill is best-effort. If the write fails, drift detection just
+			// won't activate for legacy entries — they keep working as before.
+			logger.warn(`Failed to backfill originalHash on customizations: ${error}`, LOG_CONTEXT);
+		}
 	}
 
 	initialized = true;
 	logger.info(
-		`Successfully loaded ${promptCache.size} prompts (${customizedCount} customized)`,
+		`Successfully loaded ${promptCache.size} prompts (${customizedCount} customized, ${driftedCount} drifted)`,
 		LOG_CONTEXT
 	);
 }
@@ -193,6 +248,8 @@ export function getAllPrompts(): CorePrompt[] {
 
 	return CORE_PROMPTS.map((def) => {
 		const cached = promptCache.get(def.id)!;
+		const hasDefaultDrifted =
+			cached.isModified && !!cached.originalHash && cached.originalHash !== cached.bundledHash;
 		return {
 			id: def.id,
 			filename: def.filename,
@@ -200,6 +257,7 @@ export function getAllPrompts(): CorePrompt[] {
 			category: def.category,
 			content: cached.content,
 			isModified: cached.isModified,
+			hasDefaultDrifted,
 		};
 	});
 }
@@ -213,18 +271,25 @@ export async function savePrompt(id: string, content: string): Promise<void> {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
+	// Snapshot the bundled hash at save time. This becomes the baseline for
+	// future drift detection: if the bundled file changes after the user saves,
+	// future getAllPrompts() calls will report hasDefaultDrifted = true.
+	const cached = promptCache.get(id);
+	const bundledHash = cached?.bundledHash ?? hashContent(await readBundledContent(def.filename));
+
 	await withWriteLock(async () => {
 		const customizations = (await loadUserCustomizations()) || { prompts: {} };
 		customizations.prompts[id] = {
 			content,
 			isModified: true,
 			modifiedAt: new Date().toISOString(),
+			originalHash: bundledHash,
 		};
 		await saveUserCustomizations(customizations);
 	});
 
 	// Update in-memory cache immediately
-	promptCache.set(id, { content, isModified: true });
+	promptCache.set(id, { content, isModified: true, bundledHash, originalHash: bundledHash });
 
 	logger.info(`Saved and applied customization for ${id}`, LOG_CONTEXT);
 }
@@ -240,9 +305,7 @@ export async function resetPrompt(id: string): Promise<string> {
 	}
 
 	// Read bundled content FIRST — verify it's readable before deleting customization
-	const promptsPath = getBundledPromptsPath();
-	const filePath = path.join(promptsPath, def.filename);
-	const bundledContent = await fs.readFile(filePath, 'utf-8');
+	const bundledContent = await readBundledContent(def.filename);
 
 	// Only remove customization after confirming bundled file is readable
 	await withWriteLock(async () => {
@@ -254,10 +317,33 @@ export async function resetPrompt(id: string): Promise<string> {
 	});
 
 	// Update in-memory cache immediately
-	promptCache.set(id, { content: bundledContent, isModified: false });
+	promptCache.set(id, {
+		content: bundledContent,
+		isModified: false,
+		bundledHash: hashContent(bundledContent),
+		originalHash: undefined,
+	});
 
 	logger.info(`Reset and applied bundled default for ${id}`, LOG_CONTEXT);
 	return bundledContent;
+}
+
+/**
+ * Read the current bundled (un-customized) content for a prompt. Used by the
+ * "View current default" affordance in the Maestro Prompts UI so users can see
+ * what shipped after a drift indicator appears.
+ */
+export async function getBundledDefault(id: string): Promise<string> {
+	const def = CORE_PROMPTS.find((p) => p.id === id);
+	if (!def) {
+		throw new Error(`Unknown prompt ID: ${id}`);
+	}
+	return readBundledContent(def.filename);
+}
+
+async function readBundledContent(filename: string): Promise<string> {
+	const promptsPath = getBundledPromptsPath();
+	return fs.readFile(path.join(promptsPath, filename), 'utf-8');
 }
 
 /**

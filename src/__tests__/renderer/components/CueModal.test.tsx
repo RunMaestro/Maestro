@@ -43,8 +43,17 @@ vi.mock('../../../renderer/components/CueYamlEditor', () => ({
 		isOpen ? <div data-testid="cue-yaml-editor">YAML Editor Mock</div> : null,
 }));
 
+// `vi.hoisted` so the captured ref exists before vi.mock evaluates the factory.
+// Tests assert against `capturedEditorProps.initialPipelineId` to verify that
+// the parent (CueModal) propagates / clears the "View in Pipeline" token.
+const capturedEditorProps = vi.hoisted(() => ({
+	initialPipelineId: undefined as { id: string | null; nonce: string } | undefined,
+	renderCount: 0,
+}));
 vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
-	CuePipelineEditor: () => {
+	CuePipelineEditor: (props: { initialPipelineId?: { id: string | null; nonce: string } }) => {
+		capturedEditorProps.initialPipelineId = props.initialPipelineId;
+		capturedEditorProps.renderCount += 1;
 		return <div data-testid="cue-pipeline-editor">Pipeline Editor Mock</div>;
 	},
 }));
@@ -101,6 +110,7 @@ const defaultUseCueReturn = {
 	activeRuns: [],
 	activityLog: [],
 	queueStatus: {} as Record<string, number>,
+	eventCount: 0,
 	loading: false,
 	enable: mockEnable,
 	disable: mockDisable,
@@ -177,6 +187,8 @@ describe('CueModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockUseCueReturn = { ...defaultUseCueReturn };
+		capturedEditorProps.initialPipelineId = undefined;
+		capturedEditorProps.renderCount = 0;
 	});
 
 	describe('rendering', () => {
@@ -309,7 +321,7 @@ describe('CueModal', () => {
 	describe('activity log', () => {
 		it('should show "No activity yet" when empty', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('Activity Log'));
 
 			expect(screen.getByText('No activity yet')).toBeInTheDocument();
 		});
@@ -321,7 +333,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('Activity Log'));
 
 			expect(screen.getByText(/completed in 5s/)).toBeInTheDocument();
 		});
@@ -333,7 +345,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('Activity Log'));
 
 			expect(screen.getByText(/failed/)).toBeInTheDocument();
 		});
@@ -385,12 +397,12 @@ describe('CueModal', () => {
 			expect(screen.getByText('Pipeline Editor')).toBeInTheDocument();
 		});
 
-		it('should show Pipeline Editor content by default', () => {
+		it('should show Dashboard content by default', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
-			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
-			// Dashboard content should not be visible by default
-			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
+			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
+			// Pipeline Editor content should not be visible by default
+			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 
 		it('should switch to dashboard when Dashboard tab is clicked', () => {
@@ -414,6 +426,72 @@ describe('CueModal', () => {
 			fireEvent.click(screen.getByText('Pipeline Editor'));
 			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
 			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
+		});
+	});
+
+	// Regression for 42ac8333e: handleSetActiveTab MUST clear pendingPipelineId
+	// when navigating away from the pipeline tab. Without this, a stale nonce
+	// would survive the unmount/remount cycle, and a fresh CuePipelineEditor's
+	// initial-pre-select effect (appliedNonce.current === null on the new
+	// instance) would re-snap the user back to the "View in Pipeline" target
+	// they just navigated away from.
+	describe('pending pipeline token (regression: tab switch must clear it)', () => {
+		it('clears initialPipelineId when navigating away from the pipeline tab', () => {
+			mockUseCueReturn = {
+				...defaultUseCueReturn,
+				sessions: [mockSession],
+			};
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Default tab is 'pipeline' — editor renders with no pending token.
+			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
+
+			// Navigate to Dashboard and click "View in Pipeline" — handler sets
+			// pendingPipelineId AND switches activeTab to 'pipeline', so the
+			// editor remounts and now sees the token in its initialPipelineId prop.
+			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('View in Pipeline'));
+
+			expect(capturedEditorProps.initialPipelineId).toBeDefined();
+			const tokenAfterView = capturedEditorProps.initialPipelineId!;
+			expect(typeof tokenAfterView.nonce).toBe('string');
+			expect(tokenAfterView.nonce.length).toBeGreaterThan(0);
+
+			// Navigate back to Dashboard. handleSetActiveTab(non-pipeline) MUST
+			// reset pendingPipelineId to null. The editor unmounts here, so we
+			// can't read its props — that's the whole point of the regression
+			// (the next remount is where the bug manifested).
+			fireEvent.click(screen.getByText('Dashboard'));
+
+			// Return to the pipeline tab. The freshly-mounted editor's
+			// initialPipelineId must be undefined (no stale token survives).
+			// Before the fix, the same `tokenAfterView` would still be present
+			// here and snap the user back to the prior pipeline.
+			fireEvent.click(screen.getByText('Pipeline Editor'));
+			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
+		});
+
+		it('preserves the token when navigating within the pipeline tab', () => {
+			// Defensive: handleSetActiveTab is idempotent for `tab === 'pipeline'`.
+			// Calling it with the already-active value must NOT clear the token —
+			// otherwise rapid re-clicks of the Pipeline Editor tab would race
+			// against a still-pending "View in Pipeline" navigation.
+			mockUseCueReturn = {
+				...defaultUseCueReturn,
+				sessions: [mockSession],
+			};
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('View in Pipeline'));
+			expect(capturedEditorProps.initialPipelineId).toBeDefined();
+			const tokenAfterView = capturedEditorProps.initialPipelineId!;
+
+			// Clicking the already-active Pipeline Editor tab must not clear it.
+			fireEvent.click(screen.getByText('Pipeline Editor'));
+			expect(capturedEditorProps.initialPipelineId?.nonce).toBe(tokenAfterView.nonce);
 		});
 	});
 
@@ -590,7 +668,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-			fireEvent.click(screen.getByText('Dashboard'));
+			fireEvent.click(screen.getByText('Activity Log'));
 
 			expect(screen.getByText(/completed in 5s/)).toBeInTheDocument();
 		});
@@ -601,7 +679,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button
-			const helpButton = screen.getByTitle('Help');
+			const helpButton = screen.getByTitle('About Maestro Cue');
 			fireEvent.click(helpButton);
 
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
@@ -611,7 +689,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button to enter help view
-			const helpButton = screen.getByTitle('Help');
+			const helpButton = screen.getByTitle('About Maestro Cue');
 			fireEvent.click(helpButton);
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
@@ -631,7 +709,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button
-			fireEvent.click(screen.getByTitle('Help'));
+			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
 			// Click the back arrow
@@ -676,7 +754,7 @@ describe('CueModal', () => {
 			});
 
 			// Enter help view
-			fireEvent.click(screen.getByTitle('Help'));
+			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
 			// Press escape — should go back from help, not trigger confirmation

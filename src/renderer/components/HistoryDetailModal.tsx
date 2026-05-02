@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
@@ -122,24 +123,20 @@ export function HistoryDetailModal({
 		}
 	}, [showDeleteConfirm]);
 
-	// Keyboard navigation for prev/next with arrow keys
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			// Don't handle if delete confirmation is showing
-			if (showDeleteConfirm) return;
+	// Keyboard navigation for prev/next with arrow keys.
+	useEventListener('keydown', (e) => {
+		// Don't handle if delete confirmation is showing
+		if (showDeleteConfirm) return;
 
-			if (e.key === 'ArrowLeft') {
-				e.preventDefault();
-				goToPrev();
-			} else if (e.key === 'ArrowRight') {
-				e.preventDefault();
-				goToNext();
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [goToPrev, goToNext, showDeleteConfirm]);
+		const ke = e as KeyboardEvent;
+		if (ke.key === 'ArrowLeft') {
+			ke.preventDefault();
+			goToPrev();
+		} else if (ke.key === 'ArrowRight') {
+			ke.preventDefault();
+			goToNext();
+		}
+	});
 
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 

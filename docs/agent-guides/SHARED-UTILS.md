@@ -125,20 +125,21 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Git Utilities (`src/shared/gitUtils.ts` - Both)
 
-| Function                           | Signature                      | Purpose                                              |
-| ---------------------------------- | ------------------------------ | ---------------------------------------------------- |
-| `parseGitStatusPorcelain(stdout)`  | `(string) => GitFileStatus[]`  | Parse `git status --porcelain` output.               |
-| `countUncommittedChanges(stdout)`  | `(string) => number`           | Count from porcelain output.                         |
-| `hasUncommittedChanges(stdout)`    | `(string) => boolean`          | Quick check from porcelain output.                   |
-| `parseGitNumstat(stdout)`          | `(string) => GitNumstatFile[]` | Parse `git diff --numstat` into additions/deletions. |
-| `parseGitBehindAhead(stdout)`      | `(string) => GitBehindAhead`   | Parse `git rev-list --left-right --count`.           |
-| `parseGitBranches(stdout)`         | `(string) => string[]`         | Parse branch list, dedup remote/local, filter HEAD.  |
-| `parseGitTags(stdout)`             | `(string) => string[]`         | Parse `git tag --list`.                              |
-| `cleanBranchName(stdout)`          | `(string) => string`           | Trim branch name from `git rev-parse`.               |
-| `cleanGitPath(stdout)`             | `(string) => string`           | Trim path from git output.                           |
-| `remoteUrlToBrowserUrl(remoteUrl)` | `(string) => string \| null`   | Convert SSH/HTTPS git URLs to browser-friendly URLs. |
-| `isImageFile(filePath)`            | `(string) => boolean`          | Check extension against known image types.           |
-| `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                   |
+| Function                           | Signature                      | Purpose                                                                                                                    |
+| ---------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `parseGitStatusPorcelain(stdout)`  | `(string) => GitFileStatus[]`  | Parse `git status --porcelain` output.                                                                                     |
+| `countUncommittedChanges(stdout)`  | `(string) => number`           | Count from porcelain output.                                                                                               |
+| `hasUncommittedChanges(stdout)`    | `(string) => boolean`          | Quick check from porcelain output.                                                                                         |
+| `parseGitNumstat(stdout)`          | `(string) => GitNumstatFile[]` | Parse `git diff --numstat` into additions/deletions.                                                                       |
+| `parseGitBehindAhead(stdout)`      | `(string) => GitBehindAhead`   | Parse `git rev-list --left-right --count`.                                                                                 |
+| `parseGitBranches(stdout)`         | `(string) => string[]`         | Parse branch list, dedup remote/local, filter HEAD.                                                                        |
+| `parseGitTags(stdout)`             | `(string) => string[]`         | Parse `git tag --list`.                                                                                                    |
+| `cleanBranchName(stdout)`          | `(string) => string`           | Trim branch name from `git rev-parse`.                                                                                     |
+| `cleanGitPath(stdout)`             | `(string) => string`           | Trim path from git output.                                                                                                 |
+| `remoteUrlToBrowserUrl(remoteUrl)` | `(string) => string \| null`   | Convert SSH/HTTPS git URLs to browser-friendly URLs.                                                                       |
+| `sanitizeGitBranchName(input)`     | `(string, options?) => string` | Sanitize user input into a git branch name. Use `{ allowIncomplete: true }` for controlled inputs before final validation. |
+| `isImageFile(filePath)`            | `(string) => boolean`          | Check extension against known image types.                                                                                 |
+| `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                                                                                         |
 
 ---
 

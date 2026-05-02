@@ -185,6 +185,24 @@ describe('computeOwnershipWarning', () => {
 		expect(result).toContain('owner_agent_id targets "Opus"');
 	});
 
+	it('shows the resolved display name in the tooltip when owner_agent_id is a uuid', () => {
+		const session1 = makeCandidate({
+			id: 'fe7c6b37-d7b1-4c2f-9049-f2288dd10c16',
+			name: 'Obsidian',
+		});
+		const session2 = makeCandidate({ id: 'session-2', name: 'Server' });
+		const result = computeOwnershipWarning({
+			session: session2,
+			candidates: [session1, session2],
+			config: makeConfig({ owner_agent_id: 'fe7c6b37-d7b1-4c2f-9049-f2288dd10c16' }),
+			configFromAncestor: false,
+		});
+		// The tooltip should reference the human-readable name, not the
+		// uuid the user wrote in cue.yaml.
+		expect(result).toContain('targets "Obsidian"');
+		expect(result).not.toContain('fe7c6b37');
+	});
+
 	it('flags every session in the root when owner_agent_id matches nobody', () => {
 		const session1 = makeCandidate({ id: 'session-1', name: 'Opus' });
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
@@ -321,6 +339,8 @@ describe('computeOwnershipWarning', () => {
 			config: makeConfig({ owner_agent_id: 'uuid-alpha' }),
 			configFromAncestor: false,
 		});
-		expect(fromB).toContain('targets "uuid-alpha"');
+		// The tooltip should reference the resolved display name ("Alpha"),
+		// not the raw uuid the user wrote in cue.yaml.
+		expect(fromB).toContain('targets "Alpha"');
 	});
 });

@@ -58,6 +58,14 @@ export const cueService = {
 		});
 	},
 
+	async getEventCount(): Promise<number> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.getEventCount(),
+			errorContext: 'Cue getEventCount',
+			defaultValue: 0,
+		});
+	},
+
 	async getQueueStatus(): Promise<Record<string, number>> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.getQueueStatus(),

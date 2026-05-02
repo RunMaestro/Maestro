@@ -15,9 +15,11 @@ import {
 	BookOpen,
 	Database,
 	FolderSearch,
+	GitBranch,
 	HelpCircle,
 	WrapText,
 	ListFilter,
+	PanelTop,
 	Palette,
 	Sparkles,
 } from 'lucide-react';
@@ -68,6 +70,14 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setUseNativeTitleBar,
 		autoHideMenuBar,
 		setAutoHideMenuBar,
+		showSessionIdPill,
+		setShowSessionIdPill,
+		showSessionCostPill,
+		setShowSessionCostPill,
+		showWorktreePill,
+		setShowWorktreePill,
+		showWorktreeBranchName,
+		setShowWorktreeBranchName,
 		documentGraphShowExternalLinks,
 		setDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes,
@@ -325,6 +335,157 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									autoHideMenuBar ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* Main Header Panel */}
+			<div data-setting-id="display-main-header-panel">
+				<SettingsSectionHeading icon={PanelTop}>Main Header Panel</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Show session ID pill */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show session ID pill
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the provider session ID pill (short hash, e.g. &quot;B778BF42&quot;) in the
+								main header. Click the pill to copy the full ID.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowSessionIdPill(!showSessionIdPill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showSessionIdPill ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showSessionIdPill}
+							aria-label="Show session ID pill"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showSessionIdPill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show session cost pill */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show session cost pill
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the per-session running cost (e.g. &quot;$21.33&quot;) in the main header.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowSessionCostPill(!showSessionCostPill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showSessionCostPill
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showSessionCostPill}
+							aria-label="Show session cost pill"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showSessionCostPill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* Worktree Display */}
+			<div data-setting-id="display-worktree">
+				<SettingsSectionHeading icon={GitBranch}>Worktree Display</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Show WORKTREE pill */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show WORKTREE pill in left panel agent list
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the WORKTREE badge next to worktree child agents in the left panel.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowWorktreePill(!showWorktreePill)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showWorktreePill ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showWorktreePill}
+							aria-label="Show WORKTREE pill in left panel agent list"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showWorktreePill ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show branch name */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show branch name in left panel agent list
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the worktree branch name beneath the agent name in the left panel.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowWorktreeBranchName(!showWorktreeBranchName)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showWorktreeBranchName
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showWorktreeBranchName}
+							aria-label="Show branch name in left panel agent list"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showWorktreeBranchName ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

@@ -1,10 +1,11 @@
 /**
- * CueDashboard — Composes the dashboard tab's three sections: Sessions
- * table, Active Runs list (collapsible), and Activity Log.
+ * CueDashboard — Dashboard tab body. Top-row stats, sessions table, and
+ * collapsible active runs. The Activity Log lives on its own tab.
  *
  * Pure presentational. Parent CueModal owns all data + callbacks.
  */
 
+import { useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -13,7 +14,7 @@ import type { CueRunResult } from '../../../shared/cue/contracts';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { SessionsTable } from './SessionsTable';
 import { ActiveRunsList } from './ActiveRunsList';
-import { ActivityLog } from './ActivityLog';
+import { CueDashboardStats } from './CueDashboardStats';
 
 export interface CueDashboardProps {
 	theme: Theme;
@@ -23,11 +24,14 @@ export interface CueDashboardProps {
 	onRetry: () => void;
 	sessions: CueSessionStatus[];
 	activeRuns: CueRunResult[];
+	/** Recent completed/failed runs — used to compute average runtime stat. */
 	activityLog: CueRunResult[];
 	queueStatus: Record<string, number>;
 	graphSessions: CueGraphSession[];
 	dashboardPipelines: CuePipeline[];
 	subscriptionPipelineMap: Map<string, { name: string; color: string }>;
+	/** Lifetime count of Cue events from the on-disk journal. */
+	executionCount: number;
 	activeRunsExpanded: boolean;
 	setActiveRunsExpanded: (expanded: boolean) => void;
 	onViewInPipeline: (session: CueSessionStatus) => void;
@@ -53,6 +57,7 @@ export function CueDashboard({
 	graphSessions,
 	dashboardPipelines,
 	subscriptionPipelineMap,
+	executionCount,
 	activeRunsExpanded,
 	setActiveRunsExpanded,
 	onViewInPipeline,
@@ -62,6 +67,30 @@ export function CueDashboard({
 	onStopRun,
 	onStopAll,
 }: CueDashboardProps) {
+	// Average runtime across the loaded activity log. Excludes still-running
+	// entries (durationMs is final-state only). null when no finished runs are
+	// available so the stat card can render an em dash instead of "0ms".
+	const averageRuntimeMs = useMemo(() => {
+		const finished = activityLog.filter((r) => r.status !== 'running');
+		if (finished.length === 0) return null;
+		const total = finished.reduce((sum, r) => sum + r.durationMs, 0);
+		return total / finished.length;
+	}, [activityLog]);
+
+	// Distinct agents referenced by any pipeline's agent nodes — "agents
+	// associated with Cue" in the dashboard sense.
+	const agentCount = useMemo(() => {
+		const ids = new Set<string>();
+		for (const pipeline of dashboardPipelines) {
+			for (const node of pipeline.nodes) {
+				if (node.type === 'agent' && 'sessionId' in node.data) {
+					ids.add(node.data.sessionId);
+				}
+			}
+		}
+		return ids.size;
+	}, [dashboardPipelines]);
+
 	if (loading) {
 		return (
 			<div className="text-center py-12 text-sm" style={{ color: theme.colors.textDim }}>
@@ -93,7 +122,16 @@ export function CueDashboard({
 				</div>
 			)}
 
-			{/* Section 1: Sessions with Cue */}
+			{/* Top-row stats */}
+			<CueDashboardStats
+				theme={theme}
+				pipelineCount={dashboardPipelines.length}
+				executionCount={executionCount}
+				averageRuntimeMs={averageRuntimeMs}
+				agentCount={agentCount}
+			/>
+
+			{/* Sessions with Cue */}
 			<div>
 				<h3
 					className="text-xs font-bold uppercase tracking-wider mb-3"
@@ -114,7 +152,7 @@ export function CueDashboard({
 				/>
 			</div>
 
-			{/* Section 2: Active Runs */}
+			{/* Active Runs */}
 			<div>
 				<button
 					onClick={() => setActiveRunsExpanded(!activeRunsExpanded)}
@@ -154,26 +192,6 @@ export function CueDashboard({
 						subscriptionPipelineMap={subscriptionPipelineMap}
 					/>
 				)}
-			</div>
-
-			{/* Section 3: Activity Log */}
-			<div>
-				<h3
-					className="text-xs font-bold uppercase tracking-wider mb-3"
-					style={{ color: theme.colors.textDim }}
-				>
-					Activity Log
-				</h3>
-				<div
-					className="max-h-96 overflow-y-auto rounded-md px-3 py-2"
-					style={{ backgroundColor: theme.colors.bgActivity }}
-				>
-					<ActivityLog
-						log={activityLog}
-						theme={theme}
-						subscriptionPipelineMap={subscriptionPipelineMap}
-					/>
-				</div>
 			</div>
 		</>
 	);

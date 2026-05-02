@@ -27,6 +27,7 @@ import {
 	writeEntryLocal,
 	readRemoteEntriesSsh,
 	readRemoteEntriesLocal,
+	hasLocalSharedHistory,
 } from '../../shared-history-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -62,6 +63,14 @@ export interface HistoryGraphData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	/**
+	 * Per-host entry counts in the same window the buckets cover. Key is
+	 * the entry's `hostname`, or `"__local__"` for entries with no
+	 * hostname. Lookback-aware via the same `lookbackMs` that bucketing
+	 * uses, so flipping the renderer's lookback selector updates these
+	 * numbers too.
+	 */
+	hostCounts: Record<string, number>;
 	/** True when served from the disk cache (diagnostics only). */
 	cached: boolean;
 }
@@ -75,6 +84,7 @@ interface BucketAggregateLike {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	hostCounts: Record<string, number>;
 }
 
 function aggregateToGraphData(
@@ -91,6 +101,7 @@ function aggregateToGraphData(
 		autoCount: agg.autoCount,
 		userCount: agg.userCount,
 		cueCount: agg.cueCount,
+		hostCounts: agg.hostCounts,
 		cached,
 	};
 }
@@ -105,6 +116,7 @@ function cachedToGraphData(
 		autoCount: number;
 		userCount: number;
 		cueCount: number;
+		hostCounts: Record<string, number>;
 	},
 	fromCache: boolean
 ): HistoryGraphData {
@@ -117,6 +129,7 @@ function cachedToGraphData(
 		autoCount: cached.autoCount,
 		userCount: cached.userCount,
 		cueCount: cached.cueCount,
+		hostCounts: cached.hostCounts,
 		cached: fromCache,
 	};
 }
@@ -171,12 +184,12 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				if (sessionId) {
 					// Get entries for specific session only - don't include orphaned entries
 					// to prevent history bleeding across different agent sessions in the same directory
-					localEntries = historyManager.getEntries(sessionId);
+					localEntries = await historyManager.getEntries(sessionId);
 					localEntries.sort((a, b) => b.timestamp - a.timestamp);
 				} else if (projectPath) {
-					localEntries = historyManager.getEntriesByProjectPath(projectPath);
+					localEntries = await historyManager.getEntriesByProjectPath(projectPath);
 				} else {
-					localEntries = historyManager.getAllEntries();
+					localEntries = await historyManager.getAllEntries();
 				}
 
 				// Merge shared history entries from other hosts
@@ -251,7 +264,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				// Single-session path: optionally merge shared (SSH or local
 				// project-mirrored) entries before applying lookback + pagination.
 				if (sessionId) {
-					let local = historyManager.getEntries(sessionId);
+					let local = await historyManager.getEntries(sessionId);
 					local = sortEntriesByTimestamp(local);
 
 					const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
@@ -292,15 +305,15 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				}
 
 				if (projectPath) {
-					const entries = historyManager.getEntriesByProjectPathPaginated(
+					const result = await historyManager.getEntriesByProjectPathPaginated(
 						projectPath,
 						undefined
-					).entries;
-					return paginateEntries(applyLookback(entries), pagination);
+					);
+					return paginateEntries(applyLookback(result.entries), pagination);
 				}
 
-				const entries = historyManager.getAllEntriesPaginated(undefined).entries;
-				return paginateEntries(applyLookback(entries), pagination);
+				const result = await historyManager.getAllEntriesPaginated(undefined);
+				return paginateEntries(applyLookback(result.entries), pagination);
 			}
 		)
 	);
@@ -318,30 +331,41 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				sessionId: string,
 				bucketCount: number,
 				lookbackHours: number | null,
-				sharedContext?: SharedHistoryContext
+				sharedContext?: SharedHistoryContext,
+				projectPath?: string
 			): Promise<HistoryGraphData> => {
 				const safeBucketCount = Math.max(1, bucketCount | 0);
 				const lookbackMs =
 					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
-				const filePath = historyManager.getHistoryFilePath(sessionId);
+				const filePath = await historyManager.getHistoryFilePath(sessionId);
 				const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
+				// Local-shared overlay: a non-SSH session whose project dir
+				// has foreign-host JSONL files in `.maestro/history/`.
+				// Typical of an agent running directly on the remote machine
+				// with `shareHistoryToProjectDir` on so a paired Maestro
+				// (SSH'd in from elsewhere) can observe its work.
+				const hasLocalShared = Boolean(
+					!hasShared && projectPath && hasLocalSharedHistory(projectPath)
+				);
 
-				// Cache only when there is no shared history overlay — shared
-				// entries come from arbitrary remote/local files we don't
-				// fingerprint. Bypassing the cache keeps the simple path simple.
-				if (filePath && !hasShared) {
+				// Cache only when there is no shared-history overlay (SSH or
+				// local-mirror). Shared entries come from arbitrary files we
+				// don't fingerprint, so the simple cached path can't see them.
+				if (filePath && !hasShared && !hasLocalShared) {
 					const cache = getHistoryBucketCache();
 					const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
 					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}:lb=${lookbackKey}`;
 					const fp = fileFingerprint(filePath);
-					const hit = cache.get(cacheKey, fp);
+					const hit = await cache.get(cacheKey, fp);
 					if (hit) {
 						return cachedToGraphData(hit, true);
 					}
 
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
-					cache.set({
+					// Fire-and-forget the disk write — the renderer doesn't need to
+					// wait for it; the in-memory cache layer was already updated.
+					void cache.set({
 						version: HISTORY_BUCKET_CACHE_VERSION,
 						cacheKey,
 						sourceFingerprint: fp,
@@ -353,13 +377,14 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
 						cueCount: agg.cueCount,
+						hostCounts: agg.hostCounts,
 						computedAt: Date.now(),
 					});
 					return aggregateToGraphData(agg, safeBucketCount, false);
 				}
 
 				// Shared-history or missing-file path: compute inline, no cache.
-				const entries: HistoryEntry[] = filePath ? historyManager.getEntries(sessionId) : [];
+				const entries: HistoryEntry[] = filePath ? await historyManager.getEntries(sessionId) : [];
 				const maxEntries = deps.getMaxEntries?.();
 				if (hasShared) {
 					try {
@@ -380,6 +405,19 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						}
 					} catch (err) {
 						logger.warn(`Failed to read shared history for graph: ${err}`, LOG_CONTEXT);
+					}
+				} else if (hasLocalShared) {
+					try {
+						const sharedEntries = readRemoteEntriesLocal(projectPath!, maxEntries);
+						const seen = new Set(entries.map((e) => e.id));
+						for (const e of sharedEntries) {
+							if (!seen.has(e.id)) {
+								entries.push(e);
+								seen.add(e.id);
+							}
+						}
+					} catch (err) {
+						logger.warn(`Failed to read local shared history for graph: ${err}`, LOG_CONTEXT);
 					}
 				}
 				const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
@@ -406,7 +444,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
 						? Date.now() - lookbackHours * 60 * 60 * 1000
 						: 0;
-				let entries = historyManager.getEntries(sessionId);
+				let entries = await historyManager.getEntries(sessionId);
 				if (cutoffTime > 0) entries = entries.filter((e) => e.timestamp >= cutoffTime);
 				if (entries.length === 0) return 0;
 				const sorted = sortEntriesByTimestamp(entries);
@@ -438,7 +476,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 			async (entry: HistoryEntry, sharedContext?: SharedHistoryContext) => {
 				const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
 				const maxEntries = deps.getMaxEntries?.();
-				historyManager.addEntry(sessionId, entry.projectPath, entry, maxEntries);
+				await historyManager.addEntry(sessionId, entry.projectPath, entry, maxEntries);
 				logger.info(`Added history entry: ${entry.type}`, LOG_CONTEXT, {
 					summary: entry.summary,
 				});
@@ -481,20 +519,20 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		'history:clear',
 		withIpcErrorLogging(handlerOpts('clear'), async (projectPath?: string, sessionId?: string) => {
 			if (sessionId) {
-				historyManager.clearSession(sessionId);
+				await historyManager.clearSession(sessionId);
 				logger.info(`Cleared history for session: ${sessionId}`, LOG_CONTEXT);
 				return true;
 			}
 
 			if (projectPath) {
 				// Clear all sessions for this project
-				historyManager.clearByProjectPath(projectPath);
+				await historyManager.clearByProjectPath(projectPath);
 				logger.info(`Cleared history for project: ${projectPath}`, LOG_CONTEXT);
 				return true;
 			}
 
 			// Clear all history
-			historyManager.clearAll();
+			await historyManager.clearAll();
 			return true;
 		})
 	);
@@ -505,7 +543,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		'history:delete',
 		withIpcErrorLogging(handlerOpts('delete'), async (entryId: string, sessionId?: string) => {
 			if (sessionId) {
-				const deleted = historyManager.deleteEntry(sessionId, entryId);
+				const deleted = await historyManager.deleteEntry(sessionId, entryId);
 				if (deleted) {
 					logger.info(`Deleted history entry: ${entryId} from session ${sessionId}`, LOG_CONTEXT);
 				} else {
@@ -515,9 +553,9 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 			}
 
 			// Search all sessions for the entry (slower, but works for legacy calls without sessionId)
-			const sessions = historyManager.listSessionsWithHistory();
+			const sessions = await historyManager.listSessionsWithHistory();
 			for (const sid of sessions) {
-				if (historyManager.deleteEntry(sid, entryId)) {
+				if (await historyManager.deleteEntry(sid, entryId)) {
 					logger.info(`Deleted history entry: ${entryId} from session ${sid}`, LOG_CONTEXT);
 					return true;
 				}
@@ -536,7 +574,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 			handlerOpts('update'),
 			async (entryId: string, updates: Partial<HistoryEntry>, sessionId?: string) => {
 				if (sessionId) {
-					const updated = historyManager.updateEntry(sessionId, entryId, updates);
+					const updated = await historyManager.updateEntry(sessionId, entryId, updates);
 					if (updated) {
 						logger.info(`Updated history entry: ${entryId} in session ${sessionId}`, LOG_CONTEXT, {
 							updates,
@@ -551,9 +589,9 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				}
 
 				// Search all sessions for the entry
-				const sessions = historyManager.listSessionsWithHistory();
+				const sessions = await historyManager.listSessionsWithHistory();
 				for (const sid of sessions) {
-					if (historyManager.updateEntry(sid, entryId, updates)) {
+					if (await historyManager.updateEntry(sid, entryId, updates)) {
 						logger.info(`Updated history entry: ${entryId} in session ${sid}`, LOG_CONTEXT, {
 							updates,
 						});
@@ -573,7 +611,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		withIpcErrorLogging(
 			handlerOpts('updateSessionName'),
 			async (agentSessionId: string, sessionName: string) => {
-				const count = historyManager.updateSessionNameByClaudeSessionId(
+				const count = await historyManager.updateSessionNameByClaudeSessionId(
 					agentSessionId,
 					sessionName
 				);

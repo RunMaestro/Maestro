@@ -7,6 +7,7 @@
 import type { ProcessManager } from '../process-manager';
 import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
+import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
 
 /**
  * Sets up the exit listener for process termination.
@@ -37,6 +38,8 @@ export function setupExitListener(
 		| 'patterns'
 		| 'getCueEngine'
 		| 'isCueEnabled'
+		| 'getSshRemoteByName'
+		| 'getAgentContextWindow'
 	>
 ): void {
 	const {
@@ -56,8 +59,47 @@ export function setupExitListener(
 		patterns,
 		getCueEngine,
 		isCueEnabled,
+		getSshRemoteByName,
+		getAgentContextWindow,
 	} = deps;
 	const { REGEX_MODERATOR_SESSION } = patterns;
+
+	async function refreshCopilotUsageAfterExit(
+		groupChatId: string,
+		participantName: string
+	): Promise<void> {
+		try {
+			const chat = await groupChatStorage.loadGroupChat(groupChatId);
+			const participant = chat?.participants.find((p) => p.name === participantName);
+			if (!participant || participant.agentId !== 'copilot-cli') return;
+			if (!participant.agentSessionId) return;
+
+			const sshRemote = participant.sshRemoteName
+				? (getSshRemoteByName?.(participant.sshRemoteName) ?? null)
+				: null;
+			const contextWindow = getAgentContextWindow?.(participant.agentId) ?? 0;
+			if (!contextWindow) return;
+
+			const usage = await extractCopilotUsageFromDisk(
+				participant.agentSessionId,
+				contextWindow,
+				sshRemote
+			);
+			if (!usage) return;
+
+			const updated = await groupChatStorage.updateParticipant(groupChatId, participantName, {
+				contextUsage: usage.contextUsage,
+				tokenCount: usage.tokenCount,
+			});
+			groupChatEmitters.emitParticipantsChanged?.(groupChatId, updated.participants);
+		} catch (err) {
+			logger.warn('[GroupChat] Failed to refresh copilot usage from disk', 'ProcessListener', {
+				error: String(err),
+				groupChatId,
+				participantName,
+			});
+		}
+	}
 
 	processManager.on('exit', (sessionId: string, code: number) => {
 		// Remove power block reason for this session
@@ -237,6 +279,13 @@ export function setupExitListener(
 			groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
 			groupChatRouter.clearActiveParticipantTaskSession(groupChatId, participantName);
 			debugLog('GroupChat:Debug', ` Emitted participant state: idle`);
+
+			// Refresh on-disk usage for copilot-cli participants. Copilot in batch
+			// mode only writes the session.shutdown event (the sole carrier of
+			// per-turn token counts) to events.jsonl on disk — it never appears
+			// on stdout, so the streaming usage path can't see it. Without this,
+			// the participant's context gauge stays at 0% forever.
+			void refreshCopilotUsageAfterExit(groupChatId, participantName);
 
 			// Route the buffered output now that process is complete
 			// IMPORTANT: We must wait for the response to be logged before triggering synthesis

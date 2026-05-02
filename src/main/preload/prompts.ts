@@ -17,6 +17,12 @@ export interface CorePromptData {
 	category: string;
 	content: string;
 	isModified: boolean;
+	/**
+	 * True when the bundled default has changed since the user last saved this
+	 * customization (i.e. an app update shipped a newer default). Always false
+	 * for unmodified prompts.
+	 */
+	hasDefaultDrifted: boolean;
 }
 
 export interface PromptFileEntry {
@@ -52,6 +58,13 @@ export function createPromptsApi() {
 		// Reset to bundled default (immediate effect)
 		reset: (id: string): Promise<{ success: boolean; content?: string; error?: string }> =>
 			ipcRenderer.invoke('prompts:reset', id),
+
+		// Fetch the current bundled (un-customized) content — used to surface the
+		// shipped default after drift is detected.
+		getBundledDefault: (
+			id: string
+		): Promise<{ success: boolean; content?: string; error?: string }> =>
+			ipcRenderer.invoke('prompts:getBundledDefault', id),
 
 		// Get prompts directory path (for "Open Folder" button)
 		getPath: (): Promise<{ success: boolean; path?: string; error?: string }> =>

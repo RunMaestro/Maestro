@@ -15,6 +15,7 @@ import {
 import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../utils/cliDetection';
 import { getShellPath } from '../../runtime/getShellPath';
 import { captureMessage } from '../../utils/sentry';
+import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 import {
 	parseGitBranches,
 	parseGitTags,
@@ -1212,7 +1213,12 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { gitSubdirs };
 				} catch (err) {
-					void captureException(err);
+					// ENOENT is expected when the configured parent path has been moved
+					// or deleted from disk — surface to logs but don't pollute Sentry.
+					const code = (err as NodeJS.ErrnoException | undefined)?.code;
+					if (code !== 'ENOENT') {
+						void captureException(err);
+					}
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
 					// Distinguish a failed scan from a successful "no subdirs" result so
 					// the renderer doesn't bulk-flag every existing child session as removed.
@@ -1272,7 +1278,10 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					// Start watching the directory (only top level, not recursive)
 					const watcher = chokidar.watch(worktreePath, {
-						ignored: /(^|[/\\])\../, // Ignore dotfiles
+						ignored: [
+							/(^|[/\\])\../, // Ignore dotfiles
+							WINDOWS_LOCKED_SYSTEM_FILES,
+						],
 						persistent: true,
 						ignoreInitial: true,
 						depth: 0, // Only watch top-level directory changes
@@ -1405,7 +1414,13 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { success: true };
 				} catch (err) {
-					void captureException(err);
+					// ENOENT is expected when the worktree parent path has been moved
+					// or deleted; the renderer surfaces this as "stale" — no need to
+					// page Sentry on user filesystem state.
+					const code = (err as NodeJS.ErrnoException | undefined)?.code;
+					if (code !== 'ENOENT') {
+						void captureException(err);
+					}
 					logger.error(`${LOG_CONTEXT} Failed to watch worktree directory ${worktreePath}: ${err}`);
 					return { success: false, error: String(err) };
 				}

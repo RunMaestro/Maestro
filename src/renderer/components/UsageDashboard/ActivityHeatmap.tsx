@@ -579,7 +579,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3 className="text-sm font-medium card-enter" style={{ color: theme.colors.textMain }}>
 					Activity Heatmap
 				</h3>
 				<div className="flex items-center gap-2">
@@ -621,7 +621,9 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			</div>
 
-			{/* GitHub-style heatmap for year/all views */}
+			{/* GitHub-style heatmap for year/all views — week columns stretch to
+			    fill the container instead of using a fixed 13px cell width, so
+			    the heatmap fills the modal regardless of viewport width. */}
 			{useGitHubLayout && gitHubGrid && (
 				<div className="flex gap-2">
 					{/* Day of week labels (Y-axis) */}
@@ -642,18 +644,19 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 					</div>
 
 					{/* Grid container */}
-					<div className="flex-1 overflow-x-auto">
-						{/* Month labels row */}
-						<div className="flex" style={{ marginBottom: 6, height: 18 }}>
+					<div className="flex-1 min-w-0">
+						{/* Month labels row — column widths derived from the same flex
+						    distribution as the cells (each week column = 1 unit). */}
+						<div className="flex gap-[2px]" style={{ marginBottom: 6, height: 18 }}>
 							{gitHubGrid.monthLabels.map((monthLabel, idx) => (
 								<div
 									key={`${monthLabel.month}-${idx}`}
-									className="text-xs"
+									className="text-xs min-w-0"
 									style={{
 										color: theme.colors.textDim,
-										width: monthLabel.colSpan * 15, // 13px cell + 2px gap
+										flexGrow: monthLabel.colSpan,
+										flexBasis: 0,
 										paddingLeft: 2,
-										flexShrink: 0,
 									}}
 								>
 									{monthLabel.colSpan >= 3 ? monthLabel.month : ''}
@@ -666,16 +669,15 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 							{gitHubGrid.weeks.map((week, weekIdx) => (
 								<div
 									key={weekIdx}
-									className="flex flex-col gap-[2px]"
-									style={{ width: 13, flexShrink: 0 }}
+									className="flex flex-col gap-[2px] min-w-0"
+									style={{ flex: '1 1 0' }}
 								>
 									{week.days.map((day) => (
 										<div
 											key={day.dateString}
-											className="rounded-sm cursor-default"
+											className="rounded-sm cursor-default w-full"
 											style={{
-												width: 13,
-												height: 13,
+												aspectRatio: '1 / 1',
 												backgroundColor: day.isPlaceholder
 													? 'transparent'
 													: getIntensityColor(day.intensity, theme, colorBlindMode),
@@ -707,7 +709,9 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			)}
 
-			{/* 4-hour block heatmap for month/quarter views */}
+			{/* 4-hour block heatmap for month/quarter views — day columns are
+			    flex 1/0/0 so the grid stretches to fill the modal instead of
+			    fixing every column at 14px and forcing horizontal scroll. */}
 			{use4HourBlockLayout && blockGrid && (
 				<div className="flex gap-2">
 					{/* Time block labels (Y-axis) */}
@@ -726,9 +730,9 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 						))}
 					</div>
 
-					{/* Grid of cells with scrolling */}
-					<div className="flex-1 overflow-x-auto">
-						<div className="flex gap-[3px]" style={{ minWidth: blockGrid.dayColumns.length * 17 }}>
+					{/* Grid of cells — fills the available width */}
+					<div className="flex-1 min-w-0">
+						<div className="flex gap-[3px]">
 							{blockGrid.dayColumns.map((col, colIdx) => {
 								// Show day number for all days, but only show month on 1st of month
 								const isFirstOfMonth = col.date.getDate() === 1;
@@ -736,8 +740,8 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 								return (
 									<div
 										key={col.dateString}
-										className="flex flex-col gap-[3px]"
-										style={{ width: 14, flexShrink: 0 }}
+										className="flex flex-col gap-[3px] min-w-0"
+										style={{ flex: '1 1 0' }}
 									>
 										{/* Day label with month indicator */}
 										<div
@@ -755,7 +759,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 										{col.blocks.map((block) => (
 											<div
 												key={`${col.dateString}-${block.blockIndex}`}
-												className="rounded-sm cursor-default"
+												className="rounded-sm cursor-default w-full"
 												style={{
 													height: 17,
 													backgroundColor: block.isPlaceholder

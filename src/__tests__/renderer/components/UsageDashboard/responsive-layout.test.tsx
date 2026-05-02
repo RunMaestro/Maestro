@@ -55,6 +55,14 @@ vi.mock('lucide-react', () => {
 		Trophy: createIcon('trophy', '🏆'),
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
+		Filter: createIcon('filter', '🔍'),
+		Cpu: createIcon('cpu', '🖥️'),
+		DollarSign: createIcon('dollar', '💲'),
+		Activity: createIcon('activity', '📈'),
+		// New SummaryCards momentum-row icons
+		Flame: createIcon('flame', '🔥'),
+		CalendarCheck: createIcon('calendar-check', '📆'),
+		GitBranch: createIcon('git-branch', '🌿'),
 	};
 });
 
@@ -391,16 +399,17 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('renders all 10 metric cards regardless of column count', async () => {
+		it('renders all 12 metric cards regardless of column count', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Should always have 10 metric cards
+			// Card count grew from 10 to 12 (Interactive % / Local % were
+			// replaced with Current Streak / Best Day / Active Days / Worktree %).
 			const metricCards = screen.getAllByTestId('metric-card');
-			expect(metricCards).toHaveLength(10);
+			expect(metricCards).toHaveLength(12);
 		});
 	});
 
@@ -628,7 +637,9 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			const autoRunTab = screen.getAllByRole('tab')[3];
+			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// between Agents and Activity.
+			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
 				autoRunTab.click();
 			});
@@ -652,7 +663,9 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			const autoRunTab = screen.getAllByRole('tab')[3];
+			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// between Agents and Activity.
+			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
 				autoRunTab.click();
 			});
@@ -675,7 +688,9 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			const autoRunTab = screen.getAllByRole('tab')[3];
+			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// between Agents and Activity.
+			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
 				autoRunTab.click();
 			});
@@ -823,14 +838,16 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
 			});
 
-			// Switch to agents
+			// Switch to agents — its single section is now agent-overview-cards
+			// (the previous agent-comparison chart moved to the new "Agent
+			// Overview" tab).
 			const agentsTab = screen.getAllByRole('tab')[1];
 			act(() => {
 				agentsTab.click();
 			});
 
 			await waitFor(() => {
-				expect(screen.getByTestId('section-agent-comparison')).toBeInTheDocument();
+				expect(screen.getByTestId('section-agent-overview-cards')).toBeInTheDocument();
 				expect(screen.queryByTestId('summary-cards')).not.toBeInTheDocument();
 			});
 

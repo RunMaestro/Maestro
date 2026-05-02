@@ -183,6 +183,8 @@ export interface UseSettingsReturn {
 	// UI collapse states (persistent)
 	ungroupedCollapsed: boolean;
 	setUngroupedCollapsed: (value: boolean) => void;
+	groupChatsExpanded: boolean;
+	setGroupChatsExpanded: (value: boolean) => void;
 
 	// Onboarding settings
 	tourCompleted: boolean;
@@ -346,6 +348,18 @@ export interface UseSettingsReturn {
 	setUseNativeTitleBar: (value: boolean) => void;
 	autoHideMenuBar: boolean;
 	setAutoHideMenuBar: (value: boolean) => void;
+
+	// Main header panel pill toggles
+	showSessionIdPill: boolean;
+	setShowSessionIdPill: (value: boolean) => void;
+	showSessionCostPill: boolean;
+	setShowSessionCostPill: (value: boolean) => void;
+
+	// Worktree display in left panel agent list
+	showWorktreePill: boolean;
+	setShowWorktreePill: (value: boolean) => void;
+	showWorktreeBranchName: boolean;
+	setShowWorktreeBranchName: (value: boolean) => void;
 
 	// Group Chat settings
 	moderatorStandingInstructions: string;

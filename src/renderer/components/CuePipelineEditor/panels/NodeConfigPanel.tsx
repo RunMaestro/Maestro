@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-react';
+import { Trash2, Zap, ChevronsUp, ChevronsDown, ChevronDown, Play, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type {
 	PipelineNode,
@@ -49,6 +49,8 @@ interface NodeConfigPanelProps {
 	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
+	/** Dismiss the panel by clearing the selection. */
+	onClose?: () => void;
 	onSwitchToAgent?: (sessionId: string) => void;
 	triggerDrawerOpen?: boolean;
 	agentDrawerOpen?: boolean;
@@ -76,6 +78,7 @@ function NodeConfigPanelInner({
 	onUpdateEdge,
 	onUpdateEdgePrompt,
 	onDeleteNode,
+	onClose,
 	onSwitchToAgent,
 	triggerDrawerOpen,
 	agentDrawerOpen,
@@ -288,6 +291,26 @@ function NodeConfigPanelInner({
 							title={expanded ? 'Collapse panel' : 'Expand panel'}
 						>
 							<ExpandIcon size={14} />
+						</button>
+					)}
+					{onClose && (
+						<button
+							onClick={onClose}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								padding: 4,
+								color: theme.colors.textDim,
+								backgroundColor: 'transparent',
+								border: 'none',
+								borderRadius: 4,
+								cursor: 'pointer',
+							}}
+							onMouseEnter={(e) => (e.currentTarget.style.color = theme.colors.textMain)}
+							onMouseLeave={(e) => (e.currentTarget.style.color = theme.colors.textDim)}
+							title="Close panel"
+						>
+							<ChevronDown size={14} />
 						</button>
 					)}
 					<button

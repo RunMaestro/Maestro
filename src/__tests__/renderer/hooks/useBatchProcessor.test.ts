@@ -1347,6 +1347,75 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
+
+		it('should fire onComplete with non-zero elapsed time on kill so the leaderboard receives it', async () => {
+			// Regression: killBatchRun used to call timeTracking.stopTracking() before the
+			// loop's natural cleanup ran. The natural cleanup then read getElapsedTime() as 0
+			// and invoked onComplete with elapsedTimeMs:0. The handler in useBatchHandlers
+			// gates leaderboard submission on `elapsedTimeMs > 0`, so kill events were silently
+			// dropped from the leaderboard tally. The fix moves the onComplete call into
+			// killBatchRun itself (where the elapsed time is still readable).
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() => {
+				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
+			});
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalled();
+			});
+
+			// Let the tracker accumulate a measurable chunk of elapsed time
+			await new Promise((r) => setTimeout(r, 25));
+
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			expect(mockOnComplete).toHaveBeenCalled();
+			const completeArg = mockOnComplete.mock.calls[0][0];
+			expect(completeArg.wasStopped).toBe(true);
+			expect(completeArg.elapsedTimeMs).toBeGreaterThan(0);
+			expect(completeArg.sessionId).toBe('test-session-id');
+
+			// Let the held processTask resolve so the loop's natural cleanup can run.
+			resolveAgent!({ success: true, agentSessionId: 'test-session' });
+			await new Promise((r) => setTimeout(r, 25));
+
+			// Crucially, the natural cleanup must NOT fire a second onComplete with 0ms
+			// (which would otherwise be silently dropped by the leaderboard gate but is still
+			// a state-leak symptom that we want to lock down).
+			expect(mockOnComplete).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('worktree handling', () => {
@@ -2569,12 +2638,18 @@ describe('useBatchProcessor hook', () => {
 			let doc1Calls = 0;
 			let doc2Calls = 0;
 
-			// Mock readDoc with call-count thresholds that account for the recount-all-documents
-			// logic after each task. For each document, reads happen at:
-			//   doc1: initial count, doc-loop entry, processTask post-read, recount-all
-			//   doc2: initial count, recount-all (after doc1), doc-loop entry, processTask post-read
-			// The "agent completed" transition (unchecked → checked) should happen after processTask,
-			// so doc1 returns checked on call 3+ and doc2 returns checked on call 4+.
+			// Mock readDoc with call-count thresholds that account for the per-task
+			// "baseline read of other docs" plus the recount-all-documents pass after
+			// each task. Per-doc read sequence (loopEnabled=false, single iteration):
+			//   doc1: initial count, doc-loop entry, processTask pre-spawn, processTask
+			//         post-spawn, recount-all (after doc1), baseline (during doc2),
+			//         recount-all (after doc2)
+			//   doc2: initial count, baseline (during doc1), recount-all (after doc1),
+			//         doc-loop entry, processTask pre-spawn, processTask post-spawn,
+			//         recount-all (after doc2)
+			// The "agent completed" transition (unchecked → checked) is simulated by
+			// flipping content on the first read after the doc's processTask is
+			// entered: doc1 flips on call 3+, doc2 flips on call 5+.
 			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
 				readOrder.push(filename);
 
@@ -2585,7 +2660,7 @@ describe('useBatchProcessor hook', () => {
 				}
 				if (filename === 'doc2.md') {
 					doc2Calls++;
-					if (doc2Calls <= 3) return { success: true, content: '- [ ] Doc2 Task' };
+					if (doc2Calls <= 4) return { success: true, content: '- [ ] Doc2 Task' };
 					return { success: true, content: '- [x] Doc2 Task' };
 				}
 				return { success: true, content: '' };

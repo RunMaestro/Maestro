@@ -54,7 +54,6 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
-	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 
 	// --- Store actions (stable via getState) ---
@@ -63,6 +62,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 	// --- Settings ---
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 
 	const cycleSession = useCallback(
 		(dir: 'next' | 'prev') => {

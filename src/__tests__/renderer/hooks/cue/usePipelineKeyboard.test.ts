@@ -21,6 +21,8 @@ interface SetupOpts {
 	selectedEdgeId?: string | null;
 	triggerDrawerOpen?: boolean;
 	agentDrawerOpen?: boolean;
+	/** Mock editor root. Defaults to a fresh div appended to document.body. */
+	container?: HTMLElement;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -32,6 +34,15 @@ function setup(opts: SetupOpts = {}) {
 	const setAgentDrawerOpen = vi.fn();
 	const setInteractionMode = vi.fn();
 	const handleSave = vi.fn();
+
+	const container =
+		opts.container ??
+		(() => {
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+			return el;
+		})();
+	const containerRef = { current: container };
 
 	renderHook(() =>
 		usePipelineKeyboard({
@@ -52,6 +63,7 @@ function setup(opts: SetupOpts = {}) {
 			setAgentDrawerOpen,
 			setInteractionMode,
 			handleSave,
+			containerRef,
 		})
 	);
 
@@ -64,6 +76,7 @@ function setup(opts: SetupOpts = {}) {
 		setAgentDrawerOpen,
 		setInteractionMode,
 		handleSave,
+		container,
 	};
 }
 
@@ -193,6 +206,8 @@ describe('usePipelineKeyboard', () => {
 	describe('cleanup', () => {
 		it('removes listener on unmount', () => {
 			const onDeleteNode = vi.fn();
+			const container = document.createElement('div');
+			document.body.appendChild(container);
 			const { unmount } = renderHook(() =>
 				usePipelineKeyboard({
 					isAllPipelinesView: false,
@@ -212,6 +227,7 @@ describe('usePipelineKeyboard', () => {
 					setAgentDrawerOpen: vi.fn(),
 					setInteractionMode: vi.fn(),
 					handleSave: vi.fn(),
+					containerRef: { current: container },
 				})
 			);
 			unmount();
@@ -245,13 +261,25 @@ describe('usePipelineKeyboard', () => {
 			expect(h.setInteractionMode).toHaveBeenCalledWith('pointer');
 		});
 
-		it('does not change mode when typing in an input', () => {
+		it('does not change mode when typing in an input INSIDE the editor', () => {
 			const h = setup();
 			const input = document.createElement('input');
-			document.body.appendChild(input);
+			h.container.appendChild(input);
 			dispatch('p', { target: input });
 			dispatch('s', { target: input });
 			expect(h.setInteractionMode).not.toHaveBeenCalled();
+		});
+
+		it('still switches mode when an input OUTSIDE the editor has focus', () => {
+			// Regression: when the Cue modal is open above an AI textarea that
+			// retained focus, P/S must claim the keystroke (not let the hidden
+			// background input swallow it).
+			const h = setup();
+			const externalInput = document.createElement('textarea');
+			document.body.appendChild(externalInput);
+			const ev = dispatch('p', { target: externalInput });
+			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+			expect(ev.defaultPrevented).toBe(true);
 		});
 
 		it('does not change mode when Cmd is held (Cmd+S still saves)', () => {

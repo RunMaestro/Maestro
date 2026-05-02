@@ -380,8 +380,8 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 								borderBottom: `1px solid ${theme.colors.border}`,
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
-								minWidth: '220px',
-								maxWidth: '320px',
+								minWidth: '13.75rem',
+								maxWidth: '20rem',
 							}}
 						>
 							<div className="px-3 py-2 border-b" style={{ borderColor: theme.colors.border }}>

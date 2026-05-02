@@ -168,7 +168,10 @@ export function computeOwnershipWarning(params: {
 			return `settings.owner_agent_id "${explicitOwner}" does not match any agent in this projectRoot — unowned subscriptions are disabled until this is fixed.`;
 		}
 		if (owner.id === session.id) return undefined;
-		return `settings.owner_agent_id targets "${explicitOwner}" — unowned subscriptions run on that agent instead.`;
+		// Show the resolved display name rather than the raw `explicitOwner`
+		// value, which is often a UUID — the dashboard tooltip is meant to be
+		// human-readable, and a bare uuid is unhelpful at a glance.
+		return `settings.owner_agent_id targets "${owner.name}" — unowned subscriptions run on that agent instead.`;
 	}
 
 	const firstForRoot = sameRoot[0];

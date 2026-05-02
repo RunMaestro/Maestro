@@ -139,14 +139,14 @@ export function SessionContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border"
+			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '10rem',
 			}}
 		>
 			<button
@@ -236,11 +236,11 @@ export function SessionContextMenu({
 
 					{showMoveSubmenu && (
 						<div
-							className="absolute py-1 rounded-md shadow-xl border"
+							className="absolute py-1 rounded-md shadow-xl border whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								borderColor: theme.colors.border,
-								minWidth: '140px',
+								minWidth: '8.75rem',
 								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
 								...(submenuPosition.horizontal === 'left'
 									? { right: '100%', marginRight: 4 }

@@ -15,6 +15,7 @@
  */
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { app } from 'electron';
@@ -24,7 +25,7 @@ import { captureException } from './sentry';
 const LOG_CONTEXT = '[HistoryBucketCache]';
 
 /** Bump to invalidate every existing cache entry on disk. */
-export const HISTORY_BUCKET_CACHE_VERSION = 1;
+export const HISTORY_BUCKET_CACHE_VERSION = 2;
 
 /**
  * Single bucket of the activity graph — counts of each entry type within the
@@ -58,6 +59,12 @@ export interface CachedBucketData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	/**
+	 * Per-host entry counts within the same window the buckets cover. Key
+	 * is the entry's `hostname`, or the synthetic `"__local__"` for entries
+	 * with no hostname (i.e. written by this machine's per-session store).
+	 */
+	hostCounts: Record<string, number>;
 	/** Unix ms when the cache entry was written. */
 	computedAt: number;
 }
@@ -70,19 +77,27 @@ export interface CachedBucketData {
 export class HistoryBucketCache {
 	private cacheDir: string;
 	private memCache = new Map<string, CachedBucketData>();
+	/**
+	 * Tracks in-flight disk reads so concurrent get() calls for the same
+	 * key share one readFile rather than racing. Cleared as soon as the
+	 * read settles. Important on the cold-cache path where the activity
+	 * graph and the unified history view can both hit the same key in
+	 * the same tick.
+	 */
+	private inflightReads = new Map<string, Promise<CachedBucketData | null>>();
 
 	constructor(baseDir?: string) {
 		this.cacheDir = path.join(baseDir ?? app.getPath('userData'), 'history-cache');
-		this.ensureDir();
+		// Note: directory creation is deferred to the first set() so the
+		// constructor stays sync. get() tolerates a missing dir by returning
+		// null on read failure.
 	}
 
-	private ensureDir(): void {
-		if (!fs.existsSync(this.cacheDir)) {
-			try {
-				fs.mkdirSync(this.cacheDir, { recursive: true });
-			} catch (err) {
-				logger.warn(`Failed to create cache dir: ${err}`, LOG_CONTEXT);
-			}
+	private async ensureDir(): Promise<void> {
+		try {
+			await fsp.mkdir(this.cacheDir, { recursive: true });
+		} catch (err) {
+			logger.warn(`Failed to create cache dir: ${err}`, LOG_CONTEXT);
 		}
 	}
 
@@ -95,31 +110,55 @@ export class HistoryBucketCache {
 	/**
 	 * Returns cached data only if `expectedFingerprint` matches what was stored.
 	 * Otherwise returns null — caller should recompute and call `set()`.
+	 *
+	 * Warm path (in-memory hit): returns synchronously-resolved promise; no
+	 * disk I/O. Cold path: reads via fs/promises so it doesn't block other
+	 * IPC handlers behind a sync read while the activity graph initializes.
 	 */
-	get(cacheKey: string, expectedFingerprint: string): CachedBucketData | null {
+	async get(cacheKey: string, expectedFingerprint: string): Promise<CachedBucketData | null> {
 		const mem = this.memCache.get(cacheKey);
 		if (mem && mem.sourceFingerprint === expectedFingerprint) return mem;
 
-		const fp = this.filePathFor(cacheKey);
-		if (!fs.existsSync(fp)) return null;
-
-		try {
-			const data = JSON.parse(fs.readFileSync(fp, 'utf-8')) as CachedBucketData;
-			if (data.version !== HISTORY_BUCKET_CACHE_VERSION) return null;
-			if (data.sourceFingerprint !== expectedFingerprint) return null;
-			this.memCache.set(cacheKey, data);
-			return data;
-		} catch (err) {
-			logger.warn(`Failed to read cache for ${cacheKey}: ${err}`, LOG_CONTEXT);
+		// De-dupe in-flight reads for the same key. Without this, a renderer
+		// that asks for the same bucket twice in quick succession (e.g. graph
+		// + summary panel) would issue two parallel disk reads.
+		const existing = this.inflightReads.get(cacheKey);
+		if (existing) {
+			const data = await existing;
+			if (data && data.sourceFingerprint === expectedFingerprint) return data;
 			return null;
+		}
+
+		const fp = this.filePathFor(cacheKey);
+		const readPromise = (async (): Promise<CachedBucketData | null> => {
+			try {
+				const raw = await fsp.readFile(fp, 'utf-8');
+				const data = JSON.parse(raw) as CachedBucketData;
+				if (data.version !== HISTORY_BUCKET_CACHE_VERSION) return null;
+				this.memCache.set(cacheKey, data);
+				return data;
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				if (code === 'ENOENT') return null; // cold-cache miss is expected
+				logger.warn(`Failed to read cache for ${cacheKey}: ${err}`, LOG_CONTEXT);
+				return null;
+			}
+		})();
+		this.inflightReads.set(cacheKey, readPromise);
+		try {
+			const data = await readPromise;
+			if (data && data.sourceFingerprint !== expectedFingerprint) return null;
+			return data;
+		} finally {
+			this.inflightReads.delete(cacheKey);
 		}
 	}
 
-	set(data: CachedBucketData): void {
+	async set(data: CachedBucketData): Promise<void> {
 		this.memCache.set(data.cacheKey, data);
 		try {
-			this.ensureDir();
-			fs.writeFileSync(this.filePathFor(data.cacheKey), JSON.stringify(data), 'utf-8');
+			await this.ensureDir();
+			await fsp.writeFile(this.filePathFor(data.cacheKey), JSON.stringify(data), 'utf-8');
 		} catch (err) {
 			logger.warn(`Failed to write cache for ${data.cacheKey}: ${err}`, LOG_CONTEXT);
 			void captureException(err, {
@@ -129,26 +168,30 @@ export class HistoryBucketCache {
 		}
 	}
 
-	invalidate(cacheKey: string): void {
+	async invalidate(cacheKey: string): Promise<void> {
 		this.memCache.delete(cacheKey);
 		const fp = this.filePathFor(cacheKey);
 		try {
-			if (fs.existsSync(fp)) fs.unlinkSync(fp);
+			await fsp.unlink(fp);
 		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return; // already gone is fine
 			logger.warn(`Failed to delete cache for ${cacheKey}: ${err}`, LOG_CONTEXT);
 		}
 	}
 
-	clear(): void {
+	async clear(): Promise<void> {
 		this.memCache.clear();
-		if (!fs.existsSync(this.cacheDir)) return;
 		try {
-			for (const f of fs.readdirSync(this.cacheDir)) {
-				if (f.endsWith('.json')) {
-					fs.unlinkSync(path.join(this.cacheDir, f));
-				}
-			}
+			const entries = await fsp.readdir(this.cacheDir);
+			await Promise.all(
+				entries
+					.filter((f) => f.endsWith('.json'))
+					.map((f) => fsp.unlink(path.join(this.cacheDir, f)).catch(() => undefined))
+			);
 		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return; // cache dir doesn't exist yet — nothing to clear
 			logger.warn(`Failed to clear cache dir: ${err}`, LOG_CONTEXT);
 		}
 	}

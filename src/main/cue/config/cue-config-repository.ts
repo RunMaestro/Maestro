@@ -234,8 +234,16 @@ export function pruneOrphanedPromptFiles(
 }
 
 /**
- * Watches both canonical and legacy Cue config paths.
- * Debounces onChange by 1 second.
+ * Watches both canonical and legacy Cue config paths, plus every `.md` file
+ * under `.maestro/prompts/`. Debounces onChange by 1 second.
+ *
+ * Prompt files are watched so that a "YAML written first, prompt files
+ * written later" sequence — common when an agent uses a generic file-write
+ * tool instead of `cue:writeYaml` — still triggers a reload once the
+ * referenced prompt files appear on disk. Without this, the YAML watcher
+ * fires a reload while the prompt files are missing, the normalizer caches
+ * empty prompts, and the editor renders blank textareas indefinitely
+ * because no subsequent YAML change ever re-triggers the reload.
  *
  * Uses a `torn` flag and instance check so any event that slips past
  * `watcher.close()` (chokidar emits an `unlink` for in-flight events on some
@@ -255,10 +263,16 @@ export function watchCueConfigFile(
 ): () => void {
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
+	// Glob pattern (chokidar v3 supports globs in absolute paths). Matches
+	// every `.md` file directly inside `.maestro/prompts/` — recursive
+	// subdirectories aren't part of the prompt layout, so a single-level
+	// glob keeps the watch set focused. The directory itself can be missing;
+	// chokidar starts watching once it appears.
+	const promptsGlob = path.join(projectRoot, CUE_PROMPTS_DIR, '*.md');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 
-	const watcher = chokidar.watch([canonicalPath, legacyPath], {
+	const watcher = chokidar.watch([canonicalPath, legacyPath, promptsGlob], {
 		persistent: true,
 		ignoreInitial: true,
 	});

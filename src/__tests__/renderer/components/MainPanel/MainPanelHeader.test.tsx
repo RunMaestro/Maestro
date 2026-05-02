@@ -13,6 +13,8 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
 			},
+			showSessionIdPill: true,
+			showSessionCostPill: true,
 		})
 	),
 }));

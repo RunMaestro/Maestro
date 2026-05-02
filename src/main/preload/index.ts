@@ -39,6 +39,7 @@ import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './au
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
 import { createStatsApi } from './stats';
+import { createCueStatsApi } from './cueStats';
 import { createNotificationApi } from './notifications';
 import { createLeaderboardApi } from './leaderboard';
 import { createAttachmentsApi } from './attachments';
@@ -186,6 +187,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Stats API
 	stats: createStatsApi(),
 
+	// Cue Stats API (Cue Dashboard aggregation query)
+	cueStats: createCueStatsApi(),
+
 	// Leaderboard API
 	leaderboard: createLeaderboardApi(),
 
@@ -262,6 +266,8 @@ export {
 	createGroupChatApi,
 	// Stats
 	createStatsApi,
+	// Cue Stats (Phase 03 aggregation query)
+	createCueStatsApi,
 	// Notifications
 	createNotificationApi,
 	// Leaderboard
@@ -400,6 +406,12 @@ export type {
 	SessionCreatedEvent,
 	StatsAggregation,
 } from './stats';
+export type {
+	// From cueStats (Phase 03)
+	CueStatsApi,
+	CueStatsAggregation,
+	CueStatsTimeRange,
+} from './cueStats';
 export type {
 	// From notifications
 	NotificationApi,

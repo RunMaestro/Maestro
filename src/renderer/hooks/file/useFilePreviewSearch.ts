@@ -394,6 +394,9 @@ export function useFilePreviewSearch({
 			const currentMatch = matches[validIndex];
 			if (currentMatch) {
 				const textarea = textareaRef.current;
+				// Briefly focus the textarea to set selection, then return focus to the
+				// search input so the user can keep typing/navigating without the cursor
+				// jumping into the editor (matches browser Cmd+F behavior).
 				textarea.focus();
 				textarea.setSelectionRange(currentMatch.start, currentMatch.end);
 
@@ -404,6 +407,8 @@ export function useFilePreviewSearch({
 				const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
 				const targetScroll = (lineNumber - 5) * lineHeight; // Leave some lines above
 				textarea.scrollTop = Math.max(0, targetScroll);
+
+				searchInputRef.current?.focus();
 			}
 		}
 	}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent]);

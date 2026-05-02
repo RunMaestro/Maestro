@@ -10,7 +10,16 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { ExternalLink, Maximize2, Minimize2, HelpCircle, X, Eye, EyeOff } from 'lucide-react';
+import {
+	ExternalLink,
+	Maximize2,
+	Minimize2,
+	HelpCircle,
+	X,
+	Eye,
+	EyeOff,
+	GitCompare,
+} from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
 import { captureException, captureMessage } from '../../../utils/sentry';
@@ -34,6 +43,7 @@ interface CorePrompt {
 	category: string;
 	content: string;
 	isModified: boolean;
+	hasDefaultDrifted: boolean;
 }
 
 interface MaestroPromptsTabProps {
@@ -274,6 +284,12 @@ export function MaestroPromptsTab({
 	const [isPreviewMode, setIsPreviewMode] = useState(false);
 	const [previewContent, setPreviewContent] = useState('');
 	const [isBuildingPreview, setIsBuildingPreview] = useState(false);
+	// "Show bundled default" overlay: read-only view of the current bundled
+	// content, surfaced when the user's customization has drifted from the
+	// default after an app update. Mutually exclusive with preview mode.
+	const [isShowingDefault, setIsShowingDefault] = useState(false);
+	const [bundledDefaultContent, setBundledDefaultContent] = useState('');
+	const [isLoadingBundledDefault, setIsLoadingBundledDefault] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const activeSession = useActiveSession();
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
@@ -295,7 +311,7 @@ export function MaestroPromptsTab({
 		},
 	});
 
-	// Layered escape: help → preview → expanded editor → list view → (modal closes)
+	// Layered escape: help → overlays (preview/default) → expanded editor → list view → (modal closes)
 	const handleEscape = useCallback(() => {
 		if (showHelp) {
 			setShowHelp(false);
@@ -305,26 +321,31 @@ export function MaestroPromptsTab({
 			setIsPreviewMode(false);
 			return true;
 		}
+		if (isShowingDefault) {
+			setIsShowingDefault(false);
+			return true;
+		}
 		if (isEditorExpanded) {
 			setIsEditorExpanded(false);
 			return true;
 		}
 		return false;
-	}, [showHelp, isPreviewMode, isEditorExpanded]);
+	}, [showHelp, isPreviewMode, isShowingDefault, isEditorExpanded]);
 
-	// Register escape handler with parent so escape navigates: help → preview → expanded → list → close modal
+	// Register escape handler with parent so escape navigates through overlays before closing the modal
 	useEffect(() => {
-		if (showHelp || isPreviewMode || isEditorExpanded) {
+		if (showHelp || isPreviewMode || isShowingDefault || isEditorExpanded) {
 			onEscapeHandled?.(handleEscape);
 		} else {
 			onEscapeHandled?.(null);
 		}
 		return () => onEscapeHandled?.(null);
-	}, [showHelp, isPreviewMode, isEditorExpanded, onEscapeHandled, handleEscape]);
+	}, [showHelp, isPreviewMode, isShowingDefault, isEditorExpanded, onEscapeHandled, handleEscape]);
 
-	// Exit preview mode when switching prompts or editing
+	// Exit overlays when switching prompts
 	useEffect(() => {
 		setIsPreviewMode(false);
+		setIsShowingDefault(false);
 	}, [selectedPrompt?.id]);
 
 	const handleTogglePreview = useCallback(async () => {
@@ -332,6 +353,8 @@ export function MaestroPromptsTab({
 			setIsPreviewMode(false);
 			return;
 		}
+		// Preview and "show bundled default" are mutually exclusive overlays.
+		setIsShowingDefault(false);
 		if (!activeSession) {
 			setPreviewContent(
 				'Preview unavailable: no active agent session to resolve template variables against.'
@@ -375,6 +398,36 @@ export function MaestroPromptsTab({
 			setIsBuildingPreview(false);
 		}
 	}, [isPreviewMode, activeSession, editedContent, conductorProfile]);
+
+	const handleToggleShowDefault = useCallback(async () => {
+		if (isShowingDefault) {
+			setIsShowingDefault(false);
+			return;
+		}
+		if (!selectedPrompt) return;
+		// Preview and "show bundled default" are mutually exclusive overlays.
+		setIsPreviewMode(false);
+		setIsLoadingBundledDefault(true);
+		try {
+			const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
+			if (result.success && typeof result.content === 'string') {
+				setBundledDefaultContent(result.content);
+				setIsShowingDefault(true);
+			} else {
+				const msg = result.error || 'Failed to load bundled default';
+				setBundledDefaultContent(`Failed to load bundled default: ${msg}`);
+				setIsShowingDefault(true);
+			}
+		} catch (err) {
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'MaestroPromptsTab.toggleShowDefault', promptId: selectedPrompt.id },
+			});
+			setBundledDefaultContent(`Failed to load bundled default: ${String(err)}`);
+			setIsShowingDefault(true);
+		} finally {
+			setIsLoadingBundledDefault(false);
+		}
+	}, [isShowingDefault, selectedPrompt]);
 
 	// Auto-dismiss success message after 3 seconds
 	useEffect(() => {
@@ -433,6 +486,7 @@ export function MaestroPromptsTab({
 				description: p.description,
 				category: p.category,
 				isModified: p.isModified,
+				hasDefaultDrifted: p.hasDefaultDrifted,
 			}));
 	}, [prompts]);
 
@@ -480,14 +534,21 @@ export function MaestroPromptsTab({
 			if (result.success) {
 				// Refresh all renderer prompt caches so the edit takes effect immediately
 				await refreshRendererPrompts();
+				// Saving re-baselines against the current bundled hash, so any prior
+				// drift indicator clears immediately.
 				setPrompts((prev) =>
 					prev.map((p) =>
-						p.id === selectedPrompt.id ? { ...p, content: editedContent, isModified: true } : p
+						p.id === selectedPrompt.id
+							? { ...p, content: editedContent, isModified: true, hasDefaultDrifted: false }
+							: p
 					)
 				);
 				setSelectedPrompt((prev) =>
-					prev ? { ...prev, content: editedContent, isModified: true } : null
+					prev
+						? { ...prev, content: editedContent, isModified: true, hasDefaultDrifted: false }
+						: null
 				);
+				setIsShowingDefault(false);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Changes saved');
 			} else {
@@ -524,13 +585,18 @@ export function MaestroPromptsTab({
 				await refreshRendererPrompts();
 				setPrompts((prev) =>
 					prev.map((p) =>
-						p.id === selectedPrompt.id ? { ...p, content: result.content!, isModified: false } : p
+						p.id === selectedPrompt.id
+							? { ...p, content: result.content!, isModified: false, hasDefaultDrifted: false }
+							: p
 					)
 				);
 				setSelectedPrompt((prev) =>
-					prev ? { ...prev, content: result.content!, isModified: false } : null
+					prev
+						? { ...prev, content: result.content!, isModified: false, hasDefaultDrifted: false }
+						: null
 				);
 				setEditedContent(result.content);
+				setIsShowingDefault(false);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Reset to default');
 			} else {
@@ -563,6 +629,24 @@ export function MaestroPromptsTab({
 					}}
 				>
 					<HelpCircle className="w-3.5 h-3.5" />
+				</button>
+			)}
+			{selectedPrompt?.hasDefaultDrifted && (
+				<button
+					className="expand-toggle-button"
+					onClick={handleToggleShowDefault}
+					disabled={isLoadingBundledDefault}
+					title={
+						isShowingDefault
+							? 'Exit default view (show your customization)'
+							: 'View the current bundled default that shipped with this update'
+					}
+					style={{
+						color: isShowingDefault ? theme.colors.warning : theme.colors.textDim,
+						borderColor: isShowingDefault ? theme.colors.warning : theme.colors.border,
+					}}
+				>
+					<GitCompare className="w-3.5 h-3.5" />
 				</button>
 			)}
 			<button
@@ -600,6 +684,21 @@ export function MaestroPromptsTab({
 	);
 
 	const renderEditorBody = useCallback(() => {
+		if (isShowingDefault) {
+			return (
+				<textarea
+					className="dual-pane-textarea dual-pane-textarea-preview"
+					value={bundledDefaultContent}
+					readOnly
+					spellCheck={false}
+					style={{
+						borderColor: theme.colors.warning,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				/>
+			);
+		}
 		return isPreviewMode ? (
 			<textarea
 				className="dual-pane-textarea dual-pane-textarea-preview"
@@ -684,6 +783,7 @@ export function MaestroPromptsTab({
 				editorTokenCount={editorTokenCount}
 				editorHeaderActions={editorHeaderActions}
 				showModifiedBadge={selectedPrompt?.isModified}
+				showDefaultDriftedBadge={selectedPrompt?.hasDefaultDrifted}
 				renderEditorBody={renderEditorBody}
 				successMessage={successMessage}
 				errorMessage={error}

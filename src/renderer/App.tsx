@@ -99,6 +99,8 @@ import {
 	useTourActions,
 	// Idle notification (fires command when all agents/batches finish)
 	useIdleNotification,
+	// Deferred update-restart (installs downloaded update on idle transition)
+	useRestartWhenIdle,
 	// Queue handlers (queue browser UI operations)
 	useQueueHandlers,
 	// Queue processing (execution queue processing + startup recovery)
@@ -126,6 +128,7 @@ import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './ho
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
+import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -779,6 +782,11 @@ function MaestroConsoleInner() {
 
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
 	useCueAutoDiscovery(sessions, encoreFeatures);
+
+	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
+	// Forwards document visibility to the main-process Cue scanner
+	// subsystem so it pauses background work when the window is hidden.
+	useCueVisibilityWiring();
 
 	// --- TAB HANDLERS (extracted hook) ---
 	const {
@@ -1774,6 +1782,9 @@ function MaestroConsoleInner() {
 
 	// Idle notification — fires configured command when all agents/batches finish
 	useIdleNotification();
+
+	// Restart-when-idle — installs a downloaded update once the app is idle
+	useRestartWhenIdle();
 
 	// Queue processing (execution, startup recovery) — extracted to useQueueProcessing hook
 	const { processQueuedItem } = useQueueProcessing({

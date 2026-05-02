@@ -52,6 +52,7 @@ import type {
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
 	WebPlaybookDocument,
+	NotifyToastClickAction,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	NotifyToastKind,
@@ -3646,6 +3647,13 @@ export class WebSocketMessageHandler {
 		const duration = typeof message.duration === 'number' ? message.duration : undefined;
 		const dismissible = message.dismissible === true;
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+		const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+		const actionUrl = typeof message.actionUrl === 'string' ? message.actionUrl : undefined;
+		const actionLabel = typeof message.actionLabel === 'string' ? message.actionLabel : undefined;
+		const rawClickAction =
+			typeof message.clickAction === 'object' && message.clickAction !== null
+				? (message.clickAction as Record<string, unknown>)
+				: undefined;
 
 		const sendResult = (success: boolean, error?: string) => {
 			this.send(client, {
@@ -3682,6 +3690,52 @@ export class WebSocketMessageHandler {
 			color = 'theme';
 		}
 
+		// Validate clickAction (data-driven click intent). Each kind has its
+		// own required fields; bad shapes are rejected so the CLI surfaces a
+		// clear error instead of producing a silent no-op toast.
+		let clickAction: NotifyToastClickAction | undefined;
+		if (rawClickAction !== undefined) {
+			const kind = rawClickAction.kind;
+			if (kind === 'jump-session') {
+				const id = rawClickAction.sessionId;
+				if (typeof id !== 'string' || id.length === 0) {
+					sendResult(false, "clickAction kind 'jump-session' requires sessionId");
+					return;
+				}
+				const tab = rawClickAction.tabId;
+				clickAction = {
+					kind: 'jump-session',
+					sessionId: id,
+					tabId: typeof tab === 'string' && tab.length > 0 ? tab : undefined,
+				};
+			} else if (kind === 'open-file') {
+				const id = rawClickAction.sessionId;
+				const path = rawClickAction.path;
+				if (typeof id !== 'string' || id.length === 0) {
+					sendResult(false, "clickAction kind 'open-file' requires sessionId");
+					return;
+				}
+				if (typeof path !== 'string' || path.length === 0) {
+					sendResult(false, "clickAction kind 'open-file' requires path");
+					return;
+				}
+				clickAction = { kind: 'open-file', sessionId: id, path };
+			} else if (kind === 'open-url') {
+				const url = rawClickAction.url;
+				if (typeof url !== 'string' || url.length === 0) {
+					sendResult(false, "clickAction kind 'open-url' requires url");
+					return;
+				}
+				clickAction = { kind: 'open-url', url };
+			} else {
+				sendResult(
+					false,
+					`Invalid clickAction kind: ${String(kind)}. Must be one of: jump-session, open-file, open-url`
+				);
+				return;
+			}
+		}
+
 		// Duration validation: reject 0 (use --dismissible instead) and cap at 60 s.
 		// Skipped entirely when `dismissible: true` (the toast is sticky).
 		if (!dismissible && duration !== undefined) {
@@ -3714,6 +3768,10 @@ export class WebSocketMessageHandler {
 				dismissible,
 				duration,
 				sessionId,
+				tabId,
+				actionUrl,
+				actionLabel,
+				clickAction,
 			})
 			.then((success) => sendResult(success, success ? undefined : 'Failed to show toast'))
 			.catch((error) => sendResult(false, `Failed to show toast: ${error.message}`));

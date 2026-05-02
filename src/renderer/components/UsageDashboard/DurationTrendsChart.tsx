@@ -18,6 +18,7 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
+import { clampTooltipToViewport } from './chartUtils';
 
 // Data point for the chart
 interface DataPoint {
@@ -287,7 +288,10 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 		>
 			{/* Header with title and smoothing toggle */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Duration Trends
 				</h3>
 				<div className="flex items-center gap-2">
@@ -467,41 +471,61 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 					</svg>
 				)}
 
-				{/* Tooltip */}
-				{hoveredPoint && tooltipPos && (
-					<div
-						className="fixed z-50 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
-						style={{
-							left: tooltipPos.x,
-							top: tooltipPos.y - 8,
-							transform: 'translate(-50%, -100%)',
-							backgroundColor: theme.colors.bgActivity,
-							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						<div className="font-medium mb-1">{hoveredPoint.formattedDate}</div>
-						<div style={{ color: theme.colors.textDim }}>
-							<div>
-								Avg Duration:{' '}
-								<span style={{ color: theme.colors.textMain }}>
-									{formatDuration(hoveredPoint.displayDuration)}
-								</span>
-							</div>
-							{showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration && (
-								<div>
-									Raw:{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{formatDuration(hoveredPoint.rawDuration)}
-									</span>
+				{/* Tooltip — clamped to viewport so chart points near the right/top
+				    edge don't get cropped. Estimated width/height match the rendered
+				    box; if content changes substantially, revisit these. */}
+				{hoveredPoint &&
+					tooltipPos &&
+					(() => {
+						const hasRawRow =
+							showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration;
+						const tooltipWidth = 220;
+						const tooltipHeight = hasRawRow ? 98 : 80;
+						const { left, top } = clampTooltipToViewport({
+							anchorX: tooltipPos.x,
+							anchorY: tooltipPos.y - 8,
+							width: tooltipWidth,
+							height: tooltipHeight,
+							transform: 'top-center',
+						});
+						return (
+							<div
+								className="fixed z-50 px-3 py-2 rounded text-xs pointer-events-none shadow-lg"
+								style={{
+									left,
+									top,
+									width: tooltipWidth,
+									maxWidth: tooltipWidth,
+									whiteSpace: 'normal',
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<div className="font-medium mb-1">{hoveredPoint.formattedDate}</div>
+								<div style={{ color: theme.colors.textDim }}>
+									<div>
+										Avg Duration:{' '}
+										<span style={{ color: theme.colors.textMain }}>
+											{formatDuration(hoveredPoint.displayDuration)}
+										</span>
+									</div>
+									{showSmoothed && hoveredPoint.rawDuration !== hoveredPoint.smoothedDuration && (
+										<div>
+											Raw:{' '}
+											<span style={{ color: theme.colors.textMain }}>
+												{formatDuration(hoveredPoint.rawDuration)}
+											</span>
+										</div>
+									)}
+									<div>
+										Queries:{' '}
+										<span style={{ color: theme.colors.textMain }}>{hoveredPoint.count}</span>
+									</div>
 								</div>
-							)}
-							<div>
-								Queries: <span style={{ color: theme.colors.textMain }}>{hoveredPoint.count}</span>
 							</div>
-						</div>
-					</div>
-				)}
+						);
+					})()}
 			</div>
 
 			{/* Legend */}

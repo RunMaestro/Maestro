@@ -177,7 +177,17 @@ const AutoRunPill = memo(
 		const [isExpanded, setIsExpanded] = useState(false);
 		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
-		const { completedTasks, totalTasks, isStopping } = autoRunState;
+		const { isStopping, totalTasksAcrossAllDocs } = autoRunState;
+		// Prefer multi-doc aggregate counts when available; fall back to single-doc legacy
+		// fields. Mirrors the logic in RightPanel.tsx so both displays stay in sync.
+		const completedTasks =
+			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
+				? autoRunState.completedTasksAcrossAllDocs
+				: autoRunState.completedTasks;
+		const totalTasks =
+			totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0
+				? totalTasksAcrossAllDocs
+				: autoRunState.totalTasks;
 		const concurrentCount = thinkingItems?.length || 0;
 
 		const handleHoverEnter = () => {
@@ -660,6 +670,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 		if (
 			prevAutoRun?.completedTasks !== nextAutoRun?.completedTasks ||
 			prevAutoRun?.totalTasks !== nextAutoRun?.totalTasks ||
+			prevAutoRun?.completedTasksAcrossAllDocs !== nextAutoRun?.completedTasksAcrossAllDocs ||
+			prevAutoRun?.totalTasksAcrossAllDocs !== nextAutoRun?.totalTasksAcrossAllDocs ||
 			prevAutoRun?.isStopping !== nextAutoRun?.isStopping ||
 			prevAutoRun?.startTime !== nextAutoRun?.startTime
 		) {

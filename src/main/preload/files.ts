@@ -121,14 +121,16 @@ export function createHistoryApi() {
 			sessionId: string,
 			bucketCount: number,
 			lookbackHours: number | null,
-			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+			sharedContext?: { sshRemoteId: string; remoteCwd: string },
+			projectPath?: string
 		): Promise<HistoryGraphData> =>
 			ipcRenderer.invoke(
 				'history:getGraphData',
 				sessionId,
 				bucketCount,
 				lookbackHours,
-				sharedContext
+				sharedContext,
+				projectPath
 			),
 
 		// Resolve the offset (newest-first sorted, with the same lookback

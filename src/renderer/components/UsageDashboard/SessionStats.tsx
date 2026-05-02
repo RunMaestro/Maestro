@@ -15,6 +15,7 @@ import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { isWorktreeAgent, resolveAgentDisplayName } from './chartUtils';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -82,24 +83,6 @@ function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): s
 	return additionalColors[(index - 1) % additionalColors.length];
 }
 
-/**
- * Format agent type display name
- */
-function formatAgentName(toolType: ToolType): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		copilot: 'GitHub Copilot',
-		terminal: 'Terminal',
-	};
-	return names[toolType] || toolType;
-}
-
 export const SessionStats = memo(function SessionStats({
 	sessions,
 	theme,
@@ -120,6 +103,8 @@ export const SessionStats = memo(function SessionStats({
 		let localSessions = 0;
 		let bookmarked = 0;
 		let withWorktrees = 0;
+		let worktreeChildren = 0;
+		let regularSessions = 0;
 
 		for (const session of agentSessions) {
 			// Count by agent type
@@ -153,6 +138,15 @@ export const SessionStats = memo(function SessionStats({
 			if (session.worktreeConfig || session.parentSessionId) {
 				withWorktrees++;
 			}
+
+			// Worktree children (sessions spawned from a parent) vs regular agents.
+			// A "regular" session here is anything that is NOT a worktree child —
+			// parent agents are counted as regular alongside standalone agents.
+			if (isWorktreeAgent(session)) {
+				worktreeChildren++;
+			} else {
+				regularSessions++;
+			}
 		}
 
 		return {
@@ -164,10 +158,15 @@ export const SessionStats = memo(function SessionStats({
 			localSessions,
 			bookmarked,
 			withWorktrees,
+			worktreeChildren,
+			regularSessions,
 		};
 	}, [agentSessions]);
 
-	// Sort agents by count (descending)
+	// Sort agents by count (descending) and resolve display names from sessions
+	// so the breakdown surfaces user-assigned names (e.g. "Backend API") when a
+	// provider has a single registered session, falling back to the prettified
+	// agent type when multiple sessions share the type.
 	const sortedAgents = useMemo(
 		() =>
 			Object.entries(stats.byAgent)
@@ -176,14 +175,18 @@ export const SessionStats = memo(function SessionStats({
 					agent: agent as ToolType,
 					count,
 					color: getAgentColor(index, theme, colorBlindMode),
+					displayName: resolveAgentDisplayName(agent, agentSessions).name,
 				})),
-		[stats.byAgent, theme, colorBlindMode]
+		[stats.byAgent, theme, colorBlindMode, agentSessions]
 	);
 
 	if (agentSessions.length === 0) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Agent Statistics
 				</h3>
 				<div
@@ -198,7 +201,10 @@ export const SessionStats = memo(function SessionStats({
 
 	return (
 		<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-			<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+			<h3
+				className="text-sm font-medium mb-4"
+				style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+			>
 				Agent Statistics
 			</h3>
 
@@ -233,6 +239,22 @@ export const SessionStats = memo(function SessionStats({
 				/>
 			</div>
 
+			{/* Worktree vs Regular Breakdown */}
+			<div
+				className="flex items-center gap-2 mb-4 text-xs"
+				style={{ color: theme.colors.textDim }}
+				data-testid="worktree-breakdown"
+				aria-label={`Regular: ${stats.regularSessions} | Worktree: ${stats.worktreeChildren}`}
+			>
+				<span>
+					Regular: <span style={{ color: theme.colors.textMain }}>{stats.regularSessions}</span>
+				</span>
+				<span style={{ opacity: 0.5 }}>|</span>
+				<span>
+					Worktree: <span style={{ color: theme.colors.textMain }}>{stats.worktreeChildren}</span>
+				</span>
+			</div>
+
 			{/* Agent Type Breakdown */}
 			<div className="space-y-3">
 				<h4
@@ -255,7 +277,7 @@ export const SessionStats = memo(function SessionStats({
 										className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
 										style={{ backgroundColor: agent.color }}
 									/>
-									{formatAgentName(agent.agent)}
+									{agent.displayName}
 								</div>
 
 								{/* Bar */}

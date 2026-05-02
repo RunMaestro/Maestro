@@ -17,6 +17,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from '../../utils/syntaxTheme';
+import { SyntaxHighlightBoundary } from '../SyntaxHighlightBoundary';
 import { Eye, Edit, ChevronDown, ChevronRight, X, FileText, Check } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
@@ -611,20 +612,23 @@ export function DocumentEditor({
 				}
 
 				return !inline && match ? (
-					<SyntaxHighlighter
-						language={language}
-						style={getSyntaxStyle(theme.mode)}
-						customStyle={{
-							margin: '0.5em 0',
-							padding: '1em',
-							background: theme.colors.bgActivity,
-							fontSize: '0.9em',
-							borderRadius: '6px',
-						}}
-						PreTag="div"
-					>
-						{codeContent}
-					</SyntaxHighlighter>
+					<SyntaxHighlightBoundary code={codeContent} theme={theme}>
+						<SyntaxHighlighter
+							language={language}
+							style={getSyntaxStyle(theme.mode)}
+							customStyle={{
+								margin: '0.5em 0',
+								padding: '1em',
+								background: theme.colors.bgActivity,
+								fontSize: '0.9em',
+								borderRadius: '6px',
+							}}
+							PreTag="div"
+							translate="no"
+						>
+							{codeContent}
+						</SyntaxHighlighter>
+					</SyntaxHighlightBoundary>
 				) : (
 					<code className={className} {...props}>
 						{children}

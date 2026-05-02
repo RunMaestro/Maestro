@@ -17,7 +17,7 @@ import { buildSubscriptionPipelineMap } from '../../components/CueModal/cueModal
 import type { CueGraphSession } from '../../../shared/cue-pipeline-types';
 import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
 
-type CueModalTab = 'dashboard' | 'pipeline';
+type CueModalTab = 'dashboard' | 'pipeline' | 'activity';
 
 export interface UseCueGraphDataParams {
 	activeTab: CueModalTab;

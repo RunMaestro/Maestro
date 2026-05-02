@@ -38,11 +38,13 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { getRevealLabel, getOpenInLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useSettingsStore } from '../stores/settingsStore';
+import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
@@ -507,7 +509,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
-	const compact = rightPanelWidth < 340;
+	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
@@ -918,18 +920,16 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		}
 	}, [deleteModal, session.id, session.fileTree, onShowFlash, sshRemoteId, setSessions]);
 
-	// Close context menu on Escape key
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && contextMenu) {
+	// Close context menu on Escape key (only attached while the menu is open).
+	useEventListener(
+		'keydown',
+		(e) => {
+			if ((e as KeyboardEvent).key === 'Escape') {
 				setContextMenu(null);
 			}
-		};
-		if (contextMenu) {
-			window.addEventListener('keydown', handleKeyDown);
-			return () => window.removeEventListener('keydown', handleKeyDown);
-		}
-	}, [contextMenu]);
+		},
+		{ enabled: contextMenu !== null }
+	);
 
 	// Register layer when filter is open
 	useEffect(() => {
@@ -1087,6 +1087,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 			return (
 				<div
+					key={fullPath}
 					data-file-index={globalIndex}
 					title={isFolder ? 'Alt/Option+click to expand or collapse all subfolders' : undefined}
 					className={`absolute top-0 left-0 w-full flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-white/5 px-2 rounded transition-colors border-l-2 select-none min-w-0 ${isSelected ? 'bg-white/10' : ''}`}
@@ -1493,7 +1494,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							>
 								{virtualizer.getVirtualItems().map((virtualRow) => {
 									const item = flattenedTree[virtualRow.index];
-									return <TreeRow key={item.path} item={item} virtualRow={virtualRow} />;
+									// Invoke as a plain function (not <TreeRow/>) so React doesn't see a
+									// new component type identity each parent render — TreeRow is a
+									// useCallback with a long dep list and would otherwise remount every
+									// visible row on every render. The returned <div> carries its own key.
+									return TreeRow({ item, virtualRow });
 								})}
 							</div>
 						</div>

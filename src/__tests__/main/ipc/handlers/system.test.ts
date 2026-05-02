@@ -645,14 +645,16 @@ describe('system IPC handlers', () => {
 			await expect(handler!({} as any, '')).rejects.toThrow('Invalid path');
 		});
 
-		it('should throw error for non-existent path', async () => {
+		it('should resolve gracefully (no throw) for non-existent path', async () => {
+			// Stale paths are user-caused (file deleted between display and click);
+			// handler should log + return rather than reject the IPC. Fixes
+			// MAESTRO-K1/HN/HS.
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 
 			const handler = handlers.get('shell:showItemInFolder');
 
-			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow(
-				'Path does not exist'
-			);
+			await expect(handler!({} as any, '/non/existent/path')).resolves.toBeUndefined();
+			expect(shell.showItemInFolder).not.toHaveBeenCalled();
 		});
 	});
 
@@ -672,12 +674,13 @@ describe('system IPC handlers', () => {
 			await expect(handler!({} as any, '')).rejects.toThrow('Invalid path');
 		});
 
-		it('should throw error for non-existent path', async () => {
+		it('should resolve gracefully (no throw) for non-existent path', async () => {
+			// File already gone → user's intent is satisfied; treat as no-op
+			// instead of rejecting the IPC. Fixes MAESTRO-JD/JC.
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 			const handler = handlers.get('shell:trashItem');
-			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow(
-				'Path does not exist'
-			);
+			await expect(handler!({} as any, '/non/existent/path')).resolves.toBeUndefined();
+			expect(shell.trashItem).not.toHaveBeenCalled();
 		});
 
 		it('should handle aborted operation gracefully', async () => {

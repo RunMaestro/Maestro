@@ -9,6 +9,8 @@ export interface UseCueReturn {
 	activeRuns: CueRunResult[];
 	activityLog: CueRunResult[];
 	queueStatus: Record<string, number>;
+	/** Lifetime count of Cue events from the on-disk journal. */
+	eventCount: number;
 	loading: boolean;
 	error: string | null;
 	enable: () => Promise<void>;
@@ -46,6 +48,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 	const [activeRuns, setActiveRuns] = useState<CueRunResult[]>([]);
 	const [activityLog, setActivityLog] = useState<CueRunResult[]>([]);
 	const [queueStatus, setQueueStatus] = useState<Record<string, number>>({});
+	const [eventCount, setEventCount] = useState(0);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const mountedRef = useRef(true);
@@ -59,17 +62,19 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			// powers the Cue dashboard, where an IPC failure must surface as
 			// a user-visible error banner. Going direct preserves the catch
 			// path below; the wrapper would make `err` unreachable here.
-			const [statusData, runsData, logData, queueData] = await Promise.all([
+			const [statusData, runsData, logData, queueData, eventCountData] = await Promise.all([
 				window.maestro.cue.getStatus(),
 				window.maestro.cue.getActiveRuns(),
 				window.maestro.cue.getActivityLog(100),
 				window.maestro.cue.getQueueStatus(),
+				window.maestro.cue.getEventCount(),
 			]);
 			if (!mountedRef.current) return;
 			setSessions(statusData);
 			setActiveRuns(runsData);
 			setActivityLog(logData);
 			setQueueStatus(queueData);
+			setEventCount(eventCountData);
 		} catch (err) {
 			if (!mountedRef.current) return;
 			setError(err instanceof Error ? err.message : 'Failed to fetch Cue status');
@@ -172,6 +177,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 		activeRuns,
 		activityLog,
 		queueStatus,
+		eventCount,
 		loading,
 		error,
 		enable,

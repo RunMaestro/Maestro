@@ -22,6 +22,7 @@ import {
 } from '../utils/inlineCodeCopy';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
+import { SyntaxHighlightBoundary } from './SyntaxHighlightBoundary';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
 
@@ -183,7 +184,7 @@ interface CodeBlockWithCopyProps {
 const CodeBlockWithCopy = memo(
 	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
 		return (
-			<div className="relative group/codeblock">
+			<div className="relative group/codeblock" translate="no">
 				<button
 					onClick={() => onCopy(codeContent)}
 					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
@@ -196,20 +197,22 @@ const CodeBlockWithCopy = memo(
 				>
 					<Clipboard className="w-3.5 h-3.5" />
 				</button>
-				<SyntaxHighlighter
-					language={language}
-					style={getSyntaxStyle(theme.mode)}
-					customStyle={{
-						margin: '0.5em 0',
-						padding: '1em',
-						background: theme.colors.bgSidebar,
-						fontSize: '0.9em',
-						borderRadius: '6px',
-					}}
-					PreTag="div"
-				>
-					{codeContent}
-				</SyntaxHighlighter>
+				<SyntaxHighlightBoundary code={codeContent} theme={theme}>
+					<SyntaxHighlighter
+						language={language}
+						style={getSyntaxStyle(theme.mode)}
+						customStyle={{
+							margin: '0.5em 0',
+							padding: '1em',
+							background: theme.colors.bgSidebar,
+							fontSize: '0.9em',
+							borderRadius: '6px',
+						}}
+						PreTag="div"
+					>
+						{codeContent}
+					</SyntaxHighlighter>
+				</SyntaxHighlightBoundary>
 			</div>
 		);
 	}

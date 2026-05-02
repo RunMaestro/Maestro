@@ -1117,6 +1117,55 @@ describe('graphSessionsToPipelines', () => {
 		expect((agents[0].data as { sessionId: string }).sessionId).toBe('real-uuid-123');
 	});
 
+	it('uses owning graph session for the agent node when other sessions appear earlier in sessions.json (issue #912)', () => {
+		// Repro for issue #912: a cue.yaml in an Obsidian project defines an
+		// initial trigger with no agent_id and no chain successor. The Obsidian
+		// session is the only owner, but other unrelated sessions (e.g., a
+		// "Server" opencode session) appear earlier in the global sessions list.
+		// Without owner-aware fallback, findTargetSession would return
+		// sessions[0] — "Server" — instead of the Obsidian session that
+		// actually owns the YAML.
+		const graphSessions: CueGraphSession[] = [
+			{
+				sessionId: 'obsidian-id',
+				sessionName: 'Pedsidian',
+				toolType: 'claude-code',
+				subscriptions: [
+					{
+						name: 'note-watcher',
+						event: 'file.changed',
+						enabled: true,
+						prompt: 'Process note',
+						watch: '**/*.md',
+					},
+				],
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{
+				id: 'server-id',
+				name: 'Server',
+				toolType: 'opencode',
+				cwd: '/tmp',
+				projectRoot: '/tmp/server',
+			},
+			{
+				id: 'obsidian-id',
+				name: 'Pedsidian',
+				toolType: 'claude-code',
+				cwd: '/tmp/pedsidian',
+				projectRoot: '/tmp/pedsidian',
+			},
+		];
+
+		const pipelines = graphSessionsToPipelines(graphSessions, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(1);
+		expect((agents[0].data as AgentNodeData).sessionName).toBe('Pedsidian');
+	});
+
 	it('correctly maps agents when multiple sessions share subscriptions', () => {
 		// Two sessions share the same project root / cue.yaml with a chain pipeline.
 		// Both report all subscriptions. The builder should be target of the initial

@@ -393,4 +393,127 @@ describe('CueFanInTracker — new inspection methods', () => {
 			expect(result[0].expectedCount).toBe(2);
 		});
 	});
+
+	// ─── Regression: chainDepth propagation through fan-in ────────────────────
+	// Bug 30ab9a5c4: fan-in dispatch did not forward the max chainDepth across
+	// completed sources, so circular pipelines routed through fan-in nodes
+	// bypassed the depth guard in CueCompletionService.notifyAgentCompleted —
+	// the next dispatch saw chainDepth=0 and ran indefinitely. The fix stores
+	// chainDepth in FanInSourceCompletion and the all-complete + timeout-continue
+	// paths both pass `Math.max(...completions.map(c => c.chainDepth))` to
+	// dispatchSubscription. These tests guard both paths.
+	describe('chainDepth propagation', () => {
+		it('forwards max chainDepth to dispatchSubscription when all sources complete', () => {
+			const tracker = makeTracker();
+			const sub = makeSub();
+			const settings = makeSettings();
+			const sources = ['session-a', 'session-b'];
+
+			tracker.handleCompletion(
+				'owner',
+				settings,
+				sub,
+				sources,
+				'session-a',
+				'Agent A',
+				makeCompletion({ chainDepth: 3 })
+			);
+			tracker.handleCompletion(
+				'owner',
+				settings,
+				sub,
+				sources,
+				'session-b',
+				'Agent B',
+				makeCompletion({ chainDepth: 7 })
+			);
+
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			// dispatchSubscription signature: (ownerSessionId, sub, event, completedNames, chainDepth?)
+			const call = dispatch.mock.calls[0];
+			expect(call[0]).toBe('owner');
+			expect(call[1]).toBe(sub);
+			// Last positional argument is chainDepth — must equal max(3, 7) = 7,
+			// NOT the last completion's depth (would mask cycles where the
+			// deepest source isn't the most recent), and NOT 0 (the original
+			// bug, which let cycles run forever).
+			expect(call[4]).toBe(7);
+		});
+
+		it('forwards max chainDepth in timeout-continue mode', () => {
+			vi.setSystemTime(new Date('2026-04-21T10:00:00Z'));
+			const tracker = makeTracker();
+			const sub = makeSub({ fan_in_timeout_minutes: 10 });
+			const settings = makeSettings({ timeout_on_fail: 'continue' });
+			const sources = ['session-a', 'session-b'];
+
+			// Only session-a completes; session-b is left dangling and the
+			// timer fires the timeout-continue branch.
+			tracker.handleCompletion(
+				'owner',
+				settings,
+				sub,
+				sources,
+				'session-a',
+				'Agent A',
+				makeCompletion({ chainDepth: 5 })
+			);
+
+			// Advance past the per-sub fan_in_timeout_minutes (10m).
+			vi.advanceTimersByTime(11 * 60 * 1000);
+
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			const call = dispatch.mock.calls[0];
+			// Only one completion arrived, so max == that source's chainDepth (5).
+			// The bug would have passed 0 here, masking cycles when partial
+			// fan-ins continue through to dispatch.
+			expect(call[4]).toBe(5);
+		});
+
+		it('falls back to chainDepth=0 when completions carry no chainDepth field', () => {
+			// Defensive: events from older code paths or external callers may
+			// omit chainDepth. The tracker must default to 0 (matching the
+			// `?? 0` fallback in cue-fan-in-tracker.ts:219) rather than NaN
+			// (which Math.max returns when fed undefined).
+			const tracker = makeTracker();
+			const sub = makeSub();
+			const settings = makeSettings();
+			const sources = ['session-a', 'session-b'];
+
+			// Spread overrides into makeCompletion but force chainDepth=undefined
+			// to simulate an external completion that didn't set it.
+			const completionMissingDepth = {
+				sessionName: 'agent-a',
+				status: 'completed' as const,
+				exitCode: 0,
+				durationMs: 1000,
+				stdout: 'output',
+				triggeredBy: 'fan-in-sub',
+			};
+
+			tracker.handleCompletion(
+				'owner',
+				settings,
+				sub,
+				sources,
+				'session-a',
+				'Agent A',
+				completionMissingDepth as never
+			);
+			tracker.handleCompletion(
+				'owner',
+				settings,
+				sub,
+				sources,
+				'session-b',
+				'Agent B',
+				completionMissingDepth as never
+			);
+
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			const call = dispatch.mock.calls[0];
+			expect(call[4]).toBe(0);
+			expect(Number.isNaN(call[4])).toBe(false);
+		});
+	});
 });

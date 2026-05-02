@@ -602,16 +602,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// enabling click-to-jump behavior.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteNotifyToast((params) => {
-			const { title, message, color, duration, dismissible, sessionId } = params;
+			const {
+				title,
+				message,
+				color,
+				duration,
+				dismissible,
+				sessionId,
+				tabId: explicitTabId,
+				actionUrl,
+				actionLabel,
+				clickAction,
+			} = params;
+			// Resolve agent metadata for the header strip. Prefer the caller's
+			// explicit `tabId` so the chip matches the click target; fall back
+			// to the session's currently-active AI tab.
 			let project: string | undefined;
-			let tabId: string | undefined;
+			let tabId: string | undefined = explicitTabId;
 			let tabName: string | undefined;
 			if (sessionId) {
 				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 				project = session?.name;
-				const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId);
-				tabId = activeTab?.id;
-				tabName = activeTab?.name ?? undefined;
+				const targetTabId = explicitTabId ?? session?.activeTabId;
+				const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
+				if (targetTab) {
+					tabId = targetTab.id;
+					tabName = targetTab.name ?? undefined;
+				}
 			}
 			notifyToast({
 				color,
@@ -623,6 +640,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId,
 				tabName,
 				project,
+				actionUrl,
+				actionLabel,
+				clickAction,
 			});
 		});
 		return () => {

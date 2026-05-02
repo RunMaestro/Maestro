@@ -74,6 +74,13 @@ export interface CueGitHubPollerConfig {
 	subscriptionId: string;
 	/** GitHub state filter: "open" (default), "closed", "merged" (PRs only), or "all" */
 	ghState?: string;
+	/**
+	 * Optional gate: when this returns `false`, doPoll skips the HTTP fetch
+	 * to gh CLI. The 24h prune timer keeps running (cheap). Used by the
+	 * visibility-aware pause; see CLAUDE-PERFORMANCE.md§"Visibility-Aware
+	 * Operations". Defaults to always-active when omitted.
+	 */
+	isActive?: () => boolean;
 }
 
 /**
@@ -92,6 +99,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		ghState,
 	} = config;
 	const stateFilter = ghState ?? 'open';
+	const isActive = config.isActive ?? (() => true);
 
 	let stopped = false;
 	let initialTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -290,6 +298,10 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 	async function doPoll(): Promise<void> {
 		if (stopped) return;
+		// Visibility-aware pause: skip the gh CLI fetch when inactive. The
+		// scheduleNextPoll loop keeps running so we resume cleanly when the
+		// app becomes visible again.
+		if (!isActive()) return;
 
 		try {
 			if (!(await resolveGh())) return;

@@ -111,25 +111,13 @@ fsPromises.unlink(tempFile).catch(() => {});
 
 ## Debouncing and Throttling
 
-**Use debouncing for user input and persistence:**
+**Use debouncing for persistence:**
 
-```typescript
-// Agent persistence uses 2-second debounce to prevent excessive disk I/O
-// See: src/renderer/hooks/utils/useDebouncedPersistence.ts
-const { persist, isPending } = useDebouncedPersistence(session, 2000);
-
-// Always flush on visibility change and beforeunload to prevent data loss
-useEffect(() => {
-	const handleVisibilityChange = () => {
-		if (document.hidden) flushPending();
-	};
-	document.addEventListener('visibilitychange', handleVisibilityChange);
-	window.addEventListener('beforeunload', flushPending);
-	return () => {
-		/* cleanup */
-	};
-}, []);
-```
+Session persistence is debounced through `useDebouncedPersistence(sessions, initialLoadComplete, delay)`
+in `src/renderer/hooks/utils/useDebouncedPersistence.ts` — it returns
+`{ isPending, flushNow }`. The hook already wires up `visibilitychange` and
+`beforeunload` to flush pending writes internally; do **not** add a second set
+of handlers in your component.
 
 **Debounce expensive search operations:**
 
@@ -145,6 +133,30 @@ const suggestions = useMemo(() => {
 	return getAtMentionSuggestions(debouncedFilter); // Only runs after user stops typing
 }, [debouncedFilter]);
 ```
+
+**Prefer `useDeferredValue` when the cost is React render work, not I/O:**
+
+`useDebouncedValue` waits a fixed timer; `useDeferredValue` lets React drop
+stale work mid-render with no timer. Use it when the heavy operation is a
+React re-render (filter + sort + categorize a list, render a markdown subtree)
+rather than an external API or fuzzy-search lib. Always keep the input
+`value=` bound to the immediate state — only pass the deferred copy to the
+heavy consumer.
+
+```typescript
+const [filter, setFilter] = useState('');
+const deferredFilter = useDeferredValue(filter);
+
+// Input stays responsive (immediate value)
+<input value={filter} onChange={(e) => setFilter(e.target.value)} />
+
+// Heavy categorize/sort runs against the deferred copy
+const { sortedFilteredSessions } = useSessionCategories(deferredFilter, ...);
+```
+
+In jsdom/RTL the deferred value equals the immediate value synchronously, so
+existing tests keep passing — see `src/__tests__/renderer/hooks/useInputHandlers.test.ts:353`
+for the precedent.
 
 **Use throttling for high-frequency events:**
 
@@ -186,6 +198,57 @@ const virtualizer = useVirtualizer({
 	estimateSize: () => 40, // estimated row height
 });
 ```
+
+## Per-Row DOM Budget
+
+A list row component should aim for **<30 DOM nodes per row**. CDP profiling
+caught the left bar at ~56 nodes/row × 34 rows = 1,907 nodes; at 100+ rows
+this dominates layout/style cost even with `React.memo`. When both budgets
+(>30 nodes/row AND >30 rows possible) are exceeded:
+
+1. **Slim the row first** — lazy-mount hover-only controls, drop redundant
+   wrappers, replace decorative inline `<svg>` with CSS background-mask. Inline
+   SVG carries paint cost beyond its node count; reserve it for icons that
+   actually re-color or animate per row.
+2. **Then virtualize** with `@tanstack/react-virtual` (already installed).
+   Be aware: virtualization breaks scroll-to-active, drag-and-drop measurement,
+   keyboard nav across off-screen rows, and any `querySelector` over the full
+   list. Plan for those.
+
+## IPC Payload Hygiene
+
+When state is large (sessions, history, file trees), avoid IPC patterns that
+ship the entire collection on every change:
+
+```typescript
+// BAD: clones and ships ALL sessions (with logs, tabs, browser state) on any
+// single-session change. Observed >500 MB short-lived heap churn from this
+// pattern in CDP profiling — the clone itself is the cost, not the disk write.
+window.maestro.sessions.setAll(allSessions);
+
+// GOOD: track dirty IDs in the store; ship only the changed subset.
+window.maestro.sessions.setMany([sessionId]);
+```
+
+Even when the disk write is debounced, `prepare*ForPersistence` allocates a
+full new tree per flush. Add a `setMany`-style IPC path before reaching for
+"smarter" diffing.
+
+## React State Bail-out — Don't Over-Guard
+
+`setState(samePrimitive)` is already a render-bail in React. Don't add
+manual guards "to prevent re-renders":
+
+```typescript
+// UNNECESSARY: React already bails out
+if (!isPending) setIsPending(true);
+
+// FINE — same render cost
+setIsPending(true);
+```
+
+Real perf cost lives in the **work** (data prep, allocations, child re-renders
+through unstable refs), not the duplicate set call. Profile before guarding.
 
 ## IPC Parallelization
 
@@ -237,23 +300,44 @@ const contextValue = useMemo(() => ({
 return <Context.Provider value={contextValue}>{children}</Context.Provider>;
 ```
 
-## Event Listener Cleanup
+## Event Listeners
 
-**Always clean up event listeners:**
-
-```typescript
-useEffect(() => {
-	const handler = (e: Event) => {
-		/* ... */
-	};
-	document.addEventListener('click', handler);
-	return () => document.removeEventListener('click', handler);
-}, []);
-```
+Use `useEventListener()` from `src/renderer/hooks/utils/useEventListener.ts`
+instead of pairing raw `addEventListener` / `removeEventListener` inside a
+`useEffect`. The hook handles cleanup, ref-stable handlers, and SSR safety.
+See the canonical-utilities table in [[CLAUDE.md]] for the full rule.
 
 ## Performance Profiling
 
 For React DevTools profiling workflow, see [[CONTRIBUTING.md#profiling]].
+
+### CDP Snapshot (dev mode)
+
+Maestro exposes Chrome DevTools Protocol on `ws://localhost:12345` in dev mode
+(see `src/main/index.ts` `--remote-debugging-port`). Useful for taking a quick
+performance snapshot from a script without opening DevTools:
+
+```bash
+# Get the renderer page id
+curl -s http://localhost:12345/json/list
+```
+
+Then send `Performance.enable` + `Performance.getMetrics` over the page's
+`webSocketDebuggerUrl`, optionally followed by `Profiler.start` / wait /
+`Profiler.stop` and aggregate `samples`/`timeDeltas` by node id. Force a clean
+heap reading first via `HeapProfiler.enable` + `HeapProfiler.collectGarbage`.
+
+Resting-state baselines (no terminals/canvas mounted, post-GC):
+
+| Metric                  | Healthy budget                            |
+| ----------------------- | ----------------------------------------- |
+| `Nodes`                 | < 5,000                                   |
+| `JSEventListeners`      | < 0.2 × visible-DOM-nodes                 |
+| `JSHeapUsedSize`        | < 250 MB after GC                         |
+| Max frame in 60 samples | < 32 ms (anything larger = jank to chase) |
+
+`Documents: 2` is usually benign (DOMParser/sanitizer doc) — only investigate
+if iframes/webviews are also reported by `document.querySelectorAll`.
 
 ### Chrome DevTools Performance Traces
 

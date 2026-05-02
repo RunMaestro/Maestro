@@ -20,6 +20,8 @@ import {
 	ActivityGraph,
 	HistoryEntryItem,
 	HistoryFilterToggle,
+	HostSourceFilter,
+	LOCAL_HOST_KEY,
 	ESTIMATED_ROW_HEIGHT,
 	ESTIMATED_ROW_HEIGHT_SIMPLE,
 	LOOKBACK_OPTIONS,
@@ -30,6 +32,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { logger } from '../utils/logger';
+import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -84,6 +87,8 @@ export const HistoryPanel = React.memo(
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
+		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+		const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
 			? ['AUTO', 'USER', 'CUE']
 			: ['AUTO', 'USER'];
@@ -93,6 +98,9 @@ export const HistoryPanel = React.memo(
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
+		// Source/host filter — null means "All Sources". When set, both the
+		// entry list and the activity graph narrow to entries from that host.
+		const [selectedHost, setSelectedHost] = useState<string | null>(null);
 		const searchFilterOpen = useUIStore((s) => s.historySearchFilterOpen);
 		const setSearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 		const [graphViewportRange, setGraphViewportRange] = useState<
@@ -106,6 +114,13 @@ export const HistoryPanel = React.memo(
 		// Server-cached graph buckets for the current lookback.
 		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
+			undefined
+		);
+		// Per-host counts from the server-side aggregate. Lookback-aware:
+		// flipping the lookback selector triggers a refetch, which updates
+		// these. Used by the source picker so the parenthesized counts next
+		// to each host name reflect the current window.
+		const [graphHostCounts, setGraphHostCounts] = useState<Record<string, number> | undefined>(
 			undefined
 		);
 		const graphRefreshScheduled = useRef(false);
@@ -136,10 +151,18 @@ export const HistoryPanel = React.memo(
 				session.sessionSshRemoteConfig?.syncHistory,
 			]
 		);
+		// `projectPath` is what lets the handler merge a non-SSH session's
+		// `<projectPath>/.maestro/history/*.jsonl` files (entries written
+		// by other Maestro instances pointed at the same project — typically
+		// a peer SSH'd into this machine, or vice-versa). Without it, a
+		// machine running the agent locally never sees foreign-host entries
+		// even when the JSONL files are sitting right there on disk.
+		const projectPathForHistory = session.projectRoot || session.cwd || undefined;
 		const loadPage = useCallback(
 			async (offset: number, limit: number): Promise<PaginatedPage<HistoryEntry>> => {
 				const result = await window.maestro.history.getAllPaginated({
 					sessionId: session.id,
+					projectPath: projectPathForHistory,
 					sharedContext: sharedContextSnapshot,
 					lookbackHours: graphLookbackHours,
 					pagination: { offset, limit },
@@ -150,7 +173,7 @@ export const HistoryPanel = React.memo(
 					total: result.total,
 				};
 			},
-			[session.id, sharedContextSnapshot, graphLookbackHours]
+			[session.id, projectPathForHistory, sharedContextSnapshot, graphLookbackHours]
 		);
 
 		const getEntryId = useCallback((entry: HistoryEntry) => entry.id, []);
@@ -180,16 +203,19 @@ export const HistoryPanel = React.memo(
 					session.id,
 					bucketCountForLookback(graphLookbackHours),
 					graphLookbackHours,
-					buildSharedHistoryContext(session)
+					buildSharedHistoryContext(session),
+					projectPathForHistory
 				);
 				setGraphBuckets(data.buckets);
 				setGraphRange({ start: data.earliestTimestamp, end: data.latestTimestamp });
+				setGraphHostCounts(data.hostCounts);
 			} catch (error) {
 				logger.error('Failed to load history graph data:', undefined, error);
 				setGraphBuckets(undefined);
 				setGraphRange(undefined);
+				setGraphHostCounts(undefined);
 			}
-		}, [session.id, session, graphLookbackHours]);
+		}, [session.id, session, graphLookbackHours, projectPathForHistory]);
 
 		useEffect(() => {
 			refreshGraphData();
@@ -273,11 +299,16 @@ export const HistoryPanel = React.memo(
 		// Client-side filters applied to the loaded window. Lookback is
 		// now server-side (part of the page loader), so it doesn't appear
 		// here — entries arriving from the IPC are already inside the
-		// window. Type + search remain client-side over loaded pages.
+		// window. Type + search + host all stay client-side over loaded pages.
 		const allFilteredEntries = useMemo(() => {
 			return historyEntries.filter((entry) => {
 				if (!entry || !entry.type) return false;
 				if (!activeFilters.has(entry.type)) return false;
+
+				if (selectedHost !== null) {
+					const entryHost = entry.hostname ?? LOCAL_HOST_KEY;
+					if (entryHost !== selectedHost) return false;
+				}
 
 				if (searchFilter) {
 					const searchLower = searchFilter.toLowerCase();
@@ -285,12 +316,53 @@ export const HistoryPanel = React.memo(
 					const responseMatch = entry.fullResponse?.toLowerCase().includes(searchLower);
 					const sessionIdMatch = entry.agentSessionId?.toLowerCase().includes(searchLower);
 					const sessionNameMatch = entry.sessionName?.toLowerCase().includes(searchLower);
-					if (!summaryMatch && !responseMatch && !sessionIdMatch && !sessionNameMatch) return false;
+					const hostnameMatch = entry.hostname?.toLowerCase().includes(searchLower);
+					if (
+						!summaryMatch &&
+						!responseMatch &&
+						!sessionIdMatch &&
+						!sessionNameMatch &&
+						!hostnameMatch
+					)
+						return false;
 				}
 
 				return true;
 			});
-		}, [historyEntries, activeFilters, searchFilter]);
+		}, [historyEntries, activeFilters, searchFilter, selectedHost]);
+
+		// Tally hosts. Prefers the server-side aggregate from `getGraphData`
+		// (already filtered by the active lookback window and covers the
+		// full source, not just the loaded pagination window) and falls
+		// back to client-side counting from the loaded window when the
+		// server response hasn't arrived yet. Sorted with `LOCAL_HOST_KEY`
+		// first, then remote hostnames alphabetically for stable display.
+		const hostCounts = useMemo(() => {
+			const raw = new Map<string, number>();
+			const serverEntries = graphHostCounts ? Object.entries(graphHostCounts) : [];
+			if (serverEntries.length > 0) {
+				for (const [k, v] of serverEntries) raw.set(k, v);
+			} else {
+				for (const entry of historyEntries) {
+					const key = entry?.hostname ?? LOCAL_HOST_KEY;
+					raw.set(key, (raw.get(key) ?? 0) + 1);
+				}
+			}
+			const sorted = new Map<string, number>();
+			if (raw.has(LOCAL_HOST_KEY)) sorted.set(LOCAL_HOST_KEY, raw.get(LOCAL_HOST_KEY)!);
+			for (const key of [...raw.keys()].filter((k) => k !== LOCAL_HOST_KEY).sort()) {
+				sorted.set(key, raw.get(key)!);
+			}
+			return sorted;
+		}, [graphHostCounts, historyEntries]);
+
+		// Clear the host filter if the selected host falls out of the
+		// loaded window (e.g. session switch, lookback narrowed).
+		useEffect(() => {
+			if (selectedHost !== null && !hostCounts.has(selectedHost)) {
+				setSelectedHost(null);
+			}
+		}, [hostCounts, selectedHost]);
 
 		// Note: With virtualization, we no longer need to slice entries
 		// The virtualizer handles rendering only visible items efficiently
@@ -643,12 +715,17 @@ export const HistoryPanel = React.memo(
 							onToggleFilter={toggleFilter}
 							theme={theme}
 							visibleTypes={visibleTypes}
+							compact={compact}
 						/>
 
-						{/* Activity graph inline when only 2 types (no CUE) */}
+						{/* Activity graph inline when only 2 types (no CUE).
+						    When a host filter is active we omit the server-cached
+						    aggregate so the graph re-buckets client-side from the
+						    filtered loaded window — keeps it visually consistent
+						    with the list below. */}
 						{visibleTypes.length <= 2 && (
 							<ActivityGraph
-								entries={historyEntries}
+								entries={selectedHost ? allFilteredEntries : historyEntries}
 								theme={theme}
 								viewportRange={graphViewportRange}
 								onBarClick={handleGraphBarClickVirtualized}
@@ -671,17 +748,19 @@ export const HistoryPanel = React.memo(
 						</button>
 					</div>
 
-					{/* Activity graph on its own row when 3 types (CUE enabled) */}
+					{/* Activity graph on its own row when 3 types (CUE enabled).
+					    Same precomputed-bypass as the inline variant — host filter
+					    forces client-side bucketing from the filtered window. */}
 					{visibleTypes.length > 2 && (
 						<ActivityGraph
-							entries={historyEntries}
+							entries={selectedHost ? allFilteredEntries : historyEntries}
 							theme={theme}
 							viewportRange={graphViewportRange}
 							onBarClick={handleGraphBarClickVirtualized}
 							lookbackHours={graphLookbackHours}
 							onLookbackChange={handleLookbackChange}
-							precomputedBuckets={graphBuckets}
-							precomputedRange={graphRange}
+							precomputedBuckets={selectedHost ? undefined : graphBuckets}
+							precomputedRange={selectedHost ? undefined : graphRange}
 							alwaysShowViewportLabel
 						/>
 					)}
@@ -777,6 +856,20 @@ export const HistoryPanel = React.memo(
 						</div>
 					)}
 				</div>
+
+				{/* Source/host picker — only shown when the loaded window
+				    contains more than one host. Selecting a host narrows
+				    both the list above and the activity graph at top. */}
+				{hostCounts.size > 1 && (
+					<div className="mt-2 flex-shrink-0">
+						<HostSourceFilter
+							hostCounts={hostCounts}
+							selectedHost={selectedHost}
+							onSelect={setSelectedHost}
+							theme={theme}
+						/>
+					</div>
+				)}
 
 				{/* Detail Modal */}
 				{detailModalEntry && (

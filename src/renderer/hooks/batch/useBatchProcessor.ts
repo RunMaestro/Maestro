@@ -32,7 +32,7 @@ import { logger } from '../../utils/logger';
 
 // Debounce delay for batch state updates (Quick Win 1)
 const BATCH_STATE_DEBOUNCE_MS = 200;
-const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 3000;
+const AUTO_RUN_PROGRESS_POLL_INTERVAL_MS = 20000;
 
 // Regex to match checked markdown checkboxes for reset-on-completion
 // Matches both [x] and [X] with various checkbox formats (standard and GitHub-style)
@@ -276,6 +276,11 @@ export function useBatchProcessor({
 				sessionName: string;
 				projectPath: string;
 				getCompletedTasks: () => number;
+				getTotalTasks: () => number;
+				getInputTokens: () => number;
+				getOutputTokens: () => number;
+				getTotalCost: () => number;
+				getDocumentsProcessed: () => number;
 			}
 		>
 	>({});
@@ -825,6 +830,11 @@ export function useBatchProcessor({
 				sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
 				projectPath: session.cwd,
 				getCompletedTasks: () => totalCompletedTasks,
+				getTotalTasks: () => initialTotalTasks,
+				getInputTokens: () => totalInputTokens,
+				getOutputTokens: () => totalOutputTokens,
+				getTotalCost: () => totalCost,
+				getDocumentsProcessed: () => documents.length,
 			};
 
 			// Per-loop tracking for loop summary
@@ -1026,7 +1036,9 @@ export function useBatchProcessor({
 						// This handles: template substitution, document expansion, agent spawning,
 						// session registration, re-reading document, and synopsis generation
 
-						// Poll all documents during task execution for real-time progress.
+						// Poll only the currently-processing document. Other documents in the
+						// playbook can't change during this task — the agent is working on
+						// docEntry — so snapshot their counts once and reuse them across ticks.
 						let progressPollActive = true;
 						let progressPollInFlight = false;
 						let progressPollGeneration = 0;
@@ -1039,18 +1051,26 @@ export function useBatchProcessor({
 								progressPollTimeout = null;
 							}
 						};
+						let otherDocsTotal = 0;
+						let otherDocsChecked = 0;
+						for (const doc of documents) {
+							if (doc.filename === docEntry.filename) continue;
+							try {
+								const r = await readDocAndCountTasks(folderPath, doc.filename, sshRemoteId);
+								otherDocsTotal += r.taskCount + r.checkedCount;
+								otherDocsChecked += r.checkedCount;
+							} catch {
+								// Ignore — baseline is best-effort
+							}
+						}
 						const runProgressPoll = async () => {
 							if (!progressPollActive || progressPollInFlight) return;
 							const generationAtStart = progressPollGeneration;
 							progressPollInFlight = true;
 							try {
-								let polledTotal = 0;
-								let polledChecked = 0;
-								for (const doc of documents) {
-									const r = await readDocAndCountTasks(folderPath, doc.filename, sshRemoteId);
-									polledTotal += r.taskCount + r.checkedCount;
-									polledChecked += r.checkedCount;
-								}
+								const r = await readDocAndCountTasks(folderPath, docEntry.filename, sshRemoteId);
+								const polledTotal = otherDocsTotal + r.taskCount + r.checkedCount;
+								const polledChecked = otherDocsChecked + r.checkedCount;
 								if (!progressPollActive || generationAtStart !== progressPollGeneration) return;
 								updateBatchStateAndBroadcastRef.current!(sessionId, (prev) => {
 									const prevState = prev[sessionId] || DEFAULT_BATCH_STATE;
@@ -1868,8 +1888,11 @@ export function useBatchProcessor({
 			// Broadcast state change to web clients
 			broadcastAutoRunState(sessionId, null);
 
-			// Call completion callback if provided (only if still mounted to avoid warnings)
-			if (isMountedRef.current && onComplete) {
+			// Call completion callback if provided (only if still mounted to avoid warnings).
+			// Skip when alreadyFlushed: killBatchRun owns the onComplete call in that case
+			// (it captured the elapsed time before stopTracking zeroed it). Invoking here
+			// would double-fire the toast and submit elapsedTimeMs:0 to the leaderboard.
+			if (!alreadyFlushed && isMountedRef.current && onComplete) {
 				onComplete({
 					sessionId,
 					sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
@@ -2003,6 +2026,25 @@ export function useBatchProcessor({
 						historyError
 					);
 				}
+
+				// Fire onComplete here so the kill path records local stats and submits to
+				// the leaderboard. The natural-loop cleanup is unreliable for this: it calls
+				// timeTracking.stopTracking before reading getElapsedTime, so it would invoke
+				// onComplete with elapsedTimeMs:0, which the handler gates out.
+				if (isMountedRef.current && onComplete) {
+					onComplete({
+						sessionId,
+						sessionName: flushState.sessionName,
+						completedTasks,
+						totalTasks: flushState.getTotalTasks(),
+						wasStopped: true,
+						elapsedTimeMs: elapsedMs,
+						inputTokens: flushState.getInputTokens(),
+						outputTokens: flushState.getOutputTokens(),
+						totalCostUsd: flushState.getTotalCost(),
+						documentsProcessed: flushState.getDocumentsProcessed(),
+					});
+				}
 			}
 
 			// 1. Kill all active batch processes for this session and wait for termination before cleanup.
@@ -2065,7 +2107,7 @@ export function useBatchProcessor({
 			// 8. Allow system to sleep
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 		},
-		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking, onAddHistoryEntry]
+		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking, onAddHistoryEntry, onComplete]
 	);
 
 	/**

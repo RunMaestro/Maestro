@@ -54,6 +54,7 @@ vi.mock('../../../main/prompt-manager', () => ({
 		const filenameMap: Record<string, string> = {
 			'group-chat-participant': 'group-chat-participant.md',
 			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-participant-continuation': 'group-chat-participant-continuation.md',
 			'group-chat-moderator-system': 'group-chat-moderator-system.md',
 			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
 		};

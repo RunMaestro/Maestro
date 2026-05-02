@@ -1701,6 +1701,73 @@ describe('ProcessMonitor', () => {
 		});
 	});
 
+	describe('Left alignment', () => {
+		it('group label should not push siblings to the right edge', async () => {
+			const process = createActiveProcess();
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession({ groupId: 'group-1' });
+			const group = createGroup();
+
+			render(
+				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Group')).toBeInTheDocument();
+			});
+
+			const label = screen.getByText('Test Group');
+			expect(label.className).not.toMatch(/\bflex-1\b/);
+		});
+
+		it('session label should not push siblings to the right edge', async () => {
+			const process = createActiveProcess();
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Session')).toBeInTheDocument();
+			});
+
+			const label = screen.getByText('Test Session');
+			expect(label.className).not.toMatch(/\bflex-1\b/);
+		});
+
+		it('process action cluster should not be right-aligned with ml-auto', async () => {
+			const process = createActiveProcess({
+				sessionId: 'session-1-batch-1234567890',
+				isBatchMode: true,
+			});
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('AUTO')).toBeInTheDocument();
+			});
+
+			// The AUTO badge lives inside the action cluster div. That cluster
+			// must not use `ml-auto` (which would push it to the right edge).
+			const autoBadge = screen.getByText('AUTO');
+			const actionCluster = autoBadge.parentElement;
+			expect(actionCluster?.className ?? '').not.toMatch(/\bml-auto\b/);
+		});
+
+		it('footer should not split content to opposite edges', async () => {
+			getActiveProcessesMock().mockResolvedValue([]);
+
+			render(<ProcessMonitor theme={theme} sessions={[]} groups={[]} onClose={onClose} />);
+
+			const hint = screen.getByText('↑↓ navigate • Enter view details • R refresh');
+			const footer = hint.parentElement;
+			expect(footer?.className ?? '').not.toMatch(/\bjustify-between\b/);
+		});
+	});
+
 	describe('Node selection', () => {
 		it('should select node when clicked', async () => {
 			const process = createActiveProcess();

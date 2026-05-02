@@ -28,6 +28,12 @@ export interface DualPaneFileEditorItem {
 	description?: string;
 	category?: string;
 	isModified?: boolean;
+	/**
+	 * Optional second-state indicator for items where the upstream/bundled
+	 * source has changed since the user customized it. Renders a warning-colored
+	 * dot in place of (not in addition to) the modified dot.
+	 */
+	hasDefaultDrifted?: boolean;
 }
 
 export interface DualPaneFileEditorAction {
@@ -84,6 +90,13 @@ export interface DualPaneFileEditorProps {
 
 	/** Whether to show a "Modified" badge below the title. */
 	showModifiedBadge?: boolean;
+
+	/**
+	 * Whether to show a "Default Updated" badge below the title (alongside the
+	 * Modified badge when both apply). Indicates the bundled/upstream default
+	 * has changed since the user saved their customization.
+	 */
+	showDefaultDriftedBadge?: boolean;
 
 	/** Primary action button (e.g., Save). */
 	primaryAction: DualPaneFileEditorAction;
@@ -151,6 +164,7 @@ export function DualPaneFileEditor({
 	editorTokenCount,
 	editorHeaderActions,
 	showModifiedBadge,
+	showDefaultDriftedBadge,
 	primaryAction,
 	secondaryAction,
 	openInFinderPath,
@@ -375,13 +389,26 @@ export function DualPaneFileEditor({
 											<div className="dual-pane-editor-header-actions">{editorHeaderActions}</div>
 										)}
 									</div>
-									{showModifiedBadge && !isExpanded && (
-										<span
-											className="dual-pane-modified-badge"
-											style={{ backgroundColor: theme.colors.accent }}
-										>
-											Modified
-										</span>
+									{!isExpanded && (showModifiedBadge || showDefaultDriftedBadge) && (
+										<div className="dual-pane-badge-row">
+											{showModifiedBadge && (
+												<span
+													className="dual-pane-modified-badge"
+													style={{ backgroundColor: theme.colors.accent }}
+												>
+													Modified
+												</span>
+											)}
+											{showDefaultDriftedBadge && (
+												<span
+													className="dual-pane-modified-badge"
+													style={{ backgroundColor: theme.colors.warning }}
+													title="The bundled default has changed since you saved this customization."
+												>
+													Default Updated
+												</span>
+											)}
+										</div>
 									)}
 								</div>
 
@@ -459,7 +486,17 @@ export function DualPaneFileEditor({
 				<span className="dual-pane-list-item-name">{item.label}</span>
 				<span className="dual-pane-list-item-meta">
 					{item.isModified && (
-						<span className="dual-pane-modified-indicator" style={{ color: theme.colors.accent }}>
+						<span
+							className="dual-pane-modified-indicator"
+							style={{
+								color: item.hasDefaultDrifted ? theme.colors.warning : theme.colors.accent,
+							}}
+							title={
+								item.hasDefaultDrifted
+									? 'Customized — bundled default has changed since you saved this'
+									: 'Customized'
+							}
+						>
 							&bull;
 						</span>
 					)}

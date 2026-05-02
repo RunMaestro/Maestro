@@ -34,6 +34,7 @@ vi.mock('../../main/utils/remote-fs', () => ({
 	readFileRemote: vi.fn(),
 	writeFileRemote: vi.fn(() => ({ success: true })),
 	readDirRemote: vi.fn(),
+	listDirWithStatsRemote: vi.fn(),
 	mkdirRemote: vi.fn(() => ({ success: true })),
 }));
 
@@ -54,9 +55,12 @@ vi.mock('fs', async (importOriginal) => {
 import {
 	writeEntryLocal,
 	readRemoteEntriesLocal,
+	readRemoteEntriesSsh,
 	getLocalHostname,
+	__resetSharedHistoryCacheForTest,
 } from '../../main/shared-history-manager';
-import type { HistoryEntry } from '../../shared/types';
+import * as remoteFs from '../../main/utils/remote-fs';
+import type { HistoryEntry, SshRemoteConfig } from '../../shared/types';
 
 const LOCAL_HOSTNAME = os.hostname();
 
@@ -187,6 +191,152 @@ describe('SharedHistoryManager', () => {
 			// Should keep the most recent (end of file)
 			expect(entries[0].id).toBe('entry-5');
 			expect(entries[4].id).toBe('entry-9');
+		});
+	});
+
+	describe('readRemoteEntriesSsh()', () => {
+		const sshConfig: SshRemoteConfig = {
+			id: 'remote-1',
+			name: 'Test Host',
+			host: 'example.com',
+			port: 22,
+			username: 'testuser',
+			privateKeyPath: '/home/me/.ssh/id_ed25519',
+			enabled: true,
+		};
+
+		beforeEach(() => {
+			__resetSharedHistoryCacheForTest();
+		});
+
+		it('skips re-reading files when size + mtime are unchanged', async () => {
+			const remoteCwd = '/home/testuser/project';
+			const fileEntry = {
+				name: 'history-other-host.jsonl',
+				size: 100,
+				mtime: 1700000000000,
+			};
+
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: [fileEntry],
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data:
+					JSON.stringify({
+						id: 'remote-1',
+						type: 'USER',
+						timestamp: 1700000000000,
+						summary: 'remote entry',
+						projectPath: '/home/testuser/project',
+					}) + '\n',
+			});
+
+			const first = await readRemoteEntriesSsh(remoteCwd, sshConfig);
+			expect(first).toHaveLength(1);
+			expect(first[0].id).toBe('remote-1');
+			expect(remoteFs.readFileRemote).toHaveBeenCalledTimes(1);
+
+			// Second call: same stats. Should hit cache and skip readFileRemote.
+			const second = await readRemoteEntriesSsh(remoteCwd, sshConfig);
+			expect(second).toHaveLength(1);
+			expect(second[0].id).toBe('remote-1');
+			expect(remoteFs.readFileRemote).toHaveBeenCalledTimes(1);
+			expect(remoteFs.listDirWithStatsRemote).toHaveBeenCalledTimes(2);
+		});
+
+		it('re-reads when mtime changes', async () => {
+			const remoteCwd = '/home/testuser/project';
+			vi.mocked(remoteFs.listDirWithStatsRemote)
+				.mockResolvedValueOnce({
+					success: true,
+					data: [{ name: 'history-other-host.jsonl', size: 100, mtime: 1700000000000 }],
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					data: [{ name: 'history-other-host.jsonl', size: 200, mtime: 1700000005000 }],
+				});
+
+			vi.mocked(remoteFs.readFileRemote)
+				.mockResolvedValueOnce({
+					success: true,
+					data:
+						JSON.stringify({
+							id: 'old',
+							type: 'USER',
+							timestamp: 1,
+							summary: 'old',
+							projectPath: '/p',
+						}) + '\n',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					data:
+						JSON.stringify({
+							id: 'old',
+							type: 'USER',
+							timestamp: 1,
+							summary: 'old',
+							projectPath: '/p',
+						}) +
+						'\n' +
+						JSON.stringify({
+							id: 'new',
+							type: 'USER',
+							timestamp: 2,
+							summary: 'new',
+							projectPath: '/p',
+						}) +
+						'\n',
+				});
+
+			await readRemoteEntriesSsh(remoteCwd, sshConfig);
+			const second = await readRemoteEntriesSsh(remoteCwd, sshConfig);
+
+			expect(remoteFs.readFileRemote).toHaveBeenCalledTimes(2);
+			expect(second.map((e) => e.id)).toEqual(['old', 'new']);
+		});
+
+		it('skips own hostname file', async () => {
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: [
+					{
+						name: `history-${LOCAL_HOSTNAME.replace(/[^a-zA-Z0-9._-]/g, '_')}.jsonl`,
+						size: 50,
+						mtime: 1,
+					},
+					{ name: 'history-other.jsonl', size: 50, mtime: 1 },
+				],
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data:
+					JSON.stringify({
+						id: 'remote-only',
+						type: 'USER',
+						timestamp: 1,
+						summary: 'r',
+						projectPath: '/p',
+					}) + '\n',
+			});
+
+			const entries = await readRemoteEntriesSsh('/cwd', sshConfig);
+			expect(entries).toHaveLength(1);
+			expect(entries[0].hostname).toBe('other');
+			expect(remoteFs.readFileRemote).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns empty when listDirWithStatsRemote fails', async () => {
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: false,
+				error: 'Directory not found',
+			});
+
+			const entries = await readRemoteEntriesSsh('/cwd', sshConfig);
+			expect(entries).toEqual([]);
+			expect(remoteFs.readFileRemote).not.toHaveBeenCalled();
 		});
 	});
 });

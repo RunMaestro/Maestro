@@ -1832,6 +1832,39 @@ describe('CueEngine', () => {
 			expect(date.getDay()).toBe(1); // Monday
 			expect(date.getDate()).toBe(16);
 		});
+
+		// Regression for d85290c51: when a single-day schedule's slot has
+		// already passed today, the next occurrence is exactly 7 days out.
+		// The original loop bound (`dayOffset < 7`) excluded offset 7 and
+		// the function returned null, leaving the schedule silently dead
+		// until the user toggled Cue or restarted. The fix bumped the
+		// bound to `<= 7` so weekly schedules always resolve.
+		it("resolves to same day next week when today's slot has passed", () => {
+			// Monday 2026-03-09 at 09:01 — schedule for Monday 09:00 has
+			// already passed by one minute. Without the fix, this returned null.
+			vi.setSystemTime(new Date('2026-03-09T09:01:00'));
+			const result = calculateNextScheduledTime(['09:00'], ['mon']);
+			expect(result).not.toBeNull();
+			const date = new Date(result!);
+			expect(date.getDay()).toBe(1); // Monday
+			// Next Monday is 2026-03-16 — exactly 7 days later
+			expect(date.getDate()).toBe(16);
+			expect(date.getHours()).toBe(9);
+			expect(date.getMinutes()).toBe(0);
+		});
+
+		it('resolves to same day next week with multi-day filter when today is the only matching day past its slot', () => {
+			// Wednesday 2026-03-11 at 23:59 — schedule fires Wed/Fri at 09:00.
+			// Wednesday's slot is past, Friday is offset 2 → that's the next
+			// fire, NOT next Wednesday. Verifies the picks-earliest semantic
+			// still holds with the extended bound.
+			vi.setSystemTime(new Date('2026-03-11T23:59:00'));
+			const result = calculateNextScheduledTime(['09:00'], ['wed', 'fri']);
+			expect(result).not.toBeNull();
+			const date = new Date(result!);
+			expect(date.getDay()).toBe(5); // Friday
+			expect(date.getDate()).toBe(13);
+		});
 	});
 
 	describe('time.scheduled subscriptions', () => {

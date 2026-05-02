@@ -94,7 +94,7 @@ export function AutoRunDocumentViewer({
 					setEditContent(loaded);
 					setHistoryTick((t) => t + 1);
 				}
-			} catch {
+			} catch (err) {
 				if (!cancelled) {
 					// Same reasoning as the success path — if the request fails after
 					// switching documents, a stray Cmd+Z could otherwise resurrect the
@@ -104,6 +104,13 @@ export function AutoRunDocumentViewer({
 					setContent('');
 					setEditContent('');
 					setHistoryTick((t) => t + 1);
+					// Web bundle has no Sentry — log to console so the failure is at
+					// least visible in browser devtools instead of silently swallowed.
+					console.error('[AutoRunDocumentViewer] get_auto_run_document failed', {
+						sessionId,
+						filename,
+						err,
+					});
 				}
 			} finally {
 				if (!cancelled) {

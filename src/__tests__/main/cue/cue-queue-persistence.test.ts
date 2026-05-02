@@ -98,6 +98,40 @@ describe('cue-queue-persistence', () => {
 			expect(entries[0].event.type).toBe('time.heartbeat');
 		});
 
+		it('round-trips chain lineage (chainRootId + parentEventId) through the queue table', () => {
+			const p = makePersistence();
+			p.persist(
+				's-1',
+				'pid-root',
+				makeEntry({
+					subscriptionName: 'root',
+					queuedAt: NOW - 100,
+				})
+			);
+			p.persist(
+				's-1',
+				'pid-child',
+				makeEntry({
+					subscriptionName: 'child',
+					queuedAt: NOW - 50,
+					chainRootId: 'run-root',
+					parentEventId: 'run-root',
+				})
+			);
+
+			const restored = p.restoreAll().get('s-1')!;
+			const root = restored.find((e) => e.subscriptionName === 'root')!;
+			const child = restored.find((e) => e.subscriptionName === 'child')!;
+			// Root rows persisted without lineage come back undefined (matches
+			// the "queued before usageStats was enabled" / Phase 01-root case).
+			expect(root.chainRootId).toBeUndefined();
+			expect(root.parentEventId).toBeUndefined();
+			// Children round-trip the lineage so resumed runs stay attached
+			// to their chain root after a crash.
+			expect(child.chainRootId).toBe('run-root');
+			expect(child.parentEventId).toBe('run-root');
+		});
+
 		it('groups by session and preserves queuedAt ordering', () => {
 			const p = makePersistence({ known: ['s-1', 's-2'] });
 			p.persist('s-1', 'a', makeEntry({ subscriptionName: 'A', queuedAt: NOW - 100 }));
@@ -208,6 +242,8 @@ describe('cue-queue-persistence', () => {
 				commandJson: null,
 				chainDepth: 0,
 				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
 			});
 			const restored = p.restoreAll();
 			expect(restored.size).toBe(0);

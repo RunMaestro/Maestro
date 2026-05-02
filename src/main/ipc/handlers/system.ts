@@ -247,8 +247,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		// Resolve to absolute path and verify it exists
 		const absolutePath = path.resolve(itemPath);
+		// Path missing → user's intent (delete) is already satisfied; no-op gracefully
+		// rather than rejecting the IPC promise, which surfaces as an unhandled
+		// rejection in the renderer. Fixes MAESTRO-JD/JC.
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			logger.warn(`shell:trashItem - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
 		try {
 			await shell.trashItem(absolutePath);
@@ -275,8 +279,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		// Resolve to absolute path and verify it exists
 		const absolutePath = path.resolve(itemPath);
+		// Stale path → log + return rather than rejecting the IPC, which produces
+		// noisy unhandled rejections from fire-and-forget callers in the renderer.
+		// Mirrors the shell:openPath fix (MAESTRO-B3). Fixes MAESTRO-K1/HN/HS.
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			logger.warn(`shell:showItemInFolder - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
 		shell.showItemInFolder(absolutePath);
 	});
