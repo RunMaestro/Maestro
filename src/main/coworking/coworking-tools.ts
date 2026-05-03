@@ -43,8 +43,17 @@ export async function readTerminal(
 		);
 	}
 	const full = await resolver(tabUuid);
+	// A buffer that ends in `\n` would otherwise be counted as one extra empty line
+	// and `lines: N` would return N-1 real lines plus a synthetic trailing blank.
+	// Treat a single trailing newline as a terminator, not a line.
+	const splitLines = (s: string): string[] => {
+		if (s.length === 0) return [];
+		const parts = s.split('\n');
+		if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
+		return parts;
+	};
+	const allLines = splitLines(full);
 	if (typeof args.lines === 'number' && Number.isFinite(args.lines) && args.lines > 0) {
-		const allLines = full.split('\n');
 		if (allLines.length > args.lines) {
 			return {
 				id: args.id,
@@ -55,6 +64,5 @@ export async function readTerminal(
 		}
 		return { id: args.id, content: full, truncated: false, totalLines: allLines.length };
 	}
-	const totalLines = full.length === 0 ? 0 : full.split('\n').length;
-	return { id: args.id, content: full, truncated: false, totalLines };
+	return { id: args.id, content: full, truncated: false, totalLines: allLines.length };
 }

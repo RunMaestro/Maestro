@@ -122,23 +122,26 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 		if (!win || win.isDestroyed()) {
 			throw new Error('Coworking: main window is not available to read terminal buffer');
 		}
-		// Find the owning session via the registry (the tools layer just gave us tabUuid).
-		const sessionId = (() => {
-			for (const sid of [coworkingRegistry.getActiveSessionId()]) {
-				if (sid) return sid;
-			}
-			return null;
-		})();
+		// Snapshot the active session at dispatch time. If it changes before the renderer
+		// answers, the answer is whatever that snapshot's TerminalView returns — better than
+		// silently falling through to "try every view" with potentially-stale state.
+		const sessionId = coworkingRegistry.getActiveSessionId();
 		const responseChannel = `coworking:bufferResponse:${nextRequestId++}`;
+		const expectedSenderId = win.webContents.id;
 		return new Promise<string>((resolve, reject) => {
+			const handler = (_event: Electron.IpcMainEvent, content: string) => {
+				// Drop responses originating from any renderer other than our main window
+				// — defense-in-depth against a malicious or misconfigured renderer.
+				if (_event.sender.id !== expectedSenderId) return;
+				clearTimeout(timer);
+				ipcMain.removeListener(responseChannel, handler);
+				resolve(typeof content === 'string' ? content : '');
+			};
 			const timer = setTimeout(() => {
-				ipcMain.removeAllListeners(responseChannel);
+				ipcMain.removeListener(responseChannel, handler);
 				reject(new Error('Coworking: timed out waiting for terminal buffer from renderer'));
 			}, BUFFER_REQUEST_TIMEOUT_MS);
-			ipcMain.once(responseChannel, (_event, content: string) => {
-				clearTimeout(timer);
-				resolve(typeof content === 'string' ? content : '');
-			});
+			ipcMain.on(responseChannel, handler);
 			win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
 		});
 	});

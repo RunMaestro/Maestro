@@ -1036,6 +1036,9 @@ function setupIpcHandlers() {
 			await ensureCoworkingServerScript();
 			await startCoworkingBridge();
 		} catch (err) {
+			void captureException(err instanceof Error ? err : new Error(String(err)), {
+				operation: 'startup:coworkingBridge',
+			});
 			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
 		}
 	})();

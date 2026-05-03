@@ -8,12 +8,15 @@
  */
 
 import { app } from 'electron';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { getCoworkingServerScript } from './coworking-server-script';
 
 const SCRIPT_FILENAME = 'coworking-mcp-server.js';
+const execFileAsync = promisify(execFile);
 
 /** Absolute path of the bundled server script. */
 export function getCoworkingServerScriptPath(): string {
@@ -25,7 +28,14 @@ export async function ensureCoworkingServerScript(): Promise<string> {
 	const scriptPath = getCoworkingServerScriptPath();
 	const contents = getCoworkingServerScript();
 	try {
-		const existing = await fs.promises.readFile(scriptPath, 'utf8').catch(() => null);
+		// Only treat ENOENT as "no existing file"; any other I/O failure is a real
+		// problem that should bubble up and be reported.
+		let existing: string | null = null;
+		try {
+			existing = await fs.promises.readFile(scriptPath, 'utf8');
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+		}
 		if (existing === contents) return scriptPath;
 		await fs.promises.mkdir(path.dirname(scriptPath), { recursive: true });
 		await fs.promises.writeFile(scriptPath, contents, { mode: 0o644 });
@@ -40,16 +50,41 @@ export async function ensureCoworkingServerScript(): Promise<string> {
 	return scriptPath;
 }
 
+/**
+ * Best-effort resolution of an absolute path to a `node` binary on the system,
+ * cached after the first lookup. Falls back to the literal `"node"` so the agent's
+ * MCP client tries its own PATH if nothing better is available.
+ *
+ * We do this so GUI-launched agents that don't inherit a shell's PATH (common
+ * with version managers like nvm/fnm/volta on macOS Finder launches) still find
+ * a Node binary. Resolution is cached because PATH doesn't change per Maestro
+ * launch and `which`/`where` is cheap but not free.
+ */
+let resolvedNodeCommand: string | null = null;
+export async function resolveNodeCommand(): Promise<string> {
+	if (resolvedNodeCommand) return resolvedNodeCommand;
+	const cmd = process.platform === 'win32' ? 'where' : 'which';
+	try {
+		const { stdout } = await execFileAsync(cmd, ['node'], { timeout: 2000 });
+		const first = stdout
+			.split(/\r?\n/)
+			.map((s) => s.trim())
+			.filter(Boolean)[0];
+		resolvedNodeCommand = first && path.isAbsolute(first) ? first : 'node';
+	} catch {
+		resolvedNodeCommand = 'node';
+	}
+	return resolvedNodeCommand;
+}
+
 /** Build the spawn command + args + env for the bundled MCP server. */
-export function buildMcpServerSpec(env: Record<string, string>): {
+export async function buildMcpServerSpec(env: Record<string, string>): Promise<{
 	command: string;
 	args: string[];
 	env: Record<string, string>;
-} {
-	// `node` from PATH — every supported agent already runs in a context where Node is required
-	// (Claude Code, Codex, OpenCode, Factory Droid all are Node CLIs).
+}> {
 	return {
-		command: 'node',
+		command: await resolveNodeCommand(),
 		args: [getCoworkingServerScriptPath()],
 		env,
 	};

@@ -54,6 +54,8 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 
 	const handleInstall = useCallback(
 		async (agentId: string) => {
+			// Don't let two mutations race on the same user-level config file.
+			if (busyAll || busyAgentId) return;
 			setBusyAgentId(agentId);
 			try {
 				await window.maestro.coworking.install(agentId);
@@ -73,11 +75,12 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 				setBusyAgentId(null);
 			}
 		},
-		[refresh]
+		[busyAll, busyAgentId, refresh]
 	);
 
 	const handleUninstall = useCallback(
 		async (agentId: string) => {
+			if (busyAll || busyAgentId) return;
 			setBusyAgentId(agentId);
 			try {
 				await window.maestro.coworking.uninstall(agentId);
@@ -97,10 +100,12 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 				setBusyAgentId(null);
 			}
 		},
-		[refresh]
+		[busyAll, busyAgentId, refresh]
 	);
 
 	const handleInstallAll = useCallback(async () => {
+		// Don't let bulk install race with a per-agent mutation already in flight.
+		if (busyAll || busyAgentId) return;
 		setBusyAll(true);
 		try {
 			const results = await window.maestro.coworking.installAll();
@@ -128,12 +133,14 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 		} finally {
 			setBusyAll(false);
 		}
-	}, [refresh]);
+	}, [busyAll, busyAgentId, refresh]);
 
 	const allInstalled = useMemo(
 		() => statuses.length > 0 && statuses.every((s) => s.installed),
 		[statuses]
 	);
+
+	const anyBusy = busyAll || busyAgentId !== null;
 
 	return (
 		<div className="px-4 pb-4 pt-3 space-y-3 border-t" style={{ borderColor: theme.colors.border }}>
@@ -225,7 +232,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 			<div className="flex justify-end pt-1">
 				<button
 					onClick={handleInstallAll}
-					disabled={busyAll || allInstalled || statuses.length === 0}
+					disabled={anyBusy || allInstalled || statuses.length === 0}
 					className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded transition-colors disabled:opacity-40"
 					style={{
 						borderColor: theme.colors.border,

@@ -54,6 +54,29 @@ describe('coworking-tools', () => {
 		expect(out.content).toBe(buf);
 	});
 
+	it('treats a single trailing newline as a terminator, not a line', async () => {
+		// Without the fix this would report totalLines=4 and `lines: 3` would tail-trim
+		// to "foo\nbar\n" + a synthetic empty line.
+		const out = await readTerminal(
+			{ id: 'term:1' },
+			{ registry, resolver: async () => '$ ls\nfoo\nbar\n' }
+		);
+		expect(out.totalLines).toBe(3);
+		const tailed = await readTerminal(
+			{ id: 'term:1', lines: 2 },
+			{ registry, resolver: async () => '$ ls\nfoo\nbar\n' }
+		);
+		expect(tailed.totalLines).toBe(3);
+		expect(tailed.content).toBe('foo\nbar');
+	});
+
+	it('reports zero lines for an empty buffer', async () => {
+		const out = await readTerminal({ id: 'term:1' }, { registry, resolver: async () => '' });
+		expect(out.totalLines).toBe(0);
+		expect(out.content).toBe('');
+		expect(out.truncated).toBe(false);
+	});
+
 	it('readTerminal throws on unknown id', async () => {
 		await expect(
 			readTerminal({ id: 'term:99' }, { registry, resolver: async () => 'irrelevant' })

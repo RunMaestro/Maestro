@@ -16,6 +16,7 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Props for the TerminalTabItem component.
@@ -109,12 +110,19 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	const coworkingPillId =
 		coworkingEnabled && typeof tab.coworkingId === 'number' ? `term:${tab.coworkingId}` : null;
 	const handleCoworkingPillClick = useCallback(
-		(e: React.MouseEvent) => {
+		async (e: React.MouseEvent) => {
 			if (!coworkingPillId) return;
 			e.stopPropagation();
-			void navigator.clipboard.writeText(coworkingPillId).then(() => {
+			try {
+				await navigator.clipboard.writeText(coworkingPillId);
 				flashCopiedToClipboard();
-			});
+			} catch (err) {
+				// Clipboard API can be unavailable (insecure context, focus issues, deny by user).
+				// Capture so we know which mode is failing in production rather than silently dropping.
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'TerminalTabItem.copyCoworkingId', coworkingPillId },
+				});
+			}
 		},
 		[coworkingPillId]
 	);

@@ -61,16 +61,29 @@ const TOOLS = [
   },
 ];
 
-// ---------- Bridge client (lazy, with one-shot reconnect) ----------
+// ---------- Bridge client (lazy, single shared connection) ----------
 let bridgeConn = null;
 let bridgeBuffer = '';
+let connectPromise = null;
 const pending = new Map();
 let nextRpcId = 1;
 
+function rejectAllPending(err) {
+  for (const p of pending.values()) p.reject(err);
+  pending.clear();
+}
+
 function connectBridge() {
-  return new Promise((resolve, reject) => {
+  if (bridgeConn) return Promise.resolve(bridgeConn);
+  // Concurrent callers must share a single in-flight connection so the module-
+  // level bridgeBuffer doesn't get spliced across multiple sockets.
+  if (connectPromise) return connectPromise;
+
+  connectPromise = new Promise((resolve, reject) => {
     const c = net.createConnection({ path: SOCKET_PATH }, () => {
       c.setEncoding('utf8');
+      // Reset shared buffer for this fresh connection.
+      bridgeBuffer = '';
       c.on('data', (chunk) => {
         bridgeBuffer += chunk;
         let nl;
@@ -92,25 +105,42 @@ function connectBridge() {
         }
       });
       c.on('error', (err) => {
-        for (const p of pending.values()) p.reject(err);
-        pending.clear();
+        rejectAllPending(err);
         bridgeConn = null;
       });
+      // Reject pending RPCs on a clean close too — otherwise their callers
+      // would hang forever waiting for a reply that will never come.
       c.on('close', () => {
+        rejectAllPending(new Error('coworking bridge: connection closed'));
         bridgeConn = null;
       });
       bridgeConn = c;
       resolve(c);
     });
     c.once('error', reject);
+  }).finally(() => {
+    connectPromise = null;
   });
+  return connectPromise;
 }
 
 async function bridgeCall(method, params) {
-  if (!bridgeConn) await connectBridge();
+  // Capture the resolved socket locally so that if bridgeConn is nulled out
+  // between the await and the write (e.g. by a synchronous error handler), we
+  // either succeed or surface the failure immediately instead of leaking the
+  // pending entry.
+  const conn = bridgeConn || (await connectBridge());
+  if (!conn || conn.destroyed) {
+    throw new Error('coworking bridge: not connected');
+  }
   const id = nextRpcId++;
   const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-  bridgeConn.write(JSON.stringify({ id, method, params }) + '\n');
+  try {
+    conn.write(JSON.stringify({ id, method, params }) + '\n');
+  } catch (err) {
+    pending.delete(id);
+    throw err;
+  }
   return promise;
 }
 

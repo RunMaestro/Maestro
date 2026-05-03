@@ -7,6 +7,7 @@
  * calls `list_terminals`.
  */
 
+import { captureException } from '../utils/sentry';
 import type { CoworkingTerminalEntry, CoworkingTerminalRecord } from './coworking-types';
 
 type ChangeListener = () => void;
@@ -111,8 +112,12 @@ class CoworkingRegistry {
 		for (const fn of this.listeners) {
 			try {
 				fn();
-			} catch {
-				// Listener errors must not bring down the registry.
+			} catch (err) {
+				// One bad listener must not bring down the registry, but the failure
+				// has to be observable in production. Capture and continue.
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { scope: 'CoworkingRegistry.notify' },
+				});
 			}
 		}
 	}

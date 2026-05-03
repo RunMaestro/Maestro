@@ -22,7 +22,7 @@ const LOG_CTX = '[Coworking][Installer]';
 async function buildSpec(): Promise<CoworkingMcpServerSpec> {
 	await ensureCoworkingServerScript(); // refresh the bundled script if needed
 	const env = getBridgeEnvVar();
-	return buildMcpServerSpec({ [env.name]: env.value });
+	return await buildMcpServerSpec({ [env.name]: env.value });
 }
 
 /** List install status for every supported agent. */

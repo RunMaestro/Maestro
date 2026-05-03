@@ -119,7 +119,14 @@ export function parseTerminalSessionId(
  * @returns New session with the tab added and set as active
  */
 export function addTerminalTab(session: Session, tab: TerminalTab): Session {
-	const nextCoworkingId = session.nextCoworkingId ?? 1;
+	// When `session.nextCoworkingId` is missing (legacy / partially-migrated sessions
+	// where some tabs already carry a `coworkingId`), fall back to `max(existing) + 1`
+	// so we never collide with an in-flight id.
+	const maxExistingCoworkingId = (session.terminalTabs ?? []).reduce(
+		(max, t) => (typeof t.coworkingId === 'number' && t.coworkingId > max ? t.coworkingId : max),
+		0
+	);
+	const nextCoworkingId = session.nextCoworkingId ?? maxExistingCoworkingId + 1;
 	const tabWithCoworkingId: TerminalTab = {
 		...tab,
 		coworkingId: tab.coworkingId ?? nextCoworkingId,
@@ -132,7 +139,9 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 		activeFileTabId: null,
 		activeBrowserTabId: null,
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
-		nextCoworkingId: nextCoworkingId + 1,
+		// Bump strictly past the larger of the chosen id and the bumped counter so we
+		// never hand out the same id twice within a session.
+		nextCoworkingId: Math.max(nextCoworkingId + 1, (tabWithCoworkingId.coworkingId ?? 0) + 1),
 	};
 }
 

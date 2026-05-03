@@ -8,6 +8,7 @@
 import { useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 import type { TerminalViewHandle } from '../../components/TerminalView';
+import { captureException } from '../../utils/sentry';
 
 export function useCoworkingBufferResponder(
 	terminalViewRefs: MutableRefObject<Map<string, TerminalViewHandle>>
@@ -28,7 +29,13 @@ export function useCoworkingBufferResponder(
 						}
 					}
 				}
-			} catch {
+			} catch (err) {
+				// `getTerminalBuffer` shouldn't throw under normal conditions — if it does,
+				// degrading to empty content is acceptable for the agent UX, but capture
+				// the error so we can see it in production instead of silently swallowing.
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'useCoworkingBufferResponder', tabUuid, sessionId },
+				});
 				content = '';
 			}
 			window.maestro.coworking.sendBufferResponse(responseChannel, content);

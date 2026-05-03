@@ -15,6 +15,21 @@ import { useEffect, useRef } from 'react';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
+import { captureException } from '../../utils/sentry';
+
+/** Errors we expect during teardown / pre-init — silently ignore. Anything else
+ *  bubbles up to Sentry so we can see real bridge failures in production. */
+function isExpectedTeardownIpcError(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	return /No handler registered|Object has been destroyed|cannot be cloned/i.test(err.message);
+}
+
+function reportIfUnexpected(err: unknown, scope: string): void {
+	if (isExpectedTeardownIpcError(err)) return;
+	void captureException(err instanceof Error ? err : new Error(String(err)), {
+		extra: { scope: `useCoworkingRegistrySync:${scope}` },
+	});
+}
 
 export function useCoworkingRegistrySync(): void {
 	const activeSession = useSessionStore(selectActiveSession);
@@ -23,27 +38,34 @@ export function useCoworkingRegistrySync(): void {
 
 	useEffect(() => {
 		if (!enabled) {
-			window.maestro.coworking.setActiveSession(null).catch(() => {
-				/* main process may not be ready during teardown */
-			});
+			window.maestro.coworking
+				.setActiveSession(null)
+				.catch((err) => reportIfUnexpected(err, 'disable'));
 			lastPayloadRef.current = '';
 			return;
 		}
 
 		if (!activeSession) {
-			window.maestro.coworking.setActiveSession(null).catch(() => {});
+			window.maestro.coworking
+				.setActiveSession(null)
+				.catch((err) => reportIfUnexpected(err, 'no-active-session'));
 			lastPayloadRef.current = '';
 			return;
 		}
 
 		const sessionId = activeSession.id;
-		const records = (activeSession.terminalTabs ?? [])
-			.filter((t) => typeof t.coworkingId === 'number')
-			.map((t, idx) => ({
-				id: `term:${t.coworkingId}`,
-				cwd: t.cwd ?? '',
-				title: getTerminalTabDisplayName(t, idx),
-				tabUuid: t.id,
+		// Use the original-array index for `getTerminalTabDisplayName` so the auto-generated
+		// "Terminal N" fallback name stays stable for tabs the agent sees, even if some
+		// pre-feature tabs in the array lack a `coworkingId`.
+		const allTabs = activeSession.terminalTabs ?? [];
+		const records = allTabs
+			.map((t, idx) => ({ tab: t, idx }))
+			.filter(({ tab }) => typeof tab.coworkingId === 'number')
+			.map(({ tab, idx }) => ({
+				id: `term:${tab.coworkingId}`,
+				cwd: tab.cwd ?? '',
+				title: getTerminalTabDisplayName(tab, idx),
+				tabUuid: tab.id,
 				sessionId,
 			}));
 
@@ -56,8 +78,8 @@ export function useCoworkingRegistrySync(): void {
 			try {
 				await window.maestro.coworking.setActiveSession(sessionId);
 				await window.maestro.coworking.syncSessionTerminals(sessionId, records);
-			} catch {
-				/* best-effort; main may not be ready or feature may have just been disabled */
+			} catch (err) {
+				reportIfUnexpected(err, 'sync');
 			}
 		})();
 	}, [enabled, activeSession]);

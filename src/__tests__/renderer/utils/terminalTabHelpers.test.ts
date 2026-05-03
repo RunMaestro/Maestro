@@ -157,6 +157,22 @@ describe('addTerminalTab', () => {
 		expect(updated.nextCoworkingId).toBe(2);
 	});
 
+	it('falls back to max(existing coworkingId)+1 when nextCoworkingId is missing (legacy migration)', () => {
+		// Simulates a session deserialized from disk before nextCoworkingId existed:
+		// the existing tab already carries coworkingId=7, so a fresh add must mint 8 — not 1.
+		const existingTab = createMockTerminalTab({ id: 'old', coworkingId: 7 });
+		const session = createMockSession({
+			terminalTabs: [existingTab],
+			activeTerminalTabId: 'old',
+			unifiedTabOrder: [{ type: 'terminal', id: 'old' }],
+			// nextCoworkingId intentionally omitted to mimic legacy persisted state
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new' }));
+		const newTab = updated.terminalTabs!.find((t) => t.id === 'new');
+		expect(newTab?.coworkingId).toBe(8);
+		expect(updated.nextCoworkingId).toBe(9);
+	});
+
 	it('coworkingId is monotonic and never reused after close', () => {
 		let session = createMockSession();
 		session = addTerminalTab(session, createMockTerminalTab({ id: 'a' })); // id=1
