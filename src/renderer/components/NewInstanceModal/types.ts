@@ -49,7 +49,8 @@ export interface NewInstanceModalProps {
 		customModel?: string,
 		customContextWindow?: number,
 		customProviderPath?: string,
-		sessionSshRemoteConfig?: SessionSshRemoteConfig
+		sessionSshRemoteConfig?: SessionSshRemoteConfig,
+		customEffort?: string
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];

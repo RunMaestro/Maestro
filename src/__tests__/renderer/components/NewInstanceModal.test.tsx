@@ -730,7 +730,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -777,7 +778,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -824,7 +826,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 	});
@@ -872,7 +875,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1383,7 +1387,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -1530,7 +1535,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 	});
@@ -2308,6 +2314,81 @@ describe('NewInstanceModal', () => {
 			expect(sourceSession.customArgs).toBe('--model=opus --verbose');
 		});
 
+		it('forwards source.customEffort through to onCreate when duplicating a Codex agent', async () => {
+			// Positive coverage for the customEffort plumbing (#755) and the
+			// duplicate-flow merge fix (CodeRabbit review): the picked effort must
+			// flow through as the trailing customEffort arg, not just `undefined`.
+			const sourceSession: Session = {
+				id: 'session-codex',
+				name: 'Codex Agent',
+				toolType: 'codex',
+				cwd: '/home/testuser/proj',
+				projectRoot: '/home/testuser/proj',
+				fullPath: '/home/testuser/proj',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				customEffort: 'xhigh',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'OpenAI Codex',
+					available: true,
+					configOptions: [
+						{
+							key: 'reasoningEffort',
+							type: 'select',
+							label: 'Reasoning Effort',
+							default: '',
+							options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+						},
+					],
+				}),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Codex Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 13th positional arg is customEffort. assert it's 'xhigh', not undefined.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[12]).toBe('xhigh');
+		});
+
 		it('should display SSH selector even when no agent is selected', async () => {
 			// This tests the bug where SSH section was hidden when no agents were available
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -2470,7 +2551,8 @@ describe('NewInstanceModal', () => {
 					remoteId: 'remote-1',
 					syncHistory: false,
 					workingDirOverride: '/test/path',
-				}
+				},
+				undefined
 			);
 		});
 
@@ -2694,7 +2776,8 @@ describe('NewInstanceModal', () => {
 					enabled: true,
 					remoteId: 'remote-1',
 					workingDirOverride: '/home/devuser/my-project',
-				})
+				}),
+				undefined
 			);
 		});
 
@@ -2804,7 +2887,8 @@ describe('NewInstanceModal', () => {
 					enabled: true,
 					remoteId: 'remote-1',
 					workingDirOverride: '/explicit/override/path',
-				})
+				}),
+				undefined
 			);
 		});
 

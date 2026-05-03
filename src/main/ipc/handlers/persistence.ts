@@ -355,6 +355,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 						groupEmoji: session.groupEmoji || null,
 						parentSessionId: session.parentSessionId || null,
 						worktreeBranch: session.worktreeBranch || null,
+						autoRunFolderPath: session.autoRunFolderPath || null,
 					});
 				}
 			}

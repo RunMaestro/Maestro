@@ -46,6 +46,7 @@ import { AutoRunPanel } from './AutoRunPanel';
 import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
 import { AutoRunSetupSheet } from './AutoRunSetupSheet';
 import { MarketplaceSheet } from './MarketplaceSheet';
+import { FolderPickerSheet } from './FolderPickerSheet';
 import { NotificationSettingsSheet } from './NotificationSettingsSheet';
 import { SettingsPanel } from './SettingsPanel';
 import { AgentCreationSheet } from './AgentCreationSheet';
@@ -1118,6 +1119,17 @@ export default function MobileApp() {
 	const [showUnreadAgentsOnly, setShowUnreadAgentsOnly] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
+	// Tracks the document currently focused inside `AutoRunInline` so the launch
+	// sheet can pre-fill it as the active selection — mirrors desktop's
+	// `BatchRunnerModal` `currentDocument` semantics. Bubbled up from
+	// `AutoRunInline` via `onSelectedDocumentChange`.
+	const [autoRunSelectedDoc, setAutoRunSelectedDoc] = useState<string | null>(null);
+	// Server-driven folder picker — mobile/web parity for desktop's
+	// `dialog.selectFolder` flow that repoints a session at a different
+	// `.maestro/` folder. The picker uses `get_file_tree` to navigate and sends
+	// `set_auto_run_folder` on confirm; the server bridges to the renderer's
+	// `handleAutoRunFolderSelected`-equivalent listener for state + persistence.
+	const [showFolderPicker, setShowFolderPicker] = useState(false);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [thinkingMode, setThinkingMode] = useState<ThinkingMode>('off');
 	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
@@ -1468,7 +1480,28 @@ export default function MobileApp() {
 		documents: autoRunDocuments,
 		loadDocuments: loadAutoRunDocuments,
 		launchAutoRun,
+		resumeAutoRunError,
+		skipAutoRunDocument,
+		abortAutoRunError,
 	} = useAutoRun(sendRequest, send, currentAutoRunState);
+
+	// Bind error-recovery handlers to the active session so the AutoRunIndicator
+	// can call them with no arguments. Memoized so the indicator doesn't see a
+	// fresh function identity on every render and re-trigger pending state.
+	const handleAutoRunResume = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return resumeAutoRunError(activeSessionId);
+	}, [activeSessionId, resumeAutoRunError]);
+
+	const handleAutoRunSkipDocument = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return skipAutoRunDocument(activeSessionId);
+	}, [activeSessionId, skipAutoRunDocument]);
+
+	const handleAutoRunAbort = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return abortAutoRunError(activeSessionId);
+	}, [activeSessionId, abortAutoRunError]);
 
 	// Auto Run panel handlers
 	const handleOpenAutoRunPanel = useCallback(() => {
@@ -1521,6 +1554,34 @@ export default function MobileApp() {
 			loadAutoRunDocuments(activeSessionId);
 		}
 	}, [activeSessionId, loadAutoRunDocuments]);
+
+	const handleAutoRunOpenFolderPicker = useCallback(() => {
+		setShowFolderPicker(true);
+	}, []);
+
+	const handleAutoRunCloseFolderPicker = useCallback(() => {
+		setShowFolderPicker(false);
+	}, []);
+
+	// Persists the chosen folder via `set_auto_run_folder`. The server bridges to
+	// the renderer's `maestro:setAutoRunFolder` listener which lists docs from
+	// the new path and updates the session atomically. After confirmation the
+	// inline panel re-loads via the normal `useAutoRun` document refresh.
+	const handleAutoRunFolderConfirm = useCallback(
+		async (folderPath: string) => {
+			if (!activeSessionId) return;
+			const result = await sendRequest<{ success: boolean; error?: string }>(
+				'set_auto_run_folder',
+				{ sessionId: activeSessionId, folderPath }
+			);
+			if (!result?.success) {
+				throw new Error(result?.error || 'Failed to set Auto Run folder');
+			}
+			// Refresh the in-panel document list so the new folder's docs appear.
+			loadAutoRunDocuments(activeSessionId);
+		},
+		[activeSessionId, sendRequest, loadAutoRunDocuments]
+	);
 
 	// Notification settings handlers
 	const handleOpenNotificationSettings = useCallback(() => {
@@ -1968,19 +2029,35 @@ export default function MobileApp() {
 
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
-		(command: string) => {
+		(command: string, images?: string[]) => {
 			if (!activeSessionId) return;
 
 			// Find the active session to get input mode
 			const currentMode = currentInputMode;
+			// Images are AI-mode only — terminal commands have no image concept.
+			const effectiveImages =
+				currentMode === 'ai' && images && images.length > 0 ? images : undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
 
-			// Add user message to session logs immediately for display
-			addUserLogEntry(command, currentMode);
+			// Offline path: refuse to queue when images are staged. Our offline
+			// queue can't carry image payloads, so silently dropping them
+			// would mislead the user. Bail out early so the composer keeps
+			// the staged images for retry once the connection is back.
+			if ((isOffline || !isActuallyConnected) && effectiveImages?.length) {
+				webLogger.warn(
+					'Cannot queue pasted images while offline. Reconnect and resend with images.',
+					'Mobile'
+				);
+				return;
+			}
 
-			// If offline or not connected, queue the command for later
+			// Add user message to session logs immediately for display
+			addUserLogEntry(command, currentMode, effectiveImages);
+
+			// If offline or not connected, queue the (image-free) command for
+			// later. Image-bearing sends were rejected above.
 			if (isOffline || !isActuallyConnected) {
 				const queued = queueCommand(activeSessionId, command, currentMode);
 				if (queued) {
@@ -1998,9 +2075,10 @@ export default function MobileApp() {
 					sessionId: activeSessionId,
 					command,
 					inputMode: currentMode,
+					...(effectiveImages ? { images: effectiveImages } : {}),
 				});
 				webLogger.info(
-					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId}`,
+					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId} images=${effectiveImages?.length ?? 0}`,
 					'Mobile'
 				);
 			}
@@ -3117,6 +3195,9 @@ export default function MobileApp() {
 					state={autoRunStates[activeSessionId]}
 					sessionName={activeSession?.name}
 					onTap={handleOpenAutoRunPanel}
+					onResume={handleAutoRunResume}
+					onSkipDocument={handleAutoRunSkipDocument}
+					onAbort={handleAutoRunAbort}
 				/>
 			)}
 
@@ -3177,6 +3258,9 @@ export default function MobileApp() {
 					onOpenSetup={handleAutoRunOpenSetup}
 					sendRequest={sendRequest}
 					send={send}
+					onResumeAfterError={handleAutoRunResume}
+					onSkipAfterError={handleAutoRunSkipDocument}
+					onAbortAfterError={handleAutoRunAbort}
 				/>
 			)}
 
@@ -3187,6 +3271,7 @@ export default function MobileApp() {
 					filename={autoRunViewingDoc}
 					onBack={handleAutoRunBackFromDocument}
 					sendRequest={sendRequest}
+					isLocked={Boolean(currentAutoRunState?.isRunning)}
 				/>
 			)}
 
@@ -3197,6 +3282,9 @@ export default function MobileApp() {
 					documents={autoRunDocuments}
 					onLaunch={handleAutoRunLaunch}
 					onClose={handleAutoRunCloseSetup}
+					sendRequest={sendRequest}
+					send={send}
+					currentDocument={autoRunSelectedDoc}
 					onOpenMarketplace={handleOpenMarketplaceSheet}
 				/>
 			)}
@@ -3208,6 +3296,20 @@ export default function MobileApp() {
 					sendRequest={sendRequest}
 					onImported={handleMarketplaceImported}
 					onClose={handleCloseMarketplaceSheet}
+				/>
+			)}
+
+			{/* Auto Run folder picker — desktop parity for `dialog.selectFolder`.
+				Browses the server filesystem via `get_file_tree` and persists the
+				chosen folder onto the session via `set_auto_run_folder`. */}
+			{activeSessionId && showFolderPicker && activeSession?.cwd && (
+				<FolderPickerSheet
+					sessionId={activeSessionId}
+					startPath={activeSession.cwd}
+					initialPath={activeSession.autoRunFolderPath ?? null}
+					onClose={handleAutoRunCloseFolderPicker}
+					onConfirm={handleAutoRunFolderConfirm}
+					sendRequest={sendRequest}
 				/>
 			)}
 
@@ -3392,6 +3494,8 @@ export default function MobileApp() {
 						projectPath={activeSession?.cwd}
 						onAutoRunOpenDocument={handleAutoRunOpenDocument}
 						onAutoRunOpenSetup={handleAutoRunOpenSetup}
+						onAutoRunOpenFolderPicker={handleAutoRunOpenFolderPicker}
+						onAutoRunSelectedDocumentChange={setAutoRunSelectedDoc}
 						sendRequest={sendRequest}
 						send={send}
 						onViewDiff={handleViewGitDiff}
@@ -3399,12 +3503,18 @@ export default function MobileApp() {
 						panelRef={isMobile ? undefined : rightPanelResize.panelRef}
 						width={isMobile ? undefined : rightPanelResize.width}
 						onResizeStart={isMobile ? undefined : rightPanelResize.onResizeStart}
+						// Inline desktop panel needs to reserve room for the fixed
+						// CommandInputBar; mobile/full-screen mode sits above it via z-index.
+						inputBarHeight={isMobile ? undefined : inputBarHeight}
 					/>
 				)}
 			</div>
 
-			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input) */}
-			{currentInputMode !== 'terminal' && (
+			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input).
+				Also hidden when the right panel is open in full-screen overlay mode (narrow viewport),
+				so the panel's own bottom action bar isn't covered by the chat input. On wider viewports
+				the right panel is inline and shrinks the main column, so the input stays visible. */}
+			{currentInputMode !== 'terminal' && !(showRightDrawer && isMobile) && (
 				<CommandInputBar
 					isOffline={isOffline}
 					isConnected={connectionState === 'connected' || connectionState === 'authenticated'}

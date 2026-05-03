@@ -332,6 +332,13 @@ export function useBatchProcessor({
 				currentDocumentIndex: state.currentDocumentIndex,
 				totalTasksAcrossAllDocs: state.totalTasksAcrossAllDocs,
 				completedTasksAcrossAllDocs: state.completedTasksAcrossAllDocs,
+				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				errorPaused: state.errorPaused,
+				errorMessage: state.error?.message,
+				errorType: state.error?.type,
+				errorRecoverable: state.error?.recoverable,
+				errorDocumentIndex: state.errorDocumentIndex,
+				errorTaskDescription: state.errorTaskDescription,
 			});
 		} else {
 			// When not running and no completed tasks, broadcast null to clear the state

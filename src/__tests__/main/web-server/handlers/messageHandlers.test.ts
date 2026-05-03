@@ -130,6 +130,31 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		resizeTerminal: vi.fn().mockReturnValue(true),
 		spawnTerminalForWeb: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
+		// Auto Run parity additions (playbook CRUD + task reset + error recovery)
+		resetAutoRunDocTasks: vi.fn().mockResolvedValue(true),
+		resumeAutoRunError: vi.fn().mockResolvedValue(true),
+		skipAutoRunDocument: vi.fn().mockResolvedValue(true),
+		abortAutoRunError: vi.fn().mockResolvedValue(true),
+		listPlaybooks: vi.fn().mockResolvedValue([]),
+		createPlaybook: vi.fn().mockResolvedValue({
+			id: 'pb-1',
+			name: 'My Playbook',
+			createdAt: 0,
+			updatedAt: 0,
+			documents: [],
+			loopEnabled: false,
+			prompt: '',
+		}),
+		updatePlaybook: vi.fn().mockResolvedValue({
+			id: 'pb-1',
+			name: 'My Playbook',
+			createdAt: 0,
+			updatedAt: 0,
+			documents: [],
+			loopEnabled: false,
+			prompt: '',
+		}),
+		deletePlaybook: vi.fn().mockResolvedValue(true),
 		notifyToast: vi.fn().mockResolvedValue(true),
 		notifyCenterFlash: vi.fn().mockResolvedValue(true),
 		getMarketplaceManifest: vi.fn().mockResolvedValue({
@@ -152,6 +177,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			importedDocs: [],
 			importedAssets: [],
 		}),
+		listDesktopSessions: vi.fn().mockReturnValue([]),
+		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
 }
 
@@ -213,7 +240,8 @@ describe('WebSocketMessageHandler', () => {
 					'Hello Claude!',
 					'ai',
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -236,7 +264,8 @@ describe('WebSocketMessageHandler', () => {
 					'ls -la',
 					'terminal',
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -300,13 +329,78 @@ describe('WebSocketMessageHandler', () => {
 					'Hello',
 					'ai',
 					'tab-explicit',
-					false
+					false,
+					undefined
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.tabId).toBe('tab-explicit');
+		});
+
+		it('accepts image-only sends in AI mode (no command, images present)', async () => {
+			// The web composer allows submitting in AI mode when only images
+			// are staged (no typed text). The server must not reject those
+			// requests as "missing command" — instead it forwards an empty
+			// command alongside the images so the renderer can attach them
+			// to a default image-only prompt.
+			const images = ['data:image/png;base64,abc'];
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+				images,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'',
+					'ai',
+					undefined,
+					false,
+					images
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('rejects send with neither command nor images', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('forwards pasted images so the renderer can attach them to the prompt', async () => {
+			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'look at this',
+				inputMode: 'ai',
+				images,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'look at this',
+					'ai',
+					undefined,
+					false,
+					images
+				);
+			});
 		});
 
 		it('should bypass busy guard and forward command when force=true', async () => {
@@ -326,7 +420,8 @@ describe('WebSocketMessageHandler', () => {
 					'concurrent write',
 					'ai',
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 
@@ -1766,6 +1861,151 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// ============================================================
+	// Auto Run parity — reset tasks + playbook CRUD validation
+	// These tests pin the path-safety rules called out in the PR
+	// review: neither the web client nor a compromised dev tool may
+	// escape the Auto Run root via absolute / traversal filenames.
+	// ============================================================
+	describe('reset_auto_run_doc_tasks path validation', () => {
+		it('forwards relative subfolder paths to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: 'loop/step-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.resetAutoRunDocTasks).toHaveBeenCalledWith('session-1', 'loop/step-1');
+			});
+		});
+
+		it('rejects POSIX-absolute filenames', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: '/etc/passwd',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/Invalid filename/);
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+
+		it('rejects Windows drive-letter absolute filenames', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: 'C:/tmp/doc.md',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+
+		it('rejects traversal sequences', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: '../secrets.md',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('playbook document validation', () => {
+		const validPayload = (overrides: Partial<Record<string, unknown>> = {}) => ({
+			type: 'create_playbook' as const,
+			sessionId: 'session-1',
+			playbook: {
+				name: 'p',
+				documents: [{ filename: 'a' }],
+				loopEnabled: false,
+				prompt: '',
+				...overrides,
+			},
+		});
+
+		it('accepts relative subfolder filenames', async () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'loop/step-1', resetOnCompletion: true }] }),
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createPlaybook).toHaveBeenCalled();
+			});
+			const [, playbook] = (callbacks.createPlaybook as any).mock.calls[0];
+			expect(playbook.documents).toEqual([{ filename: 'loop/step-1', resetOnCompletion: true }]);
+		});
+
+		it('rejects absolute POSIX filenames', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: '/etc/passwd' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/Invalid playbook documents/);
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects Windows drive-letter absolute filenames', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'C:\\tmp\\doc.md' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects backslash separators', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'loop\\step-1' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects `..` traversal segments', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: '../secrets' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects non-boolean resetOnCompletion rather than coercing it', () => {
+			// Review feedback — a truthy non-boolean value was being silently
+			// flipped to true. The validator now refuses anything that isn't
+			// strictly a boolean.
+			handler.handleMessage(client, {
+				...validPayload({
+					documents: [{ filename: 'a', resetOnCompletion: 'yes' as unknown as boolean }],
+				}),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('defaults resetOnCompletion to false when omitted', async () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'a' }] }),
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.createPlaybook).toHaveBeenCalled();
+			});
+			const [, playbook] = (callbacks.createPlaybook as any).mock.calls[0];
+			expect(playbook.documents[0].resetOnCompletion).toBe(false);
+		});
+	});
+
 	describe('Create Gist', () => {
 		it('replies with create_gist_result on success', async () => {
 			handler.handleMessage(client, {
@@ -1884,7 +2124,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('rejects marketplace_get_document with traversal in filename', () => {
+		it('rejects marketplace_get_document with traversal in filename via typed result', () => {
 			handler.handleMessage(client, {
 				type: 'marketplace_get_document',
 				playbookPath: 'category/sample',
@@ -1894,9 +2134,28 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('Invalid filename');
+			// Validation failures use the request-scoped result type so a CLI
+			// waiting on `marketplace_get_document_result` doesn't time out
+			// (coderabbit feedback).
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid filename');
 			expect(response.requestId).toBe('req-3');
+		});
+
+		it('rejects marketplace_get_document for absolute playbookPath via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath: '/etc/passwd',
+				filename: 'README',
+				requestId: 'req-3b',
+			});
+
+			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Local filesystem paths are not allowed');
 		});
 
 		it('returns document content on marketplace_get_document', async () => {
@@ -1957,7 +2216,7 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.sessionId).toBe('session-1');
 		});
 
-		it('rejects marketplace_import_playbook missing required fields', () => {
+		it('rejects marketplace_import_playbook missing required fields via typed result', () => {
 			handler.handleMessage(client, {
 				type: 'marketplace_import_playbook',
 				sessionId: 'session-1',
@@ -1967,8 +2226,25 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.importMarketplacePlaybook).not.toHaveBeenCalled();
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('targetFolderName');
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('targetFolderName');
+		});
+
+		it('rejects marketplace_import_playbook with separators in targetFolderName', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				targetFolderName: '../escape',
+				requestId: 'req-7b',
+			});
+
+			expect(callbacks.importMarketplacePlaybook).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('separators');
 		});
 
 		it('replies with marketplace_get_manifest_result when callback unconfigured', () => {
@@ -1984,6 +2260,143 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('marketplace_get_manifest_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not configured');
+		});
+	});
+
+	// PR2 of the CLI surface refactor: read-only session inspection used by
+	// `maestro-cli session list` and `session show <tabId>`. The handlers here
+	// are deliberately stateless so external pollers (Maestro-Discord, Cue
+	// follow-ups) can call them at arbitrary cadence.
+	describe('List Desktop Sessions (CLI → Desktop)', () => {
+		it('returns the desktop_sessions_list payload from the callback', () => {
+			(callbacks.listDesktopSessions as any).mockReturnValue([
+				{
+					tabId: 'tab-1',
+					sessionId: 'tab-1',
+					agentId: 'agent-a',
+					agentName: 'Backend',
+					toolType: 'claude-code',
+					name: 'Refactor parser',
+					agentSessionId: 'claude-uuid-1',
+					state: 'idle',
+					createdAt: 1714268000000,
+					starred: false,
+				},
+			]);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('desktop_sessions_list');
+			expect(response.success).toBe(true);
+			expect(response.sessions).toHaveLength(1);
+			expect(response.sessions[0].tabId).toBe('tab-1');
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('returns an empty list when the callback is unconfigured rather than echoing', () => {
+			// Unknown-type echo would confuse the CLI's request/response pairing
+			// (`MaestroClient` matches by responseType). Returning the empty
+			// success shape keeps the wire contract intact even when the desktop
+			// hasn't wired up the callback yet — older builds on a newer CLI.
+			callbacks.listDesktopSessions = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('desktop_sessions_list');
+			expect(response.success).toBe(true);
+			expect(response.sessions).toEqual([]);
+		});
+	});
+
+	describe('Get Session History (CLI → Desktop)', () => {
+		const mockHistory = {
+			tabId: 'tab-1',
+			sessionId: 'tab-1',
+			agentId: 'agent-a',
+			agentSessionId: 'claude-uuid-1',
+			messages: [
+				{
+					id: 'log-1',
+					role: 'user' as const,
+					source: 'user',
+					content: 'Hello',
+					timestamp: '2026-04-28T10:00:00.000Z',
+				},
+			],
+		};
+
+		it('forwards tabId / sinceMs / tail to the callback and returns the result', () => {
+			(callbacks.getSessionHistory as any).mockReturnValue(mockHistory);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-1',
+				sinceMs: 1714268000000,
+				tail: 5,
+				requestId: 'req-2',
+			});
+
+			expect(callbacks.getSessionHistory).toHaveBeenCalledWith('tab-1', {
+				sinceMs: 1714268000000,
+				tail: 5,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBe('tab-1');
+			expect(response.messages).toHaveLength(1);
+			expect(response.requestId).toBe('req-2');
+		});
+
+		it('emits MISSING_TAB_ID when tabId is omitted', () => {
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				requestId: 'req-2',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(false);
+			expect(response.code).toBe('MISSING_TAB_ID');
+			expect(callbacks.getSessionHistory).not.toHaveBeenCalled();
+		});
+
+		it('emits TAB_NOT_FOUND when the desktop has no matching tab', () => {
+			(callbacks.getSessionHistory as any).mockReturnValue(null);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-bogus',
+				requestId: 'req-3',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('session_history_result');
+			expect(response.success).toBe(false);
+			expect(response.code).toBe('TAB_NOT_FOUND');
+		});
+
+		it('coerces a negative tail to undefined rather than passing it through', () => {
+			// Negative tail would silently invert `slice(-N)` semantics on the
+			// desktop side ("everything except the last N" instead of "last N").
+			// Drop it at the boundary so a buggy caller can never poison the
+			// desktop's read.
+			(callbacks.getSessionHistory as any).mockReturnValue(mockHistory);
+
+			handler.handleMessage(client, {
+				type: 'get_session_history',
+				tabId: 'tab-1',
+				tail: -3,
+			});
+
+			expect(callbacks.getSessionHistory).toHaveBeenCalledWith('tab-1', {
+				sinceMs: undefined,
+				tail: undefined,
+			});
 		});
 	});
 });

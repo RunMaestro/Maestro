@@ -69,7 +69,8 @@ export interface UseSessionCrudReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		customEffort?: string
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -143,7 +144,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
-			}
+			},
+			customEffort?: string
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -265,6 +267,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customModel,
 					customContextWindow,
 					customProviderPath,
+					customEffort: customEffort?.trim() || undefined,
 					sessionSshRemoteConfig,
 					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 				};

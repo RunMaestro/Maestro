@@ -28,12 +28,15 @@
  * - stop_auto_run: Stop an active auto-run for a session
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
+ * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
+ * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  */
 
 import path from 'path';
 import fs from 'fs/promises';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import type {
 	AutoRunDocument,
 	AutoRunState,
@@ -49,6 +52,8 @@ import type {
 	AchievementData,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
+	WebPlaybook,
+	WebPlaybookDocument,
 	NotifyToastClickAction,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
@@ -58,6 +63,9 @@ import type {
 	NotifyCenterFlashVariant,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	DesktopSessionEntry,
+	SessionHistoryResult,
+	GetSessionHistoryOptions,
 } from '../types';
 
 /** Canonical Toast / Center Flash color set (shared design language). */
@@ -165,7 +173,8 @@ export interface MessageHandlerCallbacks {
 		command: string,
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
-		force?: boolean
+		force?: boolean,
+		images?: string[]
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -206,6 +215,10 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	setSessionAutoRunFolder: (
+		sessionId: string,
+		folderPath: string
+	) => Promise<{ success: boolean; error?: string }>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -221,6 +234,33 @@ export interface MessageHandlerCallbacks {
 	getAutoRunDocContent: (sessionId: string, filename: string) => Promise<string>;
 	saveAutoRunDoc: (sessionId: string, filename: string, content: string) => Promise<boolean>;
 	stopAutoRun: (sessionId: string) => Promise<boolean>;
+	resetAutoRunDocTasks: (sessionId: string, filename: string) => Promise<boolean>;
+	resumeAutoRunError: (sessionId: string) => Promise<boolean>;
+	skipAutoRunDocument: (sessionId: string) => Promise<boolean>;
+	abortAutoRunError: (sessionId: string) => Promise<boolean>;
+	listPlaybooks: (sessionId: string) => Promise<WebPlaybook[]>;
+	createPlaybook: (
+		sessionId: string,
+		playbook: {
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}
+	) => Promise<WebPlaybook | null>;
+	updatePlaybook: (
+		sessionId: string,
+		playbookId: string,
+		updates: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}>
+	) => Promise<WebPlaybook | null>;
+	deletePlaybook: (sessionId: string, playbookId: string) => Promise<boolean>;
 	getSettings: () => WebSettings;
 	setSetting: (key: string, value: SettingValue) => Promise<boolean>;
 	getGroups: () => GroupData[];
@@ -288,6 +328,17 @@ export interface MessageHandlerCallbacks {
 		playbookId: string,
 		targetFolderName: string
 	) => Promise<MarketplaceImportResult>;
+	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
+	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
+	 *  can address tabs by id without owning a persistent channel. */
+	listDesktopSessions: () => DesktopSessionEntry[];
+	/** Read-only conversation history fetch used by `maestro-cli session show
+	 *  <tabId>`. Filters (`sinceMs`, `tail`) live alongside the read so we don't
+	 *  ship the full transcript over the wire on every poll. */
+	getSessionHistory: (
+		tabId: string,
+		options?: GetSessionHistoryOptions
+	) => SessionHistoryResult | null;
 }
 
 /**
@@ -318,6 +369,24 @@ export class WebSocketMessageHandler {
 	 */
 	private sendError(client: WebClient, message: string, extra?: Record<string, unknown>): void {
 		this.send(client, { type: 'error', message, ...extra });
+	}
+
+	/**
+	 * Report a handler exception to Sentry and send an error response. Use in
+	 * `.catch(...)` blocks where we'd otherwise silently swallow the cause —
+	 * lets us keep the user-facing message tight while preserving production
+	 * diagnostics.
+	 */
+	private reportHandlerError(
+		client: WebClient,
+		error: unknown,
+		handler: string,
+		extra: Record<string, unknown>,
+		userMessagePrefix: string
+	): void {
+		const err = error instanceof Error ? error : new Error(String(error));
+		captureException(err, { extra: { area: 'web-server', handler, ...extra } });
+		this.sendError(client, `${userMessagePrefix}: ${err.message}`);
 	}
 
 	/**
@@ -418,6 +487,10 @@ export class WebSocketMessageHandler {
 				this.handleConfigureAutoRun(client, message);
 				break;
 
+			case 'set_auto_run_folder':
+				this.handleSetAutoRunFolder(client, message);
+				break;
+
 			case 'get_auto_run_docs':
 				this.handleGetAutoRunDocs(client, message);
 				break;
@@ -436,6 +509,38 @@ export class WebSocketMessageHandler {
 
 			case 'stop_auto_run':
 				this.handleStopAutoRun(client, message);
+				break;
+
+			case 'reset_auto_run_doc_tasks':
+				this.handleResetAutoRunDocTasks(client, message);
+				break;
+
+			case 'resume_auto_run_error':
+				this.handleResumeAutoRunError(client, message);
+				break;
+
+			case 'skip_auto_run_document':
+				this.handleSkipAutoRunDocument(client, message);
+				break;
+
+			case 'abort_auto_run_error':
+				this.handleAbortAutoRunError(client, message);
+				break;
+
+			case 'list_playbooks':
+				this.handleListPlaybooks(client, message);
+				break;
+
+			case 'create_playbook':
+				this.handleCreatePlaybook(client, message);
+				break;
+
+			case 'update_playbook':
+				this.handleUpdatePlaybook(client, message);
+				break;
+
+			case 'delete_playbook':
+				this.handleDeletePlaybook(client, message);
 				break;
 
 			case 'get_settings':
@@ -582,6 +687,14 @@ export class WebSocketMessageHandler {
 				this.handleMarketplaceImportPlaybook(client, message);
 				break;
 
+			case 'list_desktop_sessions':
+				this.handleListDesktopSessions(client, message);
+				break;
+
+			case 'get_session_history':
+				this.handleGetSessionHistory(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
@@ -624,20 +737,31 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// Optional base64 data URLs pasted from the web client. Threaded through
+		// to the renderer so AI tabs can include them in the agent prompt.
+		const images = Array.isArray(message.images)
+			? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
+			: undefined;
 
 		logger.info(
-			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
+			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}, images=${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
-		if (!sessionId || !command) {
+		// Image-only sends are valid in AI mode (the composer lets users paste
+		// images and submit without typing), so the guard accepts either a
+		// non-empty command OR at least one image. Normalize a missing command
+		// to '' so the renderer's downstream LogEntry.text stays a string.
+		const hasImages = !!images && images.length > 0;
+		if (!sessionId || (!command && !hasImages)) {
 			logger.warn(
-				`[Web Command] Missing sessionId or command: sessionId=${sessionId}, commandLen=${command?.length}`,
+				`[Web Command] Missing sessionId or command/images: sessionId=${sessionId}, commandLen=${command?.length}, images=${images?.length ?? 0}`,
 				LOG_CONTEXT
 			);
 			this.sendError(client, 'Missing sessionId or command');
 			return;
 		}
+		const effectiveCommand = command ?? '';
 
 		// Get session details to check state and determine how to handle
 		const sessionDetail = this.callbacks.getSessionDetail?.(sessionId);
@@ -671,7 +795,7 @@ export class WebSocketMessageHandler {
 
 		// Log all web interface commands prominently
 		logger.info(
-			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${command}`,
+			`[Web Command] Mode: ${mode} | Session: ${sessionId}${isAiMode ? ` | Claude: ${claudeId}` : ''} | Message: ${effectiveCommand} | Images: ${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
 
@@ -691,7 +815,7 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, requestedTabId, force)
+				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
@@ -1493,6 +1617,65 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle set_auto_run_folder message - update the Auto Run folder for an
+	 * existing session. Mirrors desktop's `dialog.selectFolder` flow: the renderer
+	 * lists docs from the new path, persists the choice to session storage, and
+	 * broadcasts the updated session.
+	 */
+	private handleSetAutoRunFolder(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const folderPath = message.folderPath as string;
+		// Avoid logging the raw folder path: it can contain user/home/project
+		// identifiers that count as PII in production logs. The basename is
+		// usually enough for debugging without leaking the full path.
+		const folderPathHint = typeof folderPath === 'string' ? path.basename(folderPath) : '<invalid>';
+		logger.info(
+			`[Web] Received set_auto_run_folder message: session=${sessionId}, folderBasename=${folderPathHint}, folderPathLength=${folderPath?.length ?? 0}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (typeof folderPath !== 'string' || folderPath.trim() === '') {
+			this.sendError(client, 'Missing or invalid folderPath');
+			return;
+		}
+
+		if (!this.callbacks.setSessionAutoRunFolder) {
+			this.sendError(client, 'Auto Run folder updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.setSessionAutoRunFolder(sessionId, folderPath)
+			.then((result) => {
+				this.send(client, {
+					type: 'set_auto_run_folder_result',
+					success: result.success,
+					error: result.error,
+					sessionId,
+					folderPath,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				captureException(err, {
+					extra: {
+						area: 'web-server',
+						handler: 'set_auto_run_folder',
+						sessionId,
+						requestId: message.requestId,
+					},
+				});
+				this.sendError(client, `Failed to set Auto Run folder: ${err.message}`);
+			});
+	}
+
+	/**
 	 * Handle open_file_tab message - open a file in a preview tab
 	 */
 	private handleOpenFileTab(client: WebClient, message: WebClientMessage): void {
@@ -1796,16 +1979,23 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Validate that a filename does not contain path traversal sequences.
-	 * Returns true if the filename is safe, false otherwise.
+	 * Validate that a filename is safe for Auto Run read/save operations.
+	 *
+	 * Allows relative forward-slash subpaths (e.g. `loop/step-1`) so documents
+	 * in subfolders can be opened and saved, but rejects:
+	 *   - `..` traversal segments
+	 *   - backslash separators (we only persist POSIX)
+	 *   - absolute POSIX paths (leading `/`)
+	 *   - absolute Windows paths (drive-letter prefix)
 	 */
 	private isValidFilename(filename: string): boolean {
 		return (
 			typeof filename === 'string' &&
 			filename.length > 0 &&
 			!filename.includes('..') &&
-			!filename.includes('/') &&
-			!filename.includes('\\')
+			!filename.includes('\\') &&
+			!filename.startsWith('/') &&
+			!/^[A-Za-z]:[\\/]/.test(filename)
 		);
 	}
 
@@ -1889,7 +2079,7 @@ export class WebSocketMessageHandler {
 		if (!this.isValidFilename(filename)) {
 			this.sendError(
 				client,
-				'Invalid filename: must not contain path separators or traversal sequences'
+				'Invalid filename: must not contain `..` traversal segments, backslashes, or absolute paths (POSIX `/` or Windows drive-letter). Forward-slash subpaths are allowed.'
 			);
 			return;
 		}
@@ -1940,7 +2130,7 @@ export class WebSocketMessageHandler {
 		if (!this.isValidFilename(filename)) {
 			this.sendError(
 				client,
-				'Invalid filename: must not contain path separators or traversal sequences'
+				'Invalid filename: must not contain `..` traversal segments, backslashes, or absolute paths (POSIX `/` or Windows drive-letter). Forward-slash subpaths are allowed.'
 			);
 			return;
 		}
@@ -1996,6 +2186,462 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				this.sendError(client, `Failed to stop auto-run: ${error.message}`);
 			});
+	}
+
+	/**
+	 * Handle reset_auto_run_doc_tasks message — revert all completed `[x]`
+	 * checkboxes back to `[ ]` for a single document. Mirrors the desktop's
+	 * "Reset Tasks" action so a playbook can be re-run from scratch.
+	 */
+	private handleResetAutoRunDocTasks(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const filename = message.filename as string;
+		logger.info(
+			`[Web] Received reset_auto_run_doc_tasks message: session=${sessionId}, filename=${filename}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !filename) {
+			this.sendError(client, 'Missing sessionId or filename');
+			return;
+		}
+
+		// Allow relative subdirectory paths (forward slashes) but reject traversal and
+		// absolute paths (POSIX `/foo.md` and Windows `C:/foo.md` / `C:\foo.md`) so the
+		// target always resolves under the Auto Run root.
+		if (
+			typeof filename !== 'string' ||
+			filename.length === 0 ||
+			filename.includes('..') ||
+			filename.includes('\\') ||
+			filename.startsWith('/') ||
+			/^[A-Za-z]:[\\/]/.test(filename)
+		) {
+			this.sendError(client, 'Invalid filename');
+			return;
+		}
+
+		if (!this.callbacks.resetAutoRunDocTasks) {
+			this.sendError(client, 'Auto-run task reset not configured');
+			return;
+		}
+
+		this.callbacks
+			.resetAutoRunDocTasks(sessionId, filename)
+			.then((success) => {
+				this.send(client, {
+					type: 'reset_auto_run_doc_tasks_result',
+					success,
+					sessionId,
+					filename,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'reset_auto_run_doc_tasks',
+					{ sessionId, filename, requestId: message.requestId },
+					'Failed to reset auto-run doc tasks'
+				);
+			});
+	}
+
+	/**
+	 * Handle resume_auto_run_error message — clear the error pause and continue.
+	 */
+	private handleResumeAutoRunError(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.resumeAutoRunError) {
+			this.sendError(client, 'Auto-run resume not configured');
+			return;
+		}
+		this.callbacks
+			.resumeAutoRunError(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'resume_auto_run_error_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'resume_auto_run_error',
+					{ sessionId, requestId: message.requestId },
+					'Failed to resume auto-run'
+				);
+			});
+	}
+
+	/**
+	 * Handle skip_auto_run_document message — skip the failing document and
+	 * continue with the next one in the queue.
+	 */
+	private handleSkipAutoRunDocument(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.skipAutoRunDocument) {
+			this.sendError(client, 'Auto-run skip not configured');
+			return;
+		}
+		this.callbacks
+			.skipAutoRunDocument(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'skip_auto_run_document_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'skip_auto_run_document',
+					{ sessionId, requestId: message.requestId },
+					'Failed to skip auto-run document'
+				);
+			});
+	}
+
+	/**
+	 * Handle abort_auto_run_error message — fully stop the run after an error.
+	 */
+	private handleAbortAutoRunError(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.abortAutoRunError) {
+			this.sendError(client, 'Auto-run abort not configured');
+			return;
+		}
+		this.callbacks
+			.abortAutoRunError(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'abort_auto_run_error_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'abort_auto_run_error',
+					{ sessionId, requestId: message.requestId },
+					'Failed to abort auto-run'
+				);
+			});
+	}
+
+	/**
+	 * Handle list_playbooks message — return the saved playbooks for a session.
+	 */
+	private handleListPlaybooks(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.listPlaybooks) {
+			this.sendError(client, 'Playbook listing not configured');
+			return;
+		}
+		this.callbacks
+			.listPlaybooks(sessionId)
+			.then((playbooks) => {
+				this.send(client, {
+					type: 'playbooks_list',
+					sessionId,
+					playbooks,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'list_playbooks',
+					{ sessionId, requestId: message.requestId },
+					'Failed to list playbooks'
+				);
+			});
+	}
+
+	/**
+	 * Handle create_playbook message — persist a new playbook with the given config.
+	 */
+	private handleCreatePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbook = message.playbook as
+			| {
+					name?: unknown;
+					documents?: unknown;
+					loopEnabled?: unknown;
+					maxLoops?: unknown;
+					prompt?: unknown;
+			  }
+			| undefined;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!playbook || typeof playbook !== 'object') {
+			this.sendError(client, 'Missing playbook payload');
+			return;
+		}
+		if (typeof playbook.name !== 'string' || playbook.name.trim() === '') {
+			this.sendError(client, 'Playbook name must be a non-empty string');
+			return;
+		}
+		const documents = this.parsePlaybookDocuments(playbook.documents);
+		if (documents === null) {
+			this.sendError(client, 'Invalid playbook documents');
+			return;
+		}
+		if (playbook.loopEnabled !== undefined && typeof playbook.loopEnabled !== 'boolean') {
+			this.sendError(client, 'loopEnabled must be a boolean');
+			return;
+		}
+		if (
+			playbook.maxLoops !== undefined &&
+			playbook.maxLoops !== null &&
+			(typeof playbook.maxLoops !== 'number' ||
+				!Number.isFinite(playbook.maxLoops) ||
+				playbook.maxLoops < 0)
+		) {
+			this.sendError(client, 'maxLoops must be a finite non-negative number');
+			return;
+		}
+		if (playbook.prompt !== undefined && typeof playbook.prompt !== 'string') {
+			this.sendError(client, 'prompt must be a string');
+			return;
+		}
+
+		if (!this.callbacks.createPlaybook) {
+			this.sendError(client, 'Playbook creation not configured');
+			return;
+		}
+
+		this.callbacks
+			.createPlaybook(sessionId, {
+				name: playbook.name.trim(),
+				documents,
+				loopEnabled: Boolean(playbook.loopEnabled),
+				maxLoops: (playbook.maxLoops as number | null | undefined) ?? null,
+				prompt: typeof playbook.prompt === 'string' ? playbook.prompt : '',
+			})
+			.then((created) => {
+				this.send(client, {
+					type: 'create_playbook_result',
+					success: created !== null,
+					sessionId,
+					playbook: created,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'create_playbook',
+					{ sessionId, requestId: message.requestId },
+					'Failed to create playbook'
+				);
+			});
+	}
+
+	/**
+	 * Handle update_playbook message — apply partial updates to an existing playbook.
+	 */
+	private handleUpdatePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbookId = message.playbookId as string;
+		const updates = message.updates as
+			| {
+					name?: unknown;
+					documents?: unknown;
+					loopEnabled?: unknown;
+					maxLoops?: unknown;
+					prompt?: unknown;
+			  }
+			| undefined;
+
+		if (!sessionId || !playbookId) {
+			this.sendError(client, 'Missing sessionId or playbookId');
+			return;
+		}
+		if (!updates || typeof updates !== 'object') {
+			this.sendError(client, 'Missing updates payload');
+			return;
+		}
+
+		const sanitized: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops: number | null;
+			prompt: string;
+		}> = {};
+
+		if (updates.name !== undefined) {
+			if (typeof updates.name !== 'string' || updates.name.trim() === '') {
+				this.sendError(client, 'Playbook name must be a non-empty string');
+				return;
+			}
+			sanitized.name = updates.name.trim();
+		}
+		if (updates.documents !== undefined) {
+			const docs = this.parsePlaybookDocuments(updates.documents);
+			if (docs === null) {
+				this.sendError(client, 'Invalid playbook documents');
+				return;
+			}
+			sanitized.documents = docs;
+		}
+		if (updates.loopEnabled !== undefined) {
+			if (typeof updates.loopEnabled !== 'boolean') {
+				this.sendError(client, 'loopEnabled must be a boolean');
+				return;
+			}
+			sanitized.loopEnabled = updates.loopEnabled;
+		}
+		if (updates.maxLoops !== undefined) {
+			if (
+				updates.maxLoops !== null &&
+				(typeof updates.maxLoops !== 'number' ||
+					!Number.isFinite(updates.maxLoops) ||
+					updates.maxLoops < 0)
+			) {
+				this.sendError(client, 'maxLoops must be a finite non-negative number');
+				return;
+			}
+			sanitized.maxLoops = updates.maxLoops as number | null;
+		}
+		if (updates.prompt !== undefined) {
+			if (typeof updates.prompt !== 'string') {
+				this.sendError(client, 'prompt must be a string');
+				return;
+			}
+			sanitized.prompt = updates.prompt;
+		}
+
+		if (!this.callbacks.updatePlaybook) {
+			this.sendError(client, 'Playbook updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updatePlaybook(sessionId, playbookId, sanitized)
+			.then((updated) => {
+				this.send(client, {
+					type: 'update_playbook_result',
+					success: updated !== null,
+					sessionId,
+					playbook: updated,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'update_playbook',
+					{ sessionId, playbookId, requestId: message.requestId },
+					'Failed to update playbook'
+				);
+			});
+	}
+
+	/**
+	 * Handle delete_playbook message — remove a playbook.
+	 */
+	private handleDeletePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbookId = message.playbookId as string;
+		if (!sessionId || !playbookId) {
+			this.sendError(client, 'Missing sessionId or playbookId');
+			return;
+		}
+		if (!this.callbacks.deletePlaybook) {
+			this.sendError(client, 'Playbook deletion not configured');
+			return;
+		}
+		this.callbacks
+			.deletePlaybook(sessionId, playbookId)
+			.then((success) => {
+				this.send(client, {
+					type: 'delete_playbook_result',
+					success,
+					sessionId,
+					playbookId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					'delete_playbook',
+					{ sessionId, playbookId, requestId: message.requestId },
+					'Failed to delete playbook'
+				);
+			});
+	}
+
+	/**
+	 * Validate and normalize the `documents` field of a playbook payload.
+	 * Returns the parsed array on success, or null on any validation failure.
+	 *
+	 * Filenames may contain forward-slash subdirectories (e.g. `loop/step-1`)
+	 * but must not:
+	 *   - contain `..` path-traversal segments
+	 *   - contain backslashes (we only persist POSIX separators)
+	 *   - be absolute (POSIX `/foo` or Windows drive-letter `C:/foo`)
+	 *
+	 * `resetOnCompletion` is validated strictly as a boolean when present;
+	 * any other type is rejected rather than coerced, so a stray truthy
+	 * value from a buggy client can't silently flip the flag on.
+	 */
+	private parsePlaybookDocuments(input: unknown): WebPlaybookDocument[] | null {
+		if (!Array.isArray(input)) return null;
+		const out: WebPlaybookDocument[] = [];
+		for (const entry of input) {
+			if (!entry || typeof entry !== 'object') return null;
+			const e = entry as { filename?: unknown; resetOnCompletion?: unknown };
+			if (typeof e.filename !== 'string' || e.filename.trim() === '') return null;
+			if (e.filename.includes('..') || e.filename.includes('\\')) return null;
+			if (e.filename.startsWith('/')) return null;
+			if (/^[A-Za-z]:[\\/]/.test(e.filename)) return null;
+			let resetOnCompletion = false;
+			if (e.resetOnCompletion !== undefined) {
+				if (typeof e.resetOnCompletion !== 'boolean') return null;
+				resetOnCompletion = e.resetOnCompletion;
+			}
+			out.push({
+				filename: e.filename,
+				resetOnCompletion,
+			});
+		}
+		return out;
 	}
 
 	/**
@@ -3335,6 +3981,31 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Send a typed `marketplace_*_result` failure rather than a generic
+	 * `error` frame. Clients that wait on the typed result type would
+	 * otherwise miss the failure and time out (coderabbit feedback).
+	 */
+	private sendMarketplaceFailure(
+		client: WebClient,
+		type:
+			| 'marketplace_get_manifest_result'
+			| 'marketplace_get_document_result'
+			| 'marketplace_get_readme_result'
+			| 'marketplace_import_playbook_result',
+		error: string,
+		message: WebClientMessage,
+		extra?: Record<string, unknown>
+	): void {
+		this.send(client, {
+			type,
+			success: false,
+			error,
+			requestId: message.requestId,
+			...extra,
+		});
+	}
+
+	/**
 	 * Handle marketplace_get_document - fetch a single document's content.
 	 */
 	private handleMarketplaceGetDocument(client: WebClient, message: WebClientMessage): void {
@@ -3342,33 +4013,49 @@ export class WebSocketMessageHandler {
 		const filename = message.filename;
 
 		if (typeof playbookPath !== 'string' || playbookPath.trim() === '') {
-			this.sendError(client, 'Missing or invalid playbookPath', {
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_document_result',
+				'Missing or invalid playbookPath',
+				message
+			);
 			return;
 		}
 		if (this.isUntrustedLocalPath(playbookPath)) {
-			this.sendError(client, 'Local filesystem paths are not allowed from web clients', {
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_document_result',
+				'Local filesystem paths are not allowed from web clients',
+				message
+			);
 			return;
 		}
 		if (typeof filename !== 'string' || filename.trim() === '') {
-			this.sendError(client, 'Missing or invalid filename', { requestId: message.requestId });
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_document_result',
+				'Missing or invalid filename',
+				message
+			);
 			return;
 		}
 		if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-			this.sendError(client, 'Invalid filename', { requestId: message.requestId });
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_document_result',
+				'Invalid filename',
+				message
+			);
 			return;
 		}
 
 		if (!this.callbacks.getMarketplaceDocument) {
-			this.send(client, {
-				type: 'marketplace_get_document_result',
-				success: false,
-				error: 'Marketplace not configured',
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_document_result',
+				'Marketplace not configured',
+				message
+			);
 			return;
 		}
 
@@ -3376,12 +4063,12 @@ export class WebSocketMessageHandler {
 			.getMarketplaceDocument(playbookPath, filename)
 			.then((result) => {
 				if (!result) {
-					this.send(client, {
-						type: 'marketplace_get_document_result',
-						success: false,
-						error: 'Marketplace not configured',
-						requestId: message.requestId,
-					});
+					this.sendMarketplaceFailure(
+						client,
+						'marketplace_get_document_result',
+						'Marketplace not configured',
+						message
+					);
 					return;
 				}
 				this.send(client, {
@@ -3392,12 +4079,12 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.send(client, {
-					type: 'marketplace_get_document_result',
-					success: false,
-					error: `Failed to fetch document: ${error.message}`,
-					requestId: message.requestId,
-				});
+				this.sendMarketplaceFailure(
+					client,
+					'marketplace_get_document_result',
+					`Failed to fetch document: ${error.message}`,
+					message
+				);
 			});
 	}
 
@@ -3407,25 +4094,31 @@ export class WebSocketMessageHandler {
 	private handleMarketplaceGetReadme(client: WebClient, message: WebClientMessage): void {
 		const playbookPath = message.playbookPath;
 		if (typeof playbookPath !== 'string' || playbookPath.trim() === '') {
-			this.sendError(client, 'Missing or invalid playbookPath', {
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_readme_result',
+				'Missing or invalid playbookPath',
+				message
+			);
 			return;
 		}
 		if (this.isUntrustedLocalPath(playbookPath)) {
-			this.sendError(client, 'Local filesystem paths are not allowed from web clients', {
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_readme_result',
+				'Local filesystem paths are not allowed from web clients',
+				message
+			);
 			return;
 		}
 
 		if (!this.callbacks.getMarketplaceReadme) {
-			this.send(client, {
-				type: 'marketplace_get_readme_result',
-				success: false,
-				error: 'Marketplace not configured',
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_get_readme_result',
+				'Marketplace not configured',
+				message
+			);
 			return;
 		}
 
@@ -3433,12 +4126,12 @@ export class WebSocketMessageHandler {
 			.getMarketplaceReadme(playbookPath)
 			.then((result) => {
 				if (!result) {
-					this.send(client, {
-						type: 'marketplace_get_readme_result',
-						success: false,
-						error: 'Marketplace not configured',
-						requestId: message.requestId,
-					});
+					this.sendMarketplaceFailure(
+						client,
+						'marketplace_get_readme_result',
+						'Marketplace not configured',
+						message
+					);
 					return;
 				}
 				this.send(client, {
@@ -3449,12 +4142,12 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.send(client, {
-					type: 'marketplace_get_readme_result',
-					success: false,
-					error: `Failed to fetch README: ${error.message}`,
-					requestId: message.requestId,
-				});
+				this.sendMarketplaceFailure(
+					client,
+					'marketplace_get_readme_result',
+					`Failed to fetch README: ${error.message}`,
+					message
+				);
 			});
 	}
 
@@ -3470,15 +4163,32 @@ export class WebSocketMessageHandler {
 		const targetFolderName = message.targetFolderName;
 
 		if (typeof sessionId !== 'string' || sessionId.trim() === '') {
-			this.sendError(client, 'Missing sessionId', { requestId: message.requestId });
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_import_playbook_result',
+				'Missing sessionId',
+				message
+			);
 			return;
 		}
 		if (typeof playbookId !== 'string' || playbookId.trim() === '') {
-			this.sendError(client, 'Missing playbookId', { requestId: message.requestId });
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_import_playbook_result',
+				'Missing playbookId',
+				message,
+				{ sessionId }
+			);
 			return;
 		}
 		if (typeof targetFolderName !== 'string' || targetFolderName.trim() === '') {
-			this.sendError(client, 'Missing targetFolderName', { requestId: message.requestId });
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_import_playbook_result',
+				'Missing targetFolderName',
+				message,
+				{ sessionId }
+			);
 			return;
 		}
 		// Reject path separators and traversal so the import folder cannot
@@ -3493,19 +4203,24 @@ export class WebSocketMessageHandler {
 			trimmedFolder.startsWith('~') ||
 			/^[a-zA-Z]:[\\/]/.test(trimmedFolder)
 		) {
-			this.sendError(client, 'targetFolderName must be a single folder name without separators', {
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_import_playbook_result',
+				'targetFolderName must be a single folder name without separators',
+				message,
+				{ sessionId }
+			);
 			return;
 		}
 
 		if (!this.callbacks.importMarketplacePlaybook) {
-			this.send(client, {
-				type: 'marketplace_import_playbook_result',
-				success: false,
-				error: 'Marketplace import not configured',
-				requestId: message.requestId,
-			});
+			this.sendMarketplaceFailure(
+				client,
+				'marketplace_import_playbook_result',
+				'Marketplace import not configured',
+				message,
+				{ sessionId }
+			);
 			return;
 		}
 
@@ -3524,14 +4239,93 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.send(client, {
-					type: 'marketplace_import_playbook_result',
-					success: false,
-					error: `Import failed: ${error.message}`,
-					sessionId,
-					requestId: message.requestId,
-				});
+				this.sendMarketplaceFailure(
+					client,
+					'marketplace_import_playbook_result',
+					`Import failed: ${error.message}`,
+					message,
+					{ sessionId }
+				);
 			});
+	}
+
+	/**
+	 * Handle list_desktop_sessions message — enumerate every open AI tab across
+	 * desktop agents. Stateless read backed by the persisted session store; no
+	 * subscription side-effects so external pollers (Maestro-Discord, Cue) can
+	 * call this every few seconds without leaking state into the desktop.
+	 */
+	private handleListDesktopSessions(client: WebClient, message: WebClientMessage): void {
+		const sessions = this.callbacks.listDesktopSessions ? this.callbacks.listDesktopSessions() : [];
+		this.send(client, {
+			type: 'desktop_sessions_list',
+			success: true,
+			sessions,
+			requestId: message.requestId,
+		});
+	}
+
+	/**
+	 * Handle get_session_history message — return the conversation log for a
+	 * tab, optionally filtered by `sinceMs` (poll cursor) and/or `tail` (cap).
+	 * Errors are returned in the same response type rather than as a generic
+	 * `error` so the CLI's request/response pairing stays deterministic.
+	 */
+	private handleGetSessionHistory(client: WebClient, message: WebClientMessage): void {
+		const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+		if (!tabId) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: 'Missing tabId',
+				code: 'MISSING_TAB_ID',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		if (!this.callbacks.getSessionHistory) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: 'Session history not configured',
+				code: 'NOT_CONFIGURED',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		const sinceMs =
+			typeof message.sinceMs === 'number' && Number.isFinite(message.sinceMs)
+				? message.sinceMs
+				: undefined;
+		const tail =
+			typeof message.tail === 'number' && Number.isFinite(message.tail) && message.tail >= 0
+				? Math.floor(message.tail)
+				: undefined;
+
+		const result = this.callbacks.getSessionHistory(tabId, { sinceMs, tail });
+		if (!result) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: `Tab not found: ${tabId}`,
+				code: 'TAB_NOT_FOUND',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.send(client, {
+			type: 'session_history_result',
+			success: true,
+			tabId: result.tabId,
+			sessionId: result.sessionId,
+			agentId: result.agentId,
+			agentSessionId: result.agentSessionId,
+			messages: result.messages,
+			requestId: message.requestId,
+		});
 	}
 
 	/**

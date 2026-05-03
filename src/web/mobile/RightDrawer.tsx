@@ -11,8 +11,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { GitStatusPanel } from './GitStatusPanel';
-import { DocumentCard } from './AutoRunDocumentCard';
-import { useAutoRun } from '../hooks/useAutoRun';
+import { AutoRunInline } from './AutoRunInline';
 import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
 import type { UseGitStatusReturn } from '../hooks/useGitStatus';
 
@@ -36,6 +35,10 @@ export interface RightDrawerProps {
 	/** Props forwarded to AutoRunPanel */
 	onAutoRunOpenDocument?: (filename: string) => void;
 	onAutoRunOpenSetup?: () => void;
+	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
+	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
+	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
+	onAutoRunOpenFolderPicker?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	/** Callback when a git file is tapped for diff viewing */
@@ -67,6 +70,8 @@ export function RightDrawer({
 	projectPath,
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
+	onAutoRunSelectedDocumentChange,
+	onAutoRunOpenFolderPicker,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -248,6 +253,8 @@ export function RightDrawer({
 							sendRequest={sendRequest}
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
+							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
+							onOpenFolderPicker={onAutoRunOpenFolderPicker}
 						/>
 					)}
 					{currentTab === 'git' && (
@@ -668,8 +675,9 @@ function HistoryTabContent({
 }
 
 /**
- * Auto Run tab content - inline auto run with document listing
- * Provides document cards, progress status, and launch/stop controls inline.
+ * Auto Run tab content — single-document editor with full desktop parity.
+ * Wraps {@link AutoRunInline} so the inline tab matches the full-screen
+ * `AutoRunPanel` exactly.
  */
 function AutoRunTabContent({
 	sessionId,
@@ -678,6 +686,8 @@ function AutoRunTabContent({
 	sendRequest,
 	send,
 	onOpenDocument,
+	onSelectedDocumentChange,
+	onOpenFolderPicker,
 }: {
 	sessionId: string;
 	autoRunState: AutoRunState | null;
@@ -685,271 +695,26 @@ function AutoRunTabContent({
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onOpenDocument?: (filename: string) => void;
+	onSelectedDocumentChange?: (filename: string | null) => void;
+	onOpenFolderPicker?: () => void;
 }) {
-	const colors = useThemeColors();
-
-	const { documents, isLoadingDocs, loadDocuments, stopAutoRun } = useAutoRun(
-		sendRequest,
-		send,
-		autoRunState
-	);
-
-	const [isStopping, setIsStopping] = useState(false);
-
-	// Load documents on mount
-	useEffect(() => {
-		loadDocuments(sessionId);
-	}, [sessionId, loadDocuments]);
-
-	// Reset stopping state when autoRun stops
-	useEffect(() => {
-		if (!autoRunState?.isRunning) {
-			setIsStopping(false);
-		}
-	}, [autoRunState?.isRunning]);
-
-	const handleRefresh = useCallback(() => {
+	const handleOpenSetup = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
-		loadDocuments(sessionId);
-	}, [sessionId, loadDocuments]);
-
-	const handleStop = useCallback(async () => {
-		triggerHaptic(HAPTIC_PATTERNS.interrupt);
-		setIsStopping(true);
-		const success = await stopAutoRun(sessionId);
-		if (!success) {
-			setIsStopping(false);
-		}
-	}, [sessionId, stopAutoRun]);
-
-	const handleDocumentTap = useCallback(
-		(filename: string) => {
-			onOpenDocument?.(filename);
-		},
-		[onOpenDocument]
-	);
-
-	const isRunning = autoRunState?.isRunning ?? false;
-	const isStopped = isStopping || autoRunState?.isStopping;
-	const totalTasks = autoRunState?.totalTasks;
-	const completedTasks = autoRunState?.completedTasks ?? 0;
-	const currentTaskIndex = autoRunState?.currentTaskIndex ?? 0;
-	const progress =
-		totalTasks != null && totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-	const totalDocs = autoRunState?.totalDocuments;
-	const currentDocIndex = autoRunState?.currentDocumentIndex;
+		onOpenSetup?.();
+	}, [onOpenSetup]);
 
 	return (
-		<div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-			{/* Compact toolbar row */}
-			<div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-				<button
-					onClick={handleRefresh}
-					style={{
-						width: '36px',
-						height: '36px',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						borderRadius: '8px',
-						backgroundColor: colors.bgSidebar,
-						border: `1px solid ${colors.border}`,
-						color: colors.textMain,
-						cursor: 'pointer',
-						touchAction: 'manipulation',
-						WebkitTapHighlightColor: 'transparent',
-						flexShrink: 0,
-					}}
-					aria-label="Refresh documents"
-					title="Refresh documents"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					>
-						<path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
-					</svg>
-				</button>
-
-				{onOpenSetup && (
-					<button
-						onClick={() => {
-							triggerHaptic(HAPTIC_PATTERNS.tap);
-							onOpenSetup();
-						}}
-						disabled={isRunning}
-						style={{
-							flex: 1,
-							padding: '8px 12px',
-							borderRadius: '8px',
-							backgroundColor: isRunning ? `${colors.accent}40` : colors.accent,
-							border: 'none',
-							color: 'white',
-							fontSize: '13px',
-							fontWeight: 600,
-							cursor: isRunning ? 'not-allowed' : 'pointer',
-							opacity: isRunning ? 0.5 : 1,
-							touchAction: 'manipulation',
-							WebkitTapHighlightColor: 'transparent',
-							minHeight: '36px',
-						}}
-					>
-						Configure & Launch
-					</button>
-				)}
-			</div>
-
-			{/* Progress section (when running) */}
-			{isRunning && (
-				<div
-					style={{
-						backgroundColor: isStopped ? colors.warning : colors.accent,
-						padding: '10px 14px',
-						borderRadius: '10px',
-						display: 'flex',
-						alignItems: 'center',
-						gap: '10px',
-					}}
-				>
-					{/* Progress badge */}
-					<div
-						style={{
-							fontSize: '13px',
-							fontWeight: 700,
-							color: isStopped ? colors.warning : colors.accent,
-							backgroundColor: 'white',
-							padding: '4px 10px',
-							borderRadius: '12px',
-							flexShrink: 0,
-						}}
-					>
-						{progress}%
-					</div>
-
-					{/* Status text + progress bar */}
-					<div style={{ flex: 1, minWidth: 0 }}>
-						<div
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								gap: '10px',
-								fontSize: '12px',
-								color: 'white',
-								fontWeight: 500,
-							}}
-						>
-							{totalTasks != null && totalTasks > 0 && (
-								<span>
-									Task {currentTaskIndex + 1}/{totalTasks}
-								</span>
-							)}
-							{totalDocs != null && currentDocIndex != null && totalDocs > 1 && (
-								<span>
-									Doc {currentDocIndex + 1}/{totalDocs}
-								</span>
-							)}
-						</div>
-						<div
-							style={{
-								height: '3px',
-								backgroundColor: 'rgba(255,255,255,0.3)',
-								borderRadius: '2px',
-								marginTop: '5px',
-								overflow: 'hidden',
-							}}
-						>
-							<div
-								style={{
-									width: `${progress}%`,
-									height: '100%',
-									backgroundColor: 'white',
-									borderRadius: '2px',
-									transition: 'width 0.3s ease-out',
-								}}
-							/>
-						</div>
-					</div>
-
-					{/* Stop button */}
-					<button
-						onClick={handleStop}
-						disabled={isStopped}
-						style={{
-							padding: '6px 12px',
-							borderRadius: '8px',
-							backgroundColor: isStopped ? `${colors.error}60` : colors.error,
-							border: 'none',
-							color: 'white',
-							fontSize: '12px',
-							fontWeight: 600,
-							cursor: isStopped ? 'not-allowed' : 'pointer',
-							touchAction: 'manipulation',
-							WebkitTapHighlightColor: 'transparent',
-							flexShrink: 0,
-						}}
-						aria-label={isStopped ? 'Stopping Auto Run' : 'Stop Auto Run'}
-					>
-						{isStopped ? 'Stopping...' : 'Stop'}
-					</button>
-				</div>
-			)}
-
-			{/* Document list */}
-			{isLoadingDocs ? (
-				<div
-					style={{
-						padding: '24px',
-						textAlign: 'center',
-						color: colors.textDim,
-						fontSize: '13px',
-					}}
-				>
-					Loading documents...
-				</div>
-			) : documents.length === 0 ? (
-				<div
-					style={{
-						padding: '20px',
-						textAlign: 'center',
-					}}
-				>
-					<p style={{ fontSize: '13px', color: colors.textDim, margin: '0 0 6px 0' }}>
-						No Auto Run documents found
-					</p>
-					<p style={{ fontSize: '12px', color: colors.textDim, margin: 0, opacity: 0.7 }}>
-						Add documents to{' '}
-						<code
-							style={{
-								fontSize: '11px',
-								backgroundColor: `${colors.textDim}15`,
-								padding: '1px 4px',
-								borderRadius: '3px',
-							}}
-						>
-							.maestro/playbooks/
-						</code>{' '}
-						directory
-					</p>
-				</div>
-			) : (
-				<div
-					style={{
-						display: 'flex',
-						flexDirection: 'column',
-						gap: '8px',
-					}}
-				>
-					{documents.map((doc) => (
-						<DocumentCard key={doc.filename} document={doc} onTap={handleDocumentTap} />
-					))}
-				</div>
-			)}
+		<div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+			<AutoRunInline
+				sessionId={sessionId}
+				autoRunState={autoRunState}
+				sendRequest={sendRequest}
+				send={send}
+				onOpenSetup={handleOpenSetup}
+				onExpandDocument={onOpenDocument}
+				onSelectedDocumentChange={onSelectedDocumentChange}
+				onOpenFolderPicker={onOpenFolderPicker}
+			/>
 		</div>
 	);
 }
