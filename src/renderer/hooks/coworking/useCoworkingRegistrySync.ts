@@ -37,18 +37,24 @@ export function useCoworkingRegistrySync(): void {
 	const lastPayloadRef = useRef<string>('');
 
 	useEffect(() => {
+		// Bail out cleanly when the coworking bridge isn't exposed (e.g. in test
+		// harnesses that mock `window.maestro` without the namespace, or in older
+		// preload bundles before this PR shipped). The hook is best-effort —
+		// without the bridge there's nothing to sync to.
+		const bridge = window.maestro?.coworking;
+		if (!bridge) {
+			lastPayloadRef.current = '';
+			return;
+		}
+
 		if (!enabled) {
-			window.maestro.coworking
-				.setActiveSession(null)
-				.catch((err) => reportIfUnexpected(err, 'disable'));
+			bridge.setActiveSession(null).catch((err) => reportIfUnexpected(err, 'disable'));
 			lastPayloadRef.current = '';
 			return;
 		}
 
 		if (!activeSession) {
-			window.maestro.coworking
-				.setActiveSession(null)
-				.catch((err) => reportIfUnexpected(err, 'no-active-session'));
+			bridge.setActiveSession(null).catch((err) => reportIfUnexpected(err, 'no-active-session'));
 			lastPayloadRef.current = '';
 			return;
 		}
@@ -76,8 +82,8 @@ export function useCoworkingRegistrySync(): void {
 
 		(async () => {
 			try {
-				await window.maestro.coworking.setActiveSession(sessionId);
-				await window.maestro.coworking.syncSessionTerminals(sessionId, records);
+				await bridge.setActiveSession(sessionId);
+				await bridge.syncSessionTerminals(sessionId, records);
 			} catch (err) {
 				reportIfUnexpected(err, 'sync');
 			}

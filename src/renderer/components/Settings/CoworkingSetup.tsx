@@ -34,8 +34,16 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 	const [loading, setLoading] = useState(true);
 
 	const refresh = useCallback(async () => {
+		// Defensive: in test harnesses (or older preload bundles) the namespace
+		// may not exist. Treat as "no agents detected" rather than crashing.
+		const bridge = window.maestro?.coworking;
+		if (!bridge) {
+			setStatuses([]);
+			setLoading(false);
+			return;
+		}
 		try {
-			const next = await window.maestro.coworking.getInstallStatus();
+			const next = await bridge.getInstallStatus();
 			setStatuses(next);
 		} catch (err) {
 			notifyToast({

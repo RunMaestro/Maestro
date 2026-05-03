@@ -14,7 +14,12 @@ export function useCoworkingBufferResponder(
 	terminalViewRefs: MutableRefObject<Map<string, TerminalViewHandle>>
 ): void {
 	useEffect(() => {
-		const off = window.maestro.coworking.onRequestBuffer((tabUuid, sessionId, responseChannel) => {
+		// Same defensive guard as the registry-sync hook: bail when the coworking
+		// bridge is absent (tests that mock `window.maestro` without it, older
+		// preload bundles).
+		const bridge = window.maestro?.coworking;
+		if (!bridge) return;
+		const off = bridge.onRequestBuffer((tabUuid, sessionId, responseChannel) => {
 			let content = '';
 			try {
 				if (sessionId) {
@@ -38,7 +43,7 @@ export function useCoworkingBufferResponder(
 				});
 				content = '';
 			}
-			window.maestro.coworking.sendBufferResponse(responseChannel, content);
+			bridge.sendBufferResponse(responseChannel, content);
 		});
 		return off;
 	}, [terminalViewRefs]);
