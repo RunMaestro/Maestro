@@ -3,7 +3,7 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { BrowserWindow, Menu, ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
@@ -369,20 +369,22 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				return { action: 'deny' };
 			});
 
-			// Restrict navigation to the app itself — prevent renderer from navigating away
+			// Restrict navigation to the app itself — prevent renderer from navigating away.
+			// Both the dev-server URL and the renderer entry's file:// URL are constants
+			// for the lifetime of this window, so compute them once at setup time rather
+			// than on every navigation event. The production guard only allows the
+			// renderer entry HTML itself: a previous "directory prefix" check let any
+			// file inside the renderer dir through, which meant a stray <a href="foo.md">
+			// in chat output could resolve relative to index.html and unload the app to
+			// a non-existent bundle file.
+			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
+			const rendererFileUrl = isDevelopment ? null : pathToFileURL(rendererPath).href;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
-					// In dev mode, allow Vite dev server navigation
-					const devUrl = new URL(devServerUrl);
-					if (parsedUrl.origin === devUrl.origin) return;
+					if (parsedUrl.origin === allowedDevOrigin) return;
 				} else {
-					// In production, only allow file:// URLs within the app's renderer directory
-					if (
-						parsedUrl.protocol === 'file:' &&
-						url.includes(path.dirname(rendererPath).replace(/\\/g, '/'))
-					)
-						return;
+					if (parsedUrl.protocol === 'file:' && url === rendererFileUrl) return;
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');

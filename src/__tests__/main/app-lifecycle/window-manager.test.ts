@@ -624,7 +624,7 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 
-		it('should allow file:// navigation within renderer directory in production', async () => {
+		it('should allow file:// navigation to the renderer entry HTML in production', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
 			const windowManager = createWindowManager({
@@ -646,7 +646,7 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Should allow file:// navigation within the renderer's directory (/path/to/)
+			// Should allow file:// navigation to the renderer entry HTML itself.
 			const mockEvent = { preventDefault: vi.fn() };
 			navigateHandler(mockEvent, 'file:///path/to/index.html');
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
@@ -680,6 +680,100 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockEvent.preventDefault).toHaveBeenCalled();
 		});
 
+		it('regression: should block file:// navigation to other files inside the renderer directory in production', async () => {
+			// A relative <a href="foo.md"> in chat output resolves against the
+			// current page URL (the renderer's index.html), producing a file://
+			// URL inside the renderer dir. The previous "directory prefix" check
+			// allowed that through, unloading the app to a non-existent file.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'file:///path/to/TEST-PLAN-0.16.15-RC.md');
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('should block file:// navigation with a query string or fragment appended to the entry HTML', async () => {
+			// Exact-match check: even if the path matches the renderer entry,
+			// any added query/fragment is treated as different navigation.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			for (const url of [
+				'file:///path/to/index.html?foo=bar',
+				'file:///path/to/index.html#hash',
+				'file:///path/to/index.htmlx', // suffix that "starts with" the entry
+			]) {
+				const mockEvent = { preventDefault: vi.fn() };
+				navigateHandler(mockEvent, url);
+				expect(mockEvent.preventDefault).toHaveBeenCalled();
+			}
+		});
+
+		it('should block dev server navigation in production mode', async () => {
+			// In production the dev-server origin is not on the allowlist.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'http://localhost:5173/');
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+		});
+
 		it('should allow dev server navigation in development mode', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -706,6 +800,74 @@ describe('app-lifecycle/window-manager', () => {
 			const mockEvent = { preventDefault: vi.fn() };
 			navigateHandler(mockEvent, 'http://localhost:5173/some/path');
 			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('should block file:// navigation in development mode', async () => {
+			// Dev mode only allows the dev-server origin, not local file:// URLs
+			// (the renderer is served from Vite, not from disk).
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: true,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'file:///path/to/index.html');
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('should register a single will-navigate handler regardless of how many navigation events fire', async () => {
+			// Regression for review feedback: rendererFileUrl/devUrl should be
+			// computed once at setup, not per-event. Easiest observable proof is
+			// that the handler is registered exactly once on the webContents.
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCalls = mockWebContents.on.mock.calls.filter(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			expect(willNavigateCalls).toHaveLength(1);
+
+			// Drive the handler many times — behavior should be stable and the
+			// allowed URL should still match exactly on every invocation.
+			const navigateHandler = willNavigateCalls[0][1];
+			for (let i = 0; i < 5; i++) {
+				const allowed = { preventDefault: vi.fn() };
+				navigateHandler(allowed, 'file:///path/to/index.html');
+				expect(allowed.preventDefault).not.toHaveBeenCalled();
+
+				const blocked = { preventDefault: vi.fn() };
+				navigateHandler(blocked, 'file:///path/to/other.md');
+				expect(blocked.preventDefault).toHaveBeenCalled();
+			}
 		});
 
 		it('should omit titleBarStyle when useNativeTitleBar is true', async () => {
