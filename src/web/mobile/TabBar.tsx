@@ -588,24 +588,14 @@ export function TabBar({
 		return () => document.removeEventListener('mousedown', handleClickOutside);
 	}, [showNewTabMenu]);
 
-	// Bell filter — derived state for which tabs to render and whether the
-	// indicator dot should appear on the bell button.
+	// Bell filter — derived state for whether the indicator dot should appear
+	// on the bell button and which tabs to render. The button stays clickable
+	// even when there are no unread tabs (matches the desktop Left Bar bell):
+	// toggling it on with everything quiet just narrows the bar to the active
+	// tab.
 	const hasUnreadTabs = tabs.some(tabHasUnreadActivity);
 
-	// Derive the effective filter synchronously so there is no between-paint
-	// frame where only the active tab is visible while the cleanup effect below
-	// is still pending.
-	const effectiveShowUnreadOnly = showUnreadOnly && hasUnreadTabs;
-
-	// Keep the persisted toggle in sync — once activity settles, flip the
-	// state back off so the bell button visually returns to its idle look.
-	useEffect(() => {
-		if (showUnreadOnly && !hasUnreadTabs) {
-			setShowUnreadOnly(false);
-		}
-	}, [showUnreadOnly, hasUnreadTabs]);
-
-	const visibleTabs = effectiveShowUnreadOnly
+	const visibleTabs = showUnreadOnly
 		? tabs.filter((tab) => tab.id === activeTabId || tabHasUnreadActivity(tab))
 		: tabs;
 
@@ -638,13 +628,14 @@ export function TabBar({
 					gap: '6px',
 				}}
 			>
-				{/* Bell filter — show only tabs with unread/busy activity */}
+				{/* Bell filter — narrows the bar to the active tab plus any with
+				    unread/busy activity. Always clickable so users can hide quiet
+				    tabs even when nothing is currently unread. */}
 				<button
 					onClick={() => {
 						triggerHaptic(HAPTIC_PATTERNS.tap);
 						setShowUnreadOnly((prev) => !prev);
 					}}
-					disabled={!effectiveShowUnreadOnly && !hasUnreadTabs}
 					style={{
 						position: 'relative',
 						display: 'flex',
@@ -653,17 +644,16 @@ export function TabBar({
 						width: '28px',
 						height: '28px',
 						borderRadius: '14px',
-						border: `1px solid ${effectiveShowUnreadOnly ? colors.accent : colors.border}`,
-						backgroundColor: effectiveShowUnreadOnly ? colors.accent : colors.bgMain,
-						color: effectiveShowUnreadOnly ? '#fff' : colors.textDim,
-						cursor: !effectiveShowUnreadOnly && !hasUnreadTabs ? 'default' : 'pointer',
-						opacity: !effectiveShowUnreadOnly && !hasUnreadTabs ? 0.4 : 1,
+						border: `1px solid ${showUnreadOnly ? colors.accent : colors.border}`,
+						backgroundColor: showUnreadOnly ? colors.accent : colors.bgMain,
+						color: showUnreadOnly ? '#fff' : colors.textDim,
+						cursor: 'pointer',
 						marginBottom: '4px',
 						padding: 0,
 					}}
-					aria-pressed={effectiveShowUnreadOnly}
-					aria-label={effectiveShowUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
-					title={effectiveShowUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+					aria-pressed={showUnreadOnly}
+					aria-label={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+					title={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
 				>
 					<svg
 						width="14"
@@ -678,7 +668,7 @@ export function TabBar({
 						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
 						<path d="M13.73 21a2 2 0 0 1-3.46 0" />
 					</svg>
-					{hasUnreadTabs && !effectiveShowUnreadOnly && (
+					{hasUnreadTabs && !showUnreadOnly && (
 						<span
 							style={{
 								position: 'absolute',

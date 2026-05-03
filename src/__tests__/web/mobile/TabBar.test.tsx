@@ -1346,7 +1346,9 @@ describe('TabBar', () => {
 			expect(screen.getByLabelText('Filter unread tabs')).toBeInTheDocument();
 		});
 
-		it('disables the bell button when no tabs have unread activity', () => {
+		it('keeps the bell button clickable when no tabs have unread activity', () => {
+			// Mirrors the desktop Left Bar bell: always toggleable so the user
+			// can hide quiet tabs even when nothing is currently unread.
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'First', hasUnread: false }),
 				createTab({ id: 'tab-2', name: 'Second', hasUnread: false }),
@@ -1360,13 +1362,14 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			expect(screen.getByLabelText('Filter unread tabs')).toBeDisabled();
+			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
 		});
 
-		it('enables the bell button when at least one tab has unread', () => {
+		it('toggling on with no unread tabs collapses the bar to the active tab', () => {
 			const tabs = [
-				createTab({ id: 'tab-1', name: 'First' }),
-				createTab({ id: 'tab-2', name: 'Second', hasUnread: true }),
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'AlsoQuiet' }),
 			];
 			render(
 				<TabBar
@@ -1377,24 +1380,12 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
-		});
 
-		it('enables the bell button when at least one tab is busy', () => {
-			const tabs = [
-				createTab({ id: 'tab-1', name: 'First' }),
-				createTab({ id: 'tab-2', name: 'Second', state: 'busy' }),
-			];
-			render(
-				<TabBar
-					tabs={tabs}
-					activeTabId="tab-1"
-					onSelectTab={mockOnSelectTab}
-					onNewTab={mockOnNewTab}
-					onCloseTab={mockOnCloseTab}
-				/>
-			);
-			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+			expect(screen.queryByText('AlsoQuiet')).not.toBeInTheDocument();
 		});
 
 		it('hides tabs with no unread/busy activity when bell is toggled on', () => {
@@ -1487,49 +1478,10 @@ describe('TabBar', () => {
 			expect(bell).toHaveAttribute('aria-pressed', 'true');
 		});
 
-		it('auto-disables the filter once no tabs have unread activity', () => {
-			const tabs = [
-				createTab({ id: 'tab-1', name: 'First' }),
-				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
-			];
-			const { rerender } = render(
-				<TabBar
-					tabs={tabs}
-					activeTabId="tab-1"
-					onSelectTab={mockOnSelectTab}
-					onNewTab={mockOnNewTab}
-					onCloseTab={mockOnCloseTab}
-				/>
-			);
-
-			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
-			expect(screen.getByLabelText('Showing unread tabs only')).toBeInTheDocument();
-
-			// Tabs settle — no more unread tabs
-			act(() => {
-				rerender(
-					<TabBar
-						tabs={[
-							createTab({ id: 'tab-1', name: 'First' }),
-							createTab({ id: 'tab-2', name: 'Unread', hasUnread: false }),
-						]}
-						activeTabId="tab-1"
-						onSelectTab={mockOnSelectTab}
-						onNewTab={mockOnNewTab}
-						onCloseTab={mockOnCloseTab}
-					/>
-				);
-			});
-
-			// Bell should auto-revert to the unfiltered state
-			expect(screen.getByLabelText('Filter unread tabs')).toBeInTheDocument();
-			expect(screen.getByText('Unread')).toBeInTheDocument();
-		});
-
-		it('does not flash a single-tab bar when the last unread settles', () => {
-			// When activity clears in the same render where the bell is still on,
-			// the synchronously-derived effectiveShowUnreadOnly should disable the
-			// filter immediately rather than waiting for the cleanup effect.
+		it('keeps the filter applied when unread activity settles (no auto-disable)', () => {
+			// Toggling is purely user-driven, matching the desktop Left Bar bell:
+			// once on, the filter stays on until the user turns it off, even if
+			// every tab becomes quiet in between.
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active' }),
 				createTab({ id: 'tab-2', name: 'Quiet' }),
@@ -1548,27 +1500,28 @@ describe('TabBar', () => {
 			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
 			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
 
-			// Rerender with no unread tabs — without the synchronous derivation
-			// the filter would still be applied for one frame, hiding "Quiet".
-			rerender(
-				<TabBar
-					tabs={[
-						createTab({ id: 'tab-1', name: 'Active' }),
-						createTab({ id: 'tab-2', name: 'Quiet' }),
-						createTab({ id: 'tab-3', name: 'Unread', hasUnread: false }),
-					]}
-					activeTabId="tab-1"
-					onSelectTab={mockOnSelectTab}
-					onNewTab={mockOnNewTab}
-					onCloseTab={mockOnCloseTab}
-				/>
-			);
+			act(() => {
+				rerender(
+					<TabBar
+						tabs={[
+							createTab({ id: 'tab-1', name: 'Active' }),
+							createTab({ id: 'tab-2', name: 'Quiet' }),
+							createTab({ id: 'tab-3', name: 'Unread', hasUnread: false }),
+						]}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onNewTab={mockOnNewTab}
+						onCloseTab={mockOnCloseTab}
+					/>
+				);
+			});
 
-			// All tabs should be visible immediately after the rerender, with no
-			// pending-effect frame where only "Active" shows.
+			// Filter still on, so quiet tabs remain hidden and only the active
+			// tab is visible.
+			expect(screen.getByLabelText('Showing unread tabs only')).toBeInTheDocument();
 			expect(screen.getByText('Active')).toBeInTheDocument();
-			expect(screen.getByText('Quiet')).toBeInTheDocument();
-			expect(screen.getByText('Unread')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+			expect(screen.queryByText('Unread')).not.toBeInTheDocument();
 		});
 
 		it('reorder math uses the unfiltered tab index when bell is on', () => {
