@@ -756,6 +756,12 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
+						// Accumulated multi-tool entry: raw tokens overflow the window,
+						// but the preserved per-entry contextUsage is the last known good
+						// percentage. The display must clamp at 100% rather than render
+						// 0% (issue #762: previously the overflow path silently surfaced
+						// the capacity as the used-token count).
+						contextUsage: 100,
 						usageStats: {
 							inputTokens: 150000,
 							outputTokens: 1000,
@@ -769,7 +775,6 @@ describe('HistoryDetailModal', () => {
 				/>
 			);
 
-			// Should cap at 100%
 			expect(screen.getByText('100%')).toBeInTheDocument();
 		});
 

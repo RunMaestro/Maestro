@@ -227,6 +227,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Reasoning Effort',
 				description: 'How much the model should reason before responding.',
 				dynamic: true,
+				// Static fallback used when ~/.codex/models_cache.json hasn't been
+				// written yet (e.g. fresh install) so the dropdown still renders.
+				options: ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
 				default: '',
 				argBuilder: (value: string) =>
 					value && value.trim() ? ['-c', `reasoning.effort="${value.trim()}"`] : [],
