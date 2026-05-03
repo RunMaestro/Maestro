@@ -27,6 +27,20 @@ export interface SelectedDocument {
 }
 
 /**
+ * Optional worktree dispatch config — when set, the desktop creates a git
+ * worktree, runs the Auto Run inside it, and (if requested) opens a PR on
+ * completion. Mirrors the `worktree` field accepted by the
+ * `configure_auto_run` WebSocket handler.
+ */
+export interface LaunchWorktreeConfig {
+	enabled: boolean;
+	path: string;
+	branchName: string;
+	createPROnCompletion: boolean;
+	prTargetBranch: string;
+}
+
+/**
  * Launch configuration for Auto Run.
  */
 export interface LaunchConfig {
@@ -34,6 +48,16 @@ export interface LaunchConfig {
 	prompt?: string;
 	loopEnabled?: boolean;
 	maxLoops?: number;
+	worktree?: LaunchWorktreeConfig;
+}
+
+/**
+ * Worktree summary returned by `list_worktrees`.
+ */
+export interface WorktreeSummary {
+	path: string;
+	branch: string | null;
+	isBare: boolean;
 }
 
 /**
@@ -49,6 +73,8 @@ export interface UseAutoRunReturn {
 	saveDocumentContent: (sessionId: string, filename: string, content: string) => Promise<boolean>;
 	launchAutoRun: (sessionId: string, config: LaunchConfig) => boolean;
 	stopAutoRun: (sessionId: string) => Promise<boolean>;
+	loadGitBranches: (sessionId: string) => Promise<{ branches: string[]; currentBranch?: string }>;
+	listWorktrees: (sessionId: string) => Promise<WorktreeSummary[]>;
 }
 
 /**
@@ -128,9 +154,42 @@ export function useAutoRun(
 				loopEnabled: config.loopEnabled,
 				maxLoops: config.maxLoops,
 				launch: true,
+				...(config.worktree && config.worktree.enabled ? { worktree: config.worktree } : {}),
 			});
 		},
 		[send]
+	);
+
+	const loadGitBranches = useCallback(
+		async (sessionId: string): Promise<{ branches: string[]; currentBranch?: string }> => {
+			try {
+				const response = await sendRequest<{ branches?: string[]; currentBranch?: string }>(
+					'get_git_branches',
+					{ sessionId }
+				);
+				return {
+					branches: response.branches ?? [],
+					currentBranch: response.currentBranch,
+				};
+			} catch {
+				return { branches: [] };
+			}
+		},
+		[sendRequest]
+	);
+
+	const listWorktrees = useCallback(
+		async (sessionId: string): Promise<WorktreeSummary[]> => {
+			try {
+				const response = await sendRequest<{ worktrees?: WorktreeSummary[] }>('list_worktrees', {
+					sessionId,
+				});
+				return response.worktrees ?? [];
+			} catch {
+				return [];
+			}
+		},
+		[sendRequest]
 	);
 
 	const stopAutoRun = useCallback(
@@ -155,6 +214,8 @@ export function useAutoRun(
 		saveDocumentContent,
 		launchAutoRun,
 		stopAutoRun,
+		loadGitBranches,
+		listWorktrees,
 	};
 }
 

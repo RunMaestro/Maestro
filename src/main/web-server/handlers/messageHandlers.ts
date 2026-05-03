@@ -42,6 +42,8 @@ import type {
 	GroupData,
 	GitStatusResult,
 	GitDiffResult,
+	GitBranchesResult,
+	ListWorktreesResult,
 	GroupChatState,
 	CueSubscriptionInfo,
 	CueActivityEntry,
@@ -237,6 +239,8 @@ export interface MessageHandlerCallbacks {
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
+	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
+	listWorktreesForSession: (sessionId: string) => Promise<ListWorktreesResult>;
 	getGroupChats: () => Promise<GroupChatState[]>;
 	startGroupChat: (topic: string, participantIds: string[]) => Promise<{ chatId: string } | null>;
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
@@ -469,6 +473,14 @@ export class WebSocketMessageHandler {
 
 			case 'get_git_diff':
 				this.handleGetGitDiff(client, message);
+				break;
+
+			case 'get_git_branches':
+				this.handleGetGitBranches(client, message);
+				break;
+
+			case 'list_worktrees':
+				this.handleListWorktrees(client, message);
 				break;
 
 			case 'get_group_chats':
@@ -2409,6 +2421,71 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to get git diff: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_git_branches message — list local + remote branches for a session's
+	 * cwd, used by the mobile Run-in-Worktree base-branch picker.
+	 */
+	private handleGetGitBranches(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.getGitBranchesForSession) {
+			this.sendError(client, 'Git branches not configured');
+			return;
+		}
+
+		this.callbacks
+			.getGitBranchesForSession(sessionId)
+			.then((result) => {
+				this.send(client, {
+					type: 'git_branches',
+					sessionId,
+					branches: result.branches,
+					currentBranch: result.currentBranch,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get git branches: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle list_worktrees message — list existing worktrees for a session's cwd,
+	 * used by mobile Run-in-Worktree to offer "use existing" alongside "create new".
+	 */
+	private handleListWorktrees(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.listWorktreesForSession) {
+			this.sendError(client, 'List worktrees not configured');
+			return;
+		}
+
+		this.callbacks
+			.listWorktreesForSession(sessionId)
+			.then((result) => {
+				this.send(client, {
+					type: 'worktrees_list',
+					sessionId,
+					worktrees: result.worktrees,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to list worktrees: ${error.message}`);
 			});
 	}
 

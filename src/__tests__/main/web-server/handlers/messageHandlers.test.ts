@@ -111,6 +111,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		renameSession: vi.fn().mockResolvedValue(true),
 		getGitStatus: vi.fn().mockResolvedValue({ files: [], branch: 'main' }),
 		getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
+		getGitBranchesForSession: vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'feature/x'], currentBranch: 'main' }),
+		listWorktreesForSession: vi.fn().mockResolvedValue({ worktrees: [] }),
 		getGroupChats: vi.fn().mockResolvedValue([]),
 		startGroupChat: vi.fn().mockResolvedValue({ chatId: 'chat-1' }),
 		getGroupChatState: vi.fn().mockResolvedValue(null),
@@ -1432,6 +1436,85 @@ describe('WebSocketMessageHandler', () => {
 				documents: [{ filename: 'doc1.md' }],
 			});
 
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+	});
+
+	describe('Run-in-Worktree git APIs (Web → Desktop)', () => {
+		it('should reject get_git_branches without sessionId', () => {
+			handler.handleMessage(client, { type: 'get_git_branches' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+		});
+
+		it('should forward get_git_branches and emit branches list', async () => {
+			handler.handleMessage(client, {
+				type: 'get_git_branches',
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getGitBranchesForSession).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('git_branches');
+			expect(response.branches).toEqual(['main', 'feature/x']);
+			expect(response.currentBranch).toBe('main');
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('should reject list_worktrees without sessionId', () => {
+			handler.handleMessage(client, { type: 'list_worktrees' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+		});
+
+		it('should forward list_worktrees and emit worktrees list', async () => {
+			(callbacks.listWorktreesForSession as any).mockResolvedValueOnce({
+				worktrees: [{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }],
+			});
+
+			handler.handleMessage(client, {
+				type: 'list_worktrees',
+				sessionId: 'session-1',
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.listWorktreesForSession).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('worktrees_list');
+			expect(response.worktrees).toEqual([{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }]);
+			expect(response.requestId).toBe('req-2');
+		});
+
+		it('should error when get_git_branches callback is not configured', () => {
+			const handlerNoCb = new WebSocketMessageHandler();
+			handlerNoCb.setCallbacks({});
+			handlerNoCb.handleMessage(client, {
+				type: 'get_git_branches',
+				sessionId: 'session-1',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+
+		it('should error when list_worktrees callback is not configured', () => {
+			const handlerNoCb = new WebSocketMessageHandler();
+			handlerNoCb.setCallbacks({});
+			handlerNoCb.handleMessage(client, {
+				type: 'list_worktrees',
+				sessionId: 'session-1',
+			});
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('not configured');

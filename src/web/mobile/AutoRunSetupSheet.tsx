@@ -8,7 +8,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import type { AutoRunDocument, LaunchConfig } from '../hooks/useAutoRun';
+import type {
+	AutoRunDocument,
+	LaunchConfig,
+	LaunchWorktreeConfig,
+	WorktreeSummary,
+} from '../hooks/useAutoRun';
+import { AutoRunWorktreeSection } from './AutoRunWorktreeSection';
 
 /**
  * Props for AutoRunSetupSheet component
@@ -18,6 +24,14 @@ export interface AutoRunSetupSheetProps {
 	documents: AutoRunDocument[];
 	onLaunch: (config: LaunchConfig) => void;
 	onClose: () => void;
+	/** Whether the session's cwd is a git repo (gates Run-in-Worktree section). */
+	isGitRepo?: boolean;
+	/** Base path where worktrees are stored, configured on desktop. */
+	worktreeBasePath?: string | null;
+	/** Lazy loader for the base-branch picker (omit to hide the section). */
+	loadGitBranches?: () => Promise<{ branches: string[]; currentBranch?: string }>;
+	/** Lazy loader for existing worktrees list (informational). */
+	loadWorktrees?: () => Promise<WorktreeSummary[]>;
 }
 
 /**
@@ -31,6 +45,10 @@ export function AutoRunSetupSheet({
 	documents,
 	onLaunch,
 	onClose,
+	isGitRepo = false,
+	worktreeBasePath = null,
+	loadGitBranches,
+	loadWorktrees,
 }: AutoRunSetupSheetProps) {
 	const colors = useThemeColors();
 	const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
@@ -39,6 +57,7 @@ export function AutoRunSetupSheet({
 	const [prompt, setPrompt] = useState('');
 	const [loopEnabled, setLoopEnabled] = useState(false);
 	const [maxLoops, setMaxLoops] = useState(3);
+	const [worktreeConfig, setWorktreeConfig] = useState<LaunchWorktreeConfig | null>(null);
 	const [isVisible, setIsVisible] = useState(false);
 	const sheetRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +73,7 @@ export function AutoRunSetupSheet({
 		setPrompt('');
 		setLoopEnabled(false);
 		setMaxLoops(3);
+		setWorktreeConfig(null);
 	}, [_sessionId, documents]);
 
 	// Animate in on mount
@@ -123,9 +143,10 @@ export function AutoRunSetupSheet({
 			prompt: prompt.trim() || undefined,
 			loopEnabled: loopEnabled || undefined,
 			maxLoops: loopEnabled ? maxLoops : undefined,
+			...(worktreeConfig && worktreeConfig.enabled ? { worktree: worktreeConfig } : {}),
 		};
 		onLaunch(config);
-	}, [selectedFiles, prompt, loopEnabled, maxLoops, onLaunch]);
+	}, [selectedFiles, prompt, loopEnabled, maxLoops, worktreeConfig, onLaunch]);
 
 	const allSelected = selectedFiles.size === documents.length && documents.length > 0;
 
@@ -376,6 +397,17 @@ export function AutoRunSetupSheet({
 							})}
 						</div>
 					</div>
+
+					{/* Run-in-Worktree section — hidden for non-git repos. */}
+					{loadGitBranches && loadWorktrees && (
+						<AutoRunWorktreeSection
+							isGitRepo={isGitRepo}
+							worktreeBasePath={worktreeBasePath}
+							loadBranches={loadGitBranches}
+							loadWorktrees={loadWorktrees}
+							onChange={setWorktreeConfig}
+						/>
+					)}
 
 					{/* Prompt input section */}
 					<div style={{ marginBottom: '20px' }}>

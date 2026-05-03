@@ -639,6 +639,8 @@ vi.mock('../../../web/hooks/useAutoRun', () => ({
 		saveDocumentContent: vi.fn(),
 		launchAutoRun: vi.fn(),
 		stopAutoRun: vi.fn(),
+		loadGitBranches: vi.fn().mockResolvedValue({ branches: [] }),
+		listWorktrees: vi.fn().mockResolvedValue([]),
 	}),
 }));
 

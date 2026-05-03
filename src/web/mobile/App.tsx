@@ -1466,7 +1466,21 @@ export default function MobileApp() {
 		documents: autoRunDocuments,
 		loadDocuments: loadAutoRunDocuments,
 		launchAutoRun,
+		loadGitBranches: loadAutoRunGitBranches,
+		listWorktrees: listAutoRunWorktrees,
 	} = useAutoRun(sendRequest, send, currentAutoRunState);
+
+	// Loaders bound to the active session so the worktree section can lazily
+	// fetch branches / worktrees without prop drilling sessionId.
+	const handleLoadAutoRunBranches = useCallback(async () => {
+		if (!activeSessionId) return { branches: [] };
+		return loadAutoRunGitBranches(activeSessionId);
+	}, [activeSessionId, loadAutoRunGitBranches]);
+
+	const handleListAutoRunWorktrees = useCallback(async () => {
+		if (!activeSessionId) return [];
+		return listAutoRunWorktrees(activeSessionId);
+	}, [activeSessionId, listAutoRunWorktrees]);
 
 	// Auto Run panel handlers
 	const handleOpenAutoRunPanel = useCallback(() => {
@@ -3175,6 +3189,10 @@ export default function MobileApp() {
 					documents={autoRunDocuments}
 					onLaunch={handleAutoRunLaunch}
 					onClose={handleAutoRunCloseSetup}
+					isGitRepo={activeSession?.isGitRepo ?? false}
+					worktreeBasePath={activeSession?.worktreeBasePath ?? null}
+					loadGitBranches={handleLoadAutoRunBranches}
+					loadWorktrees={handleListAutoRunWorktrees}
 				/>
 			)}
 

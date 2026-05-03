@@ -13,6 +13,9 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
+import { execGit } from '../utils/remote-git';
+import { getSshRemoteById } from '../stores';
+import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
@@ -171,6 +174,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					// Worktree subagent support
 					parentSessionId: s.parentSessionId || null,
 					worktreeBranch: s.worktreeBranch || null,
+					isGitRepo: s.isGitRepo ?? false,
+					worktreeBasePath: s.worktreeConfig?.basePath || null,
 				};
 			});
 		});
@@ -1406,6 +1411,110 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolve({ diff: '', files: [] });
 				}, 10000);
 			});
+		});
+
+		// Set up callback for web server to enumerate branches for the Run-in-Worktree
+		// base-branch picker on mobile. Executes git directly in the main process
+		// (no renderer round-trip needed because cwd + SSH config live in sessionsStore).
+		server.setGetGitBranchesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				return { branches: [] };
+			}
+
+			const sshRemoteId =
+				(session.sessionSshRemoteConfig?.enabled
+					? session.sessionSshRemoteConfig.remoteId
+					: undefined) || undefined;
+			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			const remoteCwd = sshRemote ? session.cwd : undefined;
+
+			try {
+				const [branchesResult, currentBranchResult] = await Promise.all([
+					execGit(['branch', '-a', '--format=%(refname:short)'], session.cwd, sshRemote, remoteCwd),
+					execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
+				]);
+
+				const branches =
+					branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
+				const currentBranch =
+					currentBranchResult.exitCode === 0
+						? currentBranchResult.stdout.trim() || undefined
+						: undefined;
+
+				return { branches, currentBranch };
+			} catch (err) {
+				logger.warn(
+					`getGitBranchesForSession failed for ${sessionId}: ${(err as Error).message}`,
+					'WebServer'
+				);
+				return { branches: [] };
+			}
+		});
+
+		// List existing worktrees for a session — used by mobile Run-in-Worktree
+		// to offer "use existing" alongside "create new".
+		server.setListWorktreesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				return { worktrees: [] };
+			}
+
+			const sshRemoteId =
+				(session.sessionSshRemoteConfig?.enabled
+					? session.sessionSshRemoteConfig.remoteId
+					: undefined) || undefined;
+			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			const remoteCwd = sshRemote ? session.cwd : undefined;
+
+			try {
+				const result = await execGit(
+					['worktree', 'list', '--porcelain'],
+					session.cwd,
+					sshRemote,
+					remoteCwd
+				);
+				if (result.exitCode !== 0) {
+					return { worktrees: [] };
+				}
+
+				const worktrees: Array<{ path: string; branch: string | null; isBare: boolean }> = [];
+				let current: { path?: string; branch?: string | null; isBare?: boolean } = {};
+				for (const line of result.stdout.split('\n')) {
+					if (line.startsWith('worktree ')) {
+						current.path = line.substring(9);
+					} else if (line.startsWith('branch ')) {
+						current.branch = line.substring(7).replace('refs/heads/', '');
+					} else if (line === 'bare') {
+						current.isBare = true;
+					} else if (line === 'detached') {
+						current.branch = null;
+					} else if (line === '' && current.path) {
+						worktrees.push({
+							path: current.path,
+							branch: current.branch ?? null,
+							isBare: current.isBare || false,
+						});
+						current = {};
+					}
+				}
+				if (current.path) {
+					worktrees.push({
+						path: current.path,
+						branch: current.branch ?? null,
+						isBare: current.isBare || false,
+					});
+				}
+				return { worktrees };
+			} catch (err) {
+				logger.warn(
+					`listWorktreesForSession failed for ${sessionId}: ${(err as Error).message}`,
+					'WebServer'
+				);
+				return { worktrees: [] };
+			}
 		});
 
 		// Set up callback for web server to stop Auto Run
