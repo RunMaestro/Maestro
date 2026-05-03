@@ -377,6 +377,13 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
 		) => void;
+		onRemoteSetAutoRunFolder: (
+			callback: (sessionId: string, folderPath: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetAutoRunFolderResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteGetAutoRunDocs: (
 			callback: (sessionId: string, responseChannel: string) => void
 		) => () => void;
@@ -395,6 +402,43 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
+		onRemoteResetAutoRunDocTasks: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteResetAutoRunDocTasksResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteResumeAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteResumeAutoRunErrorResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSkipAutoRunDocument: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSkipAutoRunDocumentResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAbortAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteListPlaybooks: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListPlaybooksResponse: (responseChannel: string, playbooks: unknown[]) => void;
+		onRemoteCreatePlaybook: (
+			callback: (sessionId: string, playbook: unknown, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCreatePlaybookResponse: (responseChannel: string, playbook: unknown) => void;
+		onRemoteUpdatePlaybook: (
+			callback: (
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdatePlaybookResponse: (responseChannel: string, playbook: unknown) => void;
+		onRemoteDeletePlaybook: (
+			callback: (sessionId: string, playbookId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteDeletePlaybookResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSetSetting: (
 			callback: (key: string, value: unknown, responseChannel: string) => void
 		) => () => void;
@@ -561,6 +605,13 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
+				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				errorPaused?: boolean;
+				errorMessage?: string;
+				errorType?: string;
+				errorRecoverable?: boolean;
+				errorDocumentIndex?: number;
+				errorTaskDescription?: string;
 			} | null
 		) => Promise<void>;
 		broadcastTabsChange: (

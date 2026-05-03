@@ -675,6 +675,54 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote set Auto Run folder from web interface
+		 * (request-response). Web clients use this to repoint a session at a
+		 * different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
+		 * + `handleAutoRunFolderSelected` flow.
+		 */
+		onRemoteSetAutoRunFolder: (
+			callback: (sessionId: string, folderPath: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				folderPath: string,
+				responseChannel: string
+			) => {
+				// Ack the response with a fallback so the web client doesn't hang on
+				// a regression, then rethrow so Sentry actually sees the bug instead
+				// of silently degrading. Mirrors `onRemoteOpenBrowserTab`'s pattern.
+				try {
+					Promise.resolve(callback(sessionId, folderPath, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+						throw error;
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:setAutoRunFolder', handler);
+			return () => ipcRenderer.removeListener('remote:setAutoRunFolder', handler);
+		},
+
+		/**
+		 * Send response for remote set Auto Run folder
+		 */
+		sendRemoteSetAutoRunFolderResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote get auto-run docs from web interface (request-response)
 		 */
 		onRemoteGetAutoRunDocs: (
@@ -775,6 +823,233 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string) => callback(sessionId);
 			ipcRenderer.on('remote:stopAutoRun', handler);
 			return () => ipcRenderer.removeListener('remote:stopAutoRun', handler);
+		},
+
+		/**
+		 * Subscribe to remote reset auto-run document tasks
+		 * (request-response — renderer reads/writes the document via existing autorun IPC).
+		 *
+		 * On failure we ack the channel with a fallback (so the web client doesn't hang)
+		 * and then rethrow so the unhandled rejection reaches Sentry via the global handler.
+		 */
+		onRemoteResetAutoRunDocTasks: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filename: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, filename, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, false);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, false);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:resetAutoRunDocTasks', handler);
+			return () => ipcRenderer.removeListener('remote:resetAutoRunDocTasks', handler);
+		},
+
+		sendRemoteResetAutoRunDocTasksResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote auto-run error-recovery actions (resume / skip-document / abort).
+		 * Each action mirrors the desktop AutoRunErrorBanner buttons.
+		 */
+		onRemoteResumeAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, false);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, false);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:resumeAutoRunError', handler);
+			return () => ipcRenderer.removeListener('remote:resumeAutoRunError', handler);
+		},
+
+		sendRemoteResumeAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteSkipAutoRunDocument: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, false);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, false);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:skipAutoRunDocument', handler);
+			return () => ipcRenderer.removeListener('remote:skipAutoRunDocument', handler);
+		},
+
+		sendRemoteSkipAutoRunDocumentResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteAbortAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, false);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, false);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:abortAutoRunError', handler);
+			return () => ipcRenderer.removeListener('remote:abortAutoRunError', handler);
+		},
+
+		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote playbook CRUD from web interface (request-response).
+		 * Renderer forwards to window.maestro.playbooks.* IPC and replies on the channel.
+		 *
+		 * Failure handling: each handler acks the IPC channel with a neutral
+		 * fallback (`[]` / `null` / `false`) so the web client doesn't hang on a
+		 * regression, and rethrows the error so Sentry's global unhandled-rejection
+		 * hook still reports the cause. The web UI currently can't distinguish a
+		 * legitimate empty list from a transport failure with this shape — a
+		 * follow-up will move these to the structured `{ success, error }` payload
+		 * used by `onRemoteSetAutoRunFolder` (tracked in the AutoRun follow-up gist).
+		 */
+		onRemoteListPlaybooks: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, []);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, []);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:listPlaybooks', handler);
+			return () => ipcRenderer.removeListener('remote:listPlaybooks', handler);
+		},
+
+		sendRemoteListPlaybooksResponse: (responseChannel: string, playbooks: unknown[]): void => {
+			ipcRenderer.send(responseChannel, playbooks);
+		},
+
+		onRemoteCreatePlaybook: (
+			callback: (sessionId: string, playbook: unknown, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbook: unknown,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbook, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, null);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, null);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:createPlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:createPlaybook', handler);
+		},
+
+		sendRemoteCreatePlaybookResponse: (responseChannel: string, playbook: unknown): void => {
+			ipcRenderer.send(responseChannel, playbook);
+		},
+
+		onRemoteUpdatePlaybook: (
+			callback: (
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbookId, updates, responseChannel)).catch(
+						(err) => {
+							ipcRenderer.send(responseChannel, null);
+							throw err;
+						}
+					);
+				} catch (err) {
+					ipcRenderer.send(responseChannel, null);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:updatePlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:updatePlaybook', handler);
+		},
+
+		sendRemoteUpdatePlaybookResponse: (responseChannel: string, playbook: unknown): void => {
+			ipcRenderer.send(responseChannel, playbook);
+		},
+
+		onRemoteDeletePlaybook: (
+			callback: (sessionId: string, playbookId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbookId: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbookId, responseChannel)).catch((err) => {
+						ipcRenderer.send(responseChannel, false);
+						throw err;
+					});
+				} catch (err) {
+					ipcRenderer.send(responseChannel, false);
+					throw err;
+				}
+			};
+			ipcRenderer.on('remote:deletePlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:deletePlaybook', handler);
+		},
+
+		sendRemoteDeletePlaybookResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
 		},
 
 		/**

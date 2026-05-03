@@ -45,10 +45,22 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
+			setSessionAutoRunFolderCallback = vi.fn();
 			setGetAutoRunDocsCallback = vi.fn();
 			setGetAutoRunDocContentCallback = vi.fn();
 			setSaveAutoRunDocCallback = vi.fn();
 			setStopAutoRunCallback = vi.fn();
+			// Auto Run parity additions — task reset, error recovery, playbook CRUD.
+			// The factory wires these during createWebServer; without the stubs
+			// the module-under-test throws TypeError on startup.
+			setResetAutoRunDocTasksCallback = vi.fn();
+			setResumeAutoRunErrorCallback = vi.fn();
+			setSkipAutoRunDocumentCallback = vi.fn();
+			setAbortAutoRunErrorCallback = vi.fn();
+			setListPlaybooksCallback = vi.fn();
+			setCreatePlaybookCallback = vi.fn();
+			setUpdatePlaybookCallback = vi.fn();
+			setDeletePlaybookCallback = vi.fn();
 			setGetSettingsCallback = vi.fn();
 			setSetSettingCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();

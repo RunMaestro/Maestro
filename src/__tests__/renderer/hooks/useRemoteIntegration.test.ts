@@ -122,8 +122,12 @@ describe('useRemoteIntegration', () => {
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
 		sendRemoteConfigureAutoRunResponse: vi.fn(),
+		sendRemoteSetAutoRunFolderResponse: vi.fn(),
 		onRemoteGetAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -185,6 +189,25 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
+		// Auto Run parity additions — playbook CRUD + task reset + error recovery.
+		// Each hook subscribes but the tests here don't drive these handlers;
+		// a no-op unsubscribe keeps useRemoteIntegration setup from throwing.
+		onRemoteResetAutoRunDocTasks: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteResetAutoRunDocTasksResponse: vi.fn(),
+		onRemoteResumeAutoRunError: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteResumeAutoRunErrorResponse: vi.fn(),
+		onRemoteSkipAutoRunDocument: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteSkipAutoRunDocumentResponse: vi.fn(),
+		onRemoteAbortAutoRunError: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteAbortAutoRunErrorResponse: vi.fn(),
+		onRemoteListPlaybooks: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteListPlaybooksResponse: vi.fn(),
+		onRemoteCreatePlaybook: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteCreatePlaybookResponse: vi.fn(),
+		onRemoteUpdatePlaybook: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteUpdatePlaybookResponse: vi.fn(),
+		onRemoteDeletePlaybook: vi.fn().mockImplementation(() => () => {}),
+		sendRemoteDeletePlaybookResponse: vi.fn(),
 		onRemoteNotifyToast: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
