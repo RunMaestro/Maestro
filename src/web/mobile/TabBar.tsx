@@ -593,7 +593,13 @@ export function TabBar({
 	// even when there are no unread tabs (matches the desktop Left Bar bell):
 	// toggling it on with everything quiet just narrows the bar to the active
 	// tab.
-	const hasUnreadTabs = tabs.some(tabHasUnreadActivity);
+	//
+	// Exclude the currently focused AI tab from the badge calc — its activity
+	// is already in front of the user, so flagging it as off-tab unread would
+	// be misleading and toggling the bell wouldn't reveal anything new.
+	const hasUnreadTabs = tabs.some(
+		(tab) => !(inputMode === 'ai' && tab.id === activeTabId) && tabHasUnreadActivity(tab)
+	);
 
 	const visibleTabs = showUnreadOnly
 		? tabs.filter((tab) => tab.id === activeTabId || tabHasUnreadActivity(tab))

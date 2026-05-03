@@ -1365,6 +1365,76 @@ describe('TabBar', () => {
 			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
 		});
 
+		it('does not show the indicator dot when the active AI tab is the only unread', () => {
+			// The active AI tab is already in front of the user, so flagging it
+			// as off-tab unread would be misleading.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active', hasUnread: true }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="ai"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			// Indicator dot is absolutely-positioned, has no visible text, and
+			// is the only element with the accent background-color — so we
+			// detect it by querying for that style on a child span.
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).toBeNull();
+		});
+
+		it('shows the indicator dot when an AI tab in terminal mode is unread', () => {
+			// In terminal mode the AI tab is no longer the focused view, so
+			// even the "active" AI tab should count as off-tab activity.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active', hasUnread: true }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="terminal"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).not.toBeNull();
+		});
+
+		it('shows the indicator dot for off-tab unread activity', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Other', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					inputMode="ai"
+				/>
+			);
+
+			const bell = screen.getByLabelText('Filter unread tabs');
+			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
+			expect(dot).not.toBeNull();
+		});
+
 		it('toggling on with no unread tabs collapses the bar to the active tab', () => {
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active' }),
