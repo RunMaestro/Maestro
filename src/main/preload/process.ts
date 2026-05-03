@@ -301,7 +301,8 @@ export function createProcessApi() {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -311,7 +312,8 @@ export function createProcessApi() {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -319,9 +321,10 @@ export function createProcessApi() {
 					inputMode,
 					tabId,
 					force,
+					imageCount: images?.length ?? 0,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force);
+					callback(sessionId, command, inputMode, tabId, force, images);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',

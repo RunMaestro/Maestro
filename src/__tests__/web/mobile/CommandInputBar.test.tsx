@@ -322,7 +322,8 @@ describe('CommandInputBar', () => {
 			const form = screen.getByRole('textbox').closest('form');
 			fireEvent.submit(form!);
 
-			expect(onSubmit).toHaveBeenCalledWith('test command');
+			// Second arg is the staged-images array; undefined when no images pasted.
+			expect(onSubmit).toHaveBeenCalledWith('test command', undefined);
 		});
 
 		it('does not submit empty value', () => {
@@ -385,7 +386,8 @@ describe('CommandInputBar', () => {
 			const input = screen.getByRole('textbox');
 			fireEvent.keyDown(input, { key: 'Enter' });
 
-			expect(onSubmit).toHaveBeenCalledWith('test');
+			// Terminal mode never carries images, so the second arg is always undefined.
+			expect(onSubmit).toHaveBeenCalledWith('test', undefined);
 		});
 
 		it('Shift+Enter ALSO submits in terminal mode (single line input)', () => {
@@ -399,7 +401,7 @@ describe('CommandInputBar', () => {
 			const input = screen.getByRole('textbox');
 			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
 
-			expect(onSubmit).toHaveBeenCalledWith('test');
+			expect(onSubmit).toHaveBeenCalledWith('test', undefined);
 		});
 	});
 

@@ -372,6 +372,7 @@ describe('CallbackRegistry', () => {
 				'npm test',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -386,6 +387,7 @@ describe('CallbackRegistry', () => {
 				'session-5',
 				'npm test',
 				'terminal',
+				undefined,
 				undefined,
 				undefined
 			);
@@ -402,6 +404,7 @@ describe('CallbackRegistry', () => {
 				'explain this code',
 				'ai',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -412,7 +415,14 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'follow up', 'ai', 'tab-xyz');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'follow up', 'ai', 'tab-xyz', undefined);
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'follow up',
+				'ai',
+				'tab-xyz',
+				undefined,
+				undefined
+			);
 		});
 
 		it('passes force argument to the callback so `dispatch --force` survives the WebSocket boundary', async () => {
@@ -421,7 +431,38 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'concurrent write', 'ai', undefined, true);
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'concurrent write', 'ai', undefined, true);
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'concurrent write',
+				'ai',
+				undefined,
+				true,
+				undefined
+			);
+		});
+
+		it('passes images argument so pasted attachments survive the boundary', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setExecuteCommandCallback(callback);
+
+			const images = ['data:image/png;base64,abc'];
+			await registry.executeCommand(
+				'session-5',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
+			);
+
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
+			);
 		});
 	});
 

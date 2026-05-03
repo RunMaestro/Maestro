@@ -251,7 +251,8 @@ export type ExecuteCommandCallback = (
 	command: string,
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
-	force?: boolean
+	force?: boolean,
+	images?: string[]
 ) => Promise<boolean>;
 
 /**
