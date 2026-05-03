@@ -117,6 +117,8 @@ import type {
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
 	NotifyCenterFlashCallback,
+	ListDesktopSessionsCallback,
+	GetSessionHistoryCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -597,6 +599,14 @@ export class WebServer {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
 
+	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
+		this.callbackRegistry.setListDesktopSessionsCallback(callback);
+	}
+
+	setGetSessionHistoryCallback(callback: GetSessionHistoryCallback): void {
+		this.callbackRegistry.setGetSessionHistoryCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -858,6 +868,9 @@ export class WebServer {
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
 			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
+			listDesktopSessions: () => this.callbackRegistry.listDesktopSessions(),
+			getSessionHistory: (tabId, options) =>
+				this.callbackRegistry.getSessionHistory(tabId, options),
 		});
 	}
 

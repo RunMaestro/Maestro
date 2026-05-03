@@ -28,6 +28,8 @@
  * - stop_auto_run: Stop an active auto-run for a session
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
+ * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
+ * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  */
 
 import path from 'path';
@@ -56,6 +58,9 @@ import type {
 	NotifyToastColor,
 	NotifyCenterFlashColor,
 	NotifyCenterFlashVariant,
+	DesktopSessionEntry,
+	SessionHistoryResult,
+	GetSessionHistoryOptions,
 } from '../types';
 
 /** Canonical Toast / Center Flash color set (shared design language). */
@@ -273,6 +278,17 @@ export interface MessageHandlerCallbacks {
 	killTerminalForWeb: (sessionId: string) => boolean;
 	notifyToast: (params: NotifyToastParams) => Promise<boolean>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
+	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
+	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
+	 *  can address tabs by id without owning a persistent channel. */
+	listDesktopSessions: () => DesktopSessionEntry[];
+	/** Read-only conversation history fetch used by `maestro-cli session show
+	 *  <tabId>`. Filters (`sinceMs`, `tail`) live alongside the read so we don't
+	 *  ship the full transcript over the wire on every poll. */
+	getSessionHistory: (
+		tabId: string,
+		options?: GetSessionHistoryOptions
+	) => SessionHistoryResult | null;
 }
 
 /**
@@ -549,6 +565,14 @@ export class WebSocketMessageHandler {
 
 			case 'notify_center_flash':
 				this.handleNotifyCenterFlash(client, message);
+				break;
+
+			case 'list_desktop_sessions':
+				this.handleListDesktopSessions(client, message);
+				break;
+
+			case 'get_session_history':
+				this.handleGetSessionHistory(client, message);
 				break;
 
 			default:
@@ -3238,6 +3262,85 @@ export class WebSocketMessageHandler {
 			.notifyCenterFlash({ message: body, detail, color, duration })
 			.then((success) => sendResult(success, success ? undefined : 'Failed to show flash'))
 			.catch((error) => sendResult(false, `Failed to show flash: ${error.message}`));
+	}
+
+	/**
+	 * Handle list_desktop_sessions message — enumerate every open AI tab across
+	 * desktop agents. Stateless read backed by the persisted session store; no
+	 * subscription side-effects so external pollers (Maestro-Discord, Cue) can
+	 * call this every few seconds without leaking state into the desktop.
+	 */
+	private handleListDesktopSessions(client: WebClient, message: WebClientMessage): void {
+		const sessions = this.callbacks.listDesktopSessions ? this.callbacks.listDesktopSessions() : [];
+		this.send(client, {
+			type: 'desktop_sessions_list',
+			success: true,
+			sessions,
+			requestId: message.requestId,
+		});
+	}
+
+	/**
+	 * Handle get_session_history message — return the conversation log for a
+	 * tab, optionally filtered by `sinceMs` (poll cursor) and/or `tail` (cap).
+	 * Errors are returned in the same response type rather than as a generic
+	 * `error` so the CLI's request/response pairing stays deterministic.
+	 */
+	private handleGetSessionHistory(client: WebClient, message: WebClientMessage): void {
+		const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+		if (!tabId) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: 'Missing tabId',
+				code: 'MISSING_TAB_ID',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		if (!this.callbacks.getSessionHistory) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: 'Session history not configured',
+				code: 'NOT_CONFIGURED',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		const sinceMs =
+			typeof message.sinceMs === 'number' && Number.isFinite(message.sinceMs)
+				? message.sinceMs
+				: undefined;
+		const tail =
+			typeof message.tail === 'number' && Number.isFinite(message.tail) && message.tail >= 0
+				? Math.floor(message.tail)
+				: undefined;
+
+		const result = this.callbacks.getSessionHistory(tabId, { sinceMs, tail });
+		if (!result) {
+			this.send(client, {
+				type: 'session_history_result',
+				success: false,
+				error: `Tab not found: ${tabId}`,
+				code: 'TAB_NOT_FOUND',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.send(client, {
+			type: 'session_history_result',
+			success: true,
+			tabId: result.tabId,
+			sessionId: result.sessionId,
+			agentId: result.agentId,
+			agentSessionId: result.agentSessionId,
+			messages: result.messages,
+			requestId: message.requestId,
+		});
 	}
 
 	/**
