@@ -56,6 +56,8 @@ import type {
 	NotifyToastColor,
 	NotifyCenterFlashColor,
 	NotifyCenterFlashVariant,
+	MarketplaceManifestResult,
+	MarketplaceImportResult,
 } from '../types';
 
 /** Canonical Toast / Center Flash color set (shared design language). */
@@ -273,6 +275,19 @@ export interface MessageHandlerCallbacks {
 	killTerminalForWeb: (sessionId: string) => boolean;
 	notifyToast: (params: NotifyToastParams) => Promise<boolean>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
+	getMarketplaceManifest: (options?: {
+		refresh?: boolean;
+	}) => Promise<MarketplaceManifestResult | null>;
+	getMarketplaceDocument: (
+		playbookPath: string,
+		filename: string
+	) => Promise<{ content: string } | null>;
+	getMarketplaceReadme: (playbookPath: string) => Promise<{ content: string | null } | null>;
+	importMarketplacePlaybook: (
+		sessionId: string,
+		playbookId: string,
+		targetFolderName: string
+	) => Promise<MarketplaceImportResult>;
 }
 
 /**
@@ -549,6 +564,22 @@ export class WebSocketMessageHandler {
 
 			case 'notify_center_flash':
 				this.handleNotifyCenterFlash(client, message);
+				break;
+
+			case 'marketplace_get_manifest':
+				this.handleMarketplaceGetManifest(client, message);
+				break;
+
+			case 'marketplace_get_document':
+				this.handleMarketplaceGetDocument(client, message);
+				break;
+
+			case 'marketplace_get_readme':
+				this.handleMarketplaceGetReadme(client, message);
+				break;
+
+			case 'marketplace_import_playbook':
+				this.handleMarketplaceImportPlaybook(client, message);
 				break;
 
 			default:
@@ -3238,6 +3269,206 @@ export class WebSocketMessageHandler {
 			.notifyCenterFlash({ message: body, detail, color, duration })
 			.then((success) => sendResult(success, success ? undefined : 'Failed to show flash'))
 			.catch((error) => sendResult(false, `Failed to show flash: ${error.message}`));
+	}
+
+	/**
+	 * Handle marketplace_get_manifest - return merged official + local catalog.
+	 */
+	private handleMarketplaceGetManifest(client: WebClient, message: WebClientMessage): void {
+		const refresh = message.refresh === true;
+
+		if (!this.callbacks.getMarketplaceManifest) {
+			this.send(client, {
+				type: 'marketplace_get_manifest_result',
+				success: false,
+				error: 'Marketplace not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.callbacks
+			.getMarketplaceManifest({ refresh })
+			.then((result) => {
+				if (!result) {
+					this.send(client, {
+						type: 'marketplace_get_manifest_result',
+						success: false,
+						error: 'No manifest available',
+						requestId: message.requestId,
+					});
+					return;
+				}
+				this.send(client, {
+					type: 'marketplace_get_manifest_result',
+					success: true,
+					manifest: result.manifest,
+					fromCache: result.fromCache,
+					cacheAge: result.cacheAge,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'marketplace_get_manifest_result',
+					success: false,
+					error: `Failed to load marketplace: ${error.message}`,
+					requestId: message.requestId,
+				});
+			});
+	}
+
+	/**
+	 * Handle marketplace_get_document - fetch a single document's content.
+	 */
+	private handleMarketplaceGetDocument(client: WebClient, message: WebClientMessage): void {
+		const playbookPath = message.playbookPath;
+		const filename = message.filename;
+
+		if (typeof playbookPath !== 'string' || playbookPath.trim() === '') {
+			this.sendError(client, 'Missing or invalid playbookPath', {
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (typeof filename !== 'string' || filename.trim() === '') {
+			this.sendError(client, 'Missing or invalid filename', { requestId: message.requestId });
+			return;
+		}
+		if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+			this.sendError(client, 'Invalid filename', { requestId: message.requestId });
+			return;
+		}
+
+		if (!this.callbacks.getMarketplaceDocument) {
+			this.send(client, {
+				type: 'marketplace_get_document_result',
+				success: false,
+				error: 'Marketplace not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.callbacks
+			.getMarketplaceDocument(playbookPath, filename)
+			.then((result) => {
+				this.send(client, {
+					type: 'marketplace_get_document_result',
+					success: true,
+					content: result?.content ?? '',
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'marketplace_get_document_result',
+					success: false,
+					error: `Failed to fetch document: ${error.message}`,
+					requestId: message.requestId,
+				});
+			});
+	}
+
+	/**
+	 * Handle marketplace_get_readme - fetch a playbook's README.
+	 */
+	private handleMarketplaceGetReadme(client: WebClient, message: WebClientMessage): void {
+		const playbookPath = message.playbookPath;
+		if (typeof playbookPath !== 'string' || playbookPath.trim() === '') {
+			this.sendError(client, 'Missing or invalid playbookPath', {
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		if (!this.callbacks.getMarketplaceReadme) {
+			this.send(client, {
+				type: 'marketplace_get_readme_result',
+				success: false,
+				error: 'Marketplace not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.callbacks
+			.getMarketplaceReadme(playbookPath)
+			.then((result) => {
+				this.send(client, {
+					type: 'marketplace_get_readme_result',
+					success: true,
+					content: result?.content ?? null,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'marketplace_get_readme_result',
+					success: false,
+					error: `Failed to fetch README: ${error.message}`,
+					requestId: message.requestId,
+				});
+			});
+	}
+
+	/**
+	 * Handle marketplace_import_playbook - import a playbook into the
+	 * session's Auto Run folder. The server resolves both the folder path
+	 * and SSH config from the session, so the mobile client doesn't need
+	 * to send them — and can't lie about them.
+	 */
+	private handleMarketplaceImportPlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId;
+		const playbookId = message.playbookId;
+		const targetFolderName = message.targetFolderName;
+
+		if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+			this.sendError(client, 'Missing sessionId', { requestId: message.requestId });
+			return;
+		}
+		if (typeof playbookId !== 'string' || playbookId.trim() === '') {
+			this.sendError(client, 'Missing playbookId', { requestId: message.requestId });
+			return;
+		}
+		if (typeof targetFolderName !== 'string' || targetFolderName.trim() === '') {
+			this.sendError(client, 'Missing targetFolderName', { requestId: message.requestId });
+			return;
+		}
+
+		if (!this.callbacks.importMarketplacePlaybook) {
+			this.send(client, {
+				type: 'marketplace_import_playbook_result',
+				success: false,
+				error: 'Marketplace import not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		this.callbacks
+			.importMarketplacePlaybook(sessionId, playbookId, targetFolderName)
+			.then((result) => {
+				this.send(client, {
+					type: 'marketplace_import_playbook_result',
+					success: result.success,
+					error: result.error,
+					playbook: result.playbook,
+					importedDocs: result.importedDocs,
+					importedAssets: result.importedAssets,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'marketplace_import_playbook_result',
+					success: false,
+					error: `Import failed: ${error.message}`,
+					sessionId,
+					requestId: message.requestId,
+				});
+			});
 	}
 
 	/**

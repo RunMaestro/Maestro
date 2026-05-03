@@ -811,3 +811,56 @@ export type GenerateDirectorNotesSynopsisCallback = (
 	lookbackDays: number,
 	provider: string
 ) => Promise<DirectorNotesSynopsisResult>;
+
+// =============================================================================
+// Marketplace (Playbook Exchange) Types
+// =============================================================================
+
+import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+
+/** Re-export for convenience so handlers don't pull from two places. */
+export type { MarketplaceManifest, MarketplacePlaybook };
+
+/** Result from the marketplace get-manifest callback. */
+export interface MarketplaceManifestResult {
+	manifest: MarketplaceManifest;
+	fromCache: boolean;
+	cacheAge?: number;
+}
+
+/** Result from the marketplace import callback. */
+export interface MarketplaceImportResult {
+	success: boolean;
+	error?: string;
+	playbook?: {
+		id: string;
+		name: string;
+		createdAt: number;
+		updatedAt: number;
+		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	};
+	importedDocs?: string[];
+	importedAssets?: string[];
+}
+
+export type GetMarketplaceManifestCallback = (options?: {
+	refresh?: boolean;
+}) => Promise<MarketplaceManifestResult>;
+
+export type GetMarketplaceDocumentCallback = (
+	playbookPath: string,
+	filename: string
+) => Promise<{ content: string }>;
+
+export type GetMarketplaceReadmeCallback = (
+	playbookPath: string
+) => Promise<{ content: string | null }>;
+
+export type ImportMarketplacePlaybookCallback = (
+	sessionId: string,
+	playbookId: string,
+	targetFolderName: string
+) => Promise<MarketplaceImportResult>;

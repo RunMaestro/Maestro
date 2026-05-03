@@ -18,6 +18,11 @@ export interface AutoRunSetupSheetProps {
 	documents: AutoRunDocument[];
 	onLaunch: (config: LaunchConfig) => void;
 	onClose: () => void;
+	/**
+	 * Open the Playbook Exchange sheet. When omitted, the entry point is
+	 * hidden — keeps tests / older callers working without the marketplace.
+	 */
+	onOpenMarketplace?: () => void;
 }
 
 /**
@@ -31,6 +36,7 @@ export function AutoRunSetupSheet({
 	documents,
 	onLaunch,
 	onClose,
+	onOpenMarketplace,
 }: AutoRunSetupSheetProps) {
 	const colors = useThemeColors();
 	const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
@@ -243,6 +249,68 @@ export function AutoRunSetupSheet({
 						padding: '0 16px',
 					}}
 				>
+					{/* Playbook Exchange entry point */}
+					{onOpenMarketplace && (
+						<div style={{ marginBottom: '20px' }}>
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onOpenMarketplace();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'space-between',
+									width: '100%',
+									padding: '12px 14px',
+									borderRadius: '10px',
+									border: `1px solid ${colors.accent}`,
+									backgroundColor: `${colors.accent}10`,
+									color: colors.textMain,
+									cursor: 'pointer',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+									minHeight: '44px',
+								}}
+								aria-label="Browse Playbook Exchange"
+							>
+								<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+									<svg
+										width="18"
+										height="18"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke={colors.accent}
+										strokeWidth="2"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<rect x="3" y="3" width="7" height="7" rx="1" />
+										<rect x="14" y="3" width="7" height="7" rx="1" />
+										<rect x="14" y="14" width="7" height="7" rx="1" />
+										<rect x="3" y="14" width="7" height="7" rx="1" />
+									</svg>
+									<span style={{ fontSize: '14px', fontWeight: 500 }}>
+										Browse Playbook Exchange
+									</span>
+								</div>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke={colors.textDim}
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<polyline points="9 18 15 12 9 6" />
+								</svg>
+							</button>
+						</div>
+					)}
+
 					{/* Document selector section */}
 					<div style={{ marginBottom: '20px' }}>
 						{/* Section label + Select All toggle */}

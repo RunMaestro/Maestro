@@ -117,6 +117,10 @@ import type {
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
 	NotifyCenterFlashCallback,
+	GetMarketplaceManifestCallback,
+	GetMarketplaceDocumentCallback,
+	GetMarketplaceReadmeCallback,
+	ImportMarketplacePlaybookCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -597,6 +601,22 @@ export class WebServer {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
 
+	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {
+		this.callbackRegistry.setGetMarketplaceManifestCallback(callback);
+	}
+
+	setGetMarketplaceDocumentCallback(callback: GetMarketplaceDocumentCallback): void {
+		this.callbackRegistry.setGetMarketplaceDocumentCallback(callback);
+	}
+
+	setGetMarketplaceReadmeCallback(callback: GetMarketplaceReadmeCallback): void {
+		this.callbackRegistry.setGetMarketplaceReadmeCallback(callback);
+	}
+
+	setImportMarketplacePlaybookCallback(callback: ImportMarketplacePlaybookCallback): void {
+		this.callbackRegistry.setImportMarketplacePlaybookCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -858,6 +878,17 @@ export class WebServer {
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
 			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
+			getMarketplaceManifest: async (options) =>
+				this.callbackRegistry.getMarketplaceManifest(options),
+			getMarketplaceDocument: async (playbookPath: string, filename: string) =>
+				this.callbackRegistry.getMarketplaceDocument(playbookPath, filename),
+			getMarketplaceReadme: async (playbookPath: string) =>
+				this.callbackRegistry.getMarketplaceReadme(playbookPath),
+			importMarketplacePlaybook: async (
+				sessionId: string,
+				playbookId: string,
+				targetFolderName: string
+			) => this.callbackRegistry.importMarketplacePlaybook(sessionId, playbookId, targetFolderName),
 		});
 	}
 

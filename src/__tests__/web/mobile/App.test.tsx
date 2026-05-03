@@ -555,6 +555,10 @@ vi.mock('../../../web/mobile/AutoRunSetupSheet', () => ({
 	AutoRunSetupSheet: () => null,
 }));
 
+vi.mock('../../../web/mobile/MarketplaceSheet', () => ({
+	MarketplaceSheet: () => null,
+}));
+
 vi.mock('../../../web/mobile/NotificationSettingsSheet', () => ({
 	NotificationSettingsSheet: () => null,
 }));
