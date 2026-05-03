@@ -119,14 +119,17 @@ export function parseTerminalSessionId(
  * @returns New session with the tab added and set as active
  */
 export function addTerminalTab(session: Session, tab: TerminalTab): Session {
-	// When `session.nextCoworkingId` is missing (legacy / partially-migrated sessions
-	// where some tabs already carry a `coworkingId`), fall back to `max(existing) + 1`
-	// so we never collide with an in-flight id.
+	// Compute the chosen id by clamping the persisted counter against the
+	// max id already in the session — this protects against two failure modes:
+	//   1. legacy / partially-migrated sessions where `nextCoworkingId` is missing;
+	//   2. sessions where the counter was persisted lower than an existing id
+	//      (e.g. a corrupted save or older buggy build), which would otherwise
+	//      hand out a duplicate `term:N`.
 	const maxExistingCoworkingId = (session.terminalTabs ?? []).reduce(
 		(max, t) => (typeof t.coworkingId === 'number' && t.coworkingId > max ? t.coworkingId : max),
 		0
 	);
-	const nextCoworkingId = session.nextCoworkingId ?? maxExistingCoworkingId + 1;
+	const nextCoworkingId = Math.max(session.nextCoworkingId ?? 1, maxExistingCoworkingId + 1);
 	const tabWithCoworkingId: TerminalTab = {
 		...tab,
 		coworkingId: tab.coworkingId ?? nextCoworkingId,

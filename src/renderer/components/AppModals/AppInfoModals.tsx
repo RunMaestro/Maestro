@@ -192,6 +192,10 @@ export const AppInfoModals = memo(function AppInfoModals({
 						defaultTimeRange={defaultStatsTimeRange}
 						colorBlindMode={colorBlindMode}
 						sessions={sessions}
+						autoRunStats={autoRunStats}
+						usageStats={usageStats}
+						handsOnTimeMs={handsOnTimeMs}
+						leaderboardRegistration={leaderboardRegistration}
 					/>
 				</Suspense>
 			)}

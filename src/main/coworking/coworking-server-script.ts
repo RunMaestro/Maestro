@@ -37,6 +37,17 @@ if (!SOCKET_PATH) {
 }
 
 const SERVER_INFO = { name: 'maestro-coworking', version: '1.0.0' };
+// Listed newest-first. The MCP spec says: if the client requests a version we
+// support, echo it back; otherwise pick one we do support. We pick the newest
+// supported version as the fallback (also our preferred version when the client
+// sends nothing). https://modelcontextprotocol.io/specification/.../basic/lifecycle
+const SUPPORTED_PROTOCOL_VERSIONS = [
+  '2025-11-25',
+  '2025-06-18',
+  '2025-03-26',
+  '2024-11-05',
+  '2024-10-07',
+];
 const TOOLS = [
   {
     name: 'list_terminals',
@@ -186,9 +197,14 @@ async function handleMessage(msg) {
   const { id, method, params } = msg;
   try {
     if (method === 'initialize') {
+      const requested = params && params.protocolVersion;
+      const protocolVersion =
+        typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.indexOf(requested) !== -1
+          ? requested
+          : SUPPORTED_PROTOCOL_VERSIONS[0];
       send(
         rpcResult(id, {
-          protocolVersion: '2025-06-18',
+          protocolVersion,
           serverInfo: SERVER_INFO,
           capabilities: { tools: {} },
         })

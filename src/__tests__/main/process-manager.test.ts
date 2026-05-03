@@ -746,8 +746,38 @@ describe('process-manager.ts', () => {
 
 				processManager.killAll();
 
-				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true });
+				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true, shutdown: false });
 				killSpy.mockRestore();
+			});
+
+			it('should SIGKILL ptys directly when shutdown:true to avoid TSFN teardown race', () => {
+				const mockPtyKill = vi.fn();
+				const mockOnExit = vi.fn();
+
+				const processes = (processManager as any).processes as Map<string, any>;
+				processes.set('shutdown-test', {
+					sessionId: 'shutdown-test',
+					toolType: 'terminal',
+					isTerminal: true,
+					pid: 1,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					ptyProcess: {
+						pid: 1,
+						kill: mockPtyKill,
+						onExit: mockOnExit,
+						onData: vi.fn(),
+						write: vi.fn(),
+						resize: vi.fn(),
+					},
+				});
+
+				processManager.killAll({ shutdown: true });
+
+				// SIGKILL only — no SIGTERM, no escalation timer, no onExit listener.
+				expect(mockPtyKill).toHaveBeenCalledTimes(1);
+				expect(mockPtyKill).toHaveBeenCalledWith('SIGKILL');
+				expect(mockOnExit).not.toHaveBeenCalled();
 			});
 		});
 	});

@@ -45,10 +45,22 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
+			setSessionAutoRunFolderCallback = vi.fn();
 			setGetAutoRunDocsCallback = vi.fn();
 			setGetAutoRunDocContentCallback = vi.fn();
 			setSaveAutoRunDocCallback = vi.fn();
 			setStopAutoRunCallback = vi.fn();
+			// Auto Run parity additions — task reset, error recovery, playbook CRUD.
+			// The factory wires these during createWebServer; without the stubs
+			// the module-under-test throws TypeError on startup.
+			setResetAutoRunDocTasksCallback = vi.fn();
+			setResumeAutoRunErrorCallback = vi.fn();
+			setSkipAutoRunDocumentCallback = vi.fn();
+			setAbortAutoRunErrorCallback = vi.fn();
+			setListPlaybooksCallback = vi.fn();
+			setCreatePlaybookCallback = vi.fn();
+			setUpdatePlaybookCallback = vi.fn();
+			setDeletePlaybookCallback = vi.fn();
 			setGetSettingsCallback = vi.fn();
 			setSetSettingCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
@@ -83,6 +95,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setKillTerminalForWebCallback = vi.fn();
 			setNotifyToastCallback = vi.fn();
 			setNotifyCenterFlashCallback = vi.fn();
+			setListDesktopSessionsCallback = vi.fn();
+			setGetSessionHistoryCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -426,6 +440,145 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
+	// PR2 of the CLI surface refactor: read-only conversation-state inspection
+	// surfaced via `maestro-cli session show <tabId>`. The callback wired here
+	// is the desktop-side half of the contract; the CLI half is tested in
+	// `src/__tests__/cli/commands/session.test.ts`.
+	describe('getSessionHistoryCallback behavior', () => {
+		// Session shape with three logs at known timestamps so --since / --tail
+		// boundaries are unambiguous. Stored on `mockSessionsStore` per-test so
+		// we can vary the ordering / source mix without churning the outer
+		// fixture.
+		const stockSession = (logs: Array<Record<string, unknown>>) => [
+			{
+				id: 'agent-a',
+				name: 'Backend',
+				toolType: 'claude-code',
+				state: 'idle',
+				inputMode: 'ai',
+				cwd: '/test/path',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-uuid-1',
+						logs,
+					},
+				],
+				activeTabId: 'tab-1',
+			},
+		];
+
+		const getCallback = () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const setGetSessionHistoryCallback = server.setGetSessionHistoryCallback as ReturnType<
+				typeof vi.fn
+			>;
+			return setGetSessionHistoryCallback.mock.calls[0][0];
+		};
+
+		it('returns null when the tab id does not match any open tab', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([{ id: 'log-1', source: 'user', text: 'hi', timestamp: 100 }])
+			);
+
+			const callback = getCallback();
+			expect(callback('tab-bogus')).toBeNull();
+		});
+
+		it('returns the full transcript with derived roles when no filters are passed', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([
+					{ id: 'log-1', source: 'user', text: 'hi', timestamp: 100 },
+					{ id: 'log-2', source: 'ai', text: 'hello', timestamp: 200 },
+					{ id: 'log-3', source: 'stdout', text: 'legacy reply', timestamp: 300 },
+				])
+			);
+
+			const callback = getCallback();
+			const result = callback('tab-1');
+
+			expect(result).not.toBeNull();
+			expect(result.tabId).toBe('tab-1');
+			expect(result.agentId).toBe('agent-a');
+			expect(result.agentSessionId).toBe('claude-uuid-1');
+			expect(result.messages).toHaveLength(3);
+			expect(result.messages.map((m: { role: string }) => m.role)).toEqual([
+				'user',
+				'assistant',
+				// `stdout` collapses to `assistant` because legacy / non-AI agent
+				// flows store assistant replies under that source.
+				'assistant',
+			]);
+		});
+
+		it('drops messages at or before --sinceMs (cursor is exclusive)', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([
+					{ id: 'log-1', source: 'user', text: 'a', timestamp: 100 },
+					{ id: 'log-2', source: 'ai', text: 'b', timestamp: 200 },
+					{ id: 'log-3', source: 'user', text: 'c', timestamp: 300 },
+				])
+			);
+
+			const callback = getCallback();
+			const result = callback('tab-1', { sinceMs: 200 });
+
+			// `> sinceMs` (not `>=`) keeps the cursor exclusive so a Discord
+			// bot can reuse the last received timestamp without seeing the
+			// same message twice on the next poll.
+			expect(result.messages).toHaveLength(1);
+			expect(result.messages[0].id).toBe('log-3');
+		});
+
+		it('returns an empty array for --tail 0 (the slice(-0) foot-gun)', () => {
+			// Regression guard for the original `slice(-options.tail)` bug:
+			// `-0 === 0`, so `slice(-0)` returned the full array and `--tail 0`
+			// silently shipped the entire transcript instead of nothing.
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([
+					{ id: 'log-1', source: 'user', text: 'a', timestamp: 100 },
+					{ id: 'log-2', source: 'ai', text: 'b', timestamp: 200 },
+				])
+			);
+
+			const callback = getCallback();
+			const result = callback('tab-1', { tail: 0 });
+
+			expect(result.messages).toEqual([]);
+		});
+
+		it('returns the last N messages when --tail is positive', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([
+					{ id: 'log-1', source: 'user', text: 'a', timestamp: 100 },
+					{ id: 'log-2', source: 'ai', text: 'b', timestamp: 200 },
+					{ id: 'log-3', source: 'user', text: 'c', timestamp: 300 },
+				])
+			);
+
+			const callback = getCallback();
+			const result = callback('tab-1', { tail: 2 });
+
+			expect(result.messages).toHaveLength(2);
+			expect(result.messages.map((m: { id: string }) => m.id)).toEqual(['log-2', 'log-3']);
+		});
+
+		it('clamps --tail above the transcript length to the full transcript', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue(
+				stockSession([
+					{ id: 'log-1', source: 'user', text: 'a', timestamp: 100 },
+					{ id: 'log-2', source: 'ai', text: 'b', timestamp: 200 },
+				])
+			);
+
+			const callback = getCallback();
+			const result = callback('tab-1', { tail: 99 });
+
+			expect(result.messages).toHaveLength(2);
+		});
+	});
+
 	describe('writeToSessionCallback behavior', () => {
 		it('should return false when processManager is null', () => {
 			deps.getProcessManager = vi.fn().mockReturnValue(null);
@@ -498,6 +651,7 @@ describe('web-server/web-server-factory', () => {
 				'test command',
 				'ai',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -518,6 +672,7 @@ describe('web-server/web-server-factory', () => {
 				'follow up',
 				'ai',
 				'tab-7',
+				undefined,
 				undefined
 			);
 		});
@@ -538,7 +693,37 @@ describe('web-server/web-server-factory', () => {
 				'concurrent write',
 				'ai',
 				undefined,
-				true
+				true,
+				undefined
+			);
+		});
+
+		it('forwards images so pasted attachments reach the renderer alongside the prompt', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
+			const result = await callback(
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
+			);
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'look at this',
+				'ai',
+				undefined,
+				undefined,
+				images
 			);
 		});
 

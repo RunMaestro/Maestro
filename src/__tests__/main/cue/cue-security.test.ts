@@ -505,7 +505,47 @@ const mockStatement = {
 	all: vi.fn(() => []),
 };
 const mockDb = {
-	pragma: vi.fn(),
+	pragma: vi.fn((query: string) => {
+		// Phase 01: initCueDb's additive-column migration calls
+		// `pragma('table_info(cue_events)')`. Return the full column set so the
+		// migration sees no missing columns and stays a no-op under the mock.
+		if (typeof query === 'string' && query.startsWith('table_info(cue_events)')) {
+			return [
+				{ name: 'id' },
+				{ name: 'type' },
+				{ name: 'trigger_name' },
+				{ name: 'session_id' },
+				{ name: 'subscription_name' },
+				{ name: 'status' },
+				{ name: 'created_at' },
+				{ name: 'completed_at' },
+				{ name: 'payload' },
+				{ name: 'pipeline_id' },
+				{ name: 'chain_root_id' },
+				{ name: 'parent_event_id' },
+			];
+		}
+		// Phase 01 — same idea for the persisted queue table; return the full
+		// column set so the additive migration is a no-op under the mock.
+		if (typeof query === 'string' && query.startsWith('table_info(cue_event_queue)')) {
+			return [
+				{ name: 'id' },
+				{ name: 'session_id' },
+				{ name: 'subscription_name' },
+				{ name: 'event_json' },
+				{ name: 'prompt' },
+				{ name: 'output_prompt' },
+				{ name: 'cli_output_json' },
+				{ name: 'action' },
+				{ name: 'command_json' },
+				{ name: 'chain_depth' },
+				{ name: 'queued_at' },
+				{ name: 'chain_root_id' },
+				{ name: 'parent_event_id' },
+			];
+		}
+		return undefined;
+	}),
 	prepare: vi.fn(() => mockStatement),
 	close: vi.fn(),
 };

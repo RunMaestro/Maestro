@@ -18,6 +18,8 @@ export interface QueryEvent {
 	tabId?: string;
 	/** Whether this query was executed on a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this query came from a worktree session (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -64,6 +66,8 @@ export interface SessionLifecycleEvent {
 	duration?: number;
 	/** Whether this was a remote SSH session */
 	isRemote?: boolean;
+	/** Whether this session is a worktree (child of a parent agent) */
+	isWorktree?: boolean;
 }
 
 /**
@@ -97,6 +101,15 @@ export interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	/** Count of queries originating from worktree (child) agents */
+	worktreeQueries: number;
+	/** Count of queries originating from parent (non-worktree) agents */
+	parentQueries: number;
+	/** Detailed worktree breakdown including duration totals (for activity split bar) */
+	byWorktreeStatus: {
+		worktree: { count: number; duration: number };
+		parent: { count: number; duration: number };
+	};
 }
 
 /**
@@ -112,4 +125,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 5;

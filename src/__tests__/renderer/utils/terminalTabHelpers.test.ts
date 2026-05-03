@@ -157,6 +157,23 @@ describe('addTerminalTab', () => {
 		expect(updated.nextCoworkingId).toBe(2);
 	});
 
+	it('clamps nextCoworkingId against existing ids even when the counter is set but stale', () => {
+		// Persisted counter is 3, but an existing tab already carries id=10. Without the
+		// Math.max clamp we'd hand out term:3 — a duplicate of nothing yet, but the next
+		// few adds would collide with the existing 10. The clamp must jump past it.
+		const existingTab = createMockTerminalTab({ id: 'old', coworkingId: 10 });
+		const session = createMockSession({
+			terminalTabs: [existingTab],
+			activeTerminalTabId: 'old',
+			unifiedTabOrder: [{ type: 'terminal', id: 'old' }],
+			nextCoworkingId: 3,
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new' }));
+		const newTab = updated.terminalTabs!.find((t) => t.id === 'new');
+		expect(newTab?.coworkingId).toBe(11);
+		expect(updated.nextCoworkingId).toBe(12);
+	});
+
 	it('falls back to max(existing coworkingId)+1 when nextCoworkingId is missing (legacy migration)', () => {
 		// Simulates a session deserialized from disk before nextCoworkingId existed:
 		// the existing tab already carries coworkingId=7, so a fresh add must mint 8 — not 1.

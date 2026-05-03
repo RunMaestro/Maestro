@@ -203,6 +203,14 @@ describe('batchStore', () => {
 			const ref2 = useBatchStore.getState().documentTaskCounts;
 			expect(ref1).not.toBe(ref2);
 		});
+
+		it('updateTaskCount keeps Map reference stable when values are unchanged', () => {
+			useBatchStore.getState().updateTaskCount('doc1.md', 3, 7);
+			const ref1 = useBatchStore.getState().documentTaskCounts;
+			useBatchStore.getState().updateTaskCount('doc1.md', 3, 7);
+			const ref2 = useBatchStore.getState().documentTaskCounts;
+			expect(ref1).toBe(ref2);
+		});
 	});
 
 	describe('clearDocumentList', () => {

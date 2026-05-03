@@ -221,8 +221,19 @@ export class ProcessManager extends EventEmitter {
 	 * PTY_KILL_ESCALATION_MS, it is sent SIGKILL. The process is removed from
 	 * the tracking map immediately so that a replacement can be spawned, but the
 	 * escalation timer keeps a reference to ensure the OS-level process dies.
+	 *
+	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
+	 * onExit listener. This collapses the window in which node-pty's worker
+	 * thread is still posting via napi_threadsafe_function while Electron
+	 * begins tearing down the Node environment — that race aborts inside
+	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
+	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
+	 * shutdown anyway since the user has already confirmed quit.
 	 */
-	kill(sessionId: string, { sync = false }: { sync?: boolean } = {}): boolean {
+	kill(
+		sessionId: string,
+		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean } = {}
+	): boolean {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return false;
 
@@ -238,6 +249,15 @@ export class ProcessManager extends EventEmitter {
 					// child (the shell), not grandchild processes it spawned (e.g., dev
 					// servers, watchers). Use taskkill /t /f to kill the entire tree.
 					this.killWindowsProcessTree(proc.pid, sessionId, sync);
+				} else if (shutdown) {
+					// Shutdown path: SIGKILL the pty child immediately so the master fd
+					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
+					// before Electron's environment teardown runs CleanupHandles.
+					try {
+						proc.ptyProcess.kill('SIGKILL');
+					} catch {
+						// Process may already be dead
+					}
 				} else {
 					const ptyProc = proc.ptyProcess;
 					const pid = proc.pid;
@@ -333,14 +353,18 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Kill all managed processes.
 	 * Snapshots the session IDs first because kill() deletes from the map.
+	 *
+	 * `shutdown: true` enables SIGKILL-immediate semantics for PTYs to avoid
+	 * the libuv/N-API teardown race that aborts the main process during
+	 * Electron environment cleanup (see kill() docs).
 	 */
-	killAll(): void {
+	killAll({ shutdown = false }: { shutdown?: boolean } = {}): void {
 		const sessionIds = [...this.processes.keys()];
 		for (const sessionId of sessionIds) {
 			// Use sync kills so process trees are dead before the app exits.
 			// On Windows this blocks briefly per process (taskkill is fast),
 			// on POSIX this has no effect (SIGTERM is already non-blocking).
-			this.kill(sessionId, { sync: true });
+			this.kill(sessionId, { sync: true, shutdown });
 		}
 	}
 

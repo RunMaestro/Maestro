@@ -477,6 +477,11 @@ describe('MainPanel', () => {
 				contextWarningYellowThreshold: 60,
 				contextWarningRedThreshold: 80,
 			},
+			// Header pills are now opt-in via Settings → Display. Tests below
+			// exercise the pill behaviors, so enable them explicitly. Defaults
+			// in the store are showSessionIdPill: false, showSessionCostPill: true.
+			showSessionIdPill: true,
+			showSessionCostPill: true,
 		});
 
 		// Clear capabilities cache and pre-populate with Claude Code capabilities (default test agent)
@@ -898,6 +903,31 @@ describe('MainPanel', () => {
 						createdAt: Date.now(),
 					},
 				],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
+		});
+
+		it('should not show UUID pill when showSessionIdPill setting is disabled', () => {
+			// The pill is opt-in via Settings → Display (defaults to false in
+			// the store). Even when every other gating condition is satisfied,
+			// the pill must stay hidden until the user enables the setting.
+			useSettingsStore.setState({ showSessionIdPill: false });
+
+			const session = createSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+					},
+				],
+				activeTabId: 'tab-1',
 			});
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);

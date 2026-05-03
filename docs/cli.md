@@ -199,6 +199,113 @@ JSON output includes full session metadata:
 
 Currently supported for `claude-code` agents.
 
+### Session Inspection
+
+Inspect open AI tabs across the running Maestro desktop app and read their conversation history. Pair `dispatch --new-tab` (writes, returns a `tabId`) with `session show <tabId>` (reads, supports `--since` and `--tail`) to build a stateless poll loop without owning a persistent connection — used by Maestro-Discord and Cue follow-ups.
+
+Both verbs talk to the running desktop over the same WebSocket as `dispatch`. There is no on-disk fallback: if the app is not running, the CLI exits with code `MAESTRO_NOT_RUNNING`.
+
+#### List Open Tabs
+
+Flatten every open AI tab across every Maestro agent into addressable entries:
+
+```bash
+# Default: compact text (one tab per line)
+maestro-cli session list
+
+# JSON for scripting
+maestro-cli session list --json
+```
+
+Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative). One tab per line so the output pipes cleanly into `grep`, `awk`, etc.
+
+JSON envelope:
+
+```json
+{
+	"success": true,
+	"sessions": [
+		{
+			"tabId": "tab-1",
+			"sessionId": "tab-1",
+			"agentId": "a1b2c3d4-...",
+			"agentName": "Backend",
+			"toolType": "claude-code",
+			"name": "Refactor parser",
+			"agentSessionId": "claude-uuid-1",
+			"state": "idle",
+			"createdAt": 1714268000000,
+			"starred": false
+		}
+	]
+}
+```
+
+To extract just `tabId`s with `jq`: `maestro-cli session list --json | jq '.sessions[].tabId'`.
+
+#### Show Conversation History
+
+Print a tab's conversation log, with optional cursor (`--since`) and cap (`--tail`) filters applied desktop-side so the wire payload stays small even on long conversations.
+
+```bash
+# Default: formatted transcript (header + per-message blocks)
+maestro-cli session show <tab-id>
+
+# JSON for scripting
+maestro-cli session show <tab-id> --json
+
+# Only messages newer than an ISO-8601 timestamp
+maestro-cli session show <tab-id> --since "2026-04-28T10:00:00Z"
+
+# `--since` also accepts a bare epoch number (auto-detects ms vs sec by magnitude,
+# so both `Date.now()` and `Date.now() / 1000` cursors work without a unit flag)
+maestro-cli session show <tab-id> --since 1714268000
+
+# Cap at the last N messages (applied after `--since`)
+maestro-cli session show <tab-id> --tail 20
+
+# Combine cursor + cap for poll loops
+maestro-cli session show <tab-id> --since "$LAST_TS" --tail 50
+```
+
+| Flag                  | Description                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `--since <timestamp>` | Only return messages strictly after this timestamp (ISO-8601, or epoch ms/sec auto-scaled) |
+| `--tail <n>`          | Cap output to the last N messages (non-negative integer; applied after `--since`)          |
+| `--json`              | Output as JSON (default is a formatted transcript)                                         |
+
+JSON shape:
+
+```json
+{
+	"success": true,
+	"tabId": "tab-1",
+	"sessionId": "tab-1",
+	"agentId": "a1b2c3d4-...",
+	"agentSessionId": "claude-uuid-1",
+	"messages": [
+		{
+			"id": "log-1",
+			"role": "user",
+			"source": "user",
+			"content": "Hello",
+			"timestamp": "2026-04-28T10:00:00.000Z"
+		},
+		{
+			"id": "log-2",
+			"role": "assistant",
+			"source": "ai",
+			"content": "Hi there",
+			"timestamp": "2026-04-28T10:00:01.000Z"
+		}
+	]
+}
+```
+
+`role` is a coarse classification (`user` | `assistant` | `system` | `tool` | `thinking` | `error` | `unknown`) so conversational consumers can branch on intent; the raw `source` is preserved alongside for callers that need to discriminate further. ISO timestamps are emitted verbatim so a `messages[-1].timestamp` from one call can be fed directly back into `--since` on the next.
+
+Error codes: `MISSING_TAB_ID`, `TAB_NOT_FOUND`, `INVALID_OPTION`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`. All errors are emitted as `{ "success": false, "error": "...", "code": "..." }` with exit code `1`.
+
 ### Creating and Removing Agents
 
 Create agents directly from the command line. Requires the Maestro desktop app to be running.

@@ -115,6 +115,12 @@ export interface UseBatchHandlersReturn {
 	handleResumeAfterError: () => void;
 	/** Abort the entire batch on unrecoverable error */
 	handleAbortBatchOnError: () => void;
+	/** Resume batch by sessionId (used by web remote) */
+	resumeAfterError: (sessionId: string) => void;
+	/** Skip current document by sessionId (used by web remote) */
+	skipCurrentDocument: (sessionId: string) => void;
+	/** Abort batch by sessionId (used by web remote) */
+	abortBatchOnError: (sessionId: string) => void;
 	/** Session IDs with active batch runs */
 	activeBatchSessionIds: string[];
 	/** Batch state for the current/active session */
@@ -706,6 +712,40 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		handleClearAgentError(sessionId);
 	}, [activeSession, abortBatchOnError, handleClearAgentError]);
 
+	// sessionId-targeted variants for use from the web remote layer. These mirror
+	// the handle* helpers above but accept an explicit sessionId instead of
+	// resolving one from the active session — the web client always knows which
+	// session the user tapped Resume/Skip/Abort for. Each wrapper also clears
+	// the session's agent error so the renderer UI drops its error banner in
+	// sync with the batch state (otherwise the banner would persist until the
+	// user interacted with the desktop app).
+	const resumeAfterErrorForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			resumeAfterError(sessionId);
+		},
+		[handleClearAgentError, resumeAfterError]
+	);
+
+	const skipCurrentDocumentForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			skipCurrentDocument(sessionId);
+		},
+		[handleClearAgentError, skipCurrentDocument]
+	);
+
+	const abortBatchOnErrorForSession = useCallback(
+		(sessionId: string) => {
+			if (!sessionId) return;
+			handleClearAgentError(sessionId);
+			abortBatchOnError(sessionId);
+		},
+		[handleClearAgentError, abortBatchOnError]
+	);
+
 	// ====================================================================
 	// Sync auto-run stats from server
 	// ====================================================================
@@ -793,6 +833,9 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		handleSkipCurrentDocument,
 		handleResumeAfterError,
 		handleAbortBatchOnError,
+		resumeAfterError: resumeAfterErrorForSession,
+		skipCurrentDocument: skipCurrentDocumentForSession,
+		abortBatchOnError: abortBatchOnErrorForSession,
 		activeBatchSessionIds,
 		currentSessionBatchState,
 		activeBatchRunState,

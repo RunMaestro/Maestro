@@ -10,6 +10,9 @@ import {
 import ReactMarkdown from 'react-markdown';
 import rehypeSlug from 'rehype-slug';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
+// Module-level constant — react-markdown re-parses the document if rehypePlugins
+// changes by reference, so the array must be hoisted out of render.
+const REHYPE_PLUGINS = [rehypeSlug];
 import { ResetTasksConfirmModal } from '../ResetTasksConfirmModal';
 import { AutoRunDocumentSelector } from './AutoRunDocumentSelector';
 import { AutoRunLightbox } from './AutoRunLightbox';
@@ -32,6 +35,7 @@ import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -293,6 +297,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handlePaste,
 		handleFileSelect,
 		handleRemoveAttachment,
+		replaceAttachment,
 		openLightboxByFilename,
 		closeLightbox,
 		handleLightboxNavigate,
@@ -309,6 +314,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		lastUndoSnapshotRef,
 		sshRemoteId,
 	});
+
+	// Open the image annotator for an existing attachment; on save, overwrite the
+	// original file in place via replaceAttachment (preserves markdown references).
+	const handleAnnotateAttachment = useCallback(
+		(filename: string) => {
+			const dataUrl = attachmentPreviews.get(filename);
+			if (!dataUrl) return;
+			useImageAnnotatorStore
+				.getState()
+				.openAnnotator(dataUrl, (newDataUrl) => replaceAttachment(filename, newDataUrl));
+		},
+		[attachmentPreviews, replaceAttachment]
+	);
 
 	// Helper function to count completed tasks (used by useImperativeHandle before taskCounts is defined)
 	const getCompletedTaskCountFromContent = useCallback(() => {
@@ -587,6 +605,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					onToggleExpanded={() => setAttachmentsExpanded(!attachmentsExpanded)}
 					onRemoveAttachment={handleRemoveAttachment}
 					onImageClick={openLightboxByFilename}
+					onAnnotateAttachment={handleAnnotateAttachment}
 				/>
 			)}
 
@@ -681,7 +700,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							<style>{proseStyles}</style>
 							<ReactMarkdown
 								remarkPlugins={remarkPlugins}
-								rehypePlugins={[rehypeSlug]}
+								rehypePlugins={REHYPE_PLUGINS}
 								components={markdownComponents}
 							>
 								{localContent || '*No content yet. Switch to Edit mode to start writing.*'}
@@ -817,6 +836,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				onClose={closeLightbox}
 				onNavigate={handleLightboxNavigate}
 				onDelete={handleLightboxDelete}
+				onAnnotate={handleAnnotateAttachment}
 			/>
 		</div>
 	);

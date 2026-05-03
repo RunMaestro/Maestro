@@ -202,6 +202,16 @@ export function NewInstanceModal({
 				if (source.customProviderPath) {
 					sourceConfig.providerPath = source.customProviderPath;
 				}
+				if (source.customEffort) {
+					// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
+					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
+					// actually defines so the value round-trips through the modal.
+					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
+					const hasReasoning = sourceAgent?.configOptions?.some(
+						(opt) => opt.key === 'reasoningEffort'
+					);
+					sourceConfig[hasReasoning ? 'reasoningEffort' : 'effort'] = source.customEffort;
+				}
 				configs[source.toolType] = sourceConfig;
 			}
 
@@ -373,6 +383,12 @@ export function NewInstanceModal({
 		// Get contextWindow and providerPath from agent config
 		const agentCustomContextWindow = agentConfigs[selectedAgent]?.contextWindow || undefined;
 		const agentCustomProviderPath = agentConfigs[selectedAgent]?.providerPath?.trim() || undefined;
+		// Effort/reasoningEffort: agents use one or the other key (e.g. Codex stores
+		// it under `reasoningEffort`, Claude Code uses `effort`).
+		const agentCustomEffort =
+			agentConfigs[selectedAgent]?.reasoningEffort?.trim() ||
+			agentConfigs[selectedAgent]?.effort?.trim() ||
+			undefined;
 
 		// Get SSH remote configuration for this session (stored per-session, not per-agent)
 		const sshRemoteConfig = agentSshRemoteConfigs[selectedAgent];
@@ -410,7 +426,8 @@ export function NewInstanceModal({
 			agentCustomModel,
 			agentCustomContextWindow,
 			agentCustomProviderPath,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			agentCustomEffort
 		);
 		onClose();
 

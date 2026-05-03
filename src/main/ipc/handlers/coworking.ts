@@ -142,7 +142,16 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				reject(new Error('Coworking: timed out waiting for terminal buffer from renderer'));
 			}, BUFFER_REQUEST_TIMEOUT_MS);
 			ipcMain.on(responseChannel, handler);
-			win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
+			try {
+				win.webContents.send('coworking:requestBuffer', tabUuid, sessionId, responseChannel);
+			} catch (err) {
+				// If `send` throws (e.g. window destroyed between the guard and now),
+				// surface it immediately instead of waiting out the 5s timeout while
+				// the listener leaks.
+				clearTimeout(timer);
+				ipcMain.removeListener(responseChannel, handler);
+				reject(err instanceof Error ? err : new Error(String(err)));
+			}
 		});
 	});
 }

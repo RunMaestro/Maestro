@@ -91,9 +91,25 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const showHelpRef = useRef(false);
 	showHelpRef.current = showHelp;
 
+	// Activity Log search state — lifted here so the modal layer escape handler
+	// can clear it before the layer stack closes the modal.
+	const [activitySearchQuery, setActivitySearchQuery] = useState('');
+	const activitySearchInputRef = useRef<HTMLInputElement>(null);
+	const activitySearchQueryRef = useRef(activitySearchQuery);
+	activitySearchQueryRef.current = activitySearchQuery;
+
 	useModalLayer(MODAL_PRIORITIES.CUE_MODAL, undefined, () => {
 		if (showHelpRef.current) {
 			setShowHelp(false);
+			return;
+		}
+		// If Activity Log search is focused with text, clear it instead of closing.
+		// First Escape clears, second Escape (now with empty input) closes the modal.
+		if (
+			document.activeElement === activitySearchInputRef.current &&
+			activitySearchQueryRef.current.length > 0
+		) {
+			setActivitySearchQuery('');
 			return;
 		}
 		if (useCueDirtyStore.getState().pipelineDirty) {
@@ -206,6 +222,25 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		setActiveTab(tab);
 	}, []);
 
+	// Cmd/Ctrl+Shift+[/] cycles between tabs. Disabled while help is open
+	// so the help view's keyboard handlers stay in charge.
+	const tabsRef = useRef<readonly CueModalTab[]>(['dashboard', 'pipeline', 'activity']);
+	useEffect(() => {
+		const handleTabCycle = (e: KeyboardEvent) => {
+			if (showHelpRef.current) return;
+			if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+			if (e.key !== '[' && e.key !== ']') return;
+			e.preventDefault();
+			const tabs = tabsRef.current;
+			const currentIndex = tabs.indexOf(activeTab);
+			const delta = e.key === '[' ? -1 : 1;
+			const newIndex = (currentIndex + delta + tabs.length) % tabs.length;
+			handleSetActiveTab(tabs[newIndex]);
+		};
+		window.addEventListener('keydown', handleTabCycle);
+		return () => window.removeEventListener('keydown', handleTabCycle);
+	}, [activeTab, handleSetActiveTab]);
+
 	const handleOpenHelp = useCallback(() => setShowHelp(true), []);
 	const handleCloseHelp = useCallback(() => setShowHelp(false), []);
 
@@ -272,6 +307,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									onRetry={handleRetry}
 									sessions={sessions}
 									activeRuns={activeRuns}
+									activityLog={activityLog}
 									queueStatus={queueStatus}
 									graphSessions={graphSessions}
 									dashboardPipelines={dashboardPipelines}
@@ -293,6 +329,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									log={activityLog}
 									theme={theme}
 									subscriptionPipelineMap={subscriptionPipelineMap}
+									searchQuery={activitySearchQuery}
+									setSearchQuery={setActivitySearchQuery}
+									searchInputRef={activitySearchInputRef}
 								/>
 							</div>
 						) : (
