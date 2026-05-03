@@ -1330,4 +1330,276 @@ describe('TabBar', () => {
 			expect(module.default).toBe(module.TabBar);
 		});
 	});
+
+	describe('Bell filter', () => {
+		it('renders the bell button', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'First' })];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).toBeInTheDocument();
+		});
+
+		it('disables the bell button when no tabs have unread activity', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First', hasUnread: false }),
+				createTab({ id: 'tab-2', name: 'Second', hasUnread: false }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).toBeDisabled();
+		});
+
+		it('enables the bell button when at least one tab has unread', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First' }),
+				createTab({ id: 'tab-2', name: 'Second', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
+		});
+
+		it('enables the bell button when at least one tab is busy', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First' }),
+				createTab({ id: 'tab-2', name: 'Second', state: 'busy' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			expect(screen.getByLabelText('Filter unread tabs')).not.toBeDisabled();
+		});
+
+		it('hides tabs with no unread/busy activity when bell is toggled on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			// Active tab is always kept visible so the user doesn't lose context
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+		});
+
+		it('always keeps the active tab visible even when it has no unread', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+		});
+
+		it('keeps busy tabs visible when bell is on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Busy', state: 'busy' }),
+				createTab({ id: 'tab-3', name: 'Quiet' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Busy')).toBeInTheDocument();
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+		});
+
+		it('updates aria-label and title when toggled on', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First' }),
+				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			const bell = screen.getByLabelText('Showing unread tabs only');
+			expect(bell).toBeInTheDocument();
+			expect(bell).toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('auto-disables the filter once no tabs have unread activity', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'First' }),
+				createTab({ id: 'tab-2', name: 'Unread', hasUnread: true }),
+			];
+			const { rerender } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+			expect(screen.getByLabelText('Showing unread tabs only')).toBeInTheDocument();
+
+			// Tabs settle — no more unread tabs
+			act(() => {
+				rerender(
+					<TabBar
+						tabs={[
+							createTab({ id: 'tab-1', name: 'First' }),
+							createTab({ id: 'tab-2', name: 'Unread', hasUnread: false }),
+						]}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onNewTab={mockOnNewTab}
+						onCloseTab={mockOnCloseTab}
+					/>
+				);
+			});
+
+			// Bell should auto-revert to the unfiltered state
+			expect(screen.getByLabelText('Filter unread tabs')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+		});
+
+		it('does not flash a single-tab bar when the last unread settles', () => {
+			// When activity clears in the same render where the bell is still on,
+			// the synchronously-derived effectiveShowUnreadOnly should disable the
+			// filter immediately rather than waiting for the cleanup effect.
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			const { rerender } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+			expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+
+			// Rerender with no unread tabs — without the synchronous derivation
+			// the filter would still be applied for one frame, hiding "Quiet".
+			rerender(
+				<TabBar
+					tabs={[
+						createTab({ id: 'tab-1', name: 'Active' }),
+						createTab({ id: 'tab-2', name: 'Quiet' }),
+						createTab({ id: 'tab-3', name: 'Unread', hasUnread: false }),
+					]}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+
+			// All tabs should be visible immediately after the rerender, with no
+			// pending-effect frame where only "Active" shows.
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.getByText('Quiet')).toBeInTheDocument();
+			expect(screen.getByText('Unread')).toBeInTheDocument();
+		});
+
+		it('reorder math uses the unfiltered tab index when bell is on', () => {
+			// First tab is active (always visible), second is hidden, third is unread.
+			// The visible "Unread" tab is the third in the original array (index 2).
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Quiet' }),
+				createTab({ id: 'tab-3', name: 'Unread', hasUnread: true }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					onRenameTab={mockOnRenameTab}
+					onStarTab={mockOnStarTab}
+					onReorderTab={mockOnReorderTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Filter unread tabs'));
+
+			// Open the popover for the visible Unread tab
+			fireEvent.contextMenu(screen.getByText('Unread').closest('button')!);
+			fireEvent.click(screen.getByText('Move Left'));
+
+			// Should reorder using the original index (2 → 1), not the filtered index
+			expect(mockOnReorderTab).toHaveBeenCalledWith(2, 1);
+		});
+	});
 });
