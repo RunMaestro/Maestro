@@ -164,3 +164,43 @@ describe('normalizer — fan_out_prompt_files resolution', () => {
 		expect(sub.prompt).toBe('shared across all');
 	});
 });
+
+describe('normalizer — settings.owner_agent_id passthrough', () => {
+	// Regression for #912: the validator and the CueSettings contract both
+	// accept `owner_agent_id`, but `normalizeSettings` was silently dropping
+	// it — so `computeOwnershipWarning` always saw `undefined` and fell
+	// through to the "first agent wins" branch.
+	it('propagates owner_agent_id from raw yaml into normalized settings', () => {
+		const raw = yaml.dump({
+			subscriptions: [{ name: 'Sub', event: 'app.startup', prompt: 'go' }],
+			settings: {
+				owner_agent_id: 'fe7c6b37-d7b1-4c2f-9049-f2288dd10c16',
+			},
+		});
+
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		expect(doc).not.toBeNull();
+		const { config } = materializeCueConfig(doc!);
+
+		expect(config.settings.owner_agent_id).toBe('fe7c6b37-d7b1-4c2f-9049-f2288dd10c16');
+	});
+
+	it('trims whitespace and normalizes empty/non-string owner_agent_id to undefined', () => {
+		const cases: Array<{ input: unknown; expected: string | undefined }> = [
+			{ input: '  Obsidian  ', expected: 'Obsidian' },
+			{ input: '   ', expected: undefined },
+			{ input: '', expected: undefined },
+			{ input: 42, expected: undefined },
+		];
+
+		for (const { input, expected } of cases) {
+			const raw = yaml.dump({
+				subscriptions: [{ name: 'Sub', event: 'app.startup', prompt: 'go' }],
+				settings: { owner_agent_id: input },
+			});
+			const doc = parseCueConfigDocument(raw, projectRoot);
+			const { config } = materializeCueConfig(doc!);
+			expect(config.settings.owner_agent_id).toBe(expected);
+		}
+	});
+});

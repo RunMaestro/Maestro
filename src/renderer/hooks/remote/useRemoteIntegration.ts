@@ -87,7 +87,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => {
 				// Log metadata only at info level — remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
@@ -99,6 +100,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					inputMode,
 					tabId,
 					force,
+					imageCount: images?.length ?? 0,
 				});
 				logger.debug('[useRemoteIntegration] onRemoteCommand preview:', undefined, {
 					sessionId,
@@ -164,6 +166,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					inputMode,
 					tabId,
 					force,
+					imageCount: images?.length ?? 0,
 				});
 				logger.debug(
 					'[useRemoteIntegration] Dispatching maestro:remoteCommand preview:',
@@ -172,7 +175,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force },
+						detail: { sessionId, command, inputMode, tabId, force, images },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -602,16 +605,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// enabling click-to-jump behavior.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteNotifyToast((params) => {
-			const { title, message, color, duration, dismissible, sessionId } = params;
+			const {
+				title,
+				message,
+				color,
+				duration,
+				dismissible,
+				sessionId,
+				tabId: explicitTabId,
+				actionUrl,
+				actionLabel,
+				clickAction,
+			} = params;
+			// Resolve agent metadata for the header strip. Prefer the caller's
+			// explicit `tabId` so the chip matches the click target; fall back
+			// to the session's currently-active AI tab.
 			let project: string | undefined;
-			let tabId: string | undefined;
+			let tabId: string | undefined = explicitTabId;
 			let tabName: string | undefined;
 			if (sessionId) {
 				const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 				project = session?.name;
-				const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId);
-				tabId = activeTab?.id;
-				tabName = activeTab?.name ?? undefined;
+				const targetTabId = explicitTabId ?? session?.activeTabId;
+				const targetTab = session?.aiTabs?.find((t) => t.id === targetTabId);
+				if (targetTab) {
+					tabId = targetTab.id;
+					tabName = targetTab.name ?? undefined;
+				}
 			}
 			notifyToast({
 				color,
@@ -623,6 +643,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId,
 				tabName,
 				project,
+				actionUrl,
+				actionLabel,
+				clickAction,
 			});
 		});
 		return () => {
@@ -715,6 +738,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote set Auto Run folder from web interface — repoints a session
+	// at a different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
+	// + `handleAutoRunFolderSelected` flow.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSetAutoRunFolder(
+			(sessionId: string, folderPath: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:setAutoRunFolder', {
+						detail: { sessionId, folderPath, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote get auto-run docs from web interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocs(
@@ -774,6 +815,104 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		});
 		return () => {
 			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote reset-tasks from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteResetAutoRunDocTasks(
+			(sessionId: string, filename: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resetAutoRunDocTasks', {
+						detail: { sessionId, filename, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote auto-run error-recovery actions (resume / skip / abort) from web
+	useEffect(() => {
+		const unsubResume = window.maestro.process.onRemoteResumeAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resumeAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubSkip = window.maestro.process.onRemoteSkipAutoRunDocument(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:skipAutoRunDocument', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubAbort = window.maestro.process.onRemoteAbortAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:abortAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubResume();
+			unsubSkip();
+			unsubAbort();
+		};
+	}, []);
+
+	// Handle remote playbook CRUD from web interface (request-response)
+	useEffect(() => {
+		const unsubList = window.maestro.process.onRemoteListPlaybooks(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:listPlaybooks', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubCreate = window.maestro.process.onRemoteCreatePlaybook(
+			(sessionId: string, playbook: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:createPlaybook', {
+						detail: { sessionId, playbook, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubUpdate = window.maestro.process.onRemoteUpdatePlaybook(
+			(sessionId: string, playbookId: string, updates: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:updatePlaybook', {
+						detail: { sessionId, playbookId, updates, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubDelete = window.maestro.process.onRemoteDeletePlaybook(
+			(sessionId: string, playbookId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:deletePlaybook', {
+						detail: { sessionId, playbookId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubList();
+			unsubCreate();
+			unsubUpdate();
+			unsubDelete();
 		};
 	}, []);
 

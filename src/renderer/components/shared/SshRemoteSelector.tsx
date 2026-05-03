@@ -104,18 +104,24 @@ function SshRemoteDropdown({
 					onChange={(e) => {
 						const value = e.target.value;
 						if (value === 'local') {
-							// Run locally
+							// Run locally. Preserve workingDirOverride and shareHistoryToProjectDir
+							// so toggling the dropdown doesn't silently wipe the
+							// "remote-controlled" flag (which is independent of SSH enablement).
 							onSshRemoteConfigChange({
 								enabled: false,
 								remoteId: null,
+								workingDirOverride: sshRemoteConfig?.workingDirOverride,
 								syncHistory: sshRemoteConfig?.syncHistory,
+								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 							});
 						} else {
-							// Use specific remote
+							// Use specific remote. Preserve sibling fields for the same reason.
 							onSshRemoteConfigChange({
 								enabled: true,
 								remoteId: value,
+								workingDirOverride: sshRemoteConfig?.workingDirOverride,
 								syncHistory: sshRemoteConfig?.syncHistory ?? false,
+								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 							});
 						}
 					}}

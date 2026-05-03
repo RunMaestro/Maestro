@@ -145,17 +145,23 @@ function TabBarInner({
 		showUnreadOnly,
 	]);
 
-	// Filter tabs for display
-	const displayedTabs = showUnreadOnly
-		? tabs.filter(
-				(t) =>
-					t.hasUnread ||
-					t.state === 'busy' ||
-					(inputMode === 'ai' && t.id === activeTabId) ||
-					hasDraft(t) ||
-					(showStarredInUnreadFilter && t.starred)
-			)
-		: tabs;
+	// Filter tabs for display. Memoized so the filter only re-runs when the
+	// inputs actually change — without this, every TabBar render (e.g. on input
+	// keystrokes or unrelated session updates) re-walks the tabs array.
+	const displayedTabs = useMemo(
+		() =>
+			showUnreadOnly
+				? tabs.filter(
+						(t) =>
+							t.hasUnread ||
+							t.state === 'busy' ||
+							(inputMode === 'ai' && t.id === activeTabId) ||
+							hasDraft(t) ||
+							(showStarredInUnreadFilter && t.starred)
+					)
+				: tabs,
+		[tabs, showUnreadOnly, inputMode, activeTabId, showStarredInUnreadFilter]
+	);
 
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;

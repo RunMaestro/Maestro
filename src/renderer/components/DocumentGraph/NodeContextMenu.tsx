@@ -115,14 +115,14 @@ export function NodeContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border"
+			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '10rem',
 			}}
 		>
 			{/* Open */}

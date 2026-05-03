@@ -31,8 +31,8 @@ export const CommandNode = memo(function CommandNode({
 		<div
 			style={{
 				minWidth: 180,
-				maxWidth: 320,
 				height: 80,
+				width: 'max-content',
 				borderRadius: 8,
 				willChange: 'transform',
 				backgroundColor: theme?.colors.bgMain ?? '#1e1e2e',
@@ -86,7 +86,6 @@ export const CommandNode = memo(function CommandNode({
 					flexDirection: 'column',
 					justifyContent: 'center',
 					padding: '8px 10px',
-					overflow: 'hidden',
 				}}
 			>
 				<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -100,8 +99,6 @@ export const CommandNode = memo(function CommandNode({
 							fontSize: 13,
 							fontWeight: 600,
 							whiteSpace: 'nowrap',
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
 							flex: 1,
 						}}
 					>
@@ -126,8 +123,6 @@ export const CommandNode = memo(function CommandNode({
 						fontSize: 11,
 						marginTop: 2,
 						whiteSpace: 'nowrap',
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
 						fontFamily: 'monospace',
 					}}
 					title={data.summary}

@@ -18,6 +18,10 @@ import {
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
 import { createTerminalTab } from './terminalTabHelpers';
+import {
+	findActiveUnifiedTabIndex,
+	insertAfterActiveInUnifiedTabOrder,
+} from './unifiedTabOrderUtils';
 import { useSettingsStore } from '../stores/settingsStore';
 import { isWindowsPlatform } from './platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from './browserTabPersistence';
@@ -507,7 +511,9 @@ export function createTab(
 	// Update the session with the new tab added and set as active.
 	// Clear activeFileTabId and activeTerminalTabId so the new AI tab is shown in the
 	// main panel, and set inputMode to 'ai' so callers don't need to patch it manually.
-	// Add the new tab to unifiedTabOrder so it appears in the unified tab bar.
+	// Insert the new tab into unifiedTabOrder directly to the right of the
+	// currently active tab so "new tab" actions feel positional regardless of
+	// which tab type is currently focused.
 	const newTabRef = { type: 'ai' as const, id: newTab.id };
 	const updatedSession: Session = {
 		...session,
@@ -517,7 +523,7 @@ export function createTab(
 		activeBrowserTabId: null,
 		activeTerminalTabId: null,
 		inputMode: 'ai' as const,
-		unifiedTabOrder: [...(session.unifiedTabOrder || []), newTabRef],
+		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 	};
 
 	return {
@@ -1919,30 +1925,7 @@ export function navigateToLastUnifiedTab(
  */
 function getCurrentUnifiedTabIndex(session: Session, effectiveOrder?: UnifiedTabRef[]): number {
 	const order = effectiveOrder || getRepairedUnifiedTabOrder(session);
-	if (order.length === 0) {
-		return -1;
-	}
-
-	// If a terminal tab is active, find it in the unified order
-	if (session.activeTerminalTabId) {
-		return order.findIndex(
-			(ref) => ref.type === 'terminal' && ref.id === session.activeTerminalTabId
-		);
-	}
-
-	// If a file tab is active, find it in the unified order
-	if (session.activeFileTabId) {
-		return order.findIndex((ref) => ref.type === 'file' && ref.id === session.activeFileTabId);
-	}
-
-	if (session.activeBrowserTabId) {
-		return order.findIndex(
-			(ref) => ref.type === 'browser' && ref.id === session.activeBrowserTabId
-		);
-	}
-
-	// Otherwise find the active AI tab
-	return order.findIndex((ref) => ref.type === 'ai' && ref.id === session.activeTabId);
+	return findActiveUnifiedTabIndex(session, order);
 }
 
 /**

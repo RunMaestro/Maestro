@@ -928,6 +928,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					const isAutoRunQuery = deps.getBatchStateRef.current
 						? deps.getBatchStateRef.current(sessionIdForStats).isRunning
 						: false;
+					const sessionForStats = getSessions().find((s) => s.id === sessionIdForStats);
 
 					window.maestro.stats
 						.recordQuery({
@@ -939,6 +940,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							projectPath: toastData.projectPath,
 							tabId: toastData.tabId,
 							isRemote: toastData.isRemote,
+							isWorktree: !!sessionForStats?.parentSessionId,
 						})
 						.catch((err) => {
 							logger.warn('[onProcessExit] Failed to record query stats:', undefined, err);
@@ -1173,6 +1175,15 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					return prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
+						// Claude Code 2.1.x in batch mode (`--print --output-format stream-json
+						// --resume <id>`) emits a fresh `session_id` on every spawn — but never
+						// writes a JSONL file under that fresh ID; the conversation continues to
+						// be appended to the original JSONL. Storing the fork ID and using it on
+						// the next spawn produces "no conversation found with session id" because
+						// the file does not exist. So once a claude-code tab/session has an
+						// agentSessionId, treat it as immutable and ignore subsequent fork IDs.
+						const isClaudeCode = s.toolType === 'claude-code';
+
 						let targetTab;
 						if (tabId) {
 							targetTab = s.aiTabs?.find((tab) => tab.id === tabId);
@@ -1180,14 +1191,16 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							// exists in aiTabs, the tab was closed. Store at session level
 							// only — do NOT fall back to another tab, as that would
 							// cross-contaminate an unrelated tab with the closed tab's
-							// agent session.
+							// agent session. Skip claude-code session-level updates: the
+							// session-level field would otherwise accumulate fork IDs that
+							// have no backing JSONL and break future resumes from new tabs.
 							if (!targetTab) {
 								logger.info(
 									'[onSessionId] Tab was closed, storing session ID at session level only:',
 									undefined,
 									{ tabId: tabId.substring(0, 8), agentSessionId: agentSessionId.substring(0, 8) }
 								);
-								return { ...s, agentSessionId };
+								return isClaudeCode ? s : { ...s, agentSessionId };
 							}
 						}
 
@@ -1202,11 +1215,23 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							logger.error(
 								'[onSessionId] No target tab found - session has no aiTabs, storing at session level only'
 							);
-							return { ...s, agentSessionId };
+							return isClaudeCode ? s : { ...s, agentSessionId };
 						}
 
-						// Accept the new ID to prevent a death spiral of failed resumes.
 						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
+							// Claude Code: keep the original ID (the fork ID is throwaway and has
+							// no backing JSONL). Just clear awaitingSessionId and move on.
+							if (isClaudeCode) {
+								const updatedAiTabs = s.aiTabs.map((tab) => {
+									if (tab.id !== targetTab.id) return tab;
+									return { ...tab, awaitingSessionId: false };
+								});
+								return { ...s, aiTabs: updatedAiTabs };
+							}
+
+							// Other agents: a session-ID mismatch indicates real resume failure.
+							// Accept the new ID to prevent a death spiral of failed resumes,
+							// surface a system log entry, and reset the context gauge.
 							logger.warn(
 								'[onSessionId] Session resume failed — agent returned a new session ID',
 								undefined,
@@ -1245,6 +1270,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							};
 						}
 
+						// First-time capture (tab has no prior agentSessionId) or matching ID:
+						// store on the tab. Skip the session-level write for claude-code so the
+						// session-level field doesn't accumulate fork IDs from closed/reset tabs.
 						const updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id !== targetTab.id) return tab;
 							const newName = tab.name && tab.name !== 'New Session' ? tab.name : null;
@@ -1256,11 +1284,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							};
 						});
 
-						return {
-							...s,
-							aiTabs: updatedAiTabs,
-							agentSessionId,
-						};
+						return isClaudeCode
+							? { ...s, aiTabs: updatedAiTabs }
+							: { ...s, aiTabs: updatedAiTabs, agentSessionId };
 					});
 				});
 

@@ -78,4 +78,38 @@ describe('platformDetection', () => {
 			expect(getWhichCommand()).toBe('which');
 		});
 	});
+
+	describe('renderer (browser) fallback', () => {
+		// In a renderer, `process` is undefined and `globalThis.maestro.platform`
+		// is provided by the preload bridge. Simulate the no-process case by
+		// blanking process.platform; the fallback should pick up maestro.platform.
+		const g = globalThis as unknown as { maestro?: { platform?: string } };
+
+		it('reads platform from globalThis.maestro.platform when process.platform is empty', () => {
+			Object.defineProperty(process, 'platform', { value: '', configurable: true });
+			const savedMaestro = g.maestro;
+			try {
+				g.maestro = { platform: 'darwin' };
+				expect(isMacOS()).toBe(true);
+				expect(isWindows()).toBe(false);
+				expect(isLinux()).toBe(false);
+			} finally {
+				g.maestro = savedMaestro;
+			}
+		});
+
+		it('falls back to linux when neither process.platform nor maestro is defined', () => {
+			Object.defineProperty(process, 'platform', { value: '', configurable: true });
+			const savedMaestro = g.maestro;
+			try {
+				g.maestro = undefined;
+				expect(() => isMacOS()).not.toThrow();
+				expect(isLinux()).toBe(true);
+				expect(isMacOS()).toBe(false);
+				expect(isWindows()).toBe(false);
+			} finally {
+				g.maestro = savedMaestro;
+			}
+		});
+	});
 });

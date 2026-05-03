@@ -13,6 +13,9 @@
 import type { HistoryEntry } from '../../shared/types';
 import type { CachedGraphBucket } from './history-bucket-cache';
 
+/** Synthetic key for entries that have no `hostname` field (i.e. local). */
+export const LOCAL_HOST_AGG_KEY = '__local__';
+
 export interface BucketAggregateResult {
 	buckets: CachedGraphBucket[];
 	earliestTimestamp: number;
@@ -21,6 +24,13 @@ export interface BucketAggregateResult {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	/**
+	 * Per-host entry counts within the same window the buckets cover. Key
+	 * is the entry's `hostname`, or `LOCAL_HOST_AGG_KEY` for entries with no
+	 * hostname. Always present; for sources with only local entries the map
+	 * has a single `{ [LOCAL_HOST_AGG_KEY]: totalCount }` entry.
+	 */
+	hostCounts: Record<string, number>;
 }
 
 export interface BucketAggregateOptions {
@@ -78,6 +88,7 @@ export function buildBucketAggregate(
 			autoCount: 0,
 			userCount: 0,
 			cueCount: 0,
+			hostCounts: {},
 		};
 	}
 
@@ -86,6 +97,7 @@ export function buildBucketAggregate(
 	let autoCount = 0;
 	let userCount = 0;
 	let cueCount = 0;
+	const hostCounts: Record<string, number> = {};
 
 	for (const entry of filtered) {
 		if (entry.timestamp < earliest) earliest = entry.timestamp;
@@ -93,6 +105,8 @@ export function buildBucketAggregate(
 		if (entry.type === 'AUTO') autoCount++;
 		else if (entry.type === 'USER') userCount++;
 		else if (entry.type === 'CUE') cueCount++;
+		const hostKey = entry.hostname || LOCAL_HOST_AGG_KEY;
+		hostCounts[hostKey] = (hostCounts[hostKey] ?? 0) + 1;
 	}
 
 	// For windowed mode the range is fixed by the lookback, not the
@@ -126,5 +140,6 @@ export function buildBucketAggregate(
 		autoCount,
 		userCount,
 		cueCount,
+		hostCounts,
 	};
 }

@@ -6,7 +6,7 @@
  * Long-press on a tab shows a popover with rename, star, and move actions.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useLongPress } from '../hooks/useLongPress';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -483,6 +483,14 @@ function TabActionsPopover({
 	);
 }
 
+/**
+ * A tab is considered "unread" if hasUnread is set OR the tab is busy
+ * (mirrors the agent-level bell filter in LeftPanel).
+ */
+function tabHasUnreadActivity(tab: AITabData): boolean {
+	return Boolean(tab.hasUnread) || tab.state === 'busy';
+}
+
 export function TabBar({
 	tabs,
 	activeTabId,
@@ -499,6 +507,7 @@ export function TabBar({
 }: TabBarProps) {
 	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
 	const [showNewTabMenu, setShowNewTabMenu] = useState(false);
+	const [showUnreadOnly, setShowUnreadOnly] = useState(false);
 	const newTabMenuRef = useRef<HTMLDivElement>(null);
 
 	const handleTabLongPress = useCallback((tab: AITabData, tabIdx: number, rect: DOMRect) => {
@@ -521,12 +530,77 @@ export function TabBar({
 		return () => document.removeEventListener('mousedown', handleClickOutside);
 	}, [showNewTabMenu]);
 
+	// Bell filter — derived state for which tabs to render and whether the
+	// indicator dot should appear on the bell button.
+	const hasUnreadTabs = tabs.some(tabHasUnreadActivity);
+
+	// Derive the effective filter synchronously so there is no between-paint
+	// frame where only the active tab is visible while the cleanup effect below
+	// is still pending.
+	const effectiveShowUnreadOnly = showUnreadOnly && hasUnreadTabs;
+
+	// Keep the persisted toggle in sync — once activity settles, flip the
+	// state back off so the bell button visually returns to its idle look.
+	useEffect(() => {
+		if (showUnreadOnly && !hasUnreadTabs) {
+			setShowUnreadOnly(false);
+		}
+	}, [showUnreadOnly, hasUnreadTabs]);
+
+	const visibleTabs = effectiveShowUnreadOnly
+		? tabs.filter((tab) => tab.id === activeTabId || tabHasUnreadActivity(tab))
+		: tabs;
+
+	// Pre-build an id→index map so the render loop's lookup of the original
+	// (unfiltered) tab index stays O(1) instead of O(n) per tab.
+	const tabIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		tabs.forEach((tab, index) => map.set(tab.id, index));
+		return map;
+	}, [tabs]);
+
 	const canClose = tabs.length > 1;
 
 	return (
 		<div className="flex items-end bg-bg-sidebar border-b border-border">
-			{/* Pinned buttons - search and new tab */}
+			{/* Pinned buttons - bell, search, and new tab */}
 			<div className="flex-shrink-0 pt-2 pl-2 flex items-center gap-1.5">
+				{/* Bell filter — show only tabs with unread/busy activity */}
+				<button
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						setShowUnreadOnly((prev) => !prev);
+					}}
+					disabled={!effectiveShowUnreadOnly && !hasUnreadTabs}
+					className={`relative flex items-center justify-center w-7 h-7 rounded-full border mb-1 p-0 ${
+						effectiveShowUnreadOnly
+							? 'border-accent bg-accent text-white cursor-pointer'
+							: hasUnreadTabs
+								? 'border-border bg-bg-main text-text-dim cursor-pointer'
+								: 'border-border bg-bg-main text-text-dim opacity-40 cursor-default'
+					}`}
+					aria-pressed={effectiveShowUnreadOnly}
+					aria-label={effectiveShowUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+					title={effectiveShowUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+						<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+					</svg>
+					{hasUnreadTabs && !effectiveShowUnreadOnly && (
+						<span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-accent" />
+					)}
+				</button>
+
 				{/* Search tabs button */}
 				{onOpenTabSearch && (
 					<button
@@ -627,18 +701,23 @@ export function TabBar({
 
 			{/* Scrollable tabs area */}
 			<div className="flex flex-1 items-end gap-0.5 pt-2 px-2 overflow-x-auto [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [-ms-overflow-style:none] hide-scrollbar">
-				{tabs.map((tab, index) => (
-					<Tab
-						key={tab.id}
-						tab={tab}
-						tabIndex={index}
-						isActive={inputMode === 'ai' && tab.id === activeTabId}
-						canClose={canClose}
-						onSelect={() => onSelectTab(tab.id)}
-						onClose={() => onCloseTab(tab.id)}
-						onLongPress={handleTabLongPress}
-					/>
-				))}
+				{visibleTabs.map((tab) => {
+					// Keep tabIndex aligned with the unfiltered tabs array so
+					// Move Left / Move Right reorder math stays correct.
+					const tabIndex = tabIndexById.get(tab.id) ?? -1;
+					return (
+						<Tab
+							key={tab.id}
+							tab={tab}
+							tabIndex={tabIndex}
+							isActive={inputMode === 'ai' && tab.id === activeTabId}
+							canClose={canClose}
+							onSelect={() => onSelectTab(tab.id)}
+							onClose={() => onCloseTab(tab.id)}
+							onLongPress={handleTabLongPress}
+						/>
+					);
+				})}
 
 				{/* Terminal tab — reuses the same active/inactive class tokens as
 				    the Tab subcomponent. Close button sits inline (not absolute),

@@ -4,6 +4,7 @@
 
 import { Session, TerminalTab, ClosedTabEntry, UnifiedTabRef } from '../types';
 import { generateId } from './ids';
+import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
 
 /** Maximum number of closed terminal tab entries to expose via the public API (e.g., for UI limits). */
 export const MAX_CLOSED_TERMINAL_TABS = 10;
@@ -105,7 +106,8 @@ export function parseTerminalSessionId(
 
 /**
  * Add a terminal tab to a session.
- * Appends the tab to terminalTabs, adds it to unifiedTabOrder, and makes it the active terminal tab.
+ * Appends the tab to terminalTabs, inserts it into unifiedTabOrder directly to
+ * the right of the currently active tab, and makes it the active terminal tab.
  *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
@@ -119,7 +121,7 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 		activeTerminalTabId: tab.id,
 		activeFileTabId: null,
 		activeBrowserTabId: null,
-		unifiedTabOrder: [...(session.unifiedTabOrder || []), newTabRef],
+		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 	};
 }
 

@@ -26,7 +26,7 @@ import { usePipelineCanvasCallbacks } from '../../hooks/cue/usePipelineCanvasCal
 import { usePipelineKeyboard } from '../../hooks/cue/usePipelineKeyboard';
 import { usePipelineContextMenu } from '../../hooks/cue/usePipelineContextMenu';
 import { PipelineToolbar } from './PipelineToolbar';
-import { PipelineCanvas } from './PipelineCanvas';
+import { PipelineCanvas, type CanvasInteractionMode } from './PipelineCanvas';
 import { PipelineContextMenu } from './PipelineContextMenu';
 
 export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
@@ -68,9 +68,17 @@ function CuePipelineEditorInner({
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
+	// Root element of the editor — used by usePipelineKeyboard to distinguish
+	// inputs inside the editor (where typing should pass through) from inputs
+	// behind the modal (where the modal must claim the keystroke).
+	const containerRef = useRef<HTMLDivElement>(null);
+
 	// Local drawer state — consumed by multiple hooks and children
 	const [triggerDrawerOpen, setTriggerDrawerOpen] = useState(false);
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+
+	// Canvas interaction mode: hand (pan on drag) vs pointer (box-select on drag).
+	const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>('hand');
 
 	// Selection bridge: usePipelineState needs selection IDs for its mutation
 	// callbacks, but usePipelineSelection needs pipelineState. We resolve the
@@ -318,7 +326,9 @@ function CuePipelineEditorInner({
 		setSelectedEdgeId,
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
+		setInteractionMode,
 		handleSave,
+		containerRef,
 	});
 
 	// ─── Context menu ──────────────────────────────────────────────────────
@@ -360,7 +370,11 @@ function CuePipelineEditorInner({
 	// ─── Render ──────────────────────────────────────────────────────────────
 
 	return (
-		<div className="flex-1 flex flex-col" style={{ width: '100%', height: '100%' }}>
+		<div
+			ref={containerRef}
+			className="flex-1 flex flex-col"
+			style={{ width: '100%', height: '100%' }}
+		>
 			<PipelineToolbar
 				theme={theme}
 				isAllPipelinesView={isAllPipelinesView}
@@ -397,6 +411,8 @@ function CuePipelineEditorInner({
 				onEdgeClick={onEdgeClickGuarded}
 				onPaneClick={onPaneClick}
 				onNodeContextMenu={onNodeContextMenu}
+				onNodeDragStart={canvasCallbacks.onNodeDragStart}
+				onNodeDrag={canvasCallbacks.onNodeDrag}
 				onNodeDragStop={canvasCallbacks.onNodeDragStop}
 				onDragOver={canvasCallbacks.onDragOver}
 				onDrop={canvasCallbacks.onDrop}
@@ -427,6 +443,7 @@ function CuePipelineEditorInner({
 				onUpdateNode={onUpdateNode}
 				onUpdateEdgePrompt={onUpdateEdgePrompt}
 				onDeleteNode={onDeleteNode}
+				onCloseNodeConfig={() => setSelectedNodeId(null)}
 				onSwitchToSession={onSwitchToSession}
 				triggerDrawerOpenForConfig={triggerDrawerOpen}
 				agentDrawerOpenForConfig={agentDrawerOpen}
@@ -438,7 +455,9 @@ function CuePipelineEditorInner({
 				onTriggerPipeline={onTriggerPipeline}
 				isDirty={isDirty}
 				runningPipelineIds={runningPipelineIds}
-				isLoading={graphLoading || !pipelinesLoaded}
+				isLoading={graphLoading || (graphSessions.length > 0 && !pipelinesLoaded)}
+				interactionMode={interactionMode}
+				setInteractionMode={setInteractionMode}
 			/>
 
 			{contextMenu && (

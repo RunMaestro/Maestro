@@ -8,6 +8,7 @@ import {
 	existsRemote,
 	mkdirRemote,
 	listDirWithStatsRemote,
+	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
@@ -665,6 +666,143 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('connection refused');
+		});
+
+		it('expands a home-relative path via $HOME so the cd lands in the right directory', async () => {
+			// Regression: shellEscape() single-quotes the path, which prevents
+			// tilde expansion and silently sends the stat loop to the wrong
+			// cwd — the bug that broke Claude/Copilot remote session listing.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote(
+				'~/.claude/projects',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('cd "$HOME/.claude/projects"');
+			expect(remoteCommand).not.toContain("cd '~/");
+		});
+	});
+
+	describe('bulkStatFileInSubdirsRemote', () => {
+		it('returns one entry per matching subdirectory file with size + mtime', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'1024|1700000000|sess-a/events.jsonl\n' +
+					'2048|1700000010|sess-b/events.jsonl\n' +
+					'4096|1700000020|sess-c/events.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'sess-a', size: 1024, mtime: 1700000000000 },
+				{ name: 'sess-b', size: 2048, mtime: 1700000010000 },
+				{ name: 'sess-c', size: 4096, mtime: 1700000020000 },
+			]);
+		});
+
+		it('issues exactly one SSH call regardless of subdirectory count', async () => {
+			const lines: string[] = [];
+			for (let i = 0; i < 200; i++) {
+				lines.push(`${1000 + i}|${1_700_000_000 + i}|sess-${i}/events.jsonl`);
+			}
+			const deps = createMockDeps({
+				stdout: lines.join('\n') + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toHaveLength(200);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it('expands a home-relative parentDir via $HOME so the cd lands in the right directory', async () => {
+			// Regression: same single-quote tilde bug as listDirWithStatsRemote.
+			// `~/.copilot/session-state` must turn into `cd "$HOME/.copilot/session-state"`.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await bulkStatFileInSubdirsRemote(
+				'~/.copilot/session-state',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('cd "$HOME/.copilot/session-state"');
+			expect(remoteCommand).not.toContain("cd '~/");
+		});
+
+		it('rejects fileNames containing shell metacharacters to prevent injection', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl; rm -rf /',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Refusing unsafe fileName');
+			// The command must never reach SSH.
+			expect(deps.execSsh).not.toHaveBeenCalled();
+		});
+
+		it('drops rows that do not end with the requested fileName suffix', async () => {
+			// Defensive: if stat ever returns an unexpected line shape, we skip
+			// it instead of producing a session id that's actually a sibling path.
+			const deps = createMockDeps({
+				stdout:
+					'100|1000|sess-good/events.jsonl\n' +
+					'200|2000|something-else/other.txt\n' +
+					'300|3000|sess-also-good/events.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await bulkStatFileInSubdirsRemote(
+				'/remote/sessions',
+				'events.jsonl',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.map((d: { name: string }) => d.name)).toEqual([
+				'sess-good',
+				'sess-also-good',
+			]);
 		});
 	});
 

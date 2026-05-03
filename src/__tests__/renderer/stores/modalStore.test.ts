@@ -1072,7 +1072,10 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.settingsModalOpen).toBe(false);
-			expect(result.current.settingsTab).toBe('general'); // Falls back to default
+			// settingsTab is undefined when no explicit tab was requested —
+			// SettingsModal restores the last in-session tab and only falls
+			// back to 'general' on first open.
+			expect(result.current.settingsTab).toBeUndefined();
 		});
 
 		it('provides all action methods from getModalActions()', () => {

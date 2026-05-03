@@ -33,6 +33,7 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
+import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -214,8 +215,8 @@ export const RightPanel = memo(
 			transitionClass: rightPanelTransitionClass,
 		} = useResizablePanel({
 			width: rightPanelWidth,
-			minWidth: 280,
-			maxWidth: 800,
+			minWidth: RIGHT_PANEL_MIN_WIDTH,
+			maxWidth: RIGHT_PANEL_MAX_WIDTH,
 			settingsKey: 'rightPanelWidth',
 			setWidth: setRightPanelWidth,
 			side: 'right',
@@ -477,7 +478,7 @@ export const RightPanel = memo(
 				{/* Tab Content */}
 				<div
 					ref={fileTreeContainerRef}
-					className="flex-1 px-4 pb-4 overflow-y-auto overflow-x-hidden min-w-[24rem] outline-none scrollbar-thin"
+					className="flex-1 px-4 pb-4 overflow-y-auto overflow-x-hidden outline-none scrollbar-thin"
 					tabIndex={-1}
 					onClick={(e) => {
 						setActiveFocus('right');

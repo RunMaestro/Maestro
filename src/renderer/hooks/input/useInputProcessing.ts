@@ -1140,8 +1140,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomPath: freshSession.customPath,
 							sessionCustomArgs: freshSession.customArgs,
 							sessionCustomEnvVars: freshSession.customEnvVars,
-							sessionCustomModel: freshSession.customModel,
-							sessionCustomEffort: freshSession.customEffort,
+							sessionCustomModel: freshActiveTab?.customModel ?? freshSession.customModel,
+							sessionCustomEffort: freshActiveTab?.customEffort ?? freshSession.customEffort,
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,

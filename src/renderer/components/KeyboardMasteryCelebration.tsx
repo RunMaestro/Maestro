@@ -10,6 +10,7 @@ import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Keyboard, Trophy, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { Theme, Shortcut } from '../types';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
@@ -164,18 +165,15 @@ export function KeyboardMasteryCelebration({
 	const handleCloseRef = useRef(handleClose);
 	handleCloseRef.current = handleClose;
 
-	// Handle keyboard events - use ref to avoid stale closure
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Enter' || e.key === 'Escape') {
-				e.preventDefault();
-				handleCloseRef.current();
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []); // Empty deps - handler reads from ref
+	// Handle keyboard events. The hook's internal ref keeps the handler stable
+	// without re-subscribing.
+	useEventListener('keydown', (e) => {
+		const ke = e as KeyboardEvent;
+		if (ke.key === 'Enter' || ke.key === 'Escape') {
+			ke.preventDefault();
+			handleCloseRef.current();
+		}
+	});
 
 	// Register with layer stack
 	useModalLayer(MODAL_PRIORITIES.KEYBOARD_MASTERY, 'Keyboard Mastery Level Up Celebration', () =>

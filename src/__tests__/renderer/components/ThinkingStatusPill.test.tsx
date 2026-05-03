@@ -668,6 +668,52 @@ describe('ThinkingStatusPill', () => {
 			expect(stopButton).toBeDisabled();
 		});
 
+		it('prefers across-all-docs counts over legacy single-doc counts when set', () => {
+			// Multi-doc playbooks populate *AcrossAllDocs aggregates; legacy fields track
+			// only the current document. The pill must display the run-wide totals to
+			// stay in sync with the right-panel "AUTO RUN ACTIVE" card.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 2,
+				totalTasks: 15, // Current document only
+				completedTasks: 3, // Current document only
+				totalTasksAcrossAllDocs: 45,
+				completedTasksAcrossAllDocs: 25,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Multi-doc Batch',
+			};
+			render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(screen.getByText('25/45')).toBeInTheDocument();
+			expect(screen.queryByText('3/15')).not.toBeInTheDocument();
+		});
+
+		it('falls back to legacy counts when totalTasksAcrossAllDocs is zero', () => {
+			// Single-document playbooks don't populate the aggregate fields (they remain 0
+			// or undefined). Pill must fall back to legacy completedTasks/totalTasks.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 2,
+				totalTasks: 10,
+				completedTasks: 4,
+				totalTasksAcrossAllDocs: 0,
+				completedTasksAcrossAllDocs: 0,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Single-doc Batch',
+			};
+			render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(screen.getByText('4/10')).toBeInTheDocument();
+		});
+
 		it('uses Date.now() as fallback when startTime is undefined', () => {
 			const autoRunState: BatchRunState = {
 				isRunning: true,
@@ -1102,6 +1148,40 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			expect(screen.getByText('+1')).toBeInTheDocument();
+		});
+
+		it('re-renders when across-all-docs counts change during AutoRun', () => {
+			// Memo comparator must include completedTasksAcrossAllDocs / totalTasksAcrossAllDocs
+			// or multi-doc playbooks would show stale aggregate counts in the pill.
+			const baseAutoRun: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 15,
+				completedTasks: 3,
+				totalTasksAcrossAllDocs: 45,
+				completedTasksAcrossAllDocs: 24,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Multi-doc',
+			};
+
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={baseAutoRun} />
+			);
+
+			expect(screen.getByText('24/45')).toBeInTheDocument();
+
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					autoRunState={{ ...baseAutoRun, completedTasksAcrossAllDocs: 25 }}
+				/>
+			);
+
+			expect(screen.getByText('25/45')).toBeInTheDocument();
 		});
 
 		it('re-renders when namedSessions changes for thinking item', () => {

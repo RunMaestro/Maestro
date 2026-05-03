@@ -15,7 +15,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { generateId } from './ids';
 import { getBrowserTabPartition } from './browserTabPersistence';
-import { ensureInUnifiedTabOrder } from './tabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
 
 /**
  * Open a URL, respecting the user's default browser setting.
@@ -94,11 +94,10 @@ export function openInMaestroBrowser(url: string): void {
 				activeBrowserTabId: newBrowserTab.id,
 				activeTerminalTabId: null,
 				inputMode: 'ai' as const,
-				unifiedTabOrder: ensureInUnifiedTabOrder(
-					s.unifiedTabOrder || [],
-					'browser',
-					newBrowserTab.id
-				),
+				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+					type: 'browser',
+					id: newBrowserTab.id,
+				}),
 			};
 		})
 	);

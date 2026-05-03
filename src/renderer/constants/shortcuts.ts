@@ -109,6 +109,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Forced Parallel Send',
 		keys: ['Meta', 'Shift', 'Enter'],
 	},
+	clearTerminal: {
+		id: 'clearTerminal',
+		label: 'Clear Terminal',
+		keys: ['Meta', 'Shift', 'k'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -159,11 +164,6 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'fontSizeDecrease',
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
-	},
-	clearTerminal: {
-		id: 'clearTerminal',
-		label: 'Clear Terminal',
-		keys: ['Meta', 'Shift', 'k'],
 	},
 };
 

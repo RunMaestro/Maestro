@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { Session, Group, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
+import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
 
 interface SkinnySidebarProps {
@@ -14,6 +15,7 @@ interface SkinnySidebarProps {
 	getFileCount: (sessionId: string) => number;
 	setActiveSessionId: (id: string) => void;
 	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
+	showUnreadAgentsOnly: boolean;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
@@ -27,15 +29,24 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	getFileCount,
 	setActiveSessionId,
 	handleContextMenu,
+	showUnreadAgentsOnly,
 }: SkinnySidebarProps) {
+	const visibleSessions = showUnreadAgentsOnly
+		? sortedSessions.filter(
+				(s) =>
+					s.id === activeSessionId || s.state === 'busy' || s.aiTabs?.some((tab) => tab.hasUnread)
+			)
+		: sortedSessions;
+
 	return (
 		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
-			{sortedSessions.map((session) => {
+			{visibleSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
+				const isUnboundClaude = hasNoClaudeProviderSession(session);
 				const effectiveStatusColor = isInBatch
 					? theme.colors.warning
-					: session.toolType === 'claude-code' && !session.agentSessionId
+					: isUnboundClaude
 						? undefined
 						: getStatusColor(session.state, theme);
 				const shouldPulse = session.state === 'busy' || isInBatch;
@@ -61,7 +72,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
 								style={{
 									opacity: activeSessionId === session.id ? 1 : 0.25,
-									...(session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+									...(isUnboundClaude && !isInBatch
 										? {
 												border: `1.5px solid ${theme.colors.textDim}`,
 												backgroundColor: 'transparent',
@@ -70,11 +81,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 												backgroundColor: effectiveStatusColor,
 											}),
 								}}
-								title={
-									session.toolType === 'claude-code' && !session.agentSessionId
-										? 'No active Claude session'
-										: undefined
-								}
+								title={isUnboundClaude ? 'No active Claude session' : undefined}
 							/>
 							{activeSessionId !== session.id && hasUnreadTabs && (
 								<div

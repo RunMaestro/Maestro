@@ -19,6 +19,7 @@ import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useTabStore } from '../../stores/tabStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
@@ -235,7 +236,6 @@ export const MainPanel = React.memo(
 		const [pillEfforts, setPillEfforts] = useState<string[]>([]);
 		const [agentDefaultModel, setAgentDefaultModel] = useState('');
 		const [agentDefaultEffort, setAgentDefaultEffort] = useState('');
-		const updateSession = useSessionStore((s) => s.updateSession);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -313,24 +313,28 @@ export const MainPanel = React.memo(
 			};
 		}, [activeSession?.toolType]);
 
-		// Resolved current model/effort: session override > agent config > empty
-		const resolvedModel = activeSession?.customModel || agentDefaultModel;
-		const resolvedEffort = activeSession?.customEffort || agentDefaultEffort;
+		// Resolved current model/effort: tab override > session override > agent config > empty
+		const resolvedModel = activeTab?.customModel || activeSession?.customModel || agentDefaultModel;
+		const resolvedEffort =
+			activeTab?.customEffort || activeSession?.customEffort || agentDefaultEffort;
+
+		const setTabModel = useTabStore((s) => s.setTabModel);
+		const setTabEffort = useTabStore((s) => s.setTabEffort);
 
 		const handleModelChange = useCallback(
 			(model: string) => {
-				if (!activeSession) return;
-				updateSession(activeSession.id, { customModel: model || undefined });
+				if (!activeTab) return;
+				setTabModel(activeTab.id, model || undefined);
 			},
-			[activeSession, updateSession]
+			[activeTab, setTabModel]
 		);
 
 		const handleEffortChange = useCallback(
 			(effort: string) => {
-				if (!activeSession) return;
-				updateSession(activeSession.id, { customEffort: effort || undefined });
+				if (!activeTab) return;
+				setTabEffort(activeTab.id, effort || undefined);
 			},
-			[activeSession, updateSession]
+			[activeTab, setTabEffort]
 		);
 
 		// Expose methods to parent via ref

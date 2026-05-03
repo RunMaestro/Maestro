@@ -28,6 +28,7 @@ import {
 	closeTerminalTab as closeTerminalTabHelper,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
+import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
 	DEFAULT_BROWSER_TAB_URL,
@@ -394,27 +395,11 @@ export function useTabHandlers(): TabHandlersReturn {
 						navigationIndex: 0,
 					};
 
-					// Create the unified tab reference
+					// Create the unified tab reference. Insert directly to the right of the
+					// currently active tab (any type) so the new file tab lands next to where
+					// the user was, not at the end of the bar.
 					const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
-
-					// If opening in new tab and there's an active file tab, insert adjacent to it
-					let updatedUnifiedTabOrder: UnifiedTabRef[];
-					if (openInNewTab && s.activeFileTabId) {
-						const currentIndex = s.unifiedTabOrder.findIndex(
-							(ref) => ref.type === 'file' && ref.id === s.activeFileTabId
-						);
-						if (currentIndex !== -1) {
-							updatedUnifiedTabOrder = [
-								...s.unifiedTabOrder.slice(0, currentIndex + 1),
-								newTabRef,
-								...s.unifiedTabOrder.slice(currentIndex + 1),
-							];
-						} else {
-							updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-						}
-					} else {
-						updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-					}
+					const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
 
 					return {
 						...s,
@@ -721,24 +706,9 @@ export function useTabHandlers(): TabHandlersReturn {
 
 				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
 
-				// Insert adjacent to current file tab if one is active
-				let updatedUnifiedTabOrder: UnifiedTabRef[];
-				if (s.activeFileTabId) {
-					const currentIndex = s.unifiedTabOrder.findIndex(
-						(ref) => ref.type === 'file' && ref.id === s.activeFileTabId
-					);
-					if (currentIndex !== -1) {
-						updatedUnifiedTabOrder = [
-							...s.unifiedTabOrder.slice(0, currentIndex + 1),
-							newTabRef,
-							...s.unifiedTabOrder.slice(currentIndex + 1),
-						];
-					} else {
-						updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-					}
-				} else {
-					updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-				}
+				// Insert directly to the right of whatever tab is currently active
+				// (any type) so a "new file" lands next to where the user was.
+				const updatedUnifiedTabOrder = insertAfterActiveInUnifiedTabOrder(s, newTabRef);
 
 				return {
 					...s,
@@ -780,11 +750,10 @@ export function useTabHandlers(): TabHandlersReturn {
 					activeBrowserTabId: newBrowserTab.id,
 					activeTerminalTabId: null,
 					inputMode: 'ai',
-					unifiedTabOrder: ensureInUnifiedTabOrder(
-						s.unifiedTabOrder || [],
-						'browser',
-						newBrowserTab.id
-					),
+					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+						type: 'browser',
+						id: newBrowserTab.id,
+					}),
 				};
 			})
 		);

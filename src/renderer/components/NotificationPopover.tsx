@@ -1,9 +1,10 @@
-import { useRef, useEffect, memo } from 'react';
+import { useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, Volume2, Coffee, type LucideIcon } from 'lucide-react';
 import type { Theme } from '../types';
 import { ToggleSwitch } from './ui/ToggleSwitch';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { useSettingsStore } from '../stores/settingsStore';
 
 interface NotificationPopoverProps {
@@ -37,16 +38,17 @@ export const NotificationPopover = memo(function NotificationPopover({
 	});
 
 	// Escape key dismissal
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				e.stopPropagation();
+	useEventListener(
+		'keydown',
+		(e) => {
+			const ke = e as KeyboardEvent;
+			if (ke.key === 'Escape') {
+				ke.stopPropagation();
 				onClose();
 			}
-		};
-		document.addEventListener('keydown', handleKeyDown);
-		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [onClose]);
+		},
+		{ target: document }
+	);
 
 	// Position relative to anchor
 	const anchorRect = anchorRef.current?.getBoundingClientRect();

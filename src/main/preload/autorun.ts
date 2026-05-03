@@ -74,6 +74,14 @@ export function createAutorunApi() {
 		deleteImage: (folderPath: string, relativePath: string, sshRemoteId?: string) =>
 			ipcRenderer.invoke('autorun:deleteImage', folderPath, relativePath, sshRemoteId),
 
+		replaceImage: (
+			folderPath: string,
+			relativePath: string,
+			base64Data: string,
+			sshRemoteId?: string
+		) =>
+			ipcRenderer.invoke('autorun:replaceImage', folderPath, relativePath, base64Data, sshRemoteId),
+
 		listImages: (folderPath: string, docName: string, sshRemoteId?: string) =>
 			ipcRenderer.invoke('autorun:listImages', folderPath, docName, sshRemoteId),
 

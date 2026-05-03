@@ -108,6 +108,7 @@ function resetStore() {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		groupChatsExpanded: true,
 		tourCompleted: false,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
@@ -209,6 +210,7 @@ describe('settingsStore', () => {
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);
 			expect(state.usageStats).toEqual(DEFAULT_USAGE_STATS);
 			expect(state.ungroupedCollapsed).toBe(false);
+			expect(state.groupChatsExpanded).toBe(true);
 			expect(state.tourCompleted).toBe(false);
 			expect(state.firstAutoRunCompleted).toBe(false);
 			expect(state.onboardingStats).toEqual(DEFAULT_ONBOARDING_STATS);
@@ -500,6 +502,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setUngroupedCollapsed(true);
 				expect(useSettingsStore.getState().ungroupedCollapsed).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('ungroupedCollapsed', true);
+			});
+
+			it('setGroupChatsExpanded updates state and persists', () => {
+				useSettingsStore.getState().setGroupChatsExpanded(false);
+				expect(useSettingsStore.getState().groupChatsExpanded).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatsExpanded', false);
 			});
 
 			it('setTourCompleted updates state and persists', () => {

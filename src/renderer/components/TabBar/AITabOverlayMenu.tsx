@@ -115,7 +115,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 
 	return (
 		<div
-			className="shadow-xl overflow-hidden"
+			className="shadow-xl overflow-hidden whitespace-nowrap"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderLeft: `1px solid ${theme.colors.border}`,
@@ -123,7 +123,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 				borderBottom: `1px solid ${theme.colors.border}`,
 				borderBottomLeftRadius: '8px',
 				borderBottomRightRadius: '8px',
-				minWidth: '220px',
+				minWidth: '13.75rem',
 			}}
 		>
 			{/* Header with session name and ID - only show for tabs with sessions */}

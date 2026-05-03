@@ -83,8 +83,12 @@ export function useSessionDebounce<T>(
 	// Track whether component is still mounted
 	const isMountedRef = useRef(true);
 
-	// Cleanup effect: clear all timers synchronously on unmount
+	// Cleanup effect: clear all timers synchronously on unmount.
+	// Also re-sets isMountedRef on mount: refs persist across remounts, so under
+	// React.StrictMode's mount→unmount→remount cycle the cleanup leaves it false
+	// forever and every debounced flush silently no-ops.
 	useEffect(() => {
+		isMountedRef.current = true;
 		return () => {
 			isMountedRef.current = false;
 

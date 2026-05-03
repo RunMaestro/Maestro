@@ -48,7 +48,7 @@ That's it. Whenever a `.ts` file in `src/` changes, Cue sends that prompt to the
 
 ## The Cue Modal
 
-Open the Cue dashboard to monitor and manage all automation activity.
+Open the Cue modal to monitor and manage all automation activity.
 
 **Keyboard shortcut:**
 
@@ -59,13 +59,13 @@ Open the Cue dashboard to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
-The modal has two tabs: **Dashboard** and **Pipeline Editor**. An **Enabled** toggle in the header lets you start and stop the engine globally.
+The modal has three tabs — **Dashboard**, **Pipeline Editor**, and **Activity Log** — plus a **Help** button and an **Enabled** master toggle in the header that starts and stops the engine globally.
 
-### Sessions Table
+## Dashboard
 
-The Dashboard tab shows all agents with Cue configurations:
+The Dashboard tab summarizes engine state at the top (Pipelines, Total Executions, Active Runs, Agents) and lists every agent that has a Cue configuration:
 
-![Cue Sessions](./screenshots/cue-sessions.png)
+![Cue Dashboard](./screenshots/cue-dashboard.png)
 
 | Column             | Description                                                  |
 | ------------------ | ------------------------------------------------------------ |
@@ -79,44 +79,15 @@ The Dashboard tab shows all agents with Cue configurations:
 
 Each row has three action buttons:
 
-- **Run Now** — Manually trigger a subscription on demand
-- **Edit YAML** — Open the inline YAML editor for that agent
-- **View in Pipeline** — Jump to the Pipeline Editor filtered to that agent
+- **Run Now** — Manually trigger a subscription on demand, bypassing its normal event conditions. Useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
+- **Edit YAML** — Open the inline YAML editor for that agent.
+- **View in Pipeline** — Jump to the Pipeline Editor filtered to that agent.
 
-### Run Now
-
-Each subscription row in the Sessions Table has a **Run Now** button that manually triggers it, bypassing its normal event conditions. This is useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
-
-### Activity Log
-
-A chronological record of completed and failed runs. Click any entry to expand full details including the event payload, run ID, and exit code.
-
-![Cue Activity Log](./screenshots/cue-activity-log.png)
-
-Each entry shows:
-
-- Subscription name and trigger type (e.g. `[github.pull_request]`)
-- Status (completed, failed, timeout, stopped)
-- Duration
-- Timestamp
-
-Expand an entry to see the full event data — for GitHub triggers this includes the PR/issue number, title, author, URL, and body.
-
-### YAML Editor
-
-Click **Edit YAML** on any session row to open the inline editor. The left side offers **pattern templates** (Startup, Heartbeat, Scheduled, Reactive, Sequential Chain, PR Review, Issue Triage, Task Queue, and more) — click one to insert a pre-configured subscription block. An **AI Assist** panel lets you describe what you want in plain English and have the agent edit the config for you.
-
-![Cue YAML Editor](./screenshots/cue-yaml-editor.png)
-
-The right side shows your YAML with real-time validation — a green **Valid YAML** indicator appears at the bottom when the config parses correctly. Click **Save** to write the file; the engine hot-reloads automatically.
-
-### Help
-
-Built-in reference guide accessible from the modal header. Covers configuration syntax, event types, and template variables.
+Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
 ## Pipeline Editor
 
-The **Pipeline Editor** tab visualizes your Cue subscriptions as a node graph — triggers on the left, agents on the right, with edges showing how events flow through your automation.
+The Pipeline Editor tab visualizes your Cue subscriptions as a node graph — triggers on the left, agents on the right, with edges showing how events flow through your automation.
 
 ![All Pipelines](./screenshots/cue-pipelines.png)
 
@@ -126,13 +97,52 @@ A pipeline can contain **multiple trigger lines** — for example, a daily scan 
 
 ### Inspecting a Pipeline
 
-Click any pipeline name in the top bar or select a node to drill into a single pipeline. Side drawers open for **Triggers** (left) and **Agents** (right), showing full configuration details. Selecting an agent node reveals its prompt text inline.
+Pick a pipeline from the **All Pipelines** dropdown in the top bar, or click any node, to drill into a single pipeline. The **Triggers** drawer (left) and **Agents** drawer (right) toggle from the toolbar and show full configuration details. Selecting a node reveals its details inline at the bottom — including the prompt text for an agent node.
 
 ![Pipeline Detail](./screenshots/cue-pipeline.png)
 
-The Triggers drawer lists all event types with their configurations (filter patterns, poll intervals, etc.). The Agents drawer shows all available agents with status indicators, and clicking one displays the prompt that will be sent when the trigger fires.
+The Triggers drawer lists all event types with their configurations (filter patterns, poll intervals, etc.). The Agents drawer shows all available agents grouped by project with status indicators.
 
-Use the **Switch to Agent** link at the bottom to jump directly to that agent's workspace.
+Use the **Switch to Agent** link to jump directly to that agent's workspace.
+
+## Activity Log
+
+The Activity Log tab is a chronological record of every completed, failed, timed-out, or stopped run. The header offers a search box and an **Expand all / Collapse all** toggle.
+
+![Cue Activity Log](./screenshots/cue-activity-log.png)
+
+Each entry shows:
+
+- Timestamp (just the time for today's runs, full date for older)
+- Pipeline color dot and subscription name
+- Trigger type (e.g. `(file.changed)`, `(github.pull_request)`)
+- Status (completed in N seconds, failed, timeout, stopped) with a duration
+
+Click any row — or use **Expand all** — to reveal the full event data: payload fields, run ID, exit code, and any captured stdout/stderr. The search box matches against subscription name, pipeline, file paths, PR titles, and the body of run output.
+
+![Activity Log Detail](./screenshots/cue-activity-log-detail.png)
+
+For `file.changed` events the payload includes the path, filename, directory, extension, and change type. For GitHub triggers it includes the PR/issue number, title, author, URL, and body.
+
+## YAML Editor
+
+Click **Edit YAML** on any Dashboard row to open the inline editor. The left column offers **pattern templates** (Startup, Heartbeat, Scheduled, Reactive, Sequential Chain, PR Review, Issue Triage, Task Queue, and more) — click one to insert a pre-configured subscription block. An **AI Assist** panel below lets you describe what you want in plain English and have the agent edit the config for you.
+
+![Cue YAML Editor](./screenshots/cue-yaml-editor.png)
+
+The right side shows your YAML with real-time validation — a green **Valid YAML** indicator appears at the bottom when the config parses correctly. Click **Save** to write the file; the engine hot-reloads automatically.
+
+### AI Assist
+
+Type a plain-English description of the subscription you want to add or change, and the agent edits the YAML for you. Useful for quickly scaffolding a new trigger without remembering field names.
+
+![AI Assist](./screenshots/cue-yaml-editor-ai.png)
+
+## Help
+
+The header **?** button opens a built-in quick-reference guide covering Cue's purpose, getting started, the full event type list, template variables, and advanced patterns. Use it as an in-app cheat sheet; for the full schema and examples, see [Configuration Reference](./maestro-cue-configuration), [Event Types](./maestro-cue-events), and [Advanced Patterns](./maestro-cue-advanced).
+
+![Cue Help](./screenshots/cue-help.png)
 
 ## Configuration File
 

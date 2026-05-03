@@ -35,6 +35,7 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
+import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { logger } from '../utils/logger';
@@ -318,6 +319,7 @@ export interface SettingsStoreState {
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
+	groupChatsExpanded: boolean;
 	tourCompleted: boolean;
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
@@ -361,12 +363,24 @@ export interface SettingsStoreState {
 	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	showAgentName: boolean;
+	showSessionIdPill: boolean;
+	showSessionCostPill: boolean;
+	showWorktreePill: boolean;
+	showWorktreeBranchName: boolean;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
 	autoRunInactivityTimeoutMin: number;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	annotatorPenColor: string;
+	annotatorPenSize: number;
+	annotatorThinning: number;
+	annotatorSmoothing: number;
+	annotatorStreamline: number;
+	annotatorTaperStart: number;
+	annotatorTaperEnd: number;
 }
 
 export interface SettingsStoreActions {
@@ -416,6 +430,7 @@ export interface SettingsStoreActions {
 	setTabShortcuts: (value: Record<string, Shortcut>) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
+	setGroupChatsExpanded: (value: boolean) => void;
 	setTourCompleted: (value: boolean) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
@@ -455,12 +470,24 @@ export interface SettingsStoreActions {
 	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
+	setShowAgentName: (value: boolean) => void;
+	setShowSessionIdPill: (value: boolean) => void;
+	setShowSessionCostPill: (value: boolean) => void;
+	setShowWorktreePill: (value: boolean) => void;
+	setShowWorktreeBranchName: (value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setAnnotatorPenColor: (value: string) => void;
+	setAnnotatorPenSize: (value: number) => void;
+	setAnnotatorThinning: (value: number) => void;
+	setAnnotatorSmoothing: (value: number) => void;
+	setAnnotatorStreamline: (value: number) => void;
+	setAnnotatorTaperStart: (value: number) => void;
+	setAnnotatorTaperEnd: (value: number) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -586,6 +613,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		groupChatsExpanded: true,
 		tourCompleted: false,
 		firstAutoRunCompleted: false,
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
@@ -629,12 +657,24 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeDetailedTracking: false,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
+		showAgentName: true,
+		showSessionIdPill: false,
+		showSessionCostPill: true,
+		showWorktreePill: false,
+		showWorktreeBranchName: false,
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		annotatorPenColor: '#9146FF',
+		annotatorPenSize: 10,
+		annotatorThinning: 0.5,
+		annotatorSmoothing: 0.5,
+		annotatorStreamline: 0.5,
+		annotatorTaperStart: 0,
+		annotatorTaperEnd: 0,
 
 		// ============================================================================
 		// Simple Setters
@@ -748,7 +788,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setRightPanelWidth: (value) => {
-			const clamped = Math.max(384, Math.min(800, value));
+			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
 			set({ rightPanelWidth: clamped });
 			window.maestro.settings.set('rightPanelWidth', clamped);
 		},
@@ -870,6 +910,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUngroupedCollapsed: (value) => {
 			set({ ungroupedCollapsed: value });
 			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setGroupChatsExpanded: (value) => {
+			set({ groupChatsExpanded: value });
+			window.maestro.settings.set('groupChatsExpanded', value);
 		},
 
 		setTourCompleted: (value) => {
@@ -1156,6 +1201,31 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('autoHideMenuBar', value);
 		},
 
+		setShowAgentName: (value) => {
+			set({ showAgentName: value });
+			window.maestro.settings.set('showAgentName', value);
+		},
+
+		setShowSessionIdPill: (value) => {
+			set({ showSessionIdPill: value });
+			window.maestro.settings.set('showSessionIdPill', value);
+		},
+
+		setShowSessionCostPill: (value) => {
+			set({ showSessionCostPill: value });
+			window.maestro.settings.set('showSessionCostPill', value);
+		},
+
+		setShowWorktreePill: (value) => {
+			set({ showWorktreePill: value });
+			window.maestro.settings.set('showWorktreePill', value);
+		},
+
+		setShowWorktreeBranchName: (value) => {
+			set({ showWorktreeBranchName: value });
+			window.maestro.settings.set('showWorktreeBranchName', value);
+		},
+
 		setModeratorStandingInstructions: (value) => {
 			const trimmed = value.slice(0, 2000);
 			set({ moderatorStandingInstructions: trimmed });
@@ -1188,6 +1258,41 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setAnnotatorPenColor: (value) => {
+			set({ annotatorPenColor: value });
+			window.maestro.settings.set('annotatorPenColor', value);
+		},
+
+		setAnnotatorPenSize: (value) => {
+			set({ annotatorPenSize: value });
+			window.maestro.settings.set('annotatorPenSize', value);
+		},
+
+		setAnnotatorThinning: (value) => {
+			set({ annotatorThinning: value });
+			window.maestro.settings.set('annotatorThinning', value);
+		},
+
+		setAnnotatorSmoothing: (value) => {
+			set({ annotatorSmoothing: value });
+			window.maestro.settings.set('annotatorSmoothing', value);
+		},
+
+		setAnnotatorStreamline: (value) => {
+			set({ annotatorStreamline: value });
+			window.maestro.settings.set('annotatorStreamline', value);
+		},
+
+		setAnnotatorTaperStart: (value) => {
+			set({ annotatorTaperStart: value });
+			window.maestro.settings.set('annotatorTaperStart', value);
+		},
+
+		setAnnotatorTaperEnd: (value) => {
+			set({ annotatorTaperEnd: value });
+			window.maestro.settings.set('annotatorTaperEnd', value);
 		},
 
 		// ============================================================================
@@ -1815,8 +1920,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['rightPanelWidth'] !== undefined)
 			patch.rightPanelWidth = Math.max(
-				384,
-				Math.min(800, allSettings['rightPanelWidth'] as number)
+				RIGHT_PANEL_MIN_WIDTH,
+				Math.min(RIGHT_PANEL_MAX_WIDTH, allSettings['rightPanelWidth'] as number)
 			);
 
 		if (allSettings['markdownEditMode'] !== undefined)
@@ -2013,6 +2118,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['ungroupedCollapsed'] !== undefined)
 			patch.ungroupedCollapsed = allSettings['ungroupedCollapsed'] as boolean;
+
+		if (allSettings['groupChatsExpanded'] !== undefined)
+			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
@@ -2218,6 +2326,21 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
+		if (allSettings['showAgentName'] !== undefined)
+			patch.showAgentName = allSettings['showAgentName'] as boolean;
+
+		if (allSettings['showSessionIdPill'] !== undefined)
+			patch.showSessionIdPill = allSettings['showSessionIdPill'] as boolean;
+
+		if (allSettings['showSessionCostPill'] !== undefined)
+			patch.showSessionCostPill = allSettings['showSessionCostPill'] as boolean;
+
+		if (allSettings['showWorktreePill'] !== undefined)
+			patch.showWorktreePill = allSettings['showWorktreePill'] as boolean;
+
+		if (allSettings['showWorktreeBranchName'] !== undefined)
+			patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
+
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
@@ -2235,6 +2358,27 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
+
+		if (allSettings['annotatorPenColor'] !== undefined)
+			patch.annotatorPenColor = allSettings['annotatorPenColor'] as string;
+
+		if (allSettings['annotatorPenSize'] !== undefined)
+			patch.annotatorPenSize = allSettings['annotatorPenSize'] as number;
+
+		if (allSettings['annotatorThinning'] !== undefined)
+			patch.annotatorThinning = allSettings['annotatorThinning'] as number;
+
+		if (allSettings['annotatorSmoothing'] !== undefined)
+			patch.annotatorSmoothing = allSettings['annotatorSmoothing'] as number;
+
+		if (allSettings['annotatorStreamline'] !== undefined)
+			patch.annotatorStreamline = allSettings['annotatorStreamline'] as number;
+
+		if (allSettings['annotatorTaperStart'] !== undefined)
+			patch.annotatorTaperStart = allSettings['annotatorTaperStart'] as number;
+
+		if (allSettings['annotatorTaperEnd'] !== undefined)
+			patch.annotatorTaperEnd = allSettings['annotatorTaperEnd'] as number;
 
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
@@ -2308,6 +2452,7 @@ export function getSettingsActions() {
 		setUsageStats: state.setUsageStats,
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setGroupChatsExpanded: state.setGroupChatsExpanded,
 		setTourCompleted: state.setTourCompleted,
 		setFirstAutoRunCompleted: state.setFirstAutoRunCompleted,
 		setOnboardingStats: state.setOnboardingStats,
@@ -2353,11 +2498,23 @@ export function getSettingsActions() {
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
+		setShowAgentName: state.setShowAgentName,
+		setShowSessionIdPill: state.setShowSessionIdPill,
+		setShowSessionCostPill: state.setShowSessionCostPill,
+		setShowWorktreePill: state.setShowWorktreePill,
+		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
 		setLastSelectedPromptId: state.setLastSelectedPromptId,
+		setAnnotatorPenColor: state.setAnnotatorPenColor,
+		setAnnotatorPenSize: state.setAnnotatorPenSize,
+		setAnnotatorThinning: state.setAnnotatorThinning,
+		setAnnotatorSmoothing: state.setAnnotatorSmoothing,
+		setAnnotatorStreamline: state.setAnnotatorStreamline,
+		setAnnotatorTaperStart: state.setAnnotatorTaperStart,
+		setAnnotatorTaperEnd: state.setAnnotatorTaperEnd,
 	};
 }

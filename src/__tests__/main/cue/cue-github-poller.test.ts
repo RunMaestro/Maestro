@@ -937,4 +937,63 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 	});
+
+	// PR-B 1.4: visibility-aware pause
+	describe('isActive gate', () => {
+		it('skips the gh fetch when isActive returns false', async () => {
+			let active = false;
+			const config = makeConfig({ isActive: () => active });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify(samplePRs),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2000);
+
+			// gh CLI was never invoked because doPoll short-circuited
+			expect(mockExecFile).not.toHaveBeenCalled();
+			expect(config.onEvent).not.toHaveBeenCalled();
+
+			cleanup();
+		});
+
+		it('resumes polling on the next interval when isActive flips back to true', async () => {
+			let active = false;
+			const config = makeConfig({ isActive: () => active });
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify(samplePRs),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+
+			// Initial poll attempt while inactive — no gh call.
+			await vi.advanceTimersByTimeAsync(2100);
+			expect(mockExecFile).not.toHaveBeenCalled();
+
+			// Activate, then advance past the configured poll interval.
+			active = true;
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+			expect(mockExecFile).toHaveBeenCalled();
+
+			cleanup();
+		});
+
+		it('defaults to always-active when isActive is omitted', async () => {
+			const config = makeConfig();
+			setupExecFile({
+				'--version': '2.0.0',
+				'pr list': JSON.stringify(samplePRs),
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(mockExecFile).toHaveBeenCalled();
+
+			cleanup();
+		});
+	});
 });

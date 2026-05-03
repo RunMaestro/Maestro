@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Play, Square, HelpCircle, LayoutGrid, Wand2 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
 import type { Theme } from '../../types';
 
 export interface AutoRunToolbarProps {
@@ -40,7 +41,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 	onFileSelect,
 }: AutoRunToolbarProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const compact = rightPanelWidth < 340;
+	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 	const btnClass =
 		'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors hover:bg-white/10';
 

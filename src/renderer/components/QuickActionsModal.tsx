@@ -113,6 +113,13 @@ interface QuickAction {
 		busyTabName?: string;
 		queueCount: number;
 	};
+	// Jump-to-agent actions only: the underlying session's bookmark flag and a
+	// stable key derived from the bare agent name. When two jump entries share
+	// the same agentSortKey (e.g. a top-level "rc" and a "Maestro subagent: rc"
+	// worktree child), the bookmarked one wins the tiebreaker so it gets the
+	// default highlight and Enter-to-jump.
+	bookmarked?: boolean;
+	agentSortKey?: string;
 }
 
 interface QuickActionsModalProps {
@@ -344,6 +351,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
+	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
+	const setBookmarksCollapsed = useUIStore((s) => s.setBookmarksCollapsed);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -453,6 +462,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
+	// Reveal a jumped-to agent without unnecessarily expanding sections.
+	// - Not bookmarked: expand the parent group if collapsed (existing behavior).
+	// - Bookmarked: prefer whichever section the agent is already visible in. If
+	//   neither bookmarks nor the parent group is open, expand bookmarks (the
+	//   pinned bookmark row is the lighter-weight reveal of the two).
+	const revealJumpTarget = (s: Session) => {
+		if (!s.bookmarked) {
+			if (s.groupId) {
+				setGroups((prev) =>
+					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+				);
+			}
+			return;
+		}
+		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
+		if (bookmarksCollapsed && !groupOpen) {
+			setBookmarksCollapsed(false);
+		}
+	};
+
 	const sessionActions: QuickAction[] = sessions.map((s) => {
 		// For worktree subagents, format as "Jump to $PARENT subagent: $NAME"
 		let label: string;
@@ -469,14 +498,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label,
 			action: () => {
 				setActiveSessionId(s.id);
-				// Auto-expand group if it's collapsed
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
-				}
+				revealJumpTarget(s);
 			},
 			subtext: s.state.toUpperCase(),
+			bookmarked: !!s.bookmarked,
+			agentSortKey: alphabetizeKey(s.name),
 		};
 	});
 
@@ -1901,11 +1927,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: s.name,
 			action: () => {
 				setActiveSessionId(s.id);
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
-				}
+				revealJumpTarget(s);
 			},
 			// State (IDLE / running) is conveyed by the LIVE/IDLE section headers in
 			// the agents-mode list, so we leave the per-row subtext empty here. Running
@@ -1913,6 +1935,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			subtext: undefined,
 			isRunningAgent: isRunning,
 			runningInfo,
+			bookmarked: !!s.bookmarked,
+			agentSortKey: alphabetizeKey(s.name),
 		};
 	});
 
@@ -1932,6 +1956,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			return a.label.toLowerCase().includes(searchLower);
 		})
 		.sort((a, b) => {
+			// When two jump-to-agent entries refer to the same agent name (e.g. a
+			// top-level "rc" and a "Maestro subagent: rc" worktree child), prefer the
+			// bookmarked one so it lands on selectedIndex 0 and gets the default
+			// highlight + Enter-to-jump.
+			const sameAgent =
+				a.agentSortKey !== undefined &&
+				b.agentSortKey !== undefined &&
+				a.agentSortKey === b.agentSortKey;
+			if (sameAgent && !!a.bookmarked !== !!b.bookmarked) {
+				return a.bookmarked ? -1 : 1;
+			}
 			// In agents mode, bucket running agents above idle ones; alphabetize within
 			// each bucket while skipping any leading emoji or punctuation so that
 			// "🚀 Atlas" sorts next to "Atlas" rather than at the top of the list.

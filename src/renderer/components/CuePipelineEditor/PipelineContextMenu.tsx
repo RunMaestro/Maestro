@@ -67,13 +67,14 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 			}}
 		>
 			<div
+				className="whitespace-nowrap"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
 					borderRadius: 6,
 					boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
 					padding: '4px 0',
-					minWidth: 140,
+					minWidth: '8.75rem',
 				}}
 			>
 				<button

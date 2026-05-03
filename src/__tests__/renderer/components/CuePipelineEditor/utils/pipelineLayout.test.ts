@@ -193,6 +193,33 @@ describe('mergePipelinesWithSavedLayout', () => {
 		expect(result.pipelines[0].color).toBe('#3b82f6');
 	});
 
+	it('restores viewOffset from saved layout (manual All-Pipelines arrangement)', () => {
+		const livePipelines = [makePipeline({ id: 'p1', name: 'Pipeline 1' })];
+		const savedLayout: PipelineLayoutState = {
+			pipelines: [
+				{
+					...makePipeline({ id: 'p1', name: 'Pipeline 1' }),
+					viewOffset: { x: 250, y: 800 },
+				},
+			],
+			selectedPipelineId: null,
+		};
+
+		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+		expect(result.pipelines[0].viewOffset).toEqual({ x: 250, y: 800 });
+	});
+
+	it('leaves viewOffset undefined when saved layout has no entry', () => {
+		const livePipelines = [makePipeline({ id: 'p1', name: 'Pipeline 1' })];
+		const savedLayout: PipelineLayoutState = {
+			pipelines: [makePipeline({ id: 'p1', name: 'Pipeline 1' })],
+			selectedPipelineId: null,
+		};
+
+		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+		expect(result.pipelines[0].viewOffset).toBeUndefined();
+	});
+
 	it('returns all live pipelines even when saved layout has fewer', () => {
 		const livePipelines = [
 			makePipeline({ id: 'p1', name: 'first' }),

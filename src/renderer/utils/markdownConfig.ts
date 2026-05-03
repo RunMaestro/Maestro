@@ -21,6 +21,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
+import { SyntaxHighlightBoundary } from '../components/SyntaxHighlightBoundary';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { openUrl } from './openUrl';
@@ -468,23 +469,28 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 						color: theme.colors.textMain,
 					},
 				};
-				return React.createElement(SyntaxHighlighter, {
-					language,
-					style: themedStyle,
-					customStyle: {
-						margin: codeBlockStyle?.margin ?? '0.5em 0',
-						padding: codeBlockStyle?.padding ?? '1em',
-						background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
-						fontSize: codeBlockStyle?.fontSize ?? '0.9em',
-						borderRadius: codeBlockStyle?.borderRadius ?? '6px',
-					},
-					PreTag: 'div',
-					children: codeContent,
+				return React.createElement(SyntaxHighlightBoundary, {
+					code: codeContent,
+					theme,
+					children: React.createElement(SyntaxHighlighter, {
+						language,
+						style: themedStyle,
+						customStyle: {
+							margin: codeBlockStyle?.margin ?? '0.5em 0',
+							padding: codeBlockStyle?.padding ?? '1em',
+							background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+							fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+							borderRadius: codeBlockStyle?.borderRadius ?? '6px',
+						},
+						PreTag: 'div',
+						translate: 'no',
+						children: codeContent,
+					}),
 				});
 			}
 
 			// Fallback: render as-is
-			return React.createElement('pre', null, children);
+			return React.createElement('pre', { translate: 'no' }, children);
 		},
 		// Inline code only — block code is handled by the pre component above
 		code: ({ node: _node, className, children, ...props }: any) => {

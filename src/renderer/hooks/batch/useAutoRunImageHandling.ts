@@ -56,6 +56,8 @@ export interface UseAutoRunImageHandlingReturn {
 	handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
 	/** Remove an attachment by relative path */
 	handleRemoveAttachment: (relativePath: string) => Promise<void>;
+	/** Replace an existing attachment's bytes with a new data URL (overwrites the file in place) */
+	replaceAttachment: (relativePath: string, newDataUrl: string) => Promise<void>;
 	/** Open lightbox for a filename or URL */
 	openLightboxByFilename: (filenameOrUrl: string) => void;
 	/** Close the lightbox */
@@ -448,6 +450,31 @@ export function useAutoRunImageHandling({
 		]
 	);
 
+	// Overwrite an existing attachment's bytes with a new data URL.
+	// Used by the image annotator: original file path is preserved so markdown
+	// references stay valid; only the on-disk content (and the in-memory preview) changes.
+	const replaceAttachment = useCallback(
+		async (relativePath: string, newDataUrl: string) => {
+			if (!folderPath) return;
+
+			const base64Content = newDataUrl.replace(/^data:image\/\w+;base64,/, '');
+
+			const result = await window.maestro.autorun.replaceImage(
+				folderPath,
+				relativePath,
+				base64Content,
+				sshRemoteId
+			);
+			if (!result.success) {
+				throw new Error(result.error || 'Failed to replace image');
+			}
+
+			setAttachmentPreviews((prev) => new Map(prev).set(relativePath, newDataUrl));
+			imageCache.set(`${folderPath}:${relativePath}`, newDataUrl);
+		},
+		[folderPath, sshRemoteId]
+	);
+
 	// Lightbox helpers - handles both attachment filenames and external URLs
 	const openLightboxByFilename = useCallback((filenameOrUrl: string) => {
 		// Check if it's an external URL (http/https/data:)
@@ -524,6 +551,7 @@ export function useAutoRunImageHandling({
 		handlePaste,
 		handleFileSelect,
 		handleRemoveAttachment,
+		replaceAttachment,
 		openLightboxByFilename,
 		closeLightbox,
 		handleLightboxNavigate,

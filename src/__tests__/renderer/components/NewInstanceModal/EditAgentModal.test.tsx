@@ -590,6 +590,77 @@ describe('EditAgentModal', () => {
 		);
 	});
 
+	it('should preserve shareHistoryToProjectDir when toggling the SSH dropdown (regression: remote-controlled flag was silently dropped)', async () => {
+		// Regression test: the SSH dropdown's onChange used to rebuild the config
+		// with only enabled/remoteId/syncHistory, silently dropping
+		// shareHistoryToProjectDir (the "This agent is remote-controlled" toggle).
+		// Switching from a remote to Local Execution would wipe the flag on save.
+		const sshSession = createSession({
+			projectRoot: '/home/devuser/project',
+			cwd: '/home/devuser/project',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/devuser/project',
+				shareHistoryToProjectDir: true,
+			},
+		});
+
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={sshSession}
+				existingSessions={[]}
+			/>
+		);
+
+		// Wait for the SSH dropdown to render with the remote selected
+		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
+
+		// Switch the dropdown to Local Execution — this is the action that used
+		// to wipe shareHistoryToProjectDir.
+		fireEvent.change(dropdown, { target: { value: 'local' } });
+
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		// shareHistoryToProjectDir must survive the dropdown toggle.
+		expect(onSave).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.any(String),
+			undefined,
+			'Be concise',
+			undefined,
+			'/custom/claude',
+			'--verbose',
+			{ API_KEY: 'test-key' },
+			'claude-sonnet',
+			100000,
+			expect.objectContaining({
+				enabled: false,
+				remoteId: null,
+				shareHistoryToProjectDir: true,
+			})
+		);
+	});
+
 	it('should render SSH remote selector when remotes exist', async () => {
 		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
 			success: true,

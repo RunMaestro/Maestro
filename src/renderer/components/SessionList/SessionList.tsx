@@ -1,14 +1,20 @@
-import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
+import React, {
+	useState,
+	useEffect,
+	useRef,
+	useMemo,
+	memo,
+	useCallback,
+	useDeferredValue,
+} from 'react';
 import {
 	Wand2,
 	Plus,
 	ChevronRight,
 	ChevronDown,
-	ChevronUp,
 	X,
 	Radio,
 	Folder,
-	GitBranch,
 	Menu,
 	Bookmark,
 	Trophy,
@@ -122,7 +128,7 @@ function SessionListInner(props: SessionListProps) {
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
-	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
+	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
 	const persistentWebLink = useSettingsStore((s) => s.persistentWebLink);
@@ -195,7 +201,7 @@ function SessionListInner(props: SessionListProps) {
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
 	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
 	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
-	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
+	const setGroupChatsExpanded = useSettingsStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
 	const setActiveSessionId = useCallback(
@@ -273,6 +279,10 @@ function SessionListInner(props: SessionListProps) {
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
+	// Deferred copy used for the heavy categorize/sort pass below. The input value
+	// itself stays bound to `sessionFilter` so typing remains instant; React just
+	// allows the filtered-list recompute to deprioritize under input pressure.
+	const deferredSessionFilter = useDeferredValue(sessionFilter);
 	const { onResizeStart: onSidebarResizeStart, transitionClass: sidebarTransitionClass } =
 		useResizablePanel({
 			width: leftSidebarWidthState,
@@ -447,7 +457,12 @@ function SessionListInner(props: SessionListProps) {
 		sortedUngroupedParentSessions,
 		sortedFilteredSessions,
 		sortedGroups,
-	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly, activeSessionId);
+	} = useSessionCategories(
+		deferredSessionFilter,
+		sortedSessions,
+		showUnreadAgentsOnly,
+		activeSessionId
+	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders
 	// These Maps store stable function references keyed by session/editing ID
@@ -544,7 +559,7 @@ function SessionListInner(props: SessionListProps) {
 
 		const content = (
 			<>
-				{/* Parent session - no chevron, maintains alignment */}
+				{/* Parent session — chevron in SessionItem toggles worktree expansion. */}
 				<SessionItem
 					session={session}
 					variant={effectiveVariant}
@@ -561,6 +576,7 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					worktreeChildCount={worktreeChildren.length}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -569,54 +585,35 @@ function SessionListInner(props: SessionListProps) {
 					onFinishRename={finishRenameHandlers.get(session.id)!}
 					onStartRename={() => startRenamingSession(`${options.keyPrefix}-${session.id}`)}
 					onToggleBookmark={toggleBookmarkHandlers.get(session.id)!}
+					onToggleWorktrees={onToggleWorktreeExpanded}
 				/>
 
-				{/* Thin band below parent when worktrees exist but collapsed - click to expand */}
-				{hasWorktrees && !worktreesExpanded && onToggleWorktreeExpanded && (
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							onToggleWorktreeExpanded(session.id);
-						}}
-						className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-						style={{
-							backgroundColor: theme.colors.accent + '15',
-							color: theme.colors.accent,
-						}}
-						title={`${worktreeChildren.length} worktree${worktreeChildren.length > 1 ? 's' : ''} (click to expand)`}
-					>
-						<GitBranch className="w-2.5 h-2.5" />
-						<span>
-							{worktreeChildren.length} worktree{worktreeChildren.length > 1 ? 's' : ''}
-						</span>
-						<ChevronDown className="w-2.5 h-2.5" />
-					</button>
-				)}
-
-				{/* Worktree children drawer (when expanded) */}
-				{hasWorktrees && worktreesExpanded && onToggleWorktreeExpanded && (
+				{/* Worktree children with tree-connector visualization. Always rendered
+				    so maxHeight + opacity drive the expand/collapse animation. */}
+				{hasWorktrees && onToggleWorktreeExpanded && (
 					<div
-						className={`rounded-bl overflow-hidden ${needsWorktreeWrapper ? '' : 'ml-1'}`}
-						style={{
-							backgroundColor: theme.colors.accent + '10',
-							borderLeft: needsWorktreeWrapper ? 'none' : `1px solid ${theme.colors.accent}30`,
-							borderBottom: `1px solid ${theme.colors.accent}30`,
-						}}
+						className="tree-children transition-all duration-200 ease-in-out overflow-hidden"
+						style={
+							{
+								'--tree-line-color': `${theme.colors.accent}30`,
+								'--tree-bg-color': theme.colors.bgSidebar,
+								maxHeight: worktreesExpanded ? `${worktreeChildren.length * 48}px` : '0px',
+								opacity: worktreesExpanded ? 1 : 0,
+							} as React.CSSProperties
+						}
 					>
-						{/* Worktree children list */}
-						<div>
-							{(showUnreadAgentsOnly
-								? worktreeChildren
-								: sortedWorktreeChildrenByParentId.get(session.id) || []
-							).map((child) => {
-								const childNavKey = getChildNavKey(variant, child.id, options.groupId);
-								const childGlobalIdx =
-									navIndexMap?.get(childNavKey) ?? sortedSessionIndexById.get(child.id) ?? -1;
-								const isChildKeyboardSelected =
-									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
-								return (
+						{(showUnreadAgentsOnly
+							? worktreeChildren
+							: sortedWorktreeChildrenByParentId.get(session.id) || []
+						).map((child) => {
+							const childNavKey = getChildNavKey(variant, child.id, options.groupId);
+							const childGlobalIdx =
+								navIndexMap?.get(childNavKey) ?? sortedSessionIndexById.get(child.id) ?? -1;
+							const isChildKeyboardSelected =
+								activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
+							return (
+								<div key={`worktree-${session.id}-${child.id}`} className="tree-child">
 									<SessionItem
-										key={`worktree-${session.id}-${child.id}`}
 										session={child}
 										variant="worktree"
 										theme={theme}
@@ -637,28 +634,9 @@ function SessionListInner(props: SessionListProps) {
 										onStartRename={() => startRenamingSession(`worktree-${session.id}-${child.id}`)}
 										onToggleBookmark={toggleBookmarkHandlers.get(child.id)!}
 									/>
-								);
-							})}
-						</div>
-						{/* Drawer handle at bottom - click to collapse */}
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onToggleWorktreeExpanded(session.id);
-							}}
-							className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-							style={{
-								backgroundColor: theme.colors.accent + '20',
-								color: theme.colors.accent,
-							}}
-							title="Click to collapse worktrees"
-						>
-							<GitBranch className="w-2.5 h-2.5" />
-							<span>
-								{worktreeChildren.length} worktree{worktreeChildren.length > 1 ? 's' : ''}
-							</span>
-							<ChevronUp className="w-2.5 h-2.5" />
-						</button>
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</>
@@ -1294,6 +1272,7 @@ function SessionListInner(props: SessionListProps) {
 								participantStates={participantStates}
 								groupChatStates={groupChatStates}
 								allGroupChatParticipantStates={allGroupChatParticipantStates}
+								showUnreadAgentsOnly={showUnreadAgentsOnly}
 							/>
 						)}
 				</div>
@@ -1310,6 +1289,7 @@ function SessionListInner(props: SessionListProps) {
 					getFileCount={getFileCount}
 					setActiveSessionId={setActiveSessionId}
 					handleContextMenu={handleContextMenu}
+					showUnreadAgentsOnly={showUnreadAgentsOnly}
 				/>
 			)}
 

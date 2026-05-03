@@ -5,6 +5,7 @@ import type { Theme, HistoryEntry } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
 const mockUnregisterLayer = vi.fn();
@@ -755,6 +756,12 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({
+						// Accumulated multi-tool entry: raw tokens overflow the window,
+						// but the preserved per-entry contextUsage is the last known good
+						// percentage. The display must clamp at 100% rather than render
+						// 0% (issue #762: previously the overflow path silently surfaced
+						// the capacity as the used-token count).
+						contextUsage: 100,
 						usageStats: {
 							inputTokens: 150000,
 							outputTokens: 1000,
@@ -768,7 +775,6 @@ describe('HistoryDetailModal', () => {
 				/>
 			);
 
-			// Should cap at 100%
 			expect(screen.getByText('100%')).toBeInTheDocument();
 		});
 
@@ -1177,6 +1183,40 @@ describe('HistoryDetailModal', () => {
 			fireEvent.keyDown(window, { key: 'ArrowRight' });
 
 			expect(mockOnNavigate).not.toHaveBeenCalled();
+		});
+
+		it('should not call onNavigate after unmount', () => {
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			expect(mockOnNavigate).not.toHaveBeenCalled();
+		});
+
+		it('should remove its keydown listener on unmount (no leak)', () => {
+			const spies = spyOnListeners(window);
+			const { unmount } = render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={mockEntries[1]}
+					onClose={mockOnClose}
+					filteredEntries={mockEntries}
+					currentIndex={1}
+					onNavigate={mockOnNavigate}
+				/>
+			);
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 

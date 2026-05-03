@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { LOOKBACK_OPTIONS, CUE_COLOR } from './historyConstants';
+import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 
 /** Pre-computed activity graph bucket from backend */
 export interface GraphBucket {
@@ -46,6 +47,12 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const graphRef = useRef<HTMLDivElement>(null);
+	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const {
+		left: contextMenuLeft,
+		top: contextMenuTop,
+		ready: contextMenuReady,
+	} = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
 
 	// Get the current lookback config
 	const lookbackConfig = useMemo(
@@ -274,13 +281,15 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{/* Context menu for lookback options */}
 			{contextMenu && (
 				<div
+					ref={contextMenuRef}
 					className="fixed z-50 py-1 rounded border shadow-lg"
 					style={{
-						left: contextMenu.x,
-						top: contextMenu.y,
+						left: contextMenuLeft,
+						top: contextMenuTop,
 						backgroundColor: theme.colors.bgSidebar,
 						borderColor: theme.colors.border,
 						minWidth: '120px',
+						opacity: contextMenuReady ? 1 : 0,
 					}}
 				>
 					<div

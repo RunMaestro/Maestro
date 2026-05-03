@@ -425,7 +425,7 @@ export const FileTab = memo(function FileTab({
 					>
 						{/* Main overlay content - connects directly to tab like an open folder */}
 						<div
-							className="shadow-xl overflow-hidden"
+							className="shadow-xl overflow-hidden whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								borderLeft: `1px solid ${theme.colors.border}`,
@@ -433,7 +433,7 @@ export const FileTab = memo(function FileTab({
 								borderBottom: `1px solid ${theme.colors.border}`,
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
-								minWidth: '220px',
+								minWidth: '13.75rem',
 							}}
 						>
 							{/* Actions */}

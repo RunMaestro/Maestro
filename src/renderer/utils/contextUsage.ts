@@ -180,6 +180,14 @@ export interface ContextDisplayResult {
 	percentage: number;
 	/** Effective context window size used for the calculation */
 	contextWindow: number;
+	/**
+	 * True when the result is computed from real usage data; false when the
+	 * function had to fall back (overflow with no trustworthy fallback %, or
+	 * missing window size). Callers should hold their previous good values
+	 * when this is false instead of displaying the fallback as if it were a
+	 * real measurement (see issue #762).
+	 */
+	trustworthy: boolean;
 }
 
 /**
@@ -193,7 +201,7 @@ export interface ContextDisplayResult {
  * @param contextWindow - Effective context window size (0 = unknown)
  * @param agentId - Agent type for agent-specific calculation
  * @param fallbackPercentage - Preserved contextUsage % to use when tokens overflow
- * @returns Display-ready tokens, percentage, and window size
+ * @returns Display-ready tokens, percentage, and window size, plus a `trustworthy` flag
  */
 export function calculateContextDisplay(
 	usageStats: {
@@ -207,31 +215,34 @@ export function calculateContextDisplay(
 	fallbackPercentage?: number | null
 ): ContextDisplayResult {
 	if (!contextWindow || contextWindow <= 0) {
-		return { tokens: 0, percentage: 0, contextWindow: 0 };
+		return { tokens: 0, percentage: 0, contextWindow: 0, trustworthy: false };
 	}
 
 	const raw = calculateContextTokens(usageStats, agentId);
 
 	let tokens = raw;
+	let trustworthy = true;
 	if (raw > contextWindow) {
 		if (
 			fallbackPercentage != null &&
 			Number.isFinite(fallbackPercentage) &&
 			fallbackPercentage >= 0
 		) {
-			// Accumulated multi-tool turn: derive tokens from preserved percentage
+			// Accumulated multi-tool turn: derive tokens from preserved percentage.
 			const boundedFallback = Math.min(100, fallbackPercentage);
 			tokens = Math.round((boundedFallback / 100) * contextWindow);
 		} else {
-			// We don't have a trustworthy fallback percentage yet, so clamp to the
-			// configured window instead of displaying an impossible token total.
-			tokens = contextWindow;
+			// No trustworthy fallback. Return zeros and flag the result as untrustworthy
+			// so the caller can hold its previous values (issue #762: previously this
+			// branch displayed `contextWindow` itself, surfacing the capacity as if it
+			// were the used-token count).
+			return { tokens: 0, percentage: 0, contextWindow, trustworthy: false };
 		}
 	}
 
 	const percentage = tokens <= 0 ? 0 : Math.min(100, Math.round((tokens / contextWindow) * 100));
 
-	return { tokens, percentage, contextWindow };
+	return { tokens, percentage, contextWindow, trustworthy };
 }
 
 /**

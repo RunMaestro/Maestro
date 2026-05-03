@@ -38,8 +38,12 @@ import type {
 } from '../../../shared/cue-pipeline-types';
 import { getNextPipelineColor } from '../../components/CuePipelineEditor/pipelineColors';
 import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
+import { resolvePipelineOffset } from '../../components/CuePipelineEditor/utils/pipelineGraph';
 import { DEFAULT_TRIGGER_LABELS } from '../../components/CuePipelineEditor/utils/pipelineValidation';
 import { generateUUID } from '../../../shared/uuid';
+
+/** Prefix used for ReactFlow-only pipeline-group background nodes. */
+const PIPELINE_GROUP_PREFIX = 'pipeline-group:';
 
 /** Delay before selecting a dropped node — lets ReactFlow mount the new node
  *  before selection fires, otherwise `selectedNode` resolves to null on the
@@ -67,6 +71,8 @@ export interface UsePipelineCanvasCallbacksParams {
 
 export interface UsePipelineCanvasCallbacksReturn {
 	onNodesChange: OnNodesChange;
+	onNodeDragStart: (event: React.MouseEvent, node: Node, draggedNodes: Node[]) => void;
+	onNodeDrag: (event: React.MouseEvent, node: Node, draggedNodes: Node[]) => void;
 	onNodeDragStop: (_event: React.MouseEvent, _node: Node, draggedNodes: Node[]) => void;
 	onEdgesChange: OnEdgesChange;
 	onConnect: (connection: Connection) => void;
@@ -89,6 +95,15 @@ export function usePipelineCanvasCallbacks({
 	const { setPipelineState, persistLayout } = actions;
 	const { setSelectedNodeId, setSelectedEdgeId } = selection;
 
+	// Pipeline-group drag tracking. Captured at dragStart, used by onNodeDrag
+	// to translate child nodes alongside the group, and by onNodeDragStop to
+	// commit the cumulative delta into the pipeline's `viewOffset`.
+	const groupDragRef = useRef<{
+		groupId: string;
+		pipelineId: string;
+		startGroupPos: { x: number; y: number };
+	} | null>(null);
+
 	// Apply ALL node changes (including mid-drag) to the local displayNodes
 	// so ReactFlow can render smooth dragging. Position commits to the
 	// canonical pipelineState happen in onNodeDragStop instead.
@@ -99,9 +114,89 @@ export function usePipelineCanvasCallbacks({
 		[setDisplayNodes]
 	);
 
+	// Capture the pipeline-group's start position so we can apply the running
+	// drag delta to its children as the user drags. Only meaningful in All
+	// Pipelines view, where pipeline-group nodes exist and are draggable.
+	const onNodeDragStart = useCallback(
+		(_event: React.MouseEvent, node: Node, _draggedNodes: Node[]) => {
+			if (node.type !== 'pipeline-group') {
+				groupDragRef.current = null;
+				return;
+			}
+			const pipelineId = node.id.startsWith(PIPELINE_GROUP_PREFIX)
+				? node.id.slice(PIPELINE_GROUP_PREFIX.length)
+				: '';
+			if (!pipelineId) {
+				groupDragRef.current = null;
+				return;
+			}
+			groupDragRef.current = {
+				groupId: node.id,
+				pipelineId,
+				startGroupPos: { x: node.position.x, y: node.position.y },
+			};
+		},
+		[]
+	);
+
+	// While dragging the group, translate every child node in displayNodes
+	// by the same delta so visually the entire pipeline moves together.
+	// Children's canonical pipelineState positions are NOT touched here —
+	// the cumulative delta is committed once on drag stop as a viewOffset.
+	const onNodeDrag = useCallback(
+		(_event: React.MouseEvent, node: Node, _draggedNodes: Node[]) => {
+			const drag = groupDragRef.current;
+			if (!drag || node.id !== drag.groupId || node.type !== 'pipeline-group') return;
+			const pipelinePrefix = `${drag.pipelineId}:`;
+			setDisplayNodes((prev) => {
+				// Read the group's previous on-screen position from the previous
+				// frame so we apply only the incremental delta this frame.
+				const prevGroup = prev.find((dn) => dn.id === drag.groupId);
+				const prevPos = prevGroup?.position ?? drag.startGroupPos;
+				const dx = node.position.x - prevPos.x;
+				const dy = node.position.y - prevPos.y;
+				if (dx === 0 && dy === 0) return prev;
+				return prev.map((dn) => {
+					if (dn.id.startsWith(pipelinePrefix)) {
+						return { ...dn, position: { x: dn.position.x + dx, y: dn.position.y + dy } };
+					}
+					return dn;
+				});
+			});
+		},
+		[setDisplayNodes]
+	);
+
 	// Commit final positions to canonical pipelineState when drag ends.
 	const onNodeDragStop = useCallback(
 		(_event: React.MouseEvent, _node: Node, draggedNodes: Node[]) => {
+			// Pipeline-group drag commits an additive `viewOffset` on the moved
+			// pipeline AND freezes the current resolved offsets of every other
+			// pipeline as their viewOffset. Without that snapshot, removing the
+			// moved pipeline from the auto-stack chain would shift the rest
+			// upward (or rearrange them) on the very next render.
+			const groupDragged = draggedNodes.find((n) => n.type === 'pipeline-group');
+			const drag = groupDragRef.current;
+			if (groupDragged && drag && groupDragged.id === drag.groupId) {
+				const dx = groupDragged.position.x - drag.startGroupPos.x;
+				const dy = groupDragged.position.y - drag.startGroupPos.y;
+				groupDragRef.current = null;
+				if (dx === 0 && dy === 0) return;
+				const movedId = drag.pipelineId;
+				const yOffsets = stableYOffsetsRef.current;
+				setPipelineState((prev) => ({
+					...prev,
+					pipelines: prev.pipelines.map((pipeline) => {
+						const current = resolvePipelineOffset(pipeline, yOffsets);
+						const next =
+							pipeline.id === movedId ? { x: current.x + dx, y: current.y + dy } : current;
+						return { ...pipeline, viewOffset: next };
+					}),
+				}));
+				persistLayout();
+				return;
+			}
+
 			if (isAllPipelinesView) return;
 			if (draggedNodes.length === 0) return;
 
@@ -429,6 +524,8 @@ export function usePipelineCanvasCallbacks({
 
 	return {
 		onNodesChange,
+		onNodeDragStart,
+		onNodeDrag,
 		onNodeDragStop,
 		onEdgesChange,
 		onConnect,

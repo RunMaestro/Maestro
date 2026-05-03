@@ -19,6 +19,7 @@ const mockCue = {
 	getGraphData: vi.fn(),
 	getActiveRuns: vi.fn(),
 	getActivityLog: vi.fn(),
+	getEventCount: vi.fn(),
 	getQueueStatus: vi.fn(),
 	getMetrics: vi.fn(),
 	getFanInHealth: vi.fn(),

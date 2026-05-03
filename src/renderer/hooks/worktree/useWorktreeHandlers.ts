@@ -30,6 +30,7 @@ import {
 	sessionMatchesWorktreeRoot,
 } from '../../utils/worktreeDedup';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 // ============================================================================
 // Return type
@@ -85,6 +86,38 @@ async function fetchGitInfo(
 /** Check if a branch name should be skipped (main, master, HEAD). */
 function isSkippableBranch(branch: string | null | undefined): boolean {
 	return branch === 'main' || branch === 'master' || branch === 'HEAD';
+}
+
+/**
+ * Resolve the canonical main-repo root for a path, normalized for comparison.
+ *
+ * Uses `worktreeInfo` (not `getRepoRoot`) so that when the path is itself a
+ * worktree, we get the *main* repo root (parent of `--git-common-dir`) rather
+ * than the worktree's own toplevel. This is what we need to verify that a
+ * scanned subdir actually belongs to the parent agent's repository.
+ *
+ * Returns null in two cases:
+ *  - "Not a git repo / no repoRoot" — explicit signal from `worktreeInfo`.
+ *    Callers fall back to the legacy "trust the basePath" behavior.
+ *  - Unexpected exception (IPC failure, etc.) — we return null *and* report
+ *    the error to Sentry + the logger. Without that signal, a regressed IPC
+ *    would silently disable the repo-root guard and re-introduce the
+ *    wrong-parent attachment bug with no production trace.
+ */
+async function resolveRepoRoot(path: string, sshRemoteId?: string): Promise<string | null> {
+	try {
+		const info = await window.maestro.git.worktreeInfo(path, sshRemoteId);
+		if (!info.success || !info.exists || !info.repoRoot) return null;
+		return normalizePath(info.repoRoot);
+	} catch (err) {
+		logger.error(
+			`[WorktreeScan] resolveRepoRoot failed for ${path}:`,
+			undefined,
+			err instanceof Error ? err.message : String(err)
+		);
+		captureException(err, { extra: { path, sshRemoteId, source: 'resolveRepoRoot' } });
+		return null;
+	}
 }
 
 // buildWorktreeSession and BuildWorktreeSessionParams are imported from ../../utils/worktreeSession
@@ -190,9 +223,24 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				if (gitSubdirs.length > 0) {
 					const newWorktreeSessions: Session[] = [];
 
+					// Same repo-identity guard as scanWorktreeConfigs: if the user just
+					// pointed this agent at a basePath that contains worktrees from a
+					// different repo, skip those subdirs instead of attaching them.
+					const parentRepoRoot = await resolveRepoRoot(activeSession.cwd, parentSshRemoteId);
+
 					for (const subdir of gitSubdirs) {
 						// Skip main/master/HEAD branches — they're typically the main repo
 						if (isSkippableBranch(subdir.branch)) continue;
+
+						// Repo-identity check (mirrors scanWorktreeConfigs). Falls back to
+						// legacy behavior when either side can't be resolved.
+						if (
+							parentRepoRoot &&
+							subdir.repoRoot &&
+							normalizePath(subdir.repoRoot) !== parentRepoRoot
+						) {
+							continue;
+						}
 
 						// Check if session already exists (read latest state each iteration)
 						const latestSessions = useSessionStore.getState().sessions;
@@ -554,7 +602,13 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		if (sessionsWithWorktreeConfig.length === 0) return;
 
 		const newWorktreeSessions: Session[] = [];
+		// Children that no longer exist on disk — surfaced as "Worktree Removed".
 		const staleSessionIds: string[] = [];
+		// Children whose cwd still exists but belongs to a different repo. Surfaced
+		// as "Worktree Re-assigned" instead of "Worktree Removed" so the user isn't
+		// told their worktree was deleted (it wasn't — it just attaches to the
+		// correct parent on the next scan / chokidar event).
+		const reassignedSessionIds: string[] = [];
 
 		for (const parentSession of sessionsWithWorktreeConfig) {
 			try {
@@ -565,13 +619,43 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				);
 				const { gitSubdirs, scanFailed } = scanResult;
 
+				// Resolve the parent's main repo root once so we can verify each scanned
+				// subdir actually belongs to *this* parent's repository. Without this,
+				// two parents whose basePaths overlap (or a basePath that contains
+				// worktrees from a different repo) would race — whichever parent's loop
+				// iterates first would grab every worktree, producing the "worktrees
+				// re-added under a wrong agent" bug after a wipe + restart.
+				const parentRepoRoot = await resolveRepoRoot(parentSession.cwd, sshRemoteId);
+
 				// Detect additions
 				for (const subdir of gitSubdirs) {
 					if (isSkippableBranch(subdir.branch)) continue;
 
+					// Repo-identity check: if we know both the parent's repo root and the
+					// subdir's repo root, skip subdirs that don't match. If either is
+					// missing (parent isn't a git repo, or git couldn't resolve the
+					// subdir's common-dir), fall back to the legacy "trust the basePath"
+					// behavior so we don't break setups that worked before.
+					if (
+						parentRepoRoot &&
+						subdir.repoRoot &&
+						normalizePath(subdir.repoRoot) !== parentRepoRoot
+					) {
+						continue;
+					}
+
 					const normalizedSubdirPath = normalizePath(subdir.path);
 					const latestSessions = useSessionStore.getState().sessions;
+					// Sessions queued for stale-removal or re-assignment are about to be
+					// detached at the end of this scan, so they must NOT block other
+					// parents in the same pass from creating the correct child. Without
+					// this, in the overlapping-basePath recovery case parent A would
+					// queue a wrong-agent child for detachment and parent B would skip
+					// the same path because the (about-to-be-removed) session still
+					// matches by cwd in the store.
+					const stalePending = new Set([...staleSessionIds, ...reassignedSessionIds]);
 					const existingSession = latestSessions.find((s) => {
+						if (stalePending.has(s.id)) return false;
 						const normalizedCwd = normalizePath(s.cwd);
 						return (
 							normalizedCwd === normalizedSubdirPath ||
@@ -614,7 +698,14 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						`[WorktreeScan] Skipping removal phase for ${parentSession.worktreeConfig!.basePath} — scan failed`
 					);
 				} else {
-					const diskPaths = new Set(gitSubdirs.map((d) => normalizePath(d.path)));
+					// Build a quick lookup from normalized subdir path → its repoRoot,
+					// so we can detect children that exist on disk but were attached to
+					// the wrong parent (the worktrees-under-wrong-agent recovery case).
+					const subdirByPath = new Map<string, { repoRoot: string | null }>();
+					for (const d of gitSubdirs) {
+						subdirByPath.set(normalizePath(d.path), { repoRoot: d.repoRoot });
+					}
+					const diskPaths = new Set(subdirByPath.keys());
 					const latestSessions = useSessionStore.getState().sessions;
 					const childSessions = latestSessions.filter(
 						(s) => s.parentSessionId === parentSession.id
@@ -625,8 +716,25 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						);
 					} else {
 						for (const child of childSessions) {
-							if (!diskPaths.has(normalizePath(child.cwd))) {
+							const childPath = normalizePath(child.cwd);
+							if (!diskPaths.has(childPath)) {
 								staleSessionIds.push(child.id);
+								continue;
+							}
+							// Detach children whose cwd points at a worktree of a different
+							// repo than this parent. Without this, after the worktree-wipe
+							// bug the wrong-agent children would never get re-attached to
+							// the correct parent (the existing-session dedup would block it).
+							const subdirRepoRoot = subdirByPath.get(childPath)?.repoRoot ?? null;
+							if (
+								parentRepoRoot &&
+								subdirRepoRoot &&
+								normalizePath(subdirRepoRoot) !== parentRepoRoot
+							) {
+								logger.warn(
+									`[WorktreeScan] Detaching ${child.id} from ${parentSession.id}: child cwd ${child.cwd} belongs to repo ${subdirRepoRoot}, not parent's repo ${parentRepoRoot}`
+								);
+								reassignedSessionIds.push(child.id);
 							}
 						}
 					}
@@ -638,6 +746,36 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					err
 				);
 			}
+		}
+
+		// Apply removals BEFORE additions so the additions' cwd-dedup doesn't see
+		// soon-to-be-detached wrong-agent children and filter out the correct
+		// re-attached child. Without this ordering the same-pass recovery
+		// (parent A flags wrong-agent child stale, parent B creates the correct
+		// child for the same cwd) would silently drop the new child.
+		if (staleSessionIds.length > 0 || reassignedSessionIds.length > 0) {
+			const staleSet = new Set(staleSessionIds);
+			const reassignedSet = new Set(reassignedSessionIds);
+			const removalSet = new Set([...staleSessionIds, ...reassignedSessionIds]);
+			useSessionStore.getState().setSessions((prev) => {
+				const removed = prev.filter((s) => removalSet.has(s.id));
+				for (const s of removed) {
+					if (reassignedSet.has(s.id)) {
+						notifyToast({
+							type: 'info',
+							title: 'Worktree Re-assigned',
+							message: s.worktreeBranch || s.name,
+						});
+					} else if (staleSet.has(s.id)) {
+						notifyToast({
+							type: 'info',
+							title: 'Worktree Removed',
+							message: s.worktreeBranch || s.name,
+						});
+					}
+				}
+				return prev.filter((s) => !removalSet.has(s.id));
+			});
 		}
 
 		if (newWorktreeSessions.length > 0) {
@@ -654,21 +792,6 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				.setSessions((prev) =>
 					prev.map((s) => (parentIds.has(s.id) ? { ...s, worktreesExpanded: true } : s))
 				);
-		}
-
-		if (staleSessionIds.length > 0) {
-			const staleSet = new Set(staleSessionIds);
-			useSessionStore.getState().setSessions((prev) => {
-				const removed = prev.filter((s) => staleSet.has(s.id));
-				for (const s of removed) {
-					notifyToast({
-						type: 'info',
-						title: 'Worktree Removed',
-						message: s.worktreeBranch || s.name,
-					});
-				}
-				return prev.filter((s) => !staleSet.has(s.id));
-			});
 		}
 	}, []);
 
@@ -750,9 +873,48 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			});
 			if (existingSession) return;
 
+			const sshRemoteId = getSshRemoteId(parentSession);
+
+			// Repo-identity check: chokidar fires for every new directory under the
+			// watched basePath, including ones that turn out to be worktrees of a
+			// *different* repo. Without this guard, those would be attached to the
+			// wrong parent agent (matching the periodic-scan logic above).
+			const [parentRepoRoot, discoveredInfo] = await Promise.all([
+				resolveRepoRoot(parentSession.cwd, sshRemoteId),
+				// Unexpected IPC errors here are reported to Sentry rather than
+				// silently nulled out — otherwise a regressed worktreeInfo would
+				// disable the repo-root guard for chokidar discoveries with no
+				// production signal. An explicit "not a repo" still resolves to
+				// `info.success=false` and falls through to the legacy fallback.
+				window.maestro.git.worktreeInfo(worktree.path, sshRemoteId).catch((err) => {
+					logger.error(
+						`[WorktreeWatcher] worktreeInfo failed for ${worktree.path}:`,
+						undefined,
+						err instanceof Error ? err.message : String(err)
+					);
+					captureException(err, {
+						extra: {
+							path: worktree.path,
+							sshRemoteId,
+							source: 'onWorktreeDiscovered',
+						},
+					});
+					return null;
+				}),
+			]);
+			const discoveredRepoRoot =
+				discoveredInfo && discoveredInfo.success && discoveredInfo.repoRoot
+					? normalizePath(discoveredInfo.repoRoot)
+					: null;
+			if (parentRepoRoot && discoveredRepoRoot && discoveredRepoRoot !== parentRepoRoot) {
+				logger.warn(
+					`[WT-DEBUG] SKIPPED: discovered worktree ${worktree.path} belongs to repo ${discoveredRepoRoot}, not parent's repo ${parentRepoRoot}`
+				);
+				return;
+			}
+
 			const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 				useSettingsStore.getState();
-			const sshRemoteId = getSshRemoteId(parentSession);
 			const gitInfo = await fetchGitInfo(worktree.path, sshRemoteId);
 
 			const worktreeSession = buildWorktreeSession({

@@ -319,34 +319,41 @@ export function SessionListItem({
 							{(session.costUsd ?? 0).toFixed(2)}
 						</span>
 					)}
-
-					{/* Show match count for content searches */}
-					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
-						<span
-							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={{
-								backgroundColor: theme.colors.accent + '30',
-								color: theme.colors.accentText,
-							}}
-						>
-							<Search className="w-3 h-3" />
-							{searchResultInfo.matchCount}
-						</span>
-					)}
-
-					{/* Show match preview for content searches */}
-					{searchResultInfo && searchResultInfo.matchPreview && searchMode !== 'title' && (
-						<span className="truncate italic max-w-[400px]" style={{ color: theme.colors.accent }}>
-							"
-							{renderHighlightedPreview(
-								searchResultInfo.matchPreview,
-								searchQuery,
-								theme.colors.accent
-							)}
-							"
-						</span>
-					)}
 				</div>
+
+				{/* Match row: shown only for content searches with results */}
+				{searchResultInfo &&
+					searchMode !== 'title' &&
+					(searchResultInfo.matchCount > 0 || searchResultInfo.matchPreview) && (
+						<div
+							className="flex items-center gap-2 mt-1.5 text-xs min-w-0"
+							style={{ color: theme.colors.textDim }}
+						>
+							{searchResultInfo.matchCount > 0 && (
+								<span
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: theme.colors.accent + '30',
+										color: theme.colors.accentText,
+									}}
+								>
+									<Search className="w-3 h-3" />
+									{searchResultInfo.matchCount}
+								</span>
+							)}
+							{searchResultInfo.matchPreview && (
+								<span className="truncate italic min-w-0" style={{ color: theme.colors.accent }}>
+									"
+									{renderHighlightedPreview(
+										searchResultInfo.matchPreview,
+										searchQuery,
+										theme.colors.accent
+									)}
+									"
+								</span>
+							)}
+						</div>
+					)}
 			</div>
 
 			{/* Active indicator */}

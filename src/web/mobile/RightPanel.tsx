@@ -27,6 +27,10 @@ export interface RightPanelProps {
 	projectPath?: string;
 	onAutoRunOpenDocument?: (filename: string) => void;
 	onAutoRunOpenSetup?: () => void;
+	/** Bubbled up from `AutoRunInline` so the launch sheet can pre-fill the active doc. */
+	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
+	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
+	onAutoRunOpenFolderPicker?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onViewDiff?: (filePath: string) => void;
@@ -39,6 +43,13 @@ export interface RightPanelProps {
 	 * column inside the layout flex row.
 	 */
 	mode?: PanelMode;
+	/**
+	 * Height (px) of the fixed-bottom CommandInputBar. Reserved as paddingBottom
+	 * on the inline panel so AutoRun's footer/toolbar isn't buried by the input
+	 * bar overlay. Ignored in overlay mode (the drawer sits above the input bar
+	 * via z-index).
+	 */
+	inputBarHeight?: number;
 }
 
 const TABS: { id: RightDrawerTab; label: string }[] = [
@@ -61,6 +72,8 @@ export function RightPanel({
 	projectPath,
 	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
+	onAutoRunSelectedDocumentChange,
+	onAutoRunOpenFolderPicker,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -68,6 +81,7 @@ export function RightPanel({
 	width,
 	onResizeStart,
 	mode = 'inline',
+	inputBarHeight,
 }: RightPanelProps) {
 	const colors = useThemeColors();
 	const [currentTab, setCurrentTab] = useState<RightDrawerTab>(activeTab);
@@ -142,6 +156,10 @@ export function RightPanel({
 				borderLeft: `1px solid ${colors.border}`,
 				backgroundColor: colors.bgMain,
 				height: '100%',
+				// Reserve space for the fixed-bottom CommandInputBar so AutoRun's
+				// footer/toolbar (Edit toggle, Save/Revert/Reset, search, token
+				// estimate) stays reachable on desktop viewports.
+				paddingBottom: inputBarHeight ? `${inputBarHeight}px` : undefined,
 				overflow: 'hidden',
 				position: 'relative',
 			};
@@ -235,6 +253,8 @@ export function RightPanel({
 							sendRequest={sendRequest}
 							send={send}
 							onOpenDocument={onAutoRunOpenDocument}
+							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
+							onOpenFolderPicker={onAutoRunOpenFolderPicker}
 						/>
 					)}
 					{currentTab === 'git' && (

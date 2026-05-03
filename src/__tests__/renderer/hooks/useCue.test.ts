@@ -15,6 +15,7 @@ const mockGetStatus = vi.fn();
 const mockGetActiveRuns = vi.fn();
 const mockGetActivityLog = vi.fn();
 const mockGetQueueStatus = vi.fn();
+const mockGetEventCount = vi.fn();
 const mockEnable = vi.fn();
 const mockDisable = vi.fn();
 const mockStopRun = vi.fn();
@@ -39,6 +40,7 @@ beforeEach(() => {
 	mockGetActiveRuns.mockResolvedValue([]);
 	mockGetActivityLog.mockResolvedValue([]);
 	mockGetQueueStatus.mockResolvedValue({});
+	mockGetEventCount.mockResolvedValue(0);
 	mockEnable.mockResolvedValue(undefined);
 	mockDisable.mockResolvedValue(undefined);
 	mockStopRun.mockResolvedValue(true);
@@ -52,6 +54,7 @@ beforeEach(() => {
 			getActiveRuns: mockGetActiveRuns,
 			getActivityLog: mockGetActivityLog,
 			getQueueStatus: mockGetQueueStatus,
+			getEventCount: mockGetEventCount,
 			enable: mockEnable,
 			disable: mockDisable,
 			stopRun: mockStopRun,
@@ -293,6 +296,50 @@ describe('useCue', () => {
 					message: expect.stringContaining('sub-x'),
 				})
 			);
+			notifySpy.mockRestore();
+		});
+
+		// Regression for 42ac8333e: an earlier version of the toast title
+		// appended the raw `payload.queuedAt` ISO-8601 string in square
+		// brackets so that back-to-back drops produced distinct titles
+		// (instead of collapsing into a single visible toast). That leaked
+		// a wire-format timestamp into user-facing UI. The fix uses a
+		// localized clock + milliseconds suffix instead. Guard both the
+		// removal of the raw ISO and the presence of the new ms tag.
+		it('toast title uses localized time + ms (no raw ISO leak)', async () => {
+			let activityCallback: ((p: unknown) => void) | null = null;
+			mockOnActivityUpdate.mockImplementation((cb: (p: unknown) => void) => {
+				activityCallback = cb;
+				return mockUnsubscribe;
+			});
+			const notificationStore = await import('../../../renderer/stores/notificationStore');
+			const notifySpy = vi.spyOn(notificationStore, 'notifyToast').mockReturnValue(undefined);
+
+			await renderAndSettle();
+
+			// Pick an instant whose ISO form contains a recognizable substring
+			// we can grep for in the title — `2026-04-21T10:11:12.345Z`.
+			const queuedAt = Date.UTC(2026, 3, 21, 10, 11, 12, 345);
+			act(() => {
+				activityCallback?.({
+					type: 'queueOverflow',
+					sessionId: 's-1',
+					sessionName: 'Sess A',
+					subscriptionName: 'sub-x',
+					queuedAt,
+				});
+			});
+
+			expect(notifySpy).toHaveBeenCalledTimes(1);
+			const call = notifySpy.mock.calls[0][0] as { title: string };
+			// No raw ISO substrings — both the date prefix and the trailing
+			// "Z" leaked through square brackets in the original bug.
+			expect(call.title).not.toMatch(/2026-04-21T/);
+			expect(call.title).not.toMatch(/\[.*Z\]/);
+			// Milliseconds tag must be present so back-to-back drops within
+			// the same wall-clock second still produce distinct titles.
+			expect(call.title).toMatch(/\d+ms/);
+			expect(call.title).toContain('Sess A');
 			notifySpy.mockRestore();
 		});
 

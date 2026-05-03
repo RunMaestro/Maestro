@@ -675,4 +675,183 @@ describe('usePipelineLayout', () => {
 			expect(result.current.pipelinesLoaded).toBe(true);
 		});
 	});
+
+	// Regression for f94108e7b: replaced an `restoreInFlightRef` boolean with a
+	// `latestRestoreIdRef` counter so a stale in-flight load whose await
+	// resolves AFTER a newer load has started cannot apply its result on top
+	// of the newer one. The boolean variant only checked "is one in flight?"
+	// — it could not distinguish "the same load that started" from "a newer
+	// one that fired during my await". When graphSessions changed mid-fetch,
+	// both callbacks would race to setPipelineState with different snapshots.
+	describe('request-id guard (regression: stale in-flight load must not overwrite newer one)', () => {
+		// Helper: returns a deferred-promise pair so the test controls when
+		// each loadPipelineLayout call resolves.
+		function makeDeferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+			let resolve!: (v: T) => void;
+			const promise = new Promise<T>((res) => {
+				resolve = res;
+			});
+			return { promise, resolve };
+		}
+
+		// loadPipelineLayout is called by THREE effects in this scenario:
+		//   1) the standalone writtenRoots-reseed effect (fires once on mount
+		//      with deps=[lastWrittenRootsRef])
+		//   2) the pipeline-restore effect (fires on mount with the initial
+		//      graphSessions)
+		//   3) the pipeline-restore effect AGAIN (fires on rerender when
+		//      graphSessions changes, before the previous load resolves).
+		// The race the fix guards against is between calls #2 and #3 — call
+		// #1 is irrelevant. This helper resolves call #1 immediately to null
+		// (writtenRoots ignores null) and gives back deferreds for calls #2/#3.
+		function setupLoadPipelineLayoutQueue() {
+			const stale = makeDeferred<unknown>();
+			const fresh = makeDeferred<unknown>();
+			let callCount = 0;
+			(window as any).maestro.cue.loadPipelineLayout = vi.fn().mockImplementation(() => {
+				callCount += 1;
+				if (callCount === 1) return Promise.resolve(null); // writtenRoots reseed
+				if (callCount === 2) return stale.promise; // first pipeline-restore (stale)
+				if (callCount === 3) return fresh.promise; // re-rendered pipeline-restore (fresh)
+				return Promise.resolve(null);
+			});
+			return { stale, fresh, getCallCount: () => callCount };
+		}
+
+		it('drops the stale load when graphSessions change and the first await resolves last', async () => {
+			// Two distinct live-pipeline snapshots — one per "before"/"after"
+			// graphSessions. graphSessionsToPipelines is the synchronous
+			// derive-from-graph function called at the top of loadLayout, so
+			// stubbing it to return distinct arrays per call lets us assert
+			// which snapshot won the race.
+			const stalePipelines = [makePipeline('stale')];
+			const freshPipelines = [makePipeline('fresh')];
+			mockGraphSessionsToPipelines.mockImplementation((graphSessions: any) => {
+				const ids = graphSessions.map((g: any) => g.sessionId).join(',');
+				return ids === 's1' ? (stalePipelines as any) : (freshPipelines as any);
+			});
+
+			const { stale, fresh } = setupLoadPipelineLayoutQueue();
+			const setPipelineState = vi.fn();
+
+			// Hoist refs that must be stable across renders. createDefaultParams
+			// allocates a fresh `lastWrittenRootsRef`/`savedStateRef` each call,
+			// which would trip the writtenRoots-reseed effect's dep array and
+			// fire an extra loadPipelineLayout on every rerender — defeating
+			// the whole point of the queue.
+			const lastWrittenRootsRef = { current: new Set<string>() };
+			const savedStateRef = { current: '' };
+			const setIsDirty = vi.fn();
+			const reactFlowInstance = createDefaultParams().reactFlowInstance;
+
+			// First render: graphSessions = [s1]. Pipeline-restore fires reqId=1
+			// and awaits the `stale` deferred.
+			let currentGraphSessions: ReturnType<typeof makeGraphSession>[] = [makeGraphSession('s1')];
+			const { rerender } = renderHook(() =>
+				usePipelineLayout({
+					reactFlowInstance,
+					graphSessions: currentGraphSessions,
+					sessions: [makeSessionInfo('s1')],
+					pipelineState: { pipelines: [], selectedPipelineId: null },
+					setPipelineState,
+					savedStateRef,
+					lastWrittenRootsRef,
+					setIsDirty,
+				})
+			);
+
+			// Re-render with new graphSessions BEFORE the first load resolves.
+			// Pipeline-restore effect re-runs reqId=2 and awaits the `fresh`
+			// deferred. latestRestoreIdRef is now 2; the stale callback at
+			// reqId=1 must bail when its await eventually resolves.
+			currentGraphSessions = [makeGraphSession('s2')];
+			rerender();
+
+			// Resolve the FRESH load first. Its reqId (2) still matches
+			// latestRestoreIdRef (2), so it applies state.
+			await act(async () => {
+				fresh.resolve(null);
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(setPipelineState).toHaveBeenCalledTimes(1);
+			expect(setPipelineState.mock.calls[0][0].pipelines).toEqual(freshPipelines);
+
+			// Now resolve the STALE load. Its reqId (1) !== latestRestoreIdRef
+			// (2), so the guard must bail. Without the fix, this call would
+			// land second and stomp the fresh state with the stale snapshot.
+			setPipelineState.mockClear();
+			await act(async () => {
+				stale.resolve(null);
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(setPipelineState).not.toHaveBeenCalled();
+		});
+
+		it('drops the stale load even when its await resolves first', async () => {
+			// Symmetric case: stale load resolves BEFORE the fresh one. Without
+			// the fix, the boolean `restoreInFlightRef` would let the stale
+			// callback set `hasRestoredLayoutRef = true`, and the fresh
+			// callback would then bail via that flag — leaving the user
+			// looking at stale data. The reqId guard correctly prefers the
+			// fresh result regardless of resolution order.
+			const stalePipelines = [makePipeline('stale')];
+			const freshPipelines = [makePipeline('fresh')];
+			mockGraphSessionsToPipelines.mockImplementation((graphSessions: any) => {
+				const ids = graphSessions.map((g: any) => g.sessionId).join(',');
+				return ids === 's1' ? (stalePipelines as any) : (freshPipelines as any);
+			});
+
+			const { stale, fresh, getCallCount } = setupLoadPipelineLayoutQueue();
+			const setPipelineState = vi.fn();
+
+			// Stable refs (see comment in the previous test).
+			const lastWrittenRootsRef = { current: new Set<string>() };
+			const savedStateRef = { current: '' };
+			const setIsDirty = vi.fn();
+			const reactFlowInstance = createDefaultParams().reactFlowInstance;
+
+			let currentGraphSessions: ReturnType<typeof makeGraphSession>[] = [makeGraphSession('s1')];
+			const { rerender } = renderHook(() =>
+				usePipelineLayout({
+					reactFlowInstance,
+					graphSessions: currentGraphSessions,
+					sessions: [makeSessionInfo('s1')],
+					pipelineState: { pipelines: [], selectedPipelineId: null },
+					setPipelineState,
+					savedStateRef,
+					lastWrittenRootsRef,
+					setIsDirty,
+				})
+			);
+
+			// Sanity: after the first render, exactly the writtenRoots reseed
+			// and the first pipeline-restore call have been issued.
+			expect(getCallCount()).toBe(2);
+			expect(setPipelineState).not.toHaveBeenCalled();
+
+			currentGraphSessions = [makeGraphSession('s2')];
+			rerender();
+
+			// After rerender the pipeline-restore effect re-fires; the third
+			// call is the fresh load awaiting `fresh.promise`.
+			expect(getCallCount()).toBe(3);
+			expect(setPipelineState).not.toHaveBeenCalled();
+
+			// Stale resolves first — its reqId (1) !== current (2), so it
+			// must bail and leave hasRestoredLayoutRef untouched.
+			await act(async () => {
+				stale.resolve(null);
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(setPipelineState).not.toHaveBeenCalled();
+
+			// Fresh resolves last — its reqId (2) matches and it applies state.
+			await act(async () => {
+				fresh.resolve(null);
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(setPipelineState).toHaveBeenCalledTimes(1);
+			expect(setPipelineState.mock.calls[0][0].pipelines).toEqual(freshPipelines);
+		});
+	});
 });

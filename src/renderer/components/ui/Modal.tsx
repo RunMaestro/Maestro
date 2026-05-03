@@ -126,8 +126,13 @@ export function Modal({
 	}, [initialFocusRef]);
 
 	const handleBackdropClick = (e: React.MouseEvent) => {
-		// Only close if clicking directly on backdrop, not on modal content
+		// Only close if clicking directly on backdrop, not on modal content.
+		// Stop propagation so a parent modal's backdrop handler doesn't also
+		// fire — matters when a Modal renders nested inside another modal
+		// (e.g. AgentDetailModal inside UsageDashboardModal); without this
+		// the outer modal would close too.
 		if (closeOnBackdropClick && e.target === e.currentTarget) {
+			e.stopPropagation();
 			onClose();
 		}
 	};

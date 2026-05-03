@@ -10,6 +10,11 @@ interface NotifyToastOptions {
 	duration?: string;
 	dismissible?: boolean;
 	agent?: string;
+	tab?: string;
+	actionUrl?: string;
+	actionLabel?: string;
+	openFile?: string;
+	openUrl?: string;
 	json?: boolean;
 }
 
@@ -102,6 +107,45 @@ export async function notifyToast(
 		}
 	}
 
+	const tabId = options.tab && options.tab.length > 0 ? options.tab : undefined;
+	if (tabId && !sessionId) {
+		console.error('Error: --tab requires --agent (a tab is scoped to an agent)');
+		process.exit(1);
+	}
+
+	const actionUrl =
+		options.actionUrl && options.actionUrl.length > 0 ? options.actionUrl : undefined;
+	const actionLabel =
+		options.actionLabel && options.actionLabel.length > 0 ? options.actionLabel : undefined;
+	if (actionLabel && !actionUrl) {
+		console.error('Error: --action-label requires --action-url');
+		process.exit(1);
+	}
+
+	// Build the clickAction (data-driven click intent that survives the IPC
+	// bridge). At most one of --open-file / --open-url can be set; both fall
+	// back to the simpler --agent jump-session behavior when omitted.
+	let clickAction:
+		| { kind: 'jump-session'; sessionId: string; tabId?: string }
+		| { kind: 'open-file'; sessionId: string; path: string }
+		| { kind: 'open-url'; url: string }
+		| undefined;
+	const openFile = options.openFile && options.openFile.length > 0 ? options.openFile : undefined;
+	const openUrl = options.openUrl && options.openUrl.length > 0 ? options.openUrl : undefined;
+	if (openFile && openUrl) {
+		console.error('Error: --open-file and --open-url are mutually exclusive');
+		process.exit(1);
+	}
+	if (openFile) {
+		if (!sessionId) {
+			console.error('Error: --open-file requires --agent (file preview is scoped to an agent)');
+			process.exit(1);
+		}
+		clickAction = { kind: 'open-file', sessionId, path: openFile };
+	} else if (openUrl) {
+		clickAction = { kind: 'open-url', url: openUrl };
+	}
+
 	try {
 		const result = await withMaestroClient(async (client) => {
 			return client.sendCommand<{ type: string; success: boolean; error?: string }>(
@@ -113,6 +157,10 @@ export async function notifyToast(
 					duration,
 					dismissible,
 					sessionId,
+					tabId,
+					actionUrl,
+					actionLabel,
+					clickAction,
 				},
 				'notify_toast_result'
 			);

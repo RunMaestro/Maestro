@@ -1245,6 +1245,18 @@ function findTargetSession(
 		const nameMatch = sessions.find((s) => s.name === pipelineKey);
 		if (nameMatch) return nameMatch.name;
 
+		// Prefer an owning session before scanning the global sessions list. The
+		// YAML literally lives in that session's project root, so it's a far
+		// stronger signal than "first session that isn't already a source" or
+		// the unconditional sessions[0] fallback below — the latter would
+		// otherwise display the pipeline as connected to whichever session
+		// happens to be first in sessions.json (issue #912).
+		if (owners && owners.length > 0) {
+			const ownerNotUsed = owners.find((o) => !usedSessions.has(o));
+			if (ownerNotUsed) return ownerNotUsed;
+			return owners[0];
+		}
+
 		// For the initial subscription, try to find a session not already used as a source
 		// This is a heuristic: the target session is typically the one the YAML belongs to
 		for (const session of sessions) {

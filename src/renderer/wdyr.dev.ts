@@ -44,6 +44,18 @@ whyDidYouRender(React, {
 		// /^FilePreview/,
 	],
 
-	// Exclude noisy components you don't care about
-	exclude: [/^BrowserRouter/, /^Link/, /^Route/],
+	// Exclude noisy components you don't care about.
+	// React Flow internals (MiniMap, NodeRenderer, NodeWrapper, MiniMapNodes)
+	// subscribe to the RF store and re-render on every viewport/nodes change
+	// by design — they swamp the console with unfixable noise. App-side
+	// ReactFlow children should still be tracked normally.
+	exclude: [
+		/^BrowserRouter/,
+		/^Link/,
+		/^Route/,
+		/^MiniMap$/,
+		/^MiniMapNodes$/,
+		/^NodeRenderer$/,
+		/^NodeWrapper$/,
+	],
 });

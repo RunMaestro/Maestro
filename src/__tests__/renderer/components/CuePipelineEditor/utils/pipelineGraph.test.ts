@@ -508,7 +508,8 @@ describe('convertToReactFlowNodes', () => {
 			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 10, y: 30 })],
 		});
 		const nodes = convertToReactFlowNodes([pipeline], null);
-		expect(nodes[0].position).toEqual({ x: 10, y: 30 });
+		const t1 = nodes.find((n) => n.id === 'p1:t1')!;
+		expect(t1.position).toEqual({ x: 10, y: 30 });
 	});
 
 	it('does NOT apply y-offsets in selected pipeline view', () => {
@@ -532,8 +533,115 @@ describe('convertToReactFlowNodes', () => {
 		});
 		const nodes = convertToReactFlowNodes([pipeline], 'p1');
 		for (const node of nodes) {
+			// Pipeline-group backgrounds are not rendered in single-pipeline view,
+			// so every remaining node still expects the drag-handle class.
 			expect(node.dragHandle).toBe('.drag-handle');
 		}
+	});
+
+	// ── Pipeline-group background nodes (All Pipelines view) ────────────────
+
+	it('emits a pipeline-group background node per non-empty pipeline in All Pipelines view', () => {
+		const p1 = makePipeline('p1', {
+			color: '#aabbcc',
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const p2 = makePipeline('p2', {
+			color: '#ddeeff',
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		const nodes = convertToReactFlowNodes([p1, p2], null);
+		const groups = nodes.filter((n) => n.type === 'pipeline-group');
+		expect(groups).toHaveLength(2);
+		expect(groups.find((g) => g.id === 'pipeline-group:p1')).toBeDefined();
+		expect(groups.find((g) => g.id === 'pipeline-group:p2')).toBeDefined();
+		// Group nodes are not selectable and behind the rest, but ARE draggable
+		// so the user can reposition the entire pipeline by grabbing the card.
+		for (const g of groups) {
+			expect(g.selectable).toBe(false);
+			expect(g.draggable).toBe(true);
+			expect(g.zIndex).toBe(-1);
+		}
+	});
+
+	it('skips pipeline-group nodes for empty pipelines', () => {
+		const p1 = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat')],
+		});
+		const p2 = makePipeline('p2', { nodes: [] });
+		const nodes = convertToReactFlowNodes([p1, p2], null);
+		const groups = nodes.filter((n) => n.type === 'pipeline-group');
+		expect(groups).toHaveLength(1);
+		expect(groups[0].id).toBe('pipeline-group:p1');
+	});
+
+	it('does NOT emit pipeline-group nodes in single-pipeline view', () => {
+		const p1 = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat')],
+		});
+		const p2 = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed')],
+		});
+		const nodes = convertToReactFlowNodes([p1, p2], 'p1');
+		expect(nodes.some((n) => n.type === 'pipeline-group')).toBe(false);
+	});
+
+	it('manual viewOffset shifts both group and children in All Pipelines view', () => {
+		const p1 = makePipeline('p1', {
+			color: '#aabbcc',
+			viewOffset: { x: 100, y: 200 },
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const nodes = convertToReactFlowNodes([p1], null);
+		const trigger = nodes.find((n) => n.id === 'p1:t1')!;
+		// Trigger renders at canonical (0, 0) + viewOffset (100, 200).
+		expect(trigger.position).toEqual({ x: 100, y: 200 });
+		const group = nodes.find((n) => n.id === 'pipeline-group:p1')!;
+		// Group bbox starts at the trigger origin (100, 200) minus padding.
+		expect(group.position.x).toBeLessThan(100);
+		expect(group.position.y).toBeLessThan(200);
+	});
+
+	it('manual viewOffset is ignored in single-pipeline view', () => {
+		const p1 = makePipeline('p1', {
+			viewOffset: { x: 100, y: 200 },
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 10, y: 30 })],
+		});
+		const nodes = convertToReactFlowNodes([p1], 'p1');
+		const trigger = nodes.find((n) => n.id === 'p1:t1')!;
+		// Single-pipeline view always renders at canonical position.
+		expect(trigger.position).toEqual({ x: 10, y: 30 });
+	});
+
+	it('pipelines with viewOffset are excluded from auto-stack chain', () => {
+		const p1 = makePipeline('p1', {
+			viewOffset: { x: 0, y: 500 },
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const p2 = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		const nodes = convertToReactFlowNodes([p1, p2], null);
+		const t1 = nodes.find((n) => n.id === 'p1:t1')!;
+		const t2 = nodes.find((n) => n.id === 'p2:t2')!;
+		// p1 honors its viewOffset (y=500); p2 auto-stacks from y=0 since p1
+		// is no longer in the chain.
+		expect(t1.position.y).toBe(500);
+		expect(t2.position.y).toBe(0);
+	});
+
+	it('pipeline-group node carries the pipeline color and name', () => {
+		const p1 = makePipeline('p1', {
+			color: '#ef4444',
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 100, y: 50 })],
+		});
+		const nodes = convertToReactFlowNodes([p1], null);
+		const group = nodes.find((n) => n.id === 'pipeline-group:p1')!;
+		expect(group).toBeDefined();
+		expect((group.data as { color: string }).color).toBe('#ef4444');
+		expect((group.data as { pipelineName: string }).pipelineName).toBe('Pipeline p1');
+		expect((group.data as { width: number }).width).toBeGreaterThan(0);
+		expect((group.data as { height: number }).height).toBeGreaterThan(0);
 	});
 });
 

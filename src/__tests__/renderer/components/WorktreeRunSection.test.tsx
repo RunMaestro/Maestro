@@ -968,6 +968,50 @@ describe('WorktreeRunSection', () => {
 		expect(screen.getByText('Branch name is required')).toBeTruthy();
 	});
 
+	it('keeps incomplete branch suffixes while typing a new worktree branch name', async () => {
+		const session = createMockSession();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				worktreeChildren={[]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: '__create_new__' } });
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText('Worktree Branch Name')).toBeTruthy();
+		});
+
+		const branchInput = screen.getByDisplayValue(/auto-run-/) as HTMLInputElement;
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'cue-' } });
+		});
+		expect(branchInput.value).toBe('cue-');
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'feature/' } });
+		});
+		expect(branchInput.value).toBe('feature/');
+
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: 'release/v1.' } });
+		});
+		expect(branchInput.value).toBe('release/v1.');
+	});
+
 	// -----------------------------------------------------------------------
 	// UX Polish: Info icon, state indicator, path preview, keyboard nav
 	// -----------------------------------------------------------------------

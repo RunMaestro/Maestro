@@ -102,14 +102,14 @@ export function FileContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden"
+			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '180px',
+				minWidth: '11.25rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>

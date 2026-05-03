@@ -112,6 +112,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			autoRunStats: DEFAULT_AUTO_RUN_STATS,
 			usageStats: DEFAULT_USAGE_STATS,
 			ungroupedCollapsed: false,
+			groupChatsExpanded: true,
 			tourCompleted: false,
 			firstAutoRunCompleted: false,
 			onboardingStats: DEFAULT_ONBOARDING_STATS,

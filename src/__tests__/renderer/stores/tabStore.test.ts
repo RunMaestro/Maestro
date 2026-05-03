@@ -455,6 +455,53 @@ describe('tabStore', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].starred).toBe(false);
 		});
+
+		it('should set and clear per-tab customModel', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			setupSessionWithTabs([tab1]);
+
+			useTabStore.getState().setTabModel('tab-1', 'claude-opus-4-7');
+			let session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customModel).toBe('claude-opus-4-7');
+
+			useTabStore.getState().setTabModel('tab-1', undefined);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customModel).toBeUndefined();
+
+			// Empty string also clears the override
+			useTabStore.getState().setTabModel('tab-1', 'claude-opus-4-7');
+			useTabStore.getState().setTabModel('tab-1', '');
+			session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customModel).toBeUndefined();
+		});
+
+		it('should set and clear per-tab customEffort', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			setupSessionWithTabs([tab1]);
+
+			useTabStore.getState().setTabEffort('tab-1', 'high');
+			let session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customEffort).toBe('high');
+
+			useTabStore.getState().setTabEffort('tab-1', undefined);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customEffort).toBeUndefined();
+		});
+
+		it('setTabModel/setTabEffort should not affect sibling tabs', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2]);
+
+			useTabStore.getState().setTabModel('tab-1', 'claude-opus-4-7');
+			useTabStore.getState().setTabEffort('tab-1', 'high');
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].customModel).toBe('claude-opus-4-7');
+			expect(session.aiTabs[0].customEffort).toBe('high');
+			expect(session.aiTabs[1].customModel).toBeUndefined();
+			expect(session.aiTabs[1].customEffort).toBeUndefined();
+		});
 	});
 
 	// ========================================================================

@@ -450,7 +450,12 @@ export async function listDirWithStatsRemote(
 	options?: { nameSuffix?: string },
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<RemoteDirEntryWithStats[]>> {
-	const escapedPath = shellEscape(dirPath);
+	// Use the tilde-aware variant: `~/foo` becomes `"$HOME/foo"` so $HOME
+	// actually expands inside the `cd`. shellEscape() single-quotes the
+	// argument and prevents that expansion, which silently sent the stat
+	// loop to the wrong directory and made every home-relative listing
+	// return zero rows.
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	// Build a glob pattern passed to the remote shell. If no suffix is given,
 	// match every non-hidden file in the directory.
 	const glob = options?.nameSuffix ? `*${options.nameSuffix}` : '*';
@@ -521,7 +526,10 @@ export async function bulkStatFileInSubdirsRemote(
 	if (/[^\w.-]/.test(fileName)) {
 		return { success: false, error: `Refusing unsafe fileName: ${fileName}` };
 	}
-	const escapedParent = shellEscape(parentDir);
+	// Tilde-aware: `~/foo` becomes `"$HOME/foo"` so the `cd` actually lands
+	// in the user's home directory on the remote. Plain shellEscape() would
+	// single-quote the path and the tilde would never expand.
+	const escapedParent = shellEscapeRemotePath(parentDir);
 	// Output one line per matching file: `<size>|<mtime-seconds>|<subdir>/<fileName>`.
 	// Same GNU-then-BSD probe used by `listDirWithStatsRemote`. The leading
 	// `cd` scopes the glob so file names come back as relative paths.

@@ -572,6 +572,43 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			);
 		});
 
+		it('sanitizes branch names that contain spaces or other illegal characters', async () => {
+			// Regression: typing "Cue Dashboard" used to flow straight to git, which
+			// rejected it with "fatal: 'Cue Dashboard' is not a valid branch name".
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'Cue Dashboard',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(window.maestro.git.worktreeSetup).toHaveBeenCalledWith(
+				'/projects/my-repo',
+				'/projects/worktrees/Cue-Dashboard',
+				'Cue-Dashboard',
+				undefined
+			);
+		});
+
 		it('adds a new session to the store with correct parentSessionId', async () => {
 			const session = createMockSession();
 			const deps = createMockDeps();

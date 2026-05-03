@@ -18,6 +18,7 @@ import type { TriggerNodeDataProps } from '../nodes/TriggerNode';
 import type { AgentNodeDataProps } from '../nodes/AgentNode';
 import type { CommandNodeDataProps } from '../nodes/CommandNode';
 import type { ErrorNodeDataProps } from '../nodes/ErrorNode';
+import type { PipelineGroupNodeDataProps } from '../nodes/PipelineGroupNode';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
 
 /** Build the one-line summary shown under the command node's name. */
@@ -69,10 +70,22 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 const PIPELINE_GAP = 100; // px between pipeline groups
 const NODE_HEIGHT = 100; // approximate node height
 
+// Approximate node footprint used to compute the bounding box of the per-pipeline
+// translucent background card in All Pipelines view. Real nodes are a touch
+// narrower/shorter, so the box always fully encloses them.
+const NODE_BG_WIDTH = 320;
+const NODE_BG_HEIGHT = 100;
+const PIPELINE_GROUP_PADDING = 28;
+
 /**
  * Computes vertical offsets so pipeline groups don't overlap in the
  * "All Pipelines" view. Returns an empty map when a single pipeline is
  * selected (offsets are only needed for the combined view).
+ *
+ * Pipelines with a manual `viewOffset` are excluded from the auto-stack
+ * chain — they're placed by the user, so they shouldn't push the rest
+ * of the auto-stacked pipelines around. Their offset comes from
+ * `computePipelineOffsets` instead.
  *
  * Exported so `onNodesChange` can subtract offsets before writing
  * ReactFlow's screen-space positions back to the canonical state.
@@ -87,6 +100,8 @@ export function computePipelineYOffsets(
 	let currentY = 0;
 	for (const pipeline of pipelines) {
 		if (pipeline.nodes.length === 0) continue;
+		// Manually-positioned pipelines opt out of auto-stack.
+		if (pipeline.viewOffset) continue;
 		let minY = Infinity;
 		let maxY = -Infinity;
 		for (const node of pipeline.nodes) {
@@ -97,6 +112,20 @@ export function computePipelineYOffsets(
 		currentY += maxY - minY + NODE_HEIGHT + PIPELINE_GAP;
 	}
 	return offsets;
+}
+
+/**
+ * Resolves the (x, y) offset to apply to every node of a pipeline in the
+ * "All Pipelines" view. Manual `viewOffset` (set by the user dragging a
+ * pipeline-group node) wins; otherwise we fall back to the auto-stack
+ * Y-offset and 0 on X.
+ */
+export function resolvePipelineOffset(
+	pipeline: CuePipelineState['pipelines'][number],
+	autoYOffsets: Map<string, number>
+): { x: number; y: number } {
+	if (pipeline.viewOffset) return pipeline.viewOffset;
+	return { x: 0, y: autoYOffsets.get(pipeline.id) ?? 0 };
 }
 
 // ─── Node conversion ─────────────────────────────────────────────────────────
@@ -145,6 +174,52 @@ export function convertToReactFlowNodes(
 	// During drag, use frozen offsets so the display stays consistent with the
 	// offsets subtracted in onNodesChange (prevents visual jump on drag end).
 	const pipelineYOffsets = frozenYOffsets ?? computePipelineYOffsets(pipelines, selectedPipelineId);
+
+	// In All Pipelines view, render a translucent color-matched background
+	// card behind each pipeline so the visual grouping is obvious. Pushed
+	// FIRST so they render under content nodes; zIndex -1 belt-and-braces
+	// in case ReactFlow decides to bump a selected node's stacking order.
+	if (selectedPipelineId === null) {
+		for (const pipeline of pipelines) {
+			if (pipeline.nodes.length === 0) continue;
+			const offset = resolvePipelineOffset(pipeline, pipelineYOffsets);
+			let minX = Infinity;
+			let minY = Infinity;
+			let maxX = -Infinity;
+			let maxY = -Infinity;
+			for (const pNode of pipeline.nodes) {
+				const x = pNode.position.x + offset.x;
+				const y = pNode.position.y + offset.y;
+				minX = Math.min(minX, x);
+				minY = Math.min(minY, y);
+				maxX = Math.max(maxX, x + NODE_BG_WIDTH);
+				maxY = Math.max(maxY, y + NODE_BG_HEIGHT);
+			}
+			const groupData: PipelineGroupNodeDataProps = {
+				pipelineName: pipeline.name,
+				color: pipeline.color,
+				width: maxX - minX + 2 * PIPELINE_GROUP_PADDING,
+				height: maxY - minY + 2 * PIPELINE_GROUP_PADDING,
+				theme,
+			};
+			nodes.push({
+				id: `pipeline-group:${pipeline.id}`,
+				type: 'pipeline-group',
+				position: {
+					x: minX - PIPELINE_GROUP_PADDING,
+					y: minY - PIPELINE_GROUP_PADDING,
+				},
+				data: groupData,
+				selectable: false,
+				// Group is the user-grabbable handle for the whole pipeline.
+				// ReactFlow honors per-node `draggable` even when the global
+				// `nodesDraggable` is false (which it is in All Pipelines view).
+				draggable: true,
+				focusable: false,
+				zIndex: -1,
+			});
+		}
+	}
 
 	// First pass: compute all pipeline colors per agent session (for multi-color indicator)
 	const agentPipelineMap = new Map<string, string[]>();
@@ -198,9 +273,15 @@ export function convertToReactFlowNodes(
 		// pipeline, causing the same agent from another pipeline to pop up dimmed.
 		if (!isActive) continue;
 
+		// viewOffset only applies in All Pipelines view — single-pipeline view
+		// must always show nodes at their canonical positions.
+		const pipelineOffset =
+			selectedPipelineId === null
+				? resolvePipelineOffset(pipeline, pipelineYOffsets)
+				: { x: 0, y: 0 };
+
 		for (const pNode of pipeline.nodes) {
 			const compositeId = `${pipeline.id}:${pNode.id}`;
-			const yOffset = pipelineYOffsets.get(pipeline.id) ?? 0;
 
 			if (pNode.type === 'trigger') {
 				const triggerData = pNode.data as TriggerNodeData;
@@ -241,7 +322,10 @@ export function convertToReactFlowNodes(
 				nodes.push({
 					id: compositeId,
 					type: 'trigger',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					position: {
+						x: pNode.position.x + pipelineOffset.x,
+						y: pNode.position.y + pipelineOffset.y,
+					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
@@ -279,7 +363,10 @@ export function convertToReactFlowNodes(
 				nodes.push({
 					id: compositeId,
 					type: 'agent',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					position: {
+						x: pNode.position.x + pipelineOffset.x,
+						y: pNode.position.y + pipelineOffset.y,
+					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
@@ -300,7 +387,10 @@ export function convertToReactFlowNodes(
 				nodes.push({
 					id: compositeId,
 					type: 'command',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					position: {
+						x: pNode.position.x + pipelineOffset.x,
+						y: pNode.position.y + pipelineOffset.y,
+					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
@@ -317,7 +407,10 @@ export function convertToReactFlowNodes(
 				nodes.push({
 					id: compositeId,
 					type: 'error',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					position: {
+						x: pNode.position.x + pipelineOffset.x,
+						y: pNode.position.y + pipelineOffset.y,
+					},
 					data: nodeData,
 					dragHandle: '.drag-handle',
 					selectable: false,

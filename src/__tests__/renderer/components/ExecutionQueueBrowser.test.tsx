@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
+import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -1883,6 +1884,54 @@ describe('ExecutionQueueBrowser', () => {
 			// The outer wrapper divs (with onMouseMove for drop targeting) should exist
 			const wrappers = container.querySelectorAll('.relative.my-1');
 			expect(wrappers.length).toBe(2);
+		});
+
+		it('does not attach window keydown/mouseup listeners while idle', () => {
+			const spies = spyOnListeners(window);
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+			const keydownAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'keydown');
+			const mouseupAdds = spies.addSpy.mock.calls.filter(([t]) => t === 'mouseup');
+			expect(keydownAdds).toHaveLength(0);
+			expect(mouseupAdds).toHaveLength(0);
+			spies.restore();
+		});
+
+		it('does not leak listeners when unmounted while idle', () => {
+			const spies = spyOnListeners(window);
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1' }), createQueuedItem({ id: 'item-2' })],
+			});
+			const { unmount } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
 		});
 	});
 });

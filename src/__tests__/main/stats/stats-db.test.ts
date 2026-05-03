@@ -284,13 +284,13 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Currently we have version 4 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes)
-			expect(db.getTargetVersion()).toBe(4);
+			// Currently we have version 5 migrations (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: is_worktree column)
+			expect(db.getTargetVersion()).toBe(5);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 4 }];
+				if (sql === 'user_version') return [{ user_version: 5 }];
 				return undefined;
 			});
 
@@ -305,8 +305,8 @@ describe('StatsDB class (mocked)', () => {
 			// This test verifies the hasPendingMigrations() logic
 			// by checking current version < target version
 
-			// Simulate a database that's already at version 4 (target version)
-			let currentVersion = 4;
+			// Simulate a database that's already at version 5 (target version)
+			let currentVersion = 5;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -320,9 +320,9 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// At version 4, target is 4, so no pending migrations
-			expect(db.getCurrentVersion()).toBe(4);
-			expect(db.getTargetVersion()).toBe(4);
+			// At version 5, target is 5, so no pending migrations
+			expect(db.getCurrentVersion()).toBe(5);
+			expect(db.getTargetVersion()).toBe(5);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

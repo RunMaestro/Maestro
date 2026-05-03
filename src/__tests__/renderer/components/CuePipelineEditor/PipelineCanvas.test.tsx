@@ -15,6 +15,7 @@ vi.mock('reactflow', () => {
 		Controls: () => <div data-testid="rf-controls" />,
 		MiniMap: () => <div data-testid="rf-minimap" />,
 		ConnectionMode: { Loose: 'loose' },
+		ConnectionLineType: { Bezier: 'bezier' },
 	};
 });
 

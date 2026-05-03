@@ -93,6 +93,7 @@ function createMockEngine() {
 		getStatus: vi.fn().mockReturnValue([]),
 		getActiveRuns: vi.fn().mockReturnValue([]),
 		getActivityLog: vi.fn().mockReturnValue([]),
+		getEventCount: vi.fn().mockReturnValue(0),
 		start: vi.fn(),
 		stop: vi.fn(),
 		stopRun: vi.fn().mockReturnValue(true),

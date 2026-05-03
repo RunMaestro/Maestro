@@ -378,7 +378,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 						onMouseLeave={overlayMouseLeave}
 					>
 						<div
-							className="shadow-xl overflow-hidden"
+							className="shadow-xl overflow-hidden whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								borderLeft: `1px solid ${theme.colors.border}`,
@@ -386,7 +386,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								borderBottom: `1px solid ${theme.colors.border}`,
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
-								minWidth: '200px',
+								minWidth: '12.5rem',
 							}}
 						>
 							<div className="p-1">

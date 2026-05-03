@@ -347,7 +347,15 @@ export async function groomContext(
 			cleanup();
 			if (!resolved) {
 				resolved = true;
-				const errorMsg = error instanceof Error ? error.message : String(error);
+				// `agent-error` emits an AgentError plain object (sessionId, type,
+				// message, ...), not a real Error — `String(error)` would yield
+				// "[object Object]". Pull `.message` out when present.
+				const errorMsg =
+					error instanceof Error
+						? error.message
+						: typeof error === 'object' && error !== null && 'message' in error
+							? String((error as { message: unknown }).message)
+							: String(error);
 				logger.error('Grooming error', LOG_CONTEXT, { groomerSessionId, error: errorMsg });
 				reject(new Error(`Grooming error: ${errorMsg}`));
 			}

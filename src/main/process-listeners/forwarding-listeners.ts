@@ -6,6 +6,11 @@
 import type { ProcessManager } from '../process-manager';
 import type { ProcessListenerDependencies, ToolExecution } from './types';
 
+/** Coalesce thinking chunks for this long before flushing to the renderer. */
+const THINKING_CHUNK_FLUSH_INTERVAL_MS = 50;
+/** Hard cap on buffered thinking chunk size — flush early if exceeded. */
+const THINKING_CHUNK_FLUSH_SIZE = 8 * 1024;
+
 /**
  * Sets up simple forwarding listeners that pass events directly to renderer.
  * These are lightweight handlers that don't require any processing logic.
@@ -23,11 +28,58 @@ export function setupForwardingListeners(
 		safeSend('process:slash-commands', sessionId, slashCommands);
 	});
 
+	// Per-session thinking-chunk buffers. Streaming reasoning can arrive at
+	// per-character granularity; coalescing them into ~50ms windows cuts IPC
+	// volume dramatically without changing observable behavior — the renderer
+	// already appends each chunk to a running buffer.
+	const thinkingBuffers = new Map<
+		string,
+		{ content: string; timer: ReturnType<typeof setTimeout> | null }
+	>();
+
+	const flushThinking = (sessionId: string) => {
+		const entry = thinkingBuffers.get(sessionId);
+		if (!entry) return;
+		if (entry.timer) {
+			clearTimeout(entry.timer);
+			entry.timer = null;
+		}
+		const content = entry.content;
+		thinkingBuffers.delete(sessionId);
+		if (content) {
+			safeSend('process:thinking-chunk', sessionId, content);
+		}
+	};
+
 	// Handle thinking/streaming content chunks from AI agents
 	// Emitted when agents produce partial text events (isPartial: true)
 	// Renderer decides whether to display based on tab's showThinking setting
 	processManager.on('thinking-chunk', (sessionId: string, content: string) => {
-		safeSend('process:thinking-chunk', sessionId, content);
+		if (!content) return;
+		let entry = thinkingBuffers.get(sessionId);
+		if (!entry) {
+			entry = { content: '', timer: null };
+			thinkingBuffers.set(sessionId, entry);
+		}
+		entry.content += content;
+
+		if (entry.content.length >= THINKING_CHUNK_FLUSH_SIZE) {
+			flushThinking(sessionId);
+			return;
+		}
+
+		if (!entry.timer) {
+			entry.timer = setTimeout(() => flushThinking(sessionId), THINKING_CHUNK_FLUSH_INTERVAL_MS);
+		}
+	});
+
+	// Flush pending thinking content the moment the agent finishes a turn so
+	// the final tail isn't held back by the 50ms timer.
+	processManager.on('query-complete', (sessionId: string) => {
+		flushThinking(sessionId);
+	});
+	processManager.on('exit', (sessionId: string) => {
+		flushThinking(sessionId);
 	});
 
 	// Handle tool execution events (OpenCode, Codex)

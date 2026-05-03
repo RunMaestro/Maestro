@@ -13,7 +13,6 @@ function resetStore() {
 		activeFocus: 'main',
 		activeRightTab: 'files',
 		bookmarksCollapsed: false,
-		groupChatsExpanded: true,
 		showUnreadOnly: false,
 		showUnreadAgentsOnly: false,
 		preFilterActiveTabId: null,
@@ -44,7 +43,6 @@ describe('uiStore', () => {
 			expect(state.activeFocus).toBe('main');
 			expect(state.activeRightTab).toBe('files');
 			expect(state.bookmarksCollapsed).toBe(false);
-			expect(state.groupChatsExpanded).toBe(true);
 			expect(state.showUnreadOnly).toBe(false);
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
@@ -130,19 +128,6 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
 			useUIStore.getState().toggleBookmarksCollapsed();
 			expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-		});
-
-		it('sets group chats expanded', () => {
-			useUIStore.getState().setGroupChatsExpanded(false);
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-		});
-
-		it('toggles group chats expanded', () => {
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(false);
-			useUIStore.getState().toggleGroupChatsExpanded();
-			expect(useUIStore.getState().groupChatsExpanded).toBe(true);
 		});
 	});
 

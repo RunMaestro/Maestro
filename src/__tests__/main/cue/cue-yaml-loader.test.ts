@@ -631,6 +631,17 @@ subscriptions:
 			);
 		});
 
+		it('also watches `.maestro/prompts/*.md` so late prompt-file writes trigger a reload', () => {
+			watchCueYaml('/projects/test', vi.fn());
+			// Without this, a "YAML written first, prompt files later" sequence
+			// strands the engine with empty cached prompts because the YAML
+			// watcher never fires again.
+			expect(chokidar.watch).toHaveBeenCalledWith(
+				expect.arrayContaining([expect.stringContaining('.maestro/prompts/*.md')]),
+				expect.anything()
+			);
+		});
+
 		it('calls onChange with debounce on file change', () => {
 			const onChange = vi.fn();
 			watchCueYaml('/projects/test', onChange);

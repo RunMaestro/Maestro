@@ -151,6 +151,7 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
+import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
 
@@ -196,6 +197,13 @@ interface MaestroAPI {
 	sessions: {
 		getAll: () => Promise<any[]>;
 		setAll: (sessions: any[]) => Promise<boolean>;
+		/**
+		 * Incremental persistence: merge `updates` into the stored sessions and
+		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
+		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * tree on every change.
+		 */
+		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
 	};
@@ -280,7 +288,8 @@ interface MaestroAPI {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
@@ -312,6 +321,13 @@ interface MaestroAPI {
 				duration?: number;
 				dismissible?: boolean;
 				sessionId?: string;
+				tabId?: string;
+				actionUrl?: string;
+				actionLabel?: string;
+				clickAction?:
+					| { kind: 'jump-session'; sessionId: string; tabId?: string }
+					| { kind: 'open-file'; sessionId: string; path: string }
+					| { kind: 'open-url'; url: string };
 			}) => void
 		) => () => void;
 		onRemoteNotifyCenterFlash: (
@@ -361,6 +377,13 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
 		) => void;
+		onRemoteSetAutoRunFolder: (
+			callback: (sessionId: string, folderPath: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetAutoRunFolderResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteGetAutoRunDocs: (
 			callback: (sessionId: string, responseChannel: string) => void
 		) => () => void;
@@ -379,6 +402,43 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
+		onRemoteResetAutoRunDocTasks: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteResetAutoRunDocTasksResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteResumeAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteResumeAutoRunErrorResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSkipAutoRunDocument: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSkipAutoRunDocumentResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteAbortAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteListPlaybooks: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListPlaybooksResponse: (responseChannel: string, playbooks: unknown[]) => void;
+		onRemoteCreatePlaybook: (
+			callback: (sessionId: string, playbook: unknown, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCreatePlaybookResponse: (responseChannel: string, playbook: unknown) => void;
+		onRemoteUpdatePlaybook: (
+			callback: (
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdatePlaybookResponse: (responseChannel: string, playbook: unknown) => void;
+		onRemoteDeletePlaybook: (
+			callback: (sessionId: string, playbookId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteDeletePlaybookResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSetSetting: (
 			callback: (key: string, value: unknown, responseChannel: string) => void
 		) => () => void;
@@ -545,6 +605,13 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
+				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				errorPaused?: boolean;
+				errorMessage?: string;
+				errorType?: string;
+				errorRecoverable?: boolean;
+				errorDocumentIndex?: number;
+				errorTaskDescription?: string;
 			} | null
 		) => Promise<void>;
 		broadcastTabsChange: (
@@ -1546,7 +1613,8 @@ interface MaestroAPI {
 			sessionId: string,
 			bucketCount: number,
 			lookbackHours: number | null,
-			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+			sharedContext?: { sshRemoteId: string; remoteCwd: string },
+			projectPath?: string
 		) => Promise<{
 			buckets: Array<{ auto: number; user: number; cue: number }>;
 			bucketCount: number;
@@ -1556,6 +1624,7 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			hostCounts: Record<string, number>;
 			cached: boolean;
 		}>;
 		getOffsetForTimestamp: (
@@ -1631,6 +1700,12 @@ interface MaestroAPI {
 			relativePath: string,
 			sshRemoteId?: string
 		) => Promise<{ success: boolean; error?: string }>;
+		replaceImage: (
+			folderPath: string,
+			relativePath: string,
+			base64Data: string,
+			sshRemoteId?: string
+		) => Promise<{ success: boolean; relativePath?: string; error?: string }>;
 		listImages: (
 			folderPath: string,
 			docName: string,
@@ -2477,6 +2552,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			tabId?: string;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string>;
 		// Start an Auto Run session (returns session ID)
 		startAutoRun: (session: {
@@ -2565,6 +2641,12 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			worktreeQueries: number;
+			parentQueries: number;
+			byWorktreeStatus: {
+				worktree: { count: number; duration: number };
+				parent: { count: number; duration: number };
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
@@ -2590,6 +2672,7 @@ interface MaestroAPI {
 			projectPath?: string;
 			createdAt: number;
 			isRemote?: boolean;
+			isWorktree?: boolean;
 		}) => Promise<string | null>;
 		// Record session closure
 		recordSessionClosed: (sessionId: string, closedAt: number) => Promise<boolean>;
@@ -2616,6 +2699,13 @@ interface MaestroAPI {
 		} | null>;
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
+	};
+	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
+	// encoreFeatures.maestroCue is off; consumers should catch and render
+	// the "feature off" state.
+	cueStats: {
+		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
 	};
 	// Document Graph API (file watching for graph visualization)
 	documentGraph: {
@@ -3111,8 +3201,16 @@ interface MaestroAPI {
 		getGraphData: () => Promise<CueGraphSession[]>;
 		getActiveRuns: () => Promise<CueRunResult[]>;
 		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
+		getEventCount: () => Promise<number>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
+		/**
+		 * Visibility-aware pause. Flip to false while the app is hidden so
+		 * the Cue scanner subsystem skips expensive background work; flip
+		 * back to true on visibility. Different from `disable`, which tears
+		 * the engine down entirely.
+		 */
+		setActive: (active: boolean) => Promise<void>;
 		stopRun: (runId: string) => Promise<boolean>;
 		stopAll: () => Promise<void>;
 		triggerSubscription: (
@@ -3161,12 +3259,16 @@ interface MaestroAPI {
 				category: string;
 				content: string;
 				isModified: boolean;
+				hasDefaultDrifted: boolean;
 			}>;
 			error?: string;
 		}>;
 		getAllIds: () => Promise<{ success: boolean; ids?: string[]; error?: string }>;
 		save: (id: string, content: string) => Promise<{ success: boolean; error?: string }>;
 		reset: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getBundledDefault: (
+			id: string
+		) => Promise<{ success: boolean; content?: string; error?: string }>;
 		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
 		listFiles: () => Promise<{
 			success: boolean;

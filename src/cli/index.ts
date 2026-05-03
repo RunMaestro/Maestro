@@ -11,6 +11,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { openBrowser } from './commands/open-browser';
@@ -182,6 +183,31 @@ program
 		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
 	)
 	.action(dispatch);
+
+// Session inspection commands - read-only access to desktop conversation state.
+// Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
+// left off without owning a persistent channel — pair with `dispatch` to write
+// and `session show` to follow up.
+const session = program
+	.command('session')
+	.description('Inspect open desktop tabs and their conversation history');
+
+session
+	.command('list')
+	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(sessionList);
+
+session
+	.command('show <tab-id>')
+	.description('Print conversation history for a desktop tab')
+	.option(
+		'--since <timestamp>',
+		'Only return messages after this timestamp (ISO-8601 or epoch ms/sec)'
+	)
+	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
+	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
+	.action(sessionShow);
 
 // Open file command - open a file in the Maestro desktop app
 program
@@ -486,6 +512,23 @@ notify
 		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout/--duration'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
+	.option(
+		'--tab <id>',
+		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
+	)
+	.option(
+		'--action-url <url>',
+		'Inline link rendered beneath the message body (opens in browser when clicked)'
+	)
+	.option('--action-label <text>', 'Label for --action-url (defaults to the URL itself)')
+	.option(
+		'--open-file <path>',
+		'On click, switch to the agent and open this file in its File Preview pane (requires --agent; mutually exclusive with --open-url)'
+	)
+	.option(
+		'--open-url <url>',
+		'On click, open this URL in the system browser (mutually exclusive with --open-file)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
 

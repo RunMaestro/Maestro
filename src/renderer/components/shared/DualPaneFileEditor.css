@@ -176,9 +176,15 @@
 	font-size: 12px;
 }
 
+.dual-pane-badge-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
 .dual-pane-modified-badge {
 	display: inline-block;
-	margin-top: 8px;
 	padding: 2px 8px;
 	color: white;
 	font-size: 10px;

@@ -8,7 +8,7 @@
  * without re-rendering.
  */
 
-import React, { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
 
 /**
  * Badge variant types

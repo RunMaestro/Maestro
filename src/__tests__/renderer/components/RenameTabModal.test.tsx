@@ -595,6 +595,26 @@ describe('RenameTabModal', () => {
 			expect(screen.getByText('Auto')).toBeInTheDocument();
 		});
 
+		it('renders Auto button tooltip with renderer-safe shortcut formatting', () => {
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={vi.fn()}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByRole('button', { name: 'Auto' })).toHaveAttribute(
+				'title',
+				'Auto-rename (Ctrl+Shift+Enter)'
+			);
+		});
+
 		it('calls onAutoName when Auto button is clicked', () => {
 			const mockOnAutoName = vi.fn();
 

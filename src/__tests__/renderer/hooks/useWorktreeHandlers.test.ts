@@ -30,12 +30,21 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
+// Mock sentry so the repo-root resolver tests can assert unexpected errors are
+// reported (silent swallowing would re-introduce the wrong-parent bug with no
+// production signal).
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
 import { useWorktreeHandlers } from '../../../renderer/hooks/worktree/useWorktreeHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { gitService } from '../../../renderer/services/git';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { captureException } from '../../../renderer/utils/sentry';
 import type { Session } from '../../../renderer/types';
 
 // ============================================================================
@@ -50,6 +59,9 @@ const mockGit = {
 	onWorktreeRemoved: vi.fn().mockReturnValue(() => {}),
 	worktreeSetup: vi.fn().mockResolvedValue({ success: true }),
 	removeWorktree: vi.fn().mockResolvedValue({ success: true }),
+	// Default: not a git repo. Tests that exercise the repoRoot filter override
+	// this per-test to return matching/mismatching repoRoots.
+	worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 };
 
 const mockParentSession = {
@@ -466,6 +478,60 @@ describe('handleSaveWorktreeConfig', () => {
 		});
 
 		expect(mockGit.scanWorktreeDirectory).not.toHaveBeenCalled();
+	});
+
+	it('filters out scanned subdirs whose repoRoot does not match the parent repo', async () => {
+		// Same repo-identity guard as scanWorktreeConfigs, applied at the moment
+		// the user saves the worktree config. Without this, pointing the agent
+		// at a basePath that contains worktrees from another repo would attach
+		// them on the spot, before any later rescan could clean up.
+		useSessionStore.setState({
+			sessions: [
+				{
+					...mockParentSession,
+					cwd: '/repos/repo-a',
+					worktreeConfig: undefined,
+				},
+			],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		mockGit.worktreeInfo.mockResolvedValueOnce({
+			success: true,
+			exists: true,
+			isWorktree: false,
+			repoRoot: '/repos/repo-a',
+		});
+
+		mockGit.scanWorktreeDirectory.mockResolvedValue({
+			gitSubdirs: [
+				{
+					path: '/shared/worktrees/feat-mine',
+					branch: 'feat-mine',
+					name: 'feat-mine',
+					repoRoot: '/repos/repo-a',
+				},
+				{
+					path: '/shared/worktrees/feat-other',
+					branch: 'feat-other',
+					name: 'feat-other',
+					repoRoot: '/repos/repo-b',
+				},
+			],
+		});
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleSaveWorktreeConfig({
+				basePath: '/shared/worktrees',
+				watchEnabled: false,
+			});
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		const children = sessions.filter((s) => s.parentSessionId === 'parent-1');
+		expect(children.map((s) => s.worktreeBranch)).toEqual(['feat-mine']);
 	});
 });
 
@@ -1312,6 +1378,68 @@ describe('Effects', () => {
 			);
 		});
 
+		it('preserves child sessions whose cwd is a nested path under basePath', async () => {
+			// Regression for #931: worktrees from slash-named branches live at
+			// <basePath>/<group>/<branch> (e.g. /projects/worktrees/fix/foo). The
+			// main process now recurses one level so gitSubdirs includes those
+			// paths; this test pins that the renderer's stale-detection treats
+			// nested entries the same as flat ones (no spurious removal).
+			vi.useFakeTimers();
+
+			const flatChild = createChildSession({
+				id: 'flat-child',
+				cwd: '/projects/worktrees/feature-flat',
+				worktreeBranch: 'feature-flat',
+				parentSessionId: 'parent-1',
+			});
+			const nestedChild = createChildSession({
+				id: 'nested-child',
+				cwd: '/projects/worktrees/fix/worktree-removal',
+				worktreeBranch: 'fix/worktree-removal',
+				parentSessionId: 'parent-1',
+			});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/projects/worktrees/feature-flat',
+						branch: 'feature-flat',
+						name: 'feature-flat',
+					},
+					{
+						path: '/projects/worktrees/fix/worktree-removal',
+						branch: 'fix/worktree-removal',
+						name: 'worktree-removal',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, flatChild, nestedChild],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(notifyToast as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'flat-child')).toBe(true);
+			expect(sessions.some((s) => s.id === 'nested-child')).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Removed' })
+			);
+		});
+
 		it('does NOT remove child sessions when scan reports scanFailed', async () => {
 			vi.useFakeTimers();
 
@@ -1857,6 +1985,616 @@ describe('Effects', () => {
 			unmount();
 
 			expect(cleanupFn).toHaveBeenCalled();
+		});
+	});
+
+	describe('Repo-identity filter (parent ↔ subdir.repoRoot match)', () => {
+		// Regression for the "worktrees re-added under a wrong agent" bug. After
+		// the worktree-wipe bug (PR #931 missing), the renderer would happily
+		// attach every worktree found under basePath to whichever parent agent's
+		// scan iterated first — even when those worktrees belonged to a different
+		// repo entirely.
+
+		it('filters out scanned subdirs whose repoRoot does not match the parent repo', async () => {
+			vi.useFakeTimers();
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Parent's main repo
+			mockGit.worktreeInfo.mockResolvedValueOnce({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+
+			// Two subdirs in the basePath: one belongs to repo-a, the other to repo-b
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-mine',
+						branch: 'feat-mine',
+						name: 'feat-mine',
+						repoRoot: '/repos/repo-a',
+					},
+					{
+						path: '/shared/worktrees/feat-other',
+						branch: 'feat-other',
+						name: 'feat-other',
+						repoRoot: '/repos/repo-b',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const children = sessions.filter((s) => s.parentSessionId === 'parent-1');
+			expect(children.map((s) => s.worktreeBranch).sort()).toEqual(['feat-mine']);
+		});
+
+		it('detaches a child whose cwd is a worktree of a different repo (self-heals wrong-agent attachment)', async () => {
+			vi.useFakeTimers();
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Wrong-agent child: was attached to repo-a's parent, but its cwd is
+			// actually a worktree of repo-b.
+			const wrongAgentChild = createChildSession({
+				id: 'wrong-agent-child',
+				cwd: '/shared/worktrees/feat-other',
+				worktreeBranch: 'feat-other',
+				parentSessionId: 'parent-1',
+			});
+			const correctChild = createChildSession({
+				id: 'correct-child',
+				cwd: '/shared/worktrees/feat-mine',
+				worktreeBranch: 'feat-mine',
+				parentSessionId: 'parent-1',
+			});
+
+			mockGit.worktreeInfo.mockResolvedValueOnce({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-mine',
+						branch: 'feat-mine',
+						name: 'feat-mine',
+						repoRoot: '/repos/repo-a',
+					},
+					{
+						path: '/shared/worktrees/feat-other',
+						branch: 'feat-other',
+						name: 'feat-other',
+						repoRoot: '/repos/repo-b',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, wrongAgentChild, correctChild],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(notifyToast as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'wrong-agent-child')).toBe(false);
+			expect(sessions.some((s) => s.id === 'correct-child')).toBe(true);
+			// Wrong-agent detachments must NOT fire the misleading "Worktree Removed"
+			// toast — the worktree still exists on disk. Use "Worktree Re-assigned"
+			// (or no toast) so the user isn't told the worktree was deleted.
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Removed' })
+			);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Re-assigned', message: 'feat-other' })
+			);
+		});
+
+		it('attaches wrong-agent child to the correct parent in the same scan pass', async () => {
+			// Regression for the "queued stale children block same-pass reattachment"
+			// edge case: parent-a flags a misattached child for detachment, then
+			// parent-b's iteration must NOT skip that path because of the
+			// (about-to-be-removed) wrong-agent session still in the store.
+			vi.useFakeTimers();
+
+			const parentA = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			const parentB = {
+				...mockParentSession,
+				id: 'parent-b',
+				cwd: '/repos/repo-b',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Wrong-agent child: cwd is a worktree of repo-b but it's attached to parent-a
+			const wrongAgentChild = createChildSession({
+				id: 'wrong-agent-child',
+				cwd: '/shared/worktrees/feat-b',
+				worktreeBranch: 'feat-b',
+				parentSessionId: 'parent-a',
+			});
+
+			// First call (parent-a) → repo-a; second call (parent-b) → repo-b
+			mockGit.worktreeInfo
+				.mockResolvedValueOnce({
+					success: true,
+					exists: true,
+					isWorktree: false,
+					repoRoot: '/repos/repo-a',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					exists: true,
+					isWorktree: false,
+					repoRoot: '/repos/repo-b',
+				});
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-b',
+						branch: 'feat-b',
+						name: 'feat-b',
+						repoRoot: '/repos/repo-b',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentA, parentB, wrongAgentChild],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			// Old child gone, new child created under the correct parent in the same pass
+			expect(sessions.some((s) => s.id === 'wrong-agent-child')).toBe(false);
+			const childrenB = sessions.filter((s) => s.parentSessionId === 'parent-b');
+			expect(childrenB).toHaveLength(1);
+			expect(childrenB[0].worktreeBranch).toBe('feat-b');
+			expect(childrenB[0].cwd).toBe('/shared/worktrees/feat-b');
+		});
+
+		it('two parents sharing a basePath each receive only their own repo worktrees', async () => {
+			vi.useFakeTimers();
+
+			const parentA = {
+				...mockParentSession,
+				id: 'parent-a',
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+			const parentB = {
+				...mockParentSession,
+				id: 'parent-b',
+				cwd: '/repos/repo-b',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// First call (parent-a's scan) → resolve parent-a's repoRoot
+			// Second call (parent-b's scan) → resolve parent-b's repoRoot
+			mockGit.worktreeInfo
+				.mockResolvedValueOnce({
+					success: true,
+					exists: true,
+					isWorktree: false,
+					repoRoot: '/repos/repo-a',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					exists: true,
+					isWorktree: false,
+					repoRoot: '/repos/repo-b',
+				});
+
+			// Both parents see the same scan result (same basePath)
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat-a',
+						branch: 'feat-a',
+						name: 'feat-a',
+						repoRoot: '/repos/repo-a',
+					},
+					{
+						path: '/shared/worktrees/feat-b',
+						branch: 'feat-b',
+						name: 'feat-b',
+						repoRoot: '/repos/repo-b',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentA, parentB],
+				activeSessionId: 'parent-a',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const childrenA = sessions.filter((s) => s.parentSessionId === 'parent-a');
+			const childrenB = sessions.filter((s) => s.parentSessionId === 'parent-b');
+			expect(childrenA.map((s) => s.worktreeBranch)).toEqual(['feat-a']);
+			expect(childrenB.map((s) => s.worktreeBranch)).toEqual(['feat-b']);
+		});
+
+		it('falls back to legacy behavior when the parent repoRoot cannot be resolved', async () => {
+			vi.useFakeTimers();
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/not-a-git-repo',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// worktreeInfo says the parent path isn't a git repo
+			mockGit.worktreeInfo.mockResolvedValueOnce({
+				success: true,
+				exists: false,
+				isWorktree: false,
+			});
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat',
+						branch: 'feat',
+						name: 'feat',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// Fall-back path: when we can't determine the parent's repo, don't filter.
+			const children = useSessionStore
+				.getState()
+				.sessions.filter((s) => s.parentSessionId === 'parent-1');
+			expect(children).toHaveLength(1);
+			expect(children[0].worktreeBranch).toBe('feat');
+		});
+
+		it('falls back to legacy behavior when subdir.repoRoot is null', async () => {
+			vi.useFakeTimers();
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			mockGit.worktreeInfo.mockResolvedValueOnce({
+				success: true,
+				exists: true,
+				isWorktree: false,
+				repoRoot: '/repos/repo-a',
+			});
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat',
+						branch: 'feat',
+						name: 'feat',
+						repoRoot: null,
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const children = useSessionStore
+				.getState()
+				.sessions.filter((s) => s.parentSessionId === 'parent-1');
+			expect(children).toHaveLength(1);
+		});
+
+		it('chokidar onWorktreeDiscovered rejects a worktree from a different repo', async () => {
+			let discoveryCallback: ((data: any) => Promise<void>) | undefined;
+			mockGit.onWorktreeDiscovered.mockImplementation((cb: any) => {
+				discoveryCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// First worktreeInfo call: the discovered worktree path → repo-b
+			// Second worktreeInfo call: the parent's cwd → repo-a
+			// (Renderer fires both in parallel via Promise.all, so order doesn't
+			// matter — we just need both to resolve to non-matching repos.)
+			mockGit.worktreeInfo.mockImplementation(async (path: string) => {
+				if (path === '/shared/worktrees/feat-other') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: true,
+						repoRoot: '/repos/repo-b',
+					};
+				}
+				if (path === '/repos/repo-a') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: false,
+						repoRoot: '/repos/repo-a',
+					};
+				}
+				return { success: true, exists: false, isWorktree: false };
+			});
+
+			await act(async () => {
+				await discoveryCallback!({
+					sessionId: 'parent-1',
+					worktree: {
+						path: '/shared/worktrees/feat-other',
+						name: 'feat-other',
+						branch: 'feat-other',
+					},
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const children = sessions.filter((s) => s.parentSessionId === 'parent-1');
+			expect(children).toHaveLength(0);
+		});
+
+		it('chokidar onWorktreeDiscovered accepts a worktree from the matching repo', async () => {
+			let discoveryCallback: ((data: any) => Promise<void>) | undefined;
+			mockGit.onWorktreeDiscovered.mockImplementation((cb: any) => {
+				discoveryCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			mockGit.worktreeInfo.mockImplementation(async (path: string) => {
+				if (path === '/shared/worktrees/feat-mine') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: true,
+						repoRoot: '/repos/repo-a',
+					};
+				}
+				if (path === '/repos/repo-a') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: false,
+						repoRoot: '/repos/repo-a',
+					};
+				}
+				return { success: true, exists: false, isWorktree: false };
+			});
+
+			await act(async () => {
+				await discoveryCallback!({
+					sessionId: 'parent-1',
+					worktree: {
+						path: '/shared/worktrees/feat-mine',
+						name: 'feat-mine',
+						branch: 'feat-mine',
+					},
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const children = sessions.filter((s) => s.parentSessionId === 'parent-1');
+			expect(children).toHaveLength(1);
+			expect(children[0].worktreeBranch).toBe('feat-mine');
+		});
+
+		it('reports unexpected worktreeInfo errors to Sentry from resolveRepoRoot (does not silently swallow)', async () => {
+			vi.useFakeTimers();
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Simulate an unexpected IPC failure (e.g. main-process handler regressed
+			// or threw). Without the error-reporting fix, this would silently disable
+			// the repo-root guard with no production signal.
+			const unexpectedErr = new Error('IPC handler crashed');
+			mockGit.worktreeInfo.mockRejectedValueOnce(unexpectedErr);
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat',
+						branch: 'feat',
+						name: 'feat',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(captureException as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(captureException).toHaveBeenCalledWith(
+				unexpectedErr,
+				expect.objectContaining({
+					extra: expect.objectContaining({ source: 'resolveRepoRoot' }),
+				})
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('resolveRepoRoot failed'),
+				undefined,
+				expect.stringContaining('IPC handler crashed')
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('reports unexpected worktreeInfo errors from the chokidar discovery handler', async () => {
+			let discoveryCallback: ((data: any) => Promise<void>) | undefined;
+			mockGit.onWorktreeDiscovered.mockImplementation((cb: any) => {
+				discoveryCallback = cb;
+				return () => {};
+			});
+
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Parent lookup succeeds; discovered-path lookup throws.
+			const unexpectedErr = new Error('renderer IPC bridge dropped');
+			mockGit.worktreeInfo.mockImplementation(async (path: string) => {
+				if (path === '/repos/repo-a') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: false,
+						repoRoot: '/repos/repo-a',
+					};
+				}
+				throw unexpectedErr;
+			});
+
+			(captureException as any).mockClear();
+
+			await act(async () => {
+				await discoveryCallback!({
+					sessionId: 'parent-1',
+					worktree: {
+						path: '/shared/worktrees/feat',
+						name: 'feat',
+						branch: 'feat',
+					},
+				});
+			});
+
+			expect(captureException).toHaveBeenCalledWith(
+				unexpectedErr,
+				expect.objectContaining({
+					extra: expect.objectContaining({ source: 'onWorktreeDiscovered' }),
+				})
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('worktreeInfo failed'),
+				undefined,
+				expect.stringContaining('renderer IPC bridge dropped')
+			);
+
+			consoleSpy.mockRestore();
 		});
 	});
 });

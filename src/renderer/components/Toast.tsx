@@ -46,19 +46,46 @@ const ToastItem = memo(function ToastItem({
 		setTimeout(() => onRemove(toast.id), 300);
 	};
 
-	// Handle click on toast to navigate to session or trigger custom action
+	// Handle click on toast to navigate to session or trigger custom action.
+	// Order: onClick (renderer-only callback) → clickAction (data-driven, survives
+	// the IPC bridge from CLI/web) → legacy sessionId fallback.
 	const handleToastClick = () => {
 		if (toast.onClick) {
 			toast.onClick();
 			handleClose();
-		} else if (toast.sessionId && onSessionClick) {
+			return;
+		}
+		if (toast.clickAction) {
+			const action = toast.clickAction;
+			switch (action.kind) {
+				case 'jump-session':
+					onSessionClick?.(action.sessionId, action.tabId);
+					break;
+				case 'open-file':
+					// Reuse the existing CLI/remote file-open path. The listener
+					// (useAppRemoteEventListeners) switches to the target session
+					// and opens the file in a preview tab.
+					window.dispatchEvent(
+						new CustomEvent('maestro:openFileTab', {
+							detail: { sessionId: action.sessionId, filePath: action.path },
+						})
+					);
+					break;
+				case 'open-url':
+					openUrl(action.url);
+					break;
+			}
+			handleClose();
+			return;
+		}
+		if (toast.sessionId && onSessionClick) {
 			onSessionClick(toast.sessionId, toast.tabId);
 			handleClose();
 		}
 	};
 
 	// Check if toast is clickable (has session navigation or custom action)
-	const isClickable = toast.onClick || (toast.sessionId && onSessionClick);
+	const isClickable = toast.onClick || toast.clickAction || (toast.sessionId && onSessionClick);
 
 	// Icon based on the toast color (5-color design language).
 	const getIcon = () => {

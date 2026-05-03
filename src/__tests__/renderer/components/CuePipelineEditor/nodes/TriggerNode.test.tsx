@@ -84,14 +84,14 @@ describe('TriggerNode', () => {
 		expect(summarySpan).toHaveAttribute('title', longSummary);
 	});
 
-	it('should use minWidth and maxWidth instead of fixed width', () => {
+	it('should use minWidth and grow to fit content instead of fixed width', () => {
 		const { container } = renderTriggerNode();
 
 		const rootDiv = container.querySelector('div[style*="min-width: 220px"]') as HTMLElement;
 		expect(rootDiv).not.toBeNull();
-		expect(rootDiv.style.maxWidth).toBe('320px');
-		// Ensure no fixed width is set
-		expect(rootDiv.style.width).toBe('');
+		// Node grows to fit content rather than capping at a fixed maxWidth.
+		expect(rootDiv.style.width).toBe('max-content');
+		expect(rootDiv.style.maxWidth).toBe('');
 	});
 
 	it('should not render config summary when empty', () => {

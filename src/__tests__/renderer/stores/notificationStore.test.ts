@@ -819,6 +819,50 @@ describe('notificationStore', () => {
 			const toast = useNotificationStore.getState().toasts[0];
 			expect(toast.taskDuration).toBe(5000);
 		});
+
+		it('preserves clickAction (jump-session) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Agent ready',
+				message: 'Click to jump.',
+				clickAction: { kind: 'jump-session', sessionId: 'sess-9', tabId: 'tab-3' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'jump-session',
+				sessionId: 'sess-9',
+				tabId: 'tab-3',
+			});
+		});
+
+		it('preserves clickAction (open-file) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Diff ready',
+				message: 'Open the patch.',
+				clickAction: { kind: 'open-file', sessionId: 'sess-9', path: '/tmp/foo.ts' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'open-file',
+				sessionId: 'sess-9',
+				path: '/tmp/foo.ts',
+			});
+		});
+
+		it('preserves clickAction (open-url) on toast', () => {
+			notifyToast({
+				type: 'info',
+				title: 'Run finished',
+				message: 'View logs.',
+				clickAction: { kind: 'open-url', url: 'https://example.com/logs' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'open-url',
+				url: 'https://example.com/logs',
+			});
+		});
 	});
 
 	// ==========================================================================
