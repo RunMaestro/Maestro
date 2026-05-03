@@ -78,6 +78,10 @@ let bridgeBuffer = '';
 let connectPromise = null;
 const pending = new Map();
 let nextRpcId = 1;
+// Cap each in-flight RPC so a wedged-but-not-disconnected bridge can't stall
+// tools/call indefinitely. 10s comfortably accommodates a renderer round-trip
+// (the main-process side caps the buffer-fetch at 5s) plus jitter.
+const BRIDGE_RPC_TIMEOUT_MS = 10000;
 
 function rejectAllPending(err) {
   for (const p of pending.values()) p.reject(err);
@@ -145,10 +149,28 @@ async function bridgeCall(method, params) {
     throw new Error('coworking bridge: not connected');
   }
   const id = nextRpcId++;
-  const promise = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  let timeoutHandle = null;
+  const promise = new Promise((resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      // Drop the pending entry first so the response (if it ever arrives) is a no-op.
+      pending.delete(id);
+      reject(new Error('coworking bridge: rpc timed out'));
+    }, BRIDGE_RPC_TIMEOUT_MS);
+    pending.set(id, {
+      resolve: (value) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        resolve(value);
+      },
+      reject: (err) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      },
+    });
+  });
   try {
     conn.write(JSON.stringify({ id, method, params }) + '\n');
   } catch (err) {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
     pending.delete(id);
     throw err;
   }

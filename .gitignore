@@ -63,6 +63,3 @@ yarn-error.log*
 
 # Claude Code local settings
 .claude/settings.local.json
-
-# npm lockfile is intentionally not tracked in this repo
-package-lock.json
