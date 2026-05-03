@@ -17,6 +17,7 @@ import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
+import type { WebPlaybook } from './types';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
 
@@ -176,8 +177,115 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					worktreeBranch: s.worktreeBranch || null,
 					isGitRepo: s.isGitRepo ?? false,
 					worktreeBasePath: s.worktreeConfig?.basePath || null,
+					// Auto Run folder — exposes the session's configured `.maestro/`
+					// playbook folder to web clients so the folder picker can show
+					// the current selection.
+					autoRunFolderPath: s.autoRunFolderPath || null,
 				};
 			});
+		});
+
+		// `maestro-cli session list` — flatten all open AI tabs into addressable
+		// entries. The CLI does not need group/cwd metadata; the structurally
+		// smaller payload keeps polling cheap. Reads straight from the persisted
+		// session store (same source the renderer pushes to via `sessions:save`),
+		// so the data is as fresh as the desktop's own state.
+		server.setListDesktopSessionsCallback(() => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const entries = [];
+			for (const s of sessions) {
+				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				for (const tab of aiTabs) {
+					if (!tab || typeof tab.id !== 'string') continue;
+					entries.push({
+						tabId: tab.id,
+						sessionId: tab.id,
+						agentId: s.id,
+						agentName: s.name,
+						toolType: s.toolType,
+						name: typeof tab.name === 'string' ? tab.name : null,
+						agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+						state: tab.state === 'busy' ? ('busy' as const) : ('idle' as const),
+						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : 0,
+						starred: tab.starred === true,
+					});
+				}
+			}
+			return entries;
+		});
+
+		// `maestro-cli session show <tabId>` — return the tab's conversation
+		// history with optional `--since` (poll cursor) and `--tail` (cap)
+		// filters applied here so the CLI never receives more than it asked for.
+		// `LogEntry.source` values map to a coarse `role` for conversational
+		// consumers (Discord bots); the raw `source` is preserved alongside so
+		// callers that want finer detail (tool vs assistant text) can still
+		// discriminate. `stdout` is treated as `assistant` because legacy /
+		// non-AI agent flows store assistant replies under that source.
+		server.setGetSessionHistoryCallback((tabId, options) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			for (const s of sessions) {
+				const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+				const tab = aiTabs.find((t) => t && t.id === tabId);
+				if (!tab) continue;
+				const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
+				let logs = rawLogs;
+				if (options?.sinceMs !== undefined) {
+					const cutoff = options.sinceMs;
+					logs = logs.filter((l) => typeof l.timestamp === 'number' && l.timestamp > cutoff);
+				}
+				if (options?.tail !== undefined && options.tail >= 0) {
+					// `slice(-0)` is identical to `slice(0)` (because `-0 === 0`),
+					// which would silently return the full transcript when the
+					// caller asked for zero messages. Compute the start index
+					// explicitly so `tail: 0` yields `[]`.
+					logs = logs.slice(Math.max(logs.length - options.tail, 0));
+				}
+				const messages = logs.map((l) => {
+					const source = typeof l.source === 'string' ? l.source : 'unknown';
+					const tsMs = typeof l.timestamp === 'number' ? l.timestamp : 0;
+					let role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'error' | 'unknown';
+					switch (source) {
+						case 'user':
+							role = 'user';
+							break;
+						case 'ai':
+						case 'stdout':
+							role = 'assistant';
+							break;
+						case 'thinking':
+							role = 'thinking';
+							break;
+						case 'tool':
+							role = 'tool';
+							break;
+						case 'system':
+							role = 'system';
+							break;
+						case 'error':
+						case 'stderr':
+							role = 'error';
+							break;
+						default:
+							role = 'unknown';
+					}
+					return {
+						id: typeof l.id === 'string' ? l.id : `${tab.id}-${tsMs}`,
+						role,
+						source,
+						content: typeof l.text === 'string' ? l.text : '',
+						timestamp: new Date(tsMs).toISOString(),
+					};
+				});
+				return {
+					tabId,
+					sessionId: tabId,
+					agentId: s.id,
+					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+					messages,
+				};
+			}
+			return null;
 		});
 
 		// Set up callback for web server to fetch single session details
@@ -244,12 +352,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to fetch history entries
 		// Uses HistoryManager for per-session storage
-		server.setGetHistoryCallback((projectPath?: string, sessionId?: string) => {
+		server.setGetHistoryCallback(async (projectPath?: string, sessionId?: string) => {
 			const historyManager = getHistoryManager();
 
 			if (sessionId) {
 				// Get entries for specific session
-				const entries = historyManager.getEntries(sessionId);
+				const entries = await historyManager.getEntries(sessionId);
 				// Sort by timestamp descending
 				entries.sort((a, b) => b.timestamp - a.timestamp);
 				return entries;
@@ -375,7 +483,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
+				force?: boolean,
+				images?: string[]
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -393,7 +502,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				// proprietary code, or PII; the full prompt goes to debug, which is
 				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | CommandLength: ${command.length}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
 					'WebServer'
 				);
 				logger.debug(
@@ -410,7 +519,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					command,
 					inputMode,
 					tabId,
-					force
+					force,
+					images
 				);
 				return true;
 			}
@@ -872,6 +982,58 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolved = true;
 					ipcMain.removeListener(responseChannel, handleResponse);
 					logger.warn(`configureAutoRun callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Timeout' });
+				}, 10000);
+			});
+		});
+
+		// Set up callback for web server to update the Auto Run folder on a session.
+		// Mirrors `configureAutoRun` IPC pattern: bridge to renderer via remote IPC,
+		// renderer-side `handleAutoRunFolderSelected` reloads docs and persists the
+		// choice through normal session storage.
+		server.setSessionAutoRunFolderCallback(async (sessionId: string, folderPath: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for setSessionAutoRunFolder', 'WebServer');
+				return { success: false, error: 'Main window not available' };
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:setAutoRunFolder:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (
+					_event: Electron.IpcMainEvent,
+					result: { success: boolean; error?: string } | undefined
+				) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for setSessionAutoRunFolder', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:setAutoRunFolder',
+					sessionId,
+					folderPath,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`setSessionAutoRunFolder callback timed out for session ${sessionId}`,
+						'WebServer'
+					);
 					resolve({ success: false, error: 'Timeout' });
 				}, 10000);
 			});
@@ -1414,16 +1576,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		});
 
 		// Resolve a session's effective git execution context (local cwd + optional
-		// SSH remote). Used by both Run-in-Worktree callbacks below.
+		// SSH remote). Used by both Run-in-Worktree callbacks below. When SSH is
+		// enabled but the configured remote can't be resolved we fail loudly —
+		// silently falling back to local git would return wrong branch/worktree
+		// data for an SSH-backed session and leak the run to the wrong machine.
 		const resolveSessionGitContext = (
 			session: StoredSession
 		): { sshRemote: ReturnType<typeof getSshRemoteById>; remoteCwd: string | undefined } => {
-			const sshRemoteId = session.sessionSshRemoteConfig?.enabled
-				? session.sessionSshRemoteConfig.remoteId
-				: undefined;
-			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-			const remoteCwd = sshRemote ? session.cwd : undefined;
-			return { sshRemote, remoteCwd };
+			if (!session.sessionSshRemoteConfig?.enabled) {
+				return { sshRemote: undefined, remoteCwd: undefined };
+			}
+			const sshRemoteId = session.sessionSshRemoteConfig.remoteId;
+			if (!sshRemoteId) {
+				throw new Error(`SSH remote is enabled but remoteId is missing for session ${session.id}`);
+			}
+			const sshRemote = getSshRemoteById(sshRemoteId);
+			if (!sshRemote) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			return { sshRemote, remoteCwd: session.cwd };
 		};
 
 		// Set up callback for web server to enumerate branches for the Run-in-Worktree
@@ -1527,6 +1698,155 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			mainWindow.webContents.send('remote:stopAutoRun', sessionId);
 			return true;
 		});
+
+		// Helper to issue a request-response IPC roundtrip to the renderer with
+		// a timeout. Used for all the playbook + error-recovery + reset-tasks
+		// bridges below — they share the same shape.
+		const remoteRequest = <T>(
+			operation: string,
+			channel: string,
+			fallback: T,
+			send: (mainWindow: BrowserWindow, responseChannel: string) => void,
+			timeoutMs = 10000
+		): Promise<T> => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn(`mainWindow is null for ${operation}`, 'WebServer');
+				return Promise.resolve(fallback);
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:${channel}:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: T) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result === undefined ? fallback : result);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn(`webContents is not available for ${operation}`, 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(fallback);
+					return;
+				}
+				send(mainWindow, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`${operation} callback timed out`, 'WebServer');
+					resolve(fallback);
+				}, timeoutMs);
+			});
+		};
+
+		// Reset all `[x]` checkboxes back to `[ ]` for an Auto Run document.
+		// Forwards to the renderer which uses the existing autorun:readDoc / writeDoc IPC
+		// (with SSH support) so this works the same locally and on remote sessions.
+		server.setResetAutoRunDocTasksCallback(async (sessionId, filename) =>
+			remoteRequest<boolean>(
+				'resetAutoRunDocTasks',
+				'resetAutoRunDocTasks',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:resetAutoRunDocTasks',
+						sessionId,
+						filename,
+						responseChannel
+					)
+			)
+		);
+
+		// Resume / skip / abort an Auto Run that has been paused due to an agent error.
+		// These mirror the desktop's AutoRunErrorBanner buttons.
+		server.setResumeAutoRunErrorCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'resumeAutoRunError',
+				'resumeAutoRunError',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:resumeAutoRunError', sessionId, responseChannel)
+			)
+		);
+
+		server.setSkipAutoRunDocumentCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'skipAutoRunDocument',
+				'skipAutoRunDocument',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:skipAutoRunDocument', sessionId, responseChannel)
+			)
+		);
+
+		server.setAbortAutoRunErrorCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'abortAutoRunError',
+				'abortAutoRunError',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:abortAutoRunError', sessionId, responseChannel)
+			)
+		);
+
+		// Playbook CRUD callbacks — list / create / update / delete.
+		// All forward to the renderer which calls window.maestro.playbooks.* IPC.
+		server.setListPlaybooksCallback(async (sessionId) =>
+			remoteRequest<WebPlaybook[]>(
+				'listPlaybooks',
+				'listPlaybooks',
+				[],
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:listPlaybooks', sessionId, responseChannel)
+			)
+		);
+
+		server.setCreatePlaybookCallback(async (sessionId, playbook) =>
+			remoteRequest<WebPlaybook | null>(
+				'createPlaybook',
+				'createPlaybook',
+				null,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:createPlaybook', sessionId, playbook, responseChannel)
+			)
+		);
+
+		server.setUpdatePlaybookCallback(async (sessionId, playbookId, updates) =>
+			remoteRequest<WebPlaybook | null>(
+				'updatePlaybook',
+				'updatePlaybook',
+				null,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:updatePlaybook',
+						sessionId,
+						playbookId,
+						updates,
+						responseChannel
+					)
+			)
+		);
+
+		server.setDeletePlaybookCallback(async (sessionId, playbookId) =>
+			remoteRequest<boolean>(
+				'deletePlaybook',
+				'deletePlaybook',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:deletePlaybook',
+						sessionId,
+						playbookId,
+						responseChannel
+					)
+			)
+		);
 
 		// ============ Group Chat Callbacks ============
 
@@ -2190,7 +2510,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 				const historyManager = getHistoryManager();
 				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Build session name map
 				const storedSessions = sessionsStore.get('sessions', []) as Array<{
@@ -2211,12 +2531,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				let entryCount = 0;
 
 				for (const sessionId of sessionIds) {
-					const filePath = historyManager.getHistoryFilePath(sessionId);
+					const filePath = await historyManager.getHistoryFilePath(sessionId);
 					if (!filePath) continue;
 					const displayName = sessionNameMap.get(sessionId) || sessionId;
 					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
 
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					let agentHasEntries = false;
 					for (const entry of entries) {
 						if (entry.timestamp >= cutoffTime) {

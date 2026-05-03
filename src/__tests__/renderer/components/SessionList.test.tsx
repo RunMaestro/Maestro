@@ -1249,7 +1249,16 @@ describe('SessionList', () => {
 		});
 
 		it('shows busy status with pulse animation', () => {
-			const sessions = [createMockSession({ id: 's1', name: 'Busy Session', state: 'busy' })];
+			// Claude sessions without an agentSessionId render a static "no active Claude session"
+			// indicator regardless of state — provide one so the busy animation is exercised.
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Busy Session',
+					state: 'busy',
+					agentSessionId: 'agent-session-1',
+				}),
+			];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
@@ -1257,8 +1266,8 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Look for animate-pulse class on status indicator
-			const pulsingElements = container.querySelectorAll('.animate-pulse');
+			// Busy state renders an animate-ping ring behind the status dot
+			const pulsingElements = container.querySelectorAll('.animate-ping');
 			expect(pulsingElements.length).toBeGreaterThan(0);
 		});
 

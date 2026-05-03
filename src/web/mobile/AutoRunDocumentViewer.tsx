@@ -2,11 +2,13 @@
  * AutoRunDocumentViewer component for Maestro mobile web interface
  *
  * Full-screen document viewer/editor for Auto Run markdown files.
- * Supports preview mode (rendered markdown) and edit mode (textarea).
+ * Supports preview mode (rendered markdown) and edit mode (textarea),
+ * undo/redo history, in-document search, and a lock state that disables
+ * edits while the desktop is running an Auto Run on this document.
  * Loads content via WebSocket and saves explicitly on user action.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -20,7 +22,14 @@ export interface AutoRunDocumentViewerProps {
 	filename: string;
 	onBack: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
+	/** When true, the editor is forced read-only (e.g. during an active Auto Run). */
+	isLocked?: boolean;
 }
+
+/** Maximum entries kept in the undo history. Older states are dropped. */
+const MAX_UNDO_HISTORY = 100;
+/** How often (ms) to push a new history snapshot when typing rapidly. */
+const HISTORY_SNAPSHOT_INTERVAL_MS = 350;
 
 /**
  * AutoRunDocumentViewer component
@@ -33,6 +42,7 @@ export function AutoRunDocumentViewer({
 	filename,
 	onBack,
 	sendRequest,
+	isLocked = false,
 }: AutoRunDocumentViewerProps) {
 	const colors = useThemeColors();
 	const [content, setContent] = useState<string>('');
@@ -48,6 +58,21 @@ export function AutoRunDocumentViewer({
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const saveMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Undo/redo history. We snapshot at most every HISTORY_SNAPSHOT_INTERVAL_MS
+	// while typing so a single Cmd+Z reverts to a sensible chunk, not one keystroke.
+	const undoStackRef = useRef<string[]>([]);
+	const redoStackRef = useRef<string[]>([]);
+	const lastSnapshotAtRef = useRef<number>(0);
+	const [historyTick, setHistoryTick] = useState(0);
+	const canUndo = undoStackRef.current.length > 0;
+	const canRedo = redoStackRef.current.length > 0;
+
+	// Search state. Matches are computed against displayContent and the
+	// current match is highlighted by selecting that range in the textarea.
+	const [searchOpen, setSearchOpen] = useState(false);
+	const [searchQuery, setSearchQuery] = useState('');
+	const [searchIndex, setSearchIndex] = useState(0);
+
 	// Load document content on mount
 	useEffect(() => {
 		let cancelled = false;
@@ -61,13 +86,31 @@ export function AutoRunDocumentViewer({
 				});
 				if (!cancelled) {
 					const loaded = response.content ?? '';
+					// Clear history *before* swapping content so Cmd+Z can't rewind
+					// into the previously-viewed document's text.
+					undoStackRef.current = [];
+					redoStackRef.current = [];
 					setContent(loaded);
 					setEditContent(loaded);
+					setHistoryTick((t) => t + 1);
 				}
-			} catch {
+			} catch (err) {
 				if (!cancelled) {
+					// Same reasoning as the success path — if the request fails after
+					// switching documents, a stray Cmd+Z could otherwise resurrect the
+					// previous file's buffer and let it be saved into this filename.
+					undoStackRef.current = [];
+					redoStackRef.current = [];
 					setContent('');
 					setEditContent('');
+					setHistoryTick((t) => t + 1);
+					// Web bundle has no Sentry — log to console so the failure is at
+					// least visible in browser devtools instead of silently swallowed.
+					console.error('[AutoRunDocumentViewer] get_auto_run_document failed', {
+						sessionId,
+						filename,
+						err,
+					});
 				}
 			} finally {
 				if (!cancelled) {
@@ -82,6 +125,18 @@ export function AutoRunDocumentViewer({
 		};
 	}, [sessionId, filename, sendRequest]);
 
+	// If the Auto Run starts while the user is editing, drop them back to preview
+	// AND discard any unsaved local edits so the locked view reflects the live
+	// file the run will be mutating — keeping a dirty buffer would let the
+	// preview render stale text on top of the file the agent is editing.
+	useEffect(() => {
+		if (isLocked && isEditing) {
+			setIsEditing(false);
+			setEditContent(content);
+			setIsDirty(false);
+		}
+	}, [isLocked, isEditing, content]);
+
 	// Clear save message timer on unmount
 	useEffect(() => {
 		return () => {
@@ -91,12 +146,14 @@ export function AutoRunDocumentViewer({
 		};
 	}, []);
 
-	// Focus textarea when entering edit mode
+	// Focus textarea when entering edit mode — but skip when search is open,
+	// otherwise the search-toggle path that flips isEditing to true would steal
+	// focus from the search input and start typing into the document.
 	useEffect(() => {
-		if (isEditing && textareaRef.current) {
+		if (isEditing && !searchOpen && textareaRef.current) {
 			textareaRef.current.focus();
 		}
-	}, [isEditing]);
+	}, [isEditing, searchOpen]);
 
 	const showSaveMessage = useCallback((text: string, type: 'success' | 'error') => {
 		setSaveMessage({ text, type });
@@ -118,6 +175,7 @@ export function AutoRunDocumentViewer({
 	}, [isDirty, onBack]);
 
 	const handleToggleEdit = useCallback(() => {
+		if (isLocked) return;
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		if (isEditing) {
 			// Switching to preview — if dirty, keep editContent but show preview of editContent
@@ -127,18 +185,66 @@ export function AutoRunDocumentViewer({
 			setEditContent(isDirty ? editContent : content);
 			setIsEditing(true);
 		}
-	}, [isEditing, isDirty, editContent, content]);
+	}, [isLocked, isEditing, isDirty, editContent, content]);
+
+	const pushHistorySnapshot = useCallback((value: string) => {
+		undoStackRef.current.push(value);
+		if (undoStackRef.current.length > MAX_UNDO_HISTORY) {
+			undoStackRef.current.shift();
+		}
+		// Any new edit invalidates the redo stack — same behavior as native editors.
+		redoStackRef.current = [];
+		setHistoryTick((t) => t + 1);
+	}, []);
 
 	const handleContentChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
 			const newContent = e.target.value;
+			const now = Date.now();
+			// Throttle history snapshots so a long burst of typing collapses into one
+			// undo step. Always snapshot the *previous* value before mutating state.
+			if (now - lastSnapshotAtRef.current >= HISTORY_SNAPSHOT_INTERVAL_MS) {
+				pushHistorySnapshot(editContent);
+				lastSnapshotAtRef.current = now;
+			}
 			setEditContent(newContent);
 			setIsDirty(newContent !== content);
 		},
-		[content]
+		[content, editContent, pushHistorySnapshot]
 	);
 
+	const handleUndo = useCallback(() => {
+		if (undoStackRef.current.length === 0) return;
+		const previous = undoStackRef.current.pop();
+		if (previous === undefined) return;
+		redoStackRef.current.push(editContent);
+		if (redoStackRef.current.length > MAX_UNDO_HISTORY) {
+			redoStackRef.current.shift();
+		}
+		setEditContent(previous);
+		setIsDirty(previous !== content);
+		setHistoryTick((t) => t + 1);
+		// Reset throttle so the *next* keystroke produces a fresh snapshot
+		// instead of being absorbed into the post-undo edit.
+		lastSnapshotAtRef.current = 0;
+	}, [content, editContent]);
+
+	const handleRedo = useCallback(() => {
+		if (redoStackRef.current.length === 0) return;
+		const next = redoStackRef.current.pop();
+		if (next === undefined) return;
+		undoStackRef.current.push(editContent);
+		if (undoStackRef.current.length > MAX_UNDO_HISTORY) {
+			undoStackRef.current.shift();
+		}
+		setEditContent(next);
+		setIsDirty(next !== content);
+		setHistoryTick((t) => t + 1);
+		lastSnapshotAtRef.current = 0;
+	}, [content, editContent]);
+
 	const handleSave = useCallback(async () => {
+		if (isLocked) return;
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		setIsSaving(true);
 		try {
@@ -162,26 +268,130 @@ export function AutoRunDocumentViewer({
 		} finally {
 			setIsSaving(false);
 		}
-	}, [sessionId, filename, editContent, sendRequest, showSaveMessage]);
+	}, [isLocked, sessionId, filename, editContent, sendRequest, showSaveMessage]);
 
-	// Close on escape key
+	// Display content: when dirty, show editContent in preview; otherwise show saved content.
+	const displayContent = isDirty ? editContent : content;
+
+	// Compute search matches in the currently-displayed content. Matching is
+	// case-insensitive and uses literal (non-regex) substrings.
+	const searchMatches = useMemo<number[]>(() => {
+		if (!searchQuery) return [];
+		const out: number[] = [];
+		const haystack = displayContent.toLowerCase();
+		const needle = searchQuery.toLowerCase();
+		if (!needle) return out;
+		let from = 0;
+		while (from <= haystack.length) {
+			const idx = haystack.indexOf(needle, from);
+			if (idx === -1) break;
+			out.push(idx);
+			from = idx + Math.max(1, needle.length);
+		}
+		return out;
+	}, [displayContent, searchQuery]);
+
+	// Reset the active match when the result set changes.
+	useEffect(() => {
+		setSearchIndex(0);
+	}, [searchMatches]);
+
+	const focusActiveMatch = useCallback(
+		(matchIdx: number) => {
+			if (searchMatches.length === 0) return;
+			const wrappedIdx =
+				((matchIdx % searchMatches.length) + searchMatches.length) % searchMatches.length;
+			const start = searchMatches[wrappedIdx];
+			const end = start + searchQuery.length;
+			setSearchIndex(wrappedIdx);
+			if (isEditing && textareaRef.current) {
+				const ta = textareaRef.current;
+				ta.focus();
+				ta.setSelectionRange(start, end);
+				// Try to scroll the match into view by adjusting scrollTop.
+				// Approximation: we use line height × line number of the match.
+				const before = displayContent.slice(0, start);
+				const lineNumber = before.split('\n').length - 1;
+				const lineHeight = 22; // matches our textarea fontSize × line-height
+				ta.scrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 2);
+			}
+		},
+		[displayContent, isEditing, searchMatches, searchQuery.length]
+	);
+
+	const handleSearchToggle = useCallback(() => {
+		setSearchOpen((open) => {
+			const next = !open;
+			if (!next) setSearchQuery('');
+			// Switch to edit mode when opening search so the textarea can
+			// highlight and scroll to the active match. We skip this when the
+			// viewer is locked (an Auto Run is in progress) since editing is
+			// disabled there — in that case the match counter still updates but
+			// Next/Prev won't move a selection.
+			if (next && !isEditing && !isLocked) {
+				setEditContent(isDirty ? editContent : content);
+				setIsEditing(true);
+			}
+			return next;
+		});
+	}, [content, editContent, isDirty, isEditing, isLocked]);
+
+	const handleSearchNext = useCallback(() => {
+		if (searchMatches.length === 0) return;
+		focusActiveMatch(searchIndex + 1);
+	}, [searchMatches, searchIndex, focusActiveMatch]);
+
+	const handleSearchPrev = useCallback(() => {
+		if (searchMatches.length === 0) return;
+		focusActiveMatch(searchIndex - 1);
+	}, [searchMatches, searchIndex, focusActiveMatch]);
+
+	// Keyboard shortcuts: Esc, Cmd+S to save, Cmd+F to search, Cmd+Z / Shift+Cmd+Z for history.
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
+				if (searchOpen) {
+					setSearchOpen(false);
+					setSearchQuery('');
+					return;
+				}
 				handleBack();
+				return;
 			}
-			// Ctrl/Cmd+S to save when editing
-			if ((e.metaKey || e.ctrlKey) && e.key === 's' && isEditing && isDirty) {
+			const meta = e.metaKey || e.ctrlKey;
+			if (!meta) return;
+			if (e.key === 's' && isEditing && isDirty && !isLocked) {
 				e.preventDefault();
 				handleSave();
+				return;
+			}
+			if (e.key === 'f') {
+				e.preventDefault();
+				setSearchOpen(true);
+				return;
+			}
+			if (e.key === 'z' && isEditing) {
+				e.preventDefault();
+				if (e.shiftKey) {
+					handleRedo();
+				} else {
+					handleUndo();
+				}
+				return;
+			}
+			// Some keyboards send Cmd+Y for redo (Windows/Linux convention)
+			if (e.key === 'y' && isEditing) {
+				e.preventDefault();
+				handleRedo();
 			}
 		};
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [handleBack, handleSave, isEditing, isDirty]);
+	}, [handleBack, handleSave, handleRedo, handleUndo, isEditing, isDirty, isLocked, searchOpen]);
 
-	// Display content: when dirty, show editContent in preview; otherwise show saved content
-	const displayContent = isDirty ? editContent : content;
+	// Reference historyTick so React re-renders the toolbar when undo/redo
+	// availability changes (refs alone wouldn't trigger a render).
+	void historyTick;
 
 	return (
 		<div
@@ -261,7 +471,19 @@ export function AutoRunDocumentViewer({
 					}}
 				>
 					{filename}
-					{isDirty && (
+					{isLocked && (
+						<span
+							style={{
+								fontSize: '11px',
+								fontWeight: 500,
+								color: colors.warning,
+								marginLeft: '6px',
+							}}
+						>
+							(locked — Auto Run in progress)
+						</span>
+					)}
+					{isDirty && !isLocked && (
 						<span
 							style={{
 								fontSize: '12px',
@@ -275,9 +497,46 @@ export function AutoRunDocumentViewer({
 					)}
 				</div>
 
+				{/* Search toggle button */}
+				<button
+					onClick={handleSearchToggle}
+					style={{
+						width: '44px',
+						height: '44px',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						borderRadius: '8px',
+						backgroundColor: searchOpen ? `${colors.accent}20` : colors.bgMain,
+						border: `1px solid ${searchOpen ? colors.accent : colors.border}`,
+						color: searchOpen ? colors.accent : colors.textMain,
+						cursor: 'pointer',
+						touchAction: 'manipulation',
+						WebkitTapHighlightColor: 'transparent',
+						flexShrink: 0,
+					}}
+					aria-label={searchOpen ? 'Close search' : 'Search document'}
+					title="Search (Cmd+F)"
+				>
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<circle cx="11" cy="11" r="8" />
+						<line x1="21" y1="21" x2="16.65" y2="16.65" />
+					</svg>
+				</button>
+
 				{/* Edit/Preview toggle */}
 				<button
 					onClick={handleToggleEdit}
+					disabled={isLocked}
 					style={{
 						width: '44px',
 						height: '44px',
@@ -288,7 +547,8 @@ export function AutoRunDocumentViewer({
 						backgroundColor: isEditing ? `${colors.accent}20` : colors.bgMain,
 						border: `1px solid ${isEditing ? colors.accent : colors.border}`,
 						color: isEditing ? colors.accent : colors.textMain,
-						cursor: 'pointer',
+						cursor: isLocked ? 'not-allowed' : 'pointer',
+						opacity: isLocked ? 0.5 : 1,
 						touchAction: 'manipulation',
 						WebkitTapHighlightColor: 'transparent',
 						flexShrink: 0,
@@ -329,7 +589,7 @@ export function AutoRunDocumentViewer({
 				</button>
 
 				{/* Save button (when editing and dirty) */}
-				{isEditing && isDirty && (
+				{isEditing && isDirty && !isLocked && (
 					<button
 						onClick={handleSave}
 						disabled={isSaving}
@@ -356,6 +616,157 @@ export function AutoRunDocumentViewer({
 					</button>
 				)}
 			</header>
+
+			{/* Search bar (when open) */}
+			{searchOpen && (
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '6px',
+						padding: '8px 16px',
+						borderBottom: `1px solid ${colors.border}`,
+						backgroundColor: colors.bgSidebar,
+						flexShrink: 0,
+					}}
+				>
+					<input
+						type="text"
+						autoFocus
+						value={searchQuery}
+						onChange={(e) => setSearchQuery(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								if (e.shiftKey) handleSearchPrev();
+								else handleSearchNext();
+							}
+						}}
+						placeholder="Find in document..."
+						style={{
+							flex: 1,
+							padding: '8px 10px',
+							borderRadius: '8px',
+							border: `1px solid ${colors.border}`,
+							backgroundColor: colors.bgMain,
+							color: colors.textMain,
+							fontSize: '14px',
+							outline: 'none',
+							WebkitAppearance: 'none',
+						}}
+						aria-label="Search query"
+					/>
+					<span
+						style={{
+							fontSize: '12px',
+							color: colors.textDim,
+							minWidth: '60px',
+							textAlign: 'right',
+						}}
+					>
+						{searchMatches.length === 0
+							? searchQuery
+								? '0 / 0'
+								: '—'
+							: `${searchIndex + 1} / ${searchMatches.length}`}
+					</span>
+					<button
+						onClick={handleSearchPrev}
+						disabled={searchMatches.length === 0}
+						style={{
+							width: '36px',
+							height: '36px',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							borderRadius: '8px',
+							backgroundColor: colors.bgMain,
+							border: `1px solid ${colors.border}`,
+							color: colors.textMain,
+							cursor: searchMatches.length === 0 ? 'not-allowed' : 'pointer',
+							opacity: searchMatches.length === 0 ? 0.4 : 1,
+							flexShrink: 0,
+						}}
+						aria-label="Previous match"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<polyline points="18 15 12 9 6 15" />
+						</svg>
+					</button>
+					<button
+						onClick={handleSearchNext}
+						disabled={searchMatches.length === 0}
+						style={{
+							width: '36px',
+							height: '36px',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							borderRadius: '8px',
+							backgroundColor: colors.bgMain,
+							border: `1px solid ${colors.border}`,
+							color: colors.textMain,
+							cursor: searchMatches.length === 0 ? 'not-allowed' : 'pointer',
+							opacity: searchMatches.length === 0 ? 0.4 : 1,
+							flexShrink: 0,
+						}}
+						aria-label="Next match"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<polyline points="6 9 12 15 18 9" />
+						</svg>
+					</button>
+					<button
+						onClick={handleSearchToggle}
+						style={{
+							width: '36px',
+							height: '36px',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							borderRadius: '8px',
+							backgroundColor: 'transparent',
+							border: `1px solid ${colors.border}`,
+							color: colors.textDim,
+							cursor: 'pointer',
+							flexShrink: 0,
+						}}
+						aria-label="Close search"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<line x1="18" y1="6" x2="6" y2="18" />
+							<line x1="6" y1="6" x2="18" y2="18" />
+						</svg>
+					</button>
+				</div>
+			)}
 
 			{/* Save message toast */}
 			{saveMessage && (
@@ -434,6 +845,7 @@ export function AutoRunDocumentViewer({
 							ref={textareaRef}
 							value={editContent}
 							onChange={handleContentChange}
+							readOnly={isLocked}
 							style={{
 								flex: 1,
 								width: '100%',
@@ -451,20 +863,101 @@ export function AutoRunDocumentViewer({
 							}}
 							spellCheck={false}
 						/>
-						{/* Character count */}
+						{/* Footer: undo/redo buttons + character count */}
 						<div
 							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
 								padding: '6px 16px',
 								paddingBottom: 'max(6px, env(safe-area-inset-bottom))',
 								borderTop: `1px solid ${colors.border}`,
 								backgroundColor: colors.bgSidebar,
-								fontSize: '11px',
-								color: colors.textDim,
-								textAlign: 'right',
 								flexShrink: 0,
 							}}
 						>
-							{editContent.length.toLocaleString()} characters
+							<button
+								onClick={handleUndo}
+								disabled={!canUndo}
+								style={{
+									width: '32px',
+									height: '32px',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									borderRadius: '6px',
+									backgroundColor: 'transparent',
+									border: `1px solid ${colors.border}`,
+									color: canUndo ? colors.textMain : colors.textDim,
+									cursor: canUndo ? 'pointer' : 'not-allowed',
+									opacity: canUndo ? 1 : 0.4,
+									flexShrink: 0,
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+								}}
+								aria-label="Undo"
+								title="Undo (Cmd+Z)"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<path d="M3 7v6h6" />
+									<path d="M21 17a9 9 0 0 0-15-6.7L3 13" />
+								</svg>
+							</button>
+							<button
+								onClick={handleRedo}
+								disabled={!canRedo}
+								style={{
+									width: '32px',
+									height: '32px',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									borderRadius: '6px',
+									backgroundColor: 'transparent',
+									border: `1px solid ${colors.border}`,
+									color: canRedo ? colors.textMain : colors.textDim,
+									cursor: canRedo ? 'pointer' : 'not-allowed',
+									opacity: canRedo ? 1 : 0.4,
+									flexShrink: 0,
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+								}}
+								aria-label="Redo"
+								title="Redo (Shift+Cmd+Z)"
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<path d="M21 7v6h-6" />
+									<path d="M3 17a9 9 0 0 1 15-6.7L21 13" />
+								</svg>
+							</button>
+							<div
+								style={{
+									flex: 1,
+									textAlign: 'right',
+									fontSize: '11px',
+									color: colors.textDim,
+								}}
+							>
+								{editContent.length.toLocaleString()} characters
+							</div>
 						</div>
 					</div>
 				) : (

@@ -21,6 +21,7 @@ import {
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 
@@ -56,6 +57,12 @@ export interface UseAppRemoteEventListenersDeps {
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
 	/** Stop a batch run directly (no confirmation dialog) */
 	stopBatchRun: (sessionId: string) => void;
+	/** Resume a batch run that was paused on agent error */
+	resumeAfterError: (sessionId: string) => void;
+	/** Skip the failing document and continue with the next one */
+	skipCurrentDocument: (sessionId: string) => void;
+	/** Abort a paused-on-error batch run entirely */
+	abortBatchOnError: (sessionId: string) => void;
 }
 
 // ============================================================================
@@ -73,6 +80,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		handleAutoRunRefresh,
 		startBatchRun,
 		stopBatchRun,
+		resumeAfterError,
+		skipCurrentDocument,
+		abortBatchOnError,
 	} = deps;
 
 	// --- File Operations ---
@@ -220,6 +230,108 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// Switch to the target session - the autoRunFolderPath useEffect
 			// will trigger handleAutoRunRefresh for the newly active session
 			setActiveSessionId(sessionId);
+		}
+	});
+
+	// Handle remote set Auto Run folder events from web interface — repoints
+	// a session at a different `.maestro/` folder, mirroring desktop's
+	// `dialog.selectFolder` + `handleAutoRunFolderSelected` flow. Lists docs
+	// from the new path via the autorun preload API and writes the new folder
+	// + first doc + content into the session atomically; the session storage
+	// layer persists `autoRunFolderPath` on the next save tick.
+	useEventListener('maestro:setAutoRunFolder', async (e: Event) => {
+		const { sessionId, folderPath, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			folderPath: string;
+			responseChannel: string;
+		};
+
+		try {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) {
+				window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+					success: false,
+					error: `Session ${sessionId} not found`,
+				});
+				return;
+			}
+
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
+			let listResult: {
+				success: boolean;
+				files?: string[];
+				tree?: unknown[];
+				error?: string;
+			} | null = null;
+			try {
+				listResult = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
+			} catch (error) {
+				captureException(error, {
+					extra: { sessionId, folderPath, responseChannel, sshRemoteId },
+				});
+				listResult = {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+
+			// Treat a structured failure the same as a thrown one — otherwise we
+			// silently repoint the session at an unreadable folder and the caller
+			// gets a false-positive `{ success: true }`.
+			if (!listResult?.success) {
+				captureMessage('AutoRun listDocs returned failure', {
+					level: 'error',
+					extra: { sessionId, folderPath, responseChannel, sshRemoteId, listResult },
+				});
+				window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+					success: false,
+					error: listResult?.error || `Could not read folder ${folderPath}`,
+				});
+				return;
+			}
+
+			const firstFile = listResult.files?.[0];
+			let firstFileContent = '';
+			if (firstFile) {
+				try {
+					const contentResult = await window.maestro.autorun.readDoc(
+						folderPath,
+						firstFile + '.md',
+						sshRemoteId
+					);
+					if (contentResult.success) {
+						firstFileContent = contentResult.content || '';
+					}
+				} catch {
+					/* leave empty; the autoRunContent useEffect will retry on next select */
+				}
+			}
+
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? {
+								...s,
+								autoRunFolderPath: folderPath,
+								autoRunSelectedFile: firstFile,
+								autoRunContent: firstFileContent,
+								autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+							}
+						: s
+				)
+			);
+
+			window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+				success: true,
+			});
+		} catch (error) {
+			captureException(error, { extra: { sessionId, folderPath, responseChannel } });
+			window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	});
 
@@ -375,10 +487,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			);
 			const filePaths: string[] = listResult.success ? listResult.files || [] : [];
 
-			// Transform file paths into AutoRunDocument objects with task counts
+			// Transform file paths into AutoRunDocument objects with task counts.
+			// `folder` is the directory portion of the relative path (empty for root)
+			// so the mobile UI can group documents by subfolder. We normalize
+			// backslash-separated paths (Windows sessions can return `subdir\\doc.md`)
+			// to forward slashes before splitting so the tree view works cross-platform.
 			const docs = await Promise.all(
 				filePaths.map(async (filePath) => {
-					const filename = filePath.split('/').pop() || filePath;
+					const normalizedPath = filePath.replace(/\\/g, '/');
+					const lastSlash = normalizedPath.lastIndexOf('/');
+					const filename = lastSlash >= 0 ? normalizedPath.slice(lastSlash + 1) : normalizedPath;
+					const folder = lastSlash >= 0 ? normalizedPath.slice(0, lastSlash) : '';
 					let taskCount = 0;
 					let completedCount = 0;
 					try {
@@ -396,7 +515,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					} catch {
 						// If reading fails, leave counts at 0
 					}
-					return { filename, path: filePath, taskCount, completedCount };
+					return { filename, path: normalizedPath, taskCount, completedCount, folder };
 				})
 			);
 			window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, docs);
@@ -461,6 +580,202 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:stopAutoRun', (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		stopBatchRun(sessionId);
+	});
+
+	// Handle remote reset-tasks: rewrite all `[x]` checkboxes back to `[ ]` for a doc.
+	// Uses the same autorun:readDoc / autorun:writeDoc IPC the desktop "Reset Tasks"
+	// modal uses, so SSH remote sessions work transparently.
+	useEventListener('maestro:resetAutoRunDocTasks', async (e: Event) => {
+		const { sessionId, filename, responseChannel } = (e as CustomEvent).detail;
+		try {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session?.autoRunFolderPath) {
+				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, false);
+				return;
+			}
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
+			const readResult = await window.maestro.autorun.readDoc(
+				session.autoRunFolderPath,
+				filename,
+				sshRemoteId
+			);
+			if (!readResult?.success) {
+				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, false);
+				return;
+			}
+			const original: string = readResult.content ?? '';
+			// Reset all completed task checkboxes (both `[x]` and `[X]`) back to `[ ]`
+			// while preserving leading whitespace and the rest of the line. The
+			// trailing whitespace group is `\s?` (not `\s`) so malformed lines like
+			// `- [x]Task` (no space after the bracket) still get unchecked — the
+			// desktop's uncheckAllTasks() behaves the same way.
+			const reset = original.replace(/^(\s*[-*]\s*)\[[xX]\](\s?)/gm, '$1[ ]$2');
+			if (reset === original) {
+				// Nothing to reset — still report success so the UI doesn't show an error.
+				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, true);
+				return;
+			}
+			const writeResult = await window.maestro.autorun.writeDoc(
+				session.autoRunFolderPath,
+				filename,
+				reset,
+				sshRemoteId
+			);
+			// Mirror the reset back into session state so the renderer's right
+			// panel reflects the new content immediately instead of waiting for
+			// the next refresh — and the autoRunContent stays in sync with disk.
+			if (writeResult?.success && session.autoRunSelectedFile + '.md' === filename) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? {
+									...s,
+									autoRunContent: reset,
+									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+								}
+							: s
+					)
+				);
+			}
+			window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(
+				responseChannel,
+				Boolean(writeResult?.success)
+			);
+		} catch (error) {
+			captureException(error, { extra: { sessionId, filename, responseChannel } });
+			logger.error('[Remote] Failed to reset auto-run doc tasks:', undefined, error);
+			window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, false);
+		}
+	});
+
+	// Auto Run error-recovery actions from web — mirror the desktop AutoRunErrorBanner buttons.
+	useEventListener('maestro:resumeAutoRunError', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail;
+		try {
+			resumeAfterError(sessionId);
+			window.maestro.process.sendRemoteResumeAutoRunErrorResponse(responseChannel, true);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:resumeAutoRunError', sessionId, responseChannel },
+			});
+			logger.error('[Remote] Failed to resume auto-run error:', undefined, error);
+			window.maestro.process.sendRemoteResumeAutoRunErrorResponse(responseChannel, false);
+		}
+	});
+
+	useEventListener('maestro:skipAutoRunDocument', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail;
+		try {
+			skipCurrentDocument(sessionId);
+			window.maestro.process.sendRemoteSkipAutoRunDocumentResponse(responseChannel, true);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:skipAutoRunDocument', sessionId, responseChannel },
+			});
+			logger.error('[Remote] Failed to skip auto-run document:', undefined, error);
+			window.maestro.process.sendRemoteSkipAutoRunDocumentResponse(responseChannel, false);
+		}
+	});
+
+	useEventListener('maestro:abortAutoRunError', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail;
+		try {
+			abortBatchOnError(sessionId);
+			window.maestro.process.sendRemoteAbortAutoRunErrorResponse(responseChannel, true);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:abortAutoRunError', sessionId, responseChannel },
+			});
+			logger.error('[Remote] Failed to abort auto-run error:', undefined, error);
+			window.maestro.process.sendRemoteAbortAutoRunErrorResponse(responseChannel, false);
+		}
+	});
+
+	// Playbook CRUD from web — forwards to window.maestro.playbooks.*
+	useEventListener('maestro:listPlaybooks', async (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail;
+		try {
+			const result = await window.maestro.playbooks.list(sessionId);
+			window.maestro.process.sendRemoteListPlaybooksResponse(
+				responseChannel,
+				Array.isArray(result?.playbooks) ? result.playbooks : []
+			);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:listPlaybooks', sessionId, responseChannel },
+			});
+			logger.error('[Remote] Failed to list playbooks:', undefined, error);
+			window.maestro.process.sendRemoteListPlaybooksResponse(responseChannel, []);
+		}
+	});
+
+	useEventListener('maestro:createPlaybook', async (e: Event) => {
+		const { sessionId, playbook, responseChannel } = (e as CustomEvent).detail;
+		try {
+			const result = await window.maestro.playbooks.create(sessionId, playbook);
+			window.maestro.process.sendRemoteCreatePlaybookResponse(
+				responseChannel,
+				result?.playbook ?? null
+			);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:createPlaybook', sessionId, responseChannel },
+			});
+			logger.error('[Remote] Failed to create playbook:', undefined, error);
+			window.maestro.process.sendRemoteCreatePlaybookResponse(responseChannel, null);
+		}
+	});
+
+	useEventListener('maestro:updatePlaybook', async (e: Event) => {
+		const { sessionId, playbookId, updates, responseChannel } = (e as CustomEvent).detail;
+		try {
+			const result = await window.maestro.playbooks.update(sessionId, playbookId, updates);
+			window.maestro.process.sendRemoteUpdatePlaybookResponse(
+				responseChannel,
+				result?.playbook ?? null
+			);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:updatePlaybook', sessionId, playbookId, responseChannel },
+			});
+			logger.error('[Remote] Failed to update playbook:', undefined, error);
+			window.maestro.process.sendRemoteUpdatePlaybookResponse(responseChannel, null);
+		}
+	});
+
+	useEventListener('maestro:deletePlaybook', async (e: Event) => {
+		const { sessionId, playbookId, responseChannel } = (e as CustomEvent).detail;
+		try {
+			// `playbooks.delete` returns `{ success: boolean; error?: string }` — if the
+			// IPC reports `success: false` (e.g. playbook not found) we must surface
+			// that back to the web client instead of silently acking true, otherwise
+			// the mobile UI optimistically drops the entry and the list goes stale.
+			const result = await window.maestro.playbooks.delete(sessionId, playbookId);
+			if (!result?.success) {
+				captureMessage('playbooks.delete returned failure', {
+					level: 'error',
+					extra: {
+						event: 'maestro:deletePlaybook',
+						sessionId,
+						playbookId,
+						error: result?.error,
+					},
+				});
+				logger.error('[Remote] Failed to delete playbook:', undefined, result?.error);
+			}
+			window.maestro.process.sendRemoteDeletePlaybookResponse(
+				responseChannel,
+				Boolean(result?.success)
+			);
+		} catch (error) {
+			captureException(error, {
+				extra: { event: 'maestro:deletePlaybook', sessionId, playbookId, responseChannel },
+			});
+			logger.error('[Remote] Failed to delete playbook:', undefined, error);
+			window.maestro.process.sendRemoteDeletePlaybookResponse(responseChannel, false);
+		}
 	});
 
 	// --- Session CRUD ---

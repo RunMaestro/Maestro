@@ -31,6 +31,7 @@ import {
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
 import { NotificationPopover } from './NotificationPopover';
+import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { normalizeMentionName } from '../utils/participantColors';
 import { logger } from '../utils/logger';
 
@@ -533,6 +534,29 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								style={{ borderColor: theme.colors.border }}
 								onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
 							/>
+							<button
+								type="button"
+								onClick={(e) => {
+									e.stopPropagation();
+									// Match by content rather than captured `idx` — index can
+									// shift if the user removes another staged image while the
+									// annotator is open.
+									useImageAnnotatorStore
+										.getState()
+										.openAnnotator(img, (newDataUrl) =>
+											setStagedImages((prev) => prev.map((s) => (s === img ? newDataUrl : s)))
+										);
+								}}
+								title="Annotate image"
+								aria-label="Annotate image"
+								className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-white"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+								}}
+							>
+								<PenLine className="w-2.5 h-2.5" />
+							</button>
 							<button
 								onClick={() => removeImage(img)}
 								className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"

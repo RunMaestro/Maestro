@@ -263,6 +263,7 @@ export interface AppModalsProps {
 	onCloseLightbox: () => void;
 	onNavigateLightbox: (img: string) => void;
 	onDeleteLightboxImage?: (img: string) => void;
+	onUpdateLightboxImage?: (oldImg: string, newDataUrl: string) => void;
 	gitDiffPreview: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
@@ -664,6 +665,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseLightbox,
 		onNavigateLightbox,
 		onDeleteLightboxImage,
+		onUpdateLightboxImage,
 		gitDiffPreview,
 		gitViewerCwd,
 		onCloseGitDiff,
@@ -998,6 +1000,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseLightbox={onCloseLightbox}
 				onNavigateLightbox={onNavigateLightbox}
 				onDeleteLightboxImage={onDeleteLightboxImage}
+				onUpdateLightboxImage={onUpdateLightboxImage}
 				gitDiffPreview={gitDiffPreview}
 				gitViewerCwd={gitViewerCwd}
 				onCloseGitDiff={onCloseGitDiff}

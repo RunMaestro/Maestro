@@ -17,6 +17,7 @@ import { DebugWizardModal } from './DebugWizardModal';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
 import { DeleteAgentConfirmModal } from './DeleteAgentConfirmModal';
+import { ImageAnnotator } from './ImageAnnotator/ImageAnnotator';
 import { MaestroWizard, WizardResumeModal } from './Wizard';
 import { TourOverlay } from './Wizard/tour';
 import type { SymphonyContributionData } from './SymphonyModal';
@@ -352,6 +353,12 @@ function AppStandaloneModalsInner({
 					/>
 				</Suspense>
 			)}
+
+			{/* --- IMAGE ANNOTATOR MODAL --- */}
+			{/* Self-sources isOpen / imageDataUrl / onSave from useImageAnnotatorStore.
+			    Returns null when closed; stays mounted so the modal-layer registration
+			    is stable across open/close cycles. */}
+			<ImageAnnotator theme={theme} />
 
 			{/* --- DIRECTOR'S NOTES MODAL (lazy-loaded, Encore Feature) --- */}
 			{encoreFeatures.directorNotes && directorNotesOpen && (

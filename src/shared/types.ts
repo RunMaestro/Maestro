@@ -168,6 +168,23 @@ export interface Group {
 	collapsed: boolean;
 }
 
+/**
+ * Cli activity attached to a Session when the CLI is running a playbook on
+ * that session. Single source of truth for both the renderer's Session type
+ * (`renderer/types/index.ts`) and the main-process persistence diff
+ * comparator (`main/ipc/handlers/persistence.ts:cliActivityChanged`).
+ *
+ * Producer: `useCliActivityMonitoring` in
+ * `renderer/hooks/remote/useCliActivityMonitoring.ts`. If a new field is added
+ * here, the comparator must compare it too — TypeScript will flag the omission
+ * because both sites depend on this exact shape.
+ */
+export interface SessionCliActivity {
+	playbookId: string;
+	playbookName: string;
+	startedAt: number;
+}
+
 // Simplified session interface for CLI (subset of full Session)
 export interface SessionInfo {
 	id: string;

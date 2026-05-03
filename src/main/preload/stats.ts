@@ -28,7 +28,7 @@ export type {
  */
 export type SessionCreatedEvent = Pick<
 	SessionLifecycleEvent,
-	'sessionId' | 'agentType' | 'projectPath' | 'createdAt' | 'isRemote'
+	'sessionId' | 'agentType' | 'projectPath' | 'createdAt' | 'isRemote' | 'isWorktree'
 >;
 
 /**

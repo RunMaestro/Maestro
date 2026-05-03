@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import {
 	X,
 	Wand2,
@@ -13,7 +13,6 @@ import {
 import { Spinner } from './ui/Spinner';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
-import type { GlobalAgentStats } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
@@ -21,7 +20,7 @@ import { formatDurationHuman } from '../../shared/formatters';
 import { Modal } from './ui/Modal';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
-import { logger } from '../utils/logger';
+import { useGlobalAgentStats } from '../hooks/stats/useGlobalAgentStats';
 
 interface AboutModalProps {
 	theme: Theme;
@@ -45,50 +44,12 @@ export function AboutModal({
 	isLeaderboardRegistered,
 	leaderboardRegistration,
 }: AboutModalProps) {
-	const [globalStats, setGlobalStats] = useState<GlobalAgentStats | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [isStatsComplete, setIsStatsComplete] = useState(false);
+	const { globalStats, loading, isComplete: isStatsComplete } = useGlobalAgentStats();
 	const badgeEscapeHandlerRef = useRef<(() => boolean) | null>(null);
 
 	// Use ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-
-	// Load global stats from all providers on mount with streaming updates
-	useEffect(() => {
-		// Subscribe to streaming updates
-		const unsubscribe = window.maestro.agentSessions.onGlobalStatsUpdate((stats) => {
-			setGlobalStats(stats);
-			setLoading(false);
-			if (stats.isComplete) {
-				setIsStatsComplete(true);
-			}
-		});
-
-		// Trigger the stats calculation (which will send streaming updates)
-		// Also use the promise result as a fallback in case IPC events don't arrive
-		window.maestro.agentSessions
-			.getGlobalStats()
-			.then((stats) => {
-				// Use returned stats as fallback if streaming updates didn't arrive
-				setGlobalStats((current) => current ?? stats);
-				setLoading(false);
-				// Only set isComplete based on actual stats, not unconditionally
-				if (stats.isComplete) {
-					setIsStatsComplete(true);
-				}
-			})
-			.catch((error) => {
-				logger.error('Failed to load global agent stats:', undefined, error);
-				setLoading(false);
-				// On error, mark as complete to stop showing loading state
-				setIsStatsComplete(true);
-			});
-
-		return () => {
-			unsubscribe();
-		};
-	}, []);
 
 	// formatTokensCompact and formatSize imported from ../utils/formatters
 

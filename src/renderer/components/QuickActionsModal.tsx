@@ -351,6 +351,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
+	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
+	const setBookmarksCollapsed = useUIStore((s) => s.setBookmarksCollapsed);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -460,6 +462,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
+	// Reveal a jumped-to agent without unnecessarily expanding sections.
+	// - Not bookmarked: expand the parent group if collapsed (existing behavior).
+	// - Bookmarked: prefer whichever section the agent is already visible in. If
+	//   neither bookmarks nor the parent group is open, expand bookmarks (the
+	//   pinned bookmark row is the lighter-weight reveal of the two).
+	const revealJumpTarget = (s: Session) => {
+		if (!s.bookmarked) {
+			if (s.groupId) {
+				setGroups((prev) =>
+					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+				);
+			}
+			return;
+		}
+		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
+		if (bookmarksCollapsed && !groupOpen) {
+			setBookmarksCollapsed(false);
+		}
+	};
+
 	const sessionActions: QuickAction[] = sessions.map((s) => {
 		// For worktree subagents, format as "Jump to $PARENT subagent: $NAME"
 		let label: string;
@@ -476,12 +498,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label,
 			action: () => {
 				setActiveSessionId(s.id);
-				// Auto-expand group if it's collapsed
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
-				}
+				revealJumpTarget(s);
 			},
 			subtext: s.state.toUpperCase(),
 			bookmarked: !!s.bookmarked,
@@ -1910,11 +1927,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: s.name,
 			action: () => {
 				setActiveSessionId(s.id);
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
-				}
+				revealJumpTarget(s);
 			},
 			// State (IDLE / running) is conveyed by the LIVE/IDLE section headers in
 			// the agents-mode list, so we leave the per-row subtext empty here. Running

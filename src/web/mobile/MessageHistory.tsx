@@ -12,11 +12,6 @@ import { stripAnsiCodes } from '../../shared/stringUtils';
 import { formatTimestamp } from '../../shared/formatters';
 import { WebReadingContent } from './WebReadingContent';
 
-/** Threshold for character-based truncation */
-const CHAR_TRUNCATE_THRESHOLD = 500;
-/** Threshold for line-based truncation */
-const LINE_TRUNCATE_THRESHOLD = 8;
-
 export interface LogEntry {
 	id?: string;
 	timestamp: number;
@@ -24,6 +19,10 @@ export interface LogEntry {
 	content?: string;
 	source?: 'user' | 'stdout' | 'stderr' | 'system' | 'thinking' | 'tool';
 	type?: string;
+	/** Base64 data URLs attached to a user message (e.g. pasted images).
+	 *  Rendered inline as thumbnails in the user-message bubble so the
+	 *  optimistic local chat shows the same attachments the agent receives. */
+	images?: string[];
 	metadata?: {
 		toolState?: {
 			name?: string;
@@ -52,8 +51,8 @@ export interface MessageHistoryProps {
 	enableBionifyReadingMode?: boolean;
 	/**
 	 * Max output lines per message before collapsing — mirrors the desktop
-	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) to
-	 * fall back to the local line/char defaults and never force-truncate.
+	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) for
+	 * "All": no truncation regardless of length.
 	 */
 	maxOutputLines?: number;
 }
@@ -117,40 +116,25 @@ export function MessageHistory({
 	const [hasNewMessages, setHasNewMessages] = useState(false);
 	const [newMessageCount, setNewMessageCount] = useState(0);
 
-	// When the user-configured line cap is finite ("15" / "25" / …) it takes
-	// precedence over the local mobile default; "All" (Infinity) disables
-	// line-based collapse entirely, matching desktop behavior.
+	// "All" (Infinity / unset) disables truncation entirely; a finite cap
+	// drives line-based collapse, matching desktop TerminalOutput.tsx behavior.
 	const hasLineCap = Number.isFinite(maxOutputLines);
-	const effectiveLineCap = hasLineCap ? maxOutputLines : LINE_TRUNCATE_THRESHOLD;
 
-	/**
-	 * Check if a message should be truncated
-	 */
 	const shouldTruncate = useCallback(
 		(text: string): boolean => {
-			if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
 			if (!hasLineCap) return false;
-			const lineCount = text.split('\n').length;
-			return lineCount > effectiveLineCap;
+			return text.split('\n').length > maxOutputLines;
 		},
-		[effectiveLineCap, hasLineCap]
+		[hasLineCap, maxOutputLines]
 	);
 
-	/**
-	 * Get truncated text for display
-	 */
 	const getTruncatedText = useCallback(
 		(text: string): string => {
+			if (!hasLineCap) return text;
 			const lines = text.split('\n');
-			if (hasLineCap && lines.length > effectiveLineCap) {
-				return lines.slice(0, effectiveLineCap).join('\n');
-			}
-			if (text.length > CHAR_TRUNCATE_THRESHOLD) {
-				return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
-			}
-			return text;
+			return lines.length > maxOutputLines ? lines.slice(0, maxOutputLines).join('\n') : text;
 		},
-		[effectiveLineCap, hasLineCap]
+		[hasLineCap, maxOutputLines]
 	);
 
 	/**
@@ -463,6 +447,36 @@ export function MessageHistory({
 									textAlign: 'left',
 								}}
 							>
+								{/* Pasted-image attachments — only meaningful on user messages
+								    in AI mode. Rendered inline so the optimistic local chat
+								    shows the same thumbnails the user staged before send,
+								    matching the desktop transcript. */}
+								{isUser && entry.images && entry.images.length > 0 && (
+									<div
+										style={{
+											display: 'flex',
+											flexWrap: 'wrap',
+											gap: '6px',
+											marginBottom: '6px',
+										}}
+									>
+										{entry.images.map((dataUrl, imgIdx) => (
+											<img
+												key={`${messageKey}-img-${imgIdx}`}
+												src={dataUrl}
+												alt={`Attached image ${imgIdx + 1}`}
+												style={{
+													maxWidth: '160px',
+													maxHeight: '160px',
+													objectFit: 'contain',
+													borderRadius: '6px',
+													border: `1px solid ${colors.border}`,
+													display: 'block',
+												}}
+											/>
+										))}
+									</div>
+								)}
 								{inputMode === 'terminal' || isUser ? (
 									// Terminal output and user input: render as plain monospace text
 									<div

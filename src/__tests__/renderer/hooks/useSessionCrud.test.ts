@@ -389,7 +389,9 @@ describe('useSessionCrud', () => {
 					{ API_KEY: 'secret' },
 					'gpt-4',
 					8192,
-					'/custom/provider'
+					'/custom/provider',
+					undefined,
+					'high'
 				);
 			});
 
@@ -402,6 +404,7 @@ describe('useSessionCrud', () => {
 			expect(session.customModel).toBe('gpt-4');
 			expect(session.customContextWindow).toBe(8192);
 			expect(session.customProviderPath).toBe('/custom/provider');
+			expect(session.customEffort).toBe('high');
 		});
 
 		it('sets input mode to terminal for terminal agent', async () => {

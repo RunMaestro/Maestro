@@ -6,6 +6,7 @@
  * centralized `passesFilter` helper before emitting.
  */
 
+import { isCueActive } from '../cue-active-state';
 import { createCueGitHubPoller } from '../cue-github-poller';
 import { passesFilter } from './cue-trigger-filter';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
@@ -38,6 +39,7 @@ export function createCueGitHubPollerTriggerSource(
 				subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
 				ghState: ctx.subscription.gh_state,
 				onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
+				isActive: isCueActive,
 				onEvent: (event) => {
 					if (!ctx.enabled()) return;
 					if (!passesFilter(ctx.subscription, event, ctx.onLog)) return;
