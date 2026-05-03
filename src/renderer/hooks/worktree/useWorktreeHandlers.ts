@@ -30,6 +30,7 @@ import {
 	sessionMatchesWorktreeRoot,
 } from '../../utils/worktreeDedup';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 // ============================================================================
 // Return type
@@ -95,15 +96,26 @@ function isSkippableBranch(branch: string | null | undefined): boolean {
  * than the worktree's own toplevel. This is what we need to verify that a
  * scanned subdir actually belongs to the parent agent's repository.
  *
- * Returns null if the path isn't a git repo or the lookup fails — callers
- * should treat null as "can't filter" and fall back to the legacy behavior.
+ * Returns null in two cases:
+ *  - "Not a git repo / no repoRoot" — explicit signal from `worktreeInfo`.
+ *    Callers fall back to the legacy "trust the basePath" behavior.
+ *  - Unexpected exception (IPC failure, etc.) — we return null *and* report
+ *    the error to Sentry + the logger. Without that signal, a regressed IPC
+ *    would silently disable the repo-root guard and re-introduce the
+ *    wrong-parent attachment bug with no production trace.
  */
 async function resolveRepoRoot(path: string, sshRemoteId?: string): Promise<string | null> {
 	try {
 		const info = await window.maestro.git.worktreeInfo(path, sshRemoteId);
 		if (!info.success || !info.exists || !info.repoRoot) return null;
 		return normalizePath(info.repoRoot);
-	} catch {
+	} catch (err) {
+		logger.error(
+			`[WorktreeScan] resolveRepoRoot failed for ${path}:`,
+			undefined,
+			err instanceof Error ? err.message : String(err)
+		);
+		captureException(err, { extra: { path, sshRemoteId, source: 'resolveRepoRoot' } });
 		return null;
 	}
 }
@@ -869,7 +881,26 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			// wrong parent agent (matching the periodic-scan logic above).
 			const [parentRepoRoot, discoveredInfo] = await Promise.all([
 				resolveRepoRoot(parentSession.cwd, sshRemoteId),
-				window.maestro.git.worktreeInfo(worktree.path, sshRemoteId).catch(() => null),
+				// Unexpected IPC errors here are reported to Sentry rather than
+				// silently nulled out — otherwise a regressed worktreeInfo would
+				// disable the repo-root guard for chokidar discoveries with no
+				// production signal. An explicit "not a repo" still resolves to
+				// `info.success=false` and falls through to the legacy fallback.
+				window.maestro.git.worktreeInfo(worktree.path, sshRemoteId).catch((err) => {
+					logger.error(
+						`[WorktreeWatcher] worktreeInfo failed for ${worktree.path}:`,
+						undefined,
+						err instanceof Error ? err.message : String(err)
+					);
+					captureException(err, {
+						extra: {
+							path: worktree.path,
+							sshRemoteId,
+							source: 'onWorktreeDiscovered',
+						},
+					});
+					return null;
+				}),
 			]);
 			const discoveredRepoRoot =
 				discoveredInfo && discoveredInfo.success && discoveredInfo.repoRoot

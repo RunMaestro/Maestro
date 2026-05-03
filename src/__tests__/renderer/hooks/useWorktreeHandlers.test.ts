@@ -30,12 +30,21 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
+// Mock sentry so the repo-root resolver tests can assert unexpected errors are
+// reported (silent swallowing would re-introduce the wrong-parent bug with no
+// production signal).
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
 import { useWorktreeHandlers } from '../../../renderer/hooks/worktree/useWorktreeHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { gitService } from '../../../renderer/services/git';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { captureException } from '../../../renderer/utils/sentry';
 import type { Session } from '../../../renderer/types';
 
 // ============================================================================
@@ -2404,6 +2413,126 @@ describe('Effects', () => {
 			const children = sessions.filter((s) => s.parentSessionId === 'parent-1');
 			expect(children).toHaveLength(1);
 			expect(children[0].worktreeBranch).toBe('feat-mine');
+		});
+
+		it('reports unexpected worktreeInfo errors to Sentry from resolveRepoRoot (does not silently swallow)', async () => {
+			vi.useFakeTimers();
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: false },
+			};
+
+			// Simulate an unexpected IPC failure (e.g. main-process handler regressed
+			// or threw). Without the error-reporting fix, this would silently disable
+			// the repo-root guard with no production signal.
+			const unexpectedErr = new Error('IPC handler crashed');
+			mockGit.worktreeInfo.mockRejectedValueOnce(unexpectedErr);
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/shared/worktrees/feat',
+						branch: 'feat',
+						name: 'feat',
+						repoRoot: '/repos/repo-a',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(captureException as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(captureException).toHaveBeenCalledWith(
+				unexpectedErr,
+				expect.objectContaining({
+					extra: expect.objectContaining({ source: 'resolveRepoRoot' }),
+				})
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('resolveRepoRoot failed'),
+				undefined,
+				expect.stringContaining('IPC handler crashed')
+			);
+
+			consoleSpy.mockRestore();
+		});
+
+		it('reports unexpected worktreeInfo errors from the chokidar discovery handler', async () => {
+			let discoveryCallback: ((data: any) => Promise<void>) | undefined;
+			mockGit.onWorktreeDiscovered.mockImplementation((cb: any) => {
+				discoveryCallback = cb;
+				return () => {};
+			});
+
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				cwd: '/repos/repo-a',
+				worktreeConfig: { basePath: '/shared/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Parent lookup succeeds; discovered-path lookup throws.
+			const unexpectedErr = new Error('renderer IPC bridge dropped');
+			mockGit.worktreeInfo.mockImplementation(async (path: string) => {
+				if (path === '/repos/repo-a') {
+					return {
+						success: true,
+						exists: true,
+						isWorktree: false,
+						repoRoot: '/repos/repo-a',
+					};
+				}
+				throw unexpectedErr;
+			});
+
+			(captureException as any).mockClear();
+
+			await act(async () => {
+				await discoveryCallback!({
+					sessionId: 'parent-1',
+					worktree: {
+						path: '/shared/worktrees/feat',
+						name: 'feat',
+						branch: 'feat',
+					},
+				});
+			});
+
+			expect(captureException).toHaveBeenCalledWith(
+				unexpectedErr,
+				expect.objectContaining({
+					extra: expect.objectContaining({ source: 'onWorktreeDiscovered' }),
+				})
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('worktreeInfo failed'),
+				undefined,
+				expect.stringContaining('renderer IPC bridge dropped')
+			);
+
+			consoleSpy.mockRestore();
 		});
 	});
 });
