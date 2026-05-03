@@ -13,7 +13,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
+import { webLogger } from '../utils/logger';
 import type { LaunchWorktreeConfig, WorktreeSummary } from '../hooks/useAutoRun';
+
+/**
+ * Discriminated state emitted by `AutoRunWorktreeSection.onChange` so the
+ * parent sheet can distinguish "user left this off" from "user enabled it but
+ * the form is invalid" — only the former should silently fall back to a normal
+ * Auto Run launch.
+ */
+export type AutoRunWorktreeState =
+	| { status: 'disabled' }
+	| { status: 'enabled-valid'; config: LaunchWorktreeConfig }
+	| { status: 'enabled-invalid'; reason: string };
 
 export interface AutoRunWorktreeSectionProps {
 	/** Whether the session's cwd is a git repo (gates the section). */
@@ -24,8 +36,8 @@ export interface AutoRunWorktreeSectionProps {
 	loadBranches: () => Promise<{ branches: string[]; currentBranch?: string }>;
 	/** Loader for existing worktrees on disk (currently informational only). */
 	loadWorktrees: () => Promise<WorktreeSummary[]>;
-	/** Emits the composed worktree config (or null when disabled). */
-	onChange: (config: LaunchWorktreeConfig | null) => void;
+	/** Emits the composed worktree state (disabled / valid / invalid). */
+	onChange: (state: AutoRunWorktreeState) => void;
 }
 
 function buildDefaultBranchName(baseBranch: string): string {
@@ -53,14 +65,14 @@ export function AutoRunWorktreeSection({
 	const [baseBranch, setBaseBranch] = useState('');
 	const [newBranchName, setNewBranchName] = useState('');
 	const [createPR, setCreatePR] = useState(false);
-	const [branchLoadError, setBranchLoadError] = useState(false);
+	const [branchLoadStatus, setBranchLoadStatus] = useState<'idle' | 'loading' | 'error'>('idle');
 	const [existingWorktrees, setExistingWorktrees] = useState<WorktreeSummary[]>([]);
 
 	// Fetch branches when toggled on so the picker is populated.
 	useEffect(() => {
 		if (!enabled || !isConfigured) return;
 		let cancelled = false;
-		setBranchLoadError(false);
+		setBranchLoadStatus('loading');
 
 		loadBranches()
 			.then(({ branches: list, currentBranch }) => {
@@ -81,15 +93,19 @@ export function AutoRunWorktreeSection({
 					const defaultBranch = currentBranch || sorted[0];
 					setBaseBranch(defaultBranch);
 					setNewBranchName(buildDefaultBranchName(defaultBranch));
+					setBranchLoadStatus('idle');
 				} else {
-					setBranchLoadError(true);
+					setBranchLoadStatus('error');
 				}
 			})
-			.catch(() => {
-				if (!cancelled) {
-					setBranchLoadError(true);
-					setBranches([]);
-				}
+			.catch((err: unknown) => {
+				if (cancelled) return;
+				webLogger.error(
+					`Failed to load branches: ${err instanceof Error ? err.message : String(err)}`,
+					'AutoRunWorktreeSection'
+				);
+				setBranches([]);
+				setBranchLoadStatus('error');
 			});
 
 		return () => {
@@ -98,7 +114,8 @@ export function AutoRunWorktreeSection({
 	}, [enabled, isConfigured, loadBranches]);
 
 	// Surface existing worktrees as informational chips so the user knows what
-	// already exists before naming a new one.
+	// already exists before naming a new one. Failures here are non-fatal — the
+	// chip just stays hidden — but we still log so we don't lose the signal.
 	useEffect(() => {
 		if (!enabled || !isConfigured) {
 			setExistingWorktrees([]);
@@ -110,8 +127,13 @@ export function AutoRunWorktreeSection({
 				if (cancelled) return;
 				setExistingWorktrees(list);
 			})
-			.catch(() => {
-				if (!cancelled) setExistingWorktrees([]);
+			.catch((err: unknown) => {
+				if (cancelled) return;
+				webLogger.error(
+					`Failed to list worktrees: ${err instanceof Error ? err.message : String(err)}`,
+					'AutoRunWorktreeSection'
+				);
+				setExistingWorktrees([]);
 			});
 		return () => {
 			cancelled = true;
@@ -125,25 +147,47 @@ export function AutoRunWorktreeSection({
 		return `${trimmed}/${newBranchName.trim()}`;
 	}, [enabled, worktreeBasePath, newBranchName]);
 
-	// Propagate full config to parent whenever any field changes.
+	// Propagate the discriminated state to the parent whenever any field
+	// changes. The parent uses `status === 'enabled-invalid'` to block launch
+	// instead of silently falling back to a non-worktree run.
 	useEffect(() => {
 		if (!enabled || !isConfigured) {
-			onChange(null);
+			onChange({ status: 'disabled' });
+			return;
+		}
+		if (branchLoadStatus === 'error') {
+			onChange({ status: 'enabled-invalid', reason: 'Could not load branches' });
 			return;
 		}
 		const branchClean = newBranchName.trim();
-		if (!worktreePathPreview || !branchClean) {
-			onChange(null);
+		if (!branchClean) {
+			onChange({ status: 'enabled-invalid', reason: 'Branch name is required' });
+			return;
+		}
+		if (!worktreePathPreview) {
+			onChange({ status: 'enabled-invalid', reason: 'Worktree path could not be computed' });
 			return;
 		}
 		onChange({
-			enabled: true,
-			path: worktreePathPreview,
-			branchName: branchClean,
-			createPROnCompletion: createPR,
-			prTargetBranch: baseBranch,
+			status: 'enabled-valid',
+			config: {
+				enabled: true,
+				path: worktreePathPreview,
+				branchName: branchClean,
+				createPROnCompletion: createPR,
+				prTargetBranch: baseBranch,
+			},
 		});
-	}, [enabled, isConfigured, worktreePathPreview, newBranchName, baseBranch, createPR, onChange]);
+	}, [
+		enabled,
+		isConfigured,
+		branchLoadStatus,
+		worktreePathPreview,
+		newBranchName,
+		baseBranch,
+		createPR,
+		onChange,
+	]);
 
 	const handleToggle = useCallback(() => {
 		if (!isConfigured) return;
@@ -275,7 +319,7 @@ export function AutoRunWorktreeSection({
 								width: '100%',
 								padding: '12px 14px',
 								borderRadius: '10px',
-								border: `1px solid ${branchLoadError ? colors.error : colors.border}`,
+								border: `1px solid ${branchLoadStatus === 'error' ? colors.error : colors.border}`,
 								backgroundColor: colors.bgSidebar,
 								color: colors.textMain,
 								fontSize: '14px',
@@ -285,14 +329,18 @@ export function AutoRunWorktreeSection({
 								minHeight: '44px',
 							}}
 						>
-							{branches.length === 0 && <option value="">Loading...</option>}
+							{branches.length === 0 && (
+								<option value="">
+									{branchLoadStatus === 'error' ? 'Failed to load' : 'Loading...'}
+								</option>
+							)}
 							{branches.map((b) => (
 								<option key={b} value={b}>
 									{b}
 								</option>
 							))}
 						</select>
-						{branchLoadError && (
+						{branchLoadStatus === 'error' && (
 							<span style={{ fontSize: '12px', color: colors.error }}>Could not load branches</span>
 						)}
 					</label>

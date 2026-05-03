@@ -162,32 +162,28 @@ export function useAutoRun(
 
 	const loadGitBranches = useCallback(
 		async (sessionId: string): Promise<{ branches: string[]; currentBranch?: string }> => {
-			try {
-				const response = await sendRequest<{ branches?: string[]; currentBranch?: string }>(
-					'get_git_branches',
-					{ sessionId }
-				);
-				return {
-					branches: response.branches ?? [],
-					currentBranch: response.currentBranch,
-				};
-			} catch {
-				return { branches: [] };
-			}
+			// Let transport/backend failures propagate so callers can render a real
+			// error state instead of an indistinguishable empty list.
+			const response = await sendRequest<{ branches?: string[]; currentBranch?: string }>(
+				'get_git_branches',
+				{ sessionId }
+			);
+			return {
+				branches: response.branches ?? [],
+				currentBranch: response.currentBranch,
+			};
 		},
 		[sendRequest]
 	);
 
 	const listWorktrees = useCallback(
 		async (sessionId: string): Promise<WorktreeSummary[]> => {
-			try {
-				const response = await sendRequest<{ worktrees?: WorktreeSummary[] }>('list_worktrees', {
-					sessionId,
-				});
-				return response.worktrees ?? [];
-			} catch {
-				return [];
-			}
+			// Let transport/backend failures propagate; a silent `[]` would mask
+			// SSH/exec regressions as "no worktrees" in the mobile UI.
+			const response = await sendRequest<{ worktrees?: WorktreeSummary[] }>('list_worktrees', {
+				sessionId,
+			});
+			return response.worktrees ?? [];
 		},
 		[sendRequest]
 	);

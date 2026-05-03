@@ -1413,108 +1413,102 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Resolve a session's effective git execution context (local cwd + optional
+		// SSH remote). Used by both Run-in-Worktree callbacks below.
+		const resolveSessionGitContext = (
+			session: StoredSession
+		): { sshRemote: ReturnType<typeof getSshRemoteById>; remoteCwd: string | undefined } => {
+			const sshRemoteId = session.sessionSshRemoteConfig?.enabled
+				? session.sessionSshRemoteConfig.remoteId
+				: undefined;
+			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			const remoteCwd = sshRemote ? session.cwd : undefined;
+			return { sshRemote, remoteCwd };
+		};
+
 		// Set up callback for web server to enumerate branches for the Run-in-Worktree
 		// base-branch picker on mobile. Executes git directly in the main process
 		// (no renderer round-trip needed because cwd + SSH config live in sessionsStore).
+		// Unexpected exec/SSH failures are rethrown so callers (and Sentry) see the
+		// real error instead of a silently empty branch list.
 		server.setGetGitBranchesForSessionCallback(async (sessionId: string) => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) {
-				return { branches: [] };
+				throw new Error(`Session not found: ${sessionId}`);
 			}
 
-			const sshRemoteId =
-				(session.sessionSshRemoteConfig?.enabled
-					? session.sessionSshRemoteConfig.remoteId
-					: undefined) || undefined;
-			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-			const remoteCwd = sshRemote ? session.cwd : undefined;
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
 
-			try {
-				const [branchesResult, currentBranchResult] = await Promise.all([
-					execGit(['branch', '-a', '--format=%(refname:short)'], session.cwd, sshRemote, remoteCwd),
-					execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
-				]);
+			const [branchesResult, currentBranchResult] = await Promise.all([
+				execGit(['branch', '-a', '--format=%(refname:short)'], session.cwd, sshRemote, remoteCwd),
+				execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
+			]);
 
-				const branches =
-					branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
-				const currentBranch =
-					currentBranchResult.exitCode === 0
-						? currentBranchResult.stdout.trim() || undefined
-						: undefined;
+			// exitCode !== 0 here legitimately means "not a git repo" (or no branches
+			// yet); empty results are the right answer in that case. Real exec/SSH
+			// failures throw out of execGit and propagate up.
+			const branches = branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
+			const currentBranch =
+				currentBranchResult.exitCode === 0
+					? currentBranchResult.stdout.trim() || undefined
+					: undefined;
 
-				return { branches, currentBranch };
-			} catch (err) {
-				logger.warn(
-					`getGitBranchesForSession failed for ${sessionId}: ${(err as Error).message}`,
-					'WebServer'
-				);
-				return { branches: [] };
-			}
+			return { branches, currentBranch };
 		});
 
 		// List existing worktrees for a session — used by mobile Run-in-Worktree
-		// to offer "use existing" alongside "create new".
+		// to offer "use existing" alongside "create new". Same error-propagation
+		// contract as getGitBranchesForSession above.
 		server.setListWorktreesForSessionCallback(async (sessionId: string) => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
+
+			const result = await execGit(
+				['worktree', 'list', '--porcelain'],
+				session.cwd,
+				sshRemote,
+				remoteCwd
+			);
+			if (result.exitCode !== 0) {
+				// Not a git repo or worktrees unsupported — empty list is the right
+				// answer. (execGit already threw on real failures.)
 				return { worktrees: [] };
 			}
 
-			const sshRemoteId =
-				(session.sessionSshRemoteConfig?.enabled
-					? session.sessionSshRemoteConfig.remoteId
-					: undefined) || undefined;
-			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-			const remoteCwd = sshRemote ? session.cwd : undefined;
-
-			try {
-				const result = await execGit(
-					['worktree', 'list', '--porcelain'],
-					session.cwd,
-					sshRemote,
-					remoteCwd
-				);
-				if (result.exitCode !== 0) {
-					return { worktrees: [] };
-				}
-
-				const worktrees: Array<{ path: string; branch: string | null; isBare: boolean }> = [];
-				let current: { path?: string; branch?: string | null; isBare?: boolean } = {};
-				for (const line of result.stdout.split('\n')) {
-					if (line.startsWith('worktree ')) {
-						current.path = line.substring(9);
-					} else if (line.startsWith('branch ')) {
-						current.branch = line.substring(7).replace('refs/heads/', '');
-					} else if (line === 'bare') {
-						current.isBare = true;
-					} else if (line === 'detached') {
-						current.branch = null;
-					} else if (line === '' && current.path) {
-						worktrees.push({
-							path: current.path,
-							branch: current.branch ?? null,
-							isBare: current.isBare || false,
-						});
-						current = {};
-					}
-				}
-				if (current.path) {
+			const worktrees: Array<{ path: string; branch: string | null; isBare: boolean }> = [];
+			let current: { path?: string; branch?: string | null; isBare?: boolean } = {};
+			for (const line of result.stdout.split('\n')) {
+				if (line.startsWith('worktree ')) {
+					current.path = line.substring(9);
+				} else if (line.startsWith('branch ')) {
+					current.branch = line.substring(7).replace('refs/heads/', '');
+				} else if (line === 'bare') {
+					current.isBare = true;
+				} else if (line === 'detached') {
+					current.branch = null;
+				} else if (line === '' && current.path) {
 					worktrees.push({
 						path: current.path,
 						branch: current.branch ?? null,
 						isBare: current.isBare || false,
 					});
+					current = {};
 				}
-				return { worktrees };
-			} catch (err) {
-				logger.warn(
-					`listWorktreesForSession failed for ${sessionId}: ${(err as Error).message}`,
-					'WebServer'
-				);
-				return { worktrees: [] };
 			}
+			if (current.path) {
+				worktrees.push({
+					path: current.path,
+					branch: current.branch ?? null,
+					isBare: current.isBare || false,
+				});
+			}
+			return { worktrees };
 		});
 
 		// Set up callback for web server to stop Auto Run

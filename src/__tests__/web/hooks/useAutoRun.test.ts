@@ -89,11 +89,10 @@ describe('useAutoRun (mobile/web)', () => {
 		expect(out).toEqual({ branches: ['main', 'feature/x'], currentBranch: 'main' });
 	});
 
-	it('loadGitBranches returns empty list on error', async () => {
+	it('loadGitBranches propagates transport errors to the caller', async () => {
 		sendRequest.mockRejectedValueOnce(new Error('boom'));
 		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		const out = await result.current.loadGitBranches('s-1');
-		expect(out).toEqual({ branches: [] });
+		await expect(result.current.loadGitBranches('s-1')).rejects.toThrow('boom');
 	});
 
 	it('listWorktrees sends list_worktrees and unwraps response', async () => {
@@ -108,10 +107,9 @@ describe('useAutoRun (mobile/web)', () => {
 		expect(out).toEqual([{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }]);
 	});
 
-	it('listWorktrees returns empty array on error', async () => {
+	it('listWorktrees propagates transport errors to the caller', async () => {
 		sendRequest.mockRejectedValueOnce(new Error('boom'));
 		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		const out = await result.current.listWorktrees('s-1');
-		expect(out).toEqual([]);
+		await expect(result.current.listWorktrees('s-1')).rejects.toThrow('boom');
 	});
 });

@@ -31,6 +31,15 @@ vi.mock('../../../web/mobile/constants', () => ({
 	triggerHaptic: vi.fn(),
 }));
 
+vi.mock('../../../web/utils/logger', () => ({
+	webLogger: {
+		debug: vi.fn(),
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+	},
+}));
+
 describe('AutoRunWorktreeSection', () => {
 	const loadBranches = vi
 		.fn()
@@ -74,7 +83,7 @@ describe('AutoRunWorktreeSection', () => {
 		expect(screen.getByText(/Configure a Worktree base path on the desktop/i)).toBeInTheDocument();
 	});
 
-	it('emits null while disabled and full config once enabled', async () => {
+	it('emits disabled while off and enabled-valid once toggled on', async () => {
 		const onChange = vi.fn();
 		render(
 			<AutoRunWorktreeSection
@@ -86,8 +95,8 @@ describe('AutoRunWorktreeSection', () => {
 			/>
 		);
 
-		// Initial render: disabled → onChange(null)
-		expect(onChange).toHaveBeenLastCalledWith(null);
+		// Initial render: disabled state
+		expect(onChange).toHaveBeenLastCalledWith({ status: 'disabled' });
 
 		// Enable toggle
 		const toggle = screen.getByRole('switch', {
@@ -97,10 +106,11 @@ describe('AutoRunWorktreeSection', () => {
 
 		await waitFor(() => expect(loadBranches).toHaveBeenCalled());
 
-		// Wait until the section emits a populated config (path/branchName resolved)
+		// Wait until the section emits enabled-valid with a populated config
 		await waitFor(() => {
 			const last = onChange.mock.calls.at(-1)?.[0];
-			expect(last).toMatchObject({
+			expect(last?.status).toBe('enabled-valid');
+			expect(last?.config).toMatchObject({
 				enabled: true,
 				path: expect.stringMatching(/^\/repo\/worktrees\/auto-run-main-/),
 				branchName: expect.stringMatching(/^auto-run-main-/),
@@ -126,7 +136,7 @@ describe('AutoRunWorktreeSection', () => {
 		await waitFor(() => expect(loadBranches).toHaveBeenCalled());
 		await waitFor(() => {
 			const last = onChange.mock.calls.at(-1)?.[0];
-			expect(last?.enabled).toBe(true);
+			expect(last?.status).toBe('enabled-valid');
 		});
 
 		fireEvent.click(
@@ -137,11 +147,11 @@ describe('AutoRunWorktreeSection', () => {
 
 		await waitFor(() => {
 			const last = onChange.mock.calls.at(-1)?.[0];
-			expect(last?.createPROnCompletion).toBe(true);
+			expect(last?.config?.createPROnCompletion).toBe(true);
 		});
 	});
 
-	it('emits null when branch name is cleared', async () => {
+	it('emits enabled-invalid when branch name is cleared', async () => {
 		const onChange = vi.fn();
 		render(
 			<AutoRunWorktreeSection
@@ -157,15 +167,41 @@ describe('AutoRunWorktreeSection', () => {
 		await waitFor(() => expect(loadBranches).toHaveBeenCalled());
 		await waitFor(() => {
 			const last = onChange.mock.calls.at(-1)?.[0];
-			expect(last?.enabled).toBe(true);
+			expect(last?.status).toBe('enabled-valid');
 		});
 
 		const branchInput = screen.getByLabelText(/Worktree branch name/i);
 		fireEvent.change(branchInput, { target: { value: '' } });
 
 		await waitFor(() => {
-			expect(onChange).toHaveBeenLastCalledWith(null);
+			const last = onChange.mock.calls.at(-1)?.[0];
+			expect(last?.status).toBe('enabled-invalid');
+			expect(last?.reason).toMatch(/Branch name is required/i);
 		});
 		expect(screen.getByText(/Branch name is required/i)).toBeInTheDocument();
+	});
+
+	it('renders "Failed to load" placeholder when branch fetch rejects', async () => {
+		const onChange = vi.fn();
+		const rejecting = vi.fn().mockRejectedValue(new Error('boom'));
+		render(
+			<AutoRunWorktreeSection
+				isGitRepo={true}
+				worktreeBasePath="/repo/worktrees"
+				loadBranches={rejecting}
+				loadWorktrees={loadWorktrees}
+				onChange={onChange}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('switch', { name: /Dispatch to a separate worktree/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/Failed to load/i)).toBeInTheDocument();
+		});
+		await waitFor(() => {
+			const last = onChange.mock.calls.at(-1)?.[0];
+			expect(last?.status).toBe('enabled-invalid');
+		});
 	});
 });

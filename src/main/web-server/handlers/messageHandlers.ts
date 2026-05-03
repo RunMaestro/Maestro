@@ -2452,8 +2452,9 @@ export class WebSocketMessageHandler {
 					requestId: message.requestId,
 				});
 			})
-			.catch((error) => {
-				this.sendError(client, `Failed to get git branches: ${error.message}`);
+			.catch((error: unknown) => {
+				const msg = error instanceof Error ? error.message : String(error);
+				this.sendError(client, `Failed to get git branches: ${msg}`);
 			});
 	}
 
@@ -2484,8 +2485,9 @@ export class WebSocketMessageHandler {
 					requestId: message.requestId,
 				});
 			})
-			.catch((error) => {
-				this.sendError(client, `Failed to list worktrees: ${error.message}`);
+			.catch((error: unknown) => {
+				const msg = error instanceof Error ? error.message : String(error);
+				this.sendError(client, `Failed to list worktrees: ${msg}`);
 			});
 	}
 
