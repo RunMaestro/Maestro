@@ -1312,6 +1312,68 @@ describe('Effects', () => {
 			);
 		});
 
+		it('preserves child sessions whose cwd is a nested path under basePath', async () => {
+			// Regression for #931: worktrees from slash-named branches live at
+			// <basePath>/<group>/<branch> (e.g. /projects/worktrees/fix/foo). The
+			// main process now recurses one level so gitSubdirs includes those
+			// paths; this test pins that the renderer's stale-detection treats
+			// nested entries the same as flat ones (no spurious removal).
+			vi.useFakeTimers();
+
+			const flatChild = createChildSession({
+				id: 'flat-child',
+				cwd: '/projects/worktrees/feature-flat',
+				worktreeBranch: 'feature-flat',
+				parentSessionId: 'parent-1',
+			});
+			const nestedChild = createChildSession({
+				id: 'nested-child',
+				cwd: '/projects/worktrees/fix/worktree-removal',
+				worktreeBranch: 'fix/worktree-removal',
+				parentSessionId: 'parent-1',
+			});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/projects/worktrees/feature-flat',
+						branch: 'feature-flat',
+						name: 'feature-flat',
+					},
+					{
+						path: '/projects/worktrees/fix/worktree-removal',
+						branch: 'fix/worktree-removal',
+						name: 'worktree-removal',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, flatChild, nestedChild],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			(notifyToast as any).mockClear();
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'flat-child')).toBe(true);
+			expect(sessions.some((s) => s.id === 'nested-child')).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Worktree Removed' })
+			);
+		});
+
 		it('does NOT remove child sessions when scan reports scanFailed', async () => {
 			vi.useFakeTimers();
 
