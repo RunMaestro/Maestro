@@ -208,9 +208,14 @@ export class ContextSummarizationService {
 				originalTokens,
 				compactedTokens,
 			};
-		} catch {
-			// The groomContext API handles its own cleanup - rethrow
-			throw new Error('Context summarization failed');
+		} catch (err) {
+			// Preserve the underlying error message so callers can surface it to
+			// the user. Wrapping with a generic string here used to swallow the
+			// real cause (e.g. "Agent X is not available", spawn ENAMETOOLONG)
+			// and the resulting "Compaction Failed" toast told users to "check
+			// the tab" — but no tab actually showed details.
+			if (err instanceof Error) throw err;
+			throw new Error(typeof err === 'string' ? err : 'Context summarization failed');
 		}
 	}
 

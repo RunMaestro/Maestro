@@ -306,13 +306,16 @@ Continue with implementation.`);
 			expect(result!.compactedTokens).toBeGreaterThan(0);
 		});
 
-		it('should handle IPC errors gracefully', async () => {
+		it('should propagate the underlying IPC error', async () => {
+			// Preserving the inner message lets the renderer surface real
+			// causes (e.g. "Agent X is not available") in the failure toast
+			// instead of a generic "Context summarization failed".
 			mockGroomContext.mockRejectedValue(new Error('IPC failed'));
 
 			const logs = [createMockLog({ text: 'Test' })];
 
 			await expect(service.summarizeContext(baseRequest, logs, () => {})).rejects.toThrow(
-				'Context summarization failed'
+				'IPC failed'
 			);
 		});
 	});

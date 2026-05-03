@@ -403,11 +403,18 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 						// Clear the summarization state for this tab
 						clearTabState(targetTabId);
 					} else {
-						// startSummarize returned null (error already set in operationStore)
+						// startSummarize returned null after setting an error state in
+						// operationStore. Pull the actual error so the toast can
+						// surface it directly instead of pointing users at a "tab"
+						// that never renders details.
+						const tabState = useOperationStore.getState().summarizeStates.get(targetTabId);
+						const detail = tabState?.error?.trim();
 						notifyToast({
 							type: 'error',
 							title: 'Compaction Failed',
-							message: 'Failed to compact context. Check the tab for details.',
+							message: detail
+								? `Failed to compact context: ${detail}`
+								: 'Failed to compact context.',
 							sessionId: sourceSessionId,
 							tabId: targetTabId,
 						});
@@ -415,10 +422,13 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 				})
 				.catch((err) => {
 					console.error('[handleSummarizeAndContinue] Unexpected error:', err);
+					const detail = err instanceof Error ? err.message : String(err);
 					notifyToast({
 						type: 'error',
 						title: 'Compaction Failed',
-						message: 'An unexpected error occurred during compaction.',
+						message: detail
+							? `An unexpected error occurred during compaction: ${detail}`
+							: 'An unexpected error occurred during compaction.',
 						sessionId: sourceSessionId,
 						tabId: targetTabId,
 					});
