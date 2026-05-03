@@ -1616,9 +1616,23 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
 			]);
 
-			// exitCode !== 0 here legitimately means "not a git repo" (or no branches
-			// yet); empty results are the right answer in that case. Real exec/SSH
-			// failures throw out of execGit and propagate up.
+			// `execGit` returns `exitCode: number | string`. A string exit code (e.g.
+			// 'ENOENT', 'EPERM') means git never even ran — that's a real failure we
+			// want surfaced to Sentry, not a fake "empty repo" result. A numeric
+			// non-zero exit code is a legitimate "not a git repo" / "no branches"
+			// signal and maps to empty results.
+			if (typeof branchesResult.exitCode !== 'number') {
+				throw new Error(
+					branchesResult.stderr || `git branch failed: ${String(branchesResult.exitCode)}`
+				);
+			}
+			if (typeof currentBranchResult.exitCode !== 'number') {
+				throw new Error(
+					currentBranchResult.stderr ||
+						`git rev-parse failed: ${String(currentBranchResult.exitCode)}`
+				);
+			}
+
 			const branches = branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
 			const currentBranch =
 				currentBranchResult.exitCode === 0
@@ -1646,9 +1660,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				sshRemote,
 				remoteCwd
 			);
+			// String exitCode = git never ran (ENOENT/EPERM/etc.) — surface to Sentry.
+			if (typeof result.exitCode !== 'number') {
+				throw new Error(result.stderr || `git worktree list failed: ${String(result.exitCode)}`);
+			}
 			if (result.exitCode !== 0) {
-				// Not a git repo or worktrees unsupported — empty list is the right
-				// answer. (execGit already threw on real failures.)
+				// Numeric non-zero: not a git repo or worktrees unsupported — empty
+				// list is the right answer here.
 				return { worktrees: [] };
 			}
 

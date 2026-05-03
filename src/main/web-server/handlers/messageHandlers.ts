@@ -3099,8 +3099,13 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error: unknown) => {
-				const msg = error instanceof Error ? error.message : String(error);
-				this.sendError(client, `Failed to get git branches: ${msg}`);
+				this.reportHandlerError(
+					client,
+					error,
+					'get_git_branches',
+					{ sessionId, requestId: message.requestId },
+					'Failed to get git branches'
+				);
 			});
 	}
 
@@ -3132,8 +3137,13 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error: unknown) => {
-				const msg = error instanceof Error ? error.message : String(error);
-				this.sendError(client, `Failed to list worktrees: ${msg}`);
+				this.reportHandlerError(
+					client,
+					error,
+					'list_worktrees',
+					{ sessionId, requestId: message.requestId },
+					'Failed to list worktrees'
+				);
 			});
 	}
 
