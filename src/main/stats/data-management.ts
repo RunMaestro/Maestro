@@ -136,8 +136,9 @@ function csvEscape(value: string): string {
 /**
  * Export query events to CSV format.
  *
- * Includes all fields (including isRemote added in migration v2)
- * with proper CSV escaping for values containing quotes, commas, or newlines.
+ * Includes all fields (including isRemote added in migration v2 and isWorktree
+ * added in migration v5) with proper CSV escaping for values containing
+ * quotes, commas, or newlines.
  */
 export function exportToCsv(db: Database.Database, range: StatsTimeRange): string {
 	const events = getQueryEvents(db, range);
@@ -152,6 +153,7 @@ export function exportToCsv(db: Database.Database, range: StatsTimeRange): strin
 		'projectPath',
 		'tabId',
 		'isRemote',
+		'isWorktree',
 	];
 
 	const rows = events.map((e) => [
@@ -164,6 +166,7 @@ export function exportToCsv(db: Database.Database, range: StatsTimeRange): strin
 		csvEscape(e.projectPath ?? ''),
 		csvEscape(e.tabId ?? ''),
 		csvEscape(e.isRemote !== undefined ? String(e.isRemote) : ''),
+		csvEscape(e.isWorktree !== undefined ? String(e.isWorktree) : ''),
 	]);
 
 	return [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');

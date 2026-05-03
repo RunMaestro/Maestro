@@ -130,6 +130,13 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				sshRemoteId?: string
 			) => {
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// Fail loudly when the user opted into SSH but the remote
+				// can't be resolved — silently importing locally would land
+				// the playbook on the wrong host (mirrors the SSH spawn
+				// pattern in CLAUDE.md: never silently downgrade to local).
+				if (sshRemoteId && !sshConfig) {
+					throw new Error(`SSH remote not found or disabled: ${sshRemoteId}`);
+				}
 				const result = await importMarketplacePlaybook({
 					app,
 					playbookId,

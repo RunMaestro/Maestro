@@ -165,6 +165,7 @@ export interface AppUtilityModalsProps {
 	onCloseLightbox: () => void;
 	onNavigateLightbox: (img: string) => void;
 	onDeleteLightboxImage?: (img: string) => void;
+	onUpdateLightboxImage?: (oldImg: string, newDataUrl: string) => void;
 
 	// GitDiffViewer
 	gitDiffPreview: string | null;
@@ -379,6 +380,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	stagedImages,
 	onCloseLightbox,
 	onNavigateLightbox,
+	onUpdateLightboxImage,
 	onDeleteLightboxImage,
 	// GitDiffViewer
 	gitDiffPreview,
@@ -555,6 +557,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onClose={onCloseLightbox}
 					onNavigate={onNavigateLightbox}
 					onDelete={onDeleteLightboxImage}
+					onUpdateImage={onUpdateLightboxImage}
 					theme={theme}
 				/>
 			)}

@@ -973,19 +973,23 @@ describe('marketplace IPC handlers', () => {
 				manifest: sampleManifest,
 			};
 
-			// Mock os.homedir() to return a predictable path
+			// Mock os.homedir() to return a predictable path. Marketplace
+			// service uses `import os from 'os'` (default import), so the
+			// mock must expose `default` plus the named export.
 			vi.mock('os', () => ({
+				default: { homedir: vi.fn().mockReturnValue('/Users/testuser') },
 				homedir: vi.fn().mockReturnValue('/Users/testuser'),
 			}));
 
 			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
 			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)
-			// For this test, we just verify that fs.readFile is called (not fetch)
+			// For this test, we just verify that fs.readFile is called (not fetch).
+			// Order: cache, local manifest, document content, playbooks file (ENOENT).
 			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(validCache))
-				.mockResolvedValueOnce(JSON.stringify(localManifest))
-				.mockResolvedValueOnce('# Setup from tilde path')
-				.mockRejectedValueOnce({ code: 'ENOENT' });
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockResolvedValueOnce(JSON.stringify(localManifest)) // local manifest
+				.mockResolvedValueOnce('# Setup from tilde path') // document content
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -1019,8 +1023,9 @@ describe('marketplace IPC handlers', () => {
 			};
 
 			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(validCache))
-				.mockRejectedValueOnce({ code: 'ENOENT' });
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1039,8 +1044,12 @@ describe('marketplace IPC handlers', () => {
 				'session-123'
 			);
 
-			// Should have imported the second doc
+			// Should have imported the second doc — and the persisted playbook
+			// should only reference docs that actually wrote to disk.
 			expect(result.importedDocs).toEqual(['phase-2']);
+			expect(result.playbook.documents.map((d: { filename: string }) => d.filename)).toEqual([
+				'Partial/phase-2',
+			]);
 		});
 
 		describe('SSH remote import', () => {
@@ -1051,8 +1060,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				// Remote functions return RemoteFsResult with success: true
@@ -1117,27 +1127,13 @@ describe('marketplace IPC handlers', () => {
 				expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
 			});
 
-			it('should fall back to local fs when SSH remote not found', async () => {
-				// Return empty array - no SSH remotes configured
+			it('should fail loudly when SSH remote ID does not resolve', async () => {
+				// The user explicitly opted into SSH; silently importing
+				// locally would land on the wrong host. The handler must
+				// reject before any filesystem call.
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'sshRemotes') return [];
 					return defaultValue;
-				});
-
-				const validCache: MarketplaceCache = {
-					fetchedAt: Date.now(),
-					manifest: sampleManifest,
-				};
-
-				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-				mockFetch.mockResolvedValue({
-					ok: true,
-					text: () => Promise.resolve('# Content'),
 				});
 
 				const handler = handlers.get('marketplace:importPlaybook');
@@ -1150,34 +1146,17 @@ describe('marketplace IPC handlers', () => {
 					'non-existent-ssh-remote'
 				);
 
-				// Should fall back to local fs operations
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
 				expect(mockMkdirRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-				expect(fs.mkdir).toHaveBeenCalled();
-				expect(result.success).toBe(true);
+				expect(fs.mkdir).not.toHaveBeenCalled();
 			});
 
-			it('should fall back to local fs when SSH remote is disabled', async () => {
-				// Return SSH remote that is disabled
+			it('should fail loudly when SSH remote is disabled', async () => {
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'sshRemotes') return [{ ...sampleSshRemote, enabled: false }];
 					return defaultValue;
-				});
-
-				const validCache: MarketplaceCache = {
-					fetchedAt: Date.now(),
-					manifest: sampleManifest,
-				};
-
-				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
-				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-
-				mockFetch.mockResolvedValue({
-					ok: true,
-					text: () => Promise.resolve('# Content'),
 				});
 
 				const handler = handlers.get('marketplace:importPlaybook');
@@ -1190,11 +1169,11 @@ describe('marketplace IPC handlers', () => {
 					'ssh-remote-1'
 				);
 
-				// Should fall back to local fs because remote is disabled
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('SSH remote not found or disabled');
 				expect(mockMkdirRemote).not.toHaveBeenCalled();
 				expect(mockWriteFileRemote).not.toHaveBeenCalled();
-				expect(fs.mkdir).toHaveBeenCalled();
-				expect(result.success).toBe(true);
+				expect(fs.mkdir).not.toHaveBeenCalled();
 			});
 
 			it('should handle SSH mkdir failure gracefully', async () => {
@@ -1204,8 +1183,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				// Return RemoteFsResult with success: false and error message (use mockResolvedValueOnce)
 				mockMkdirRemote.mockResolvedValueOnce({ success: false, error: 'SSH connection failed' });
 
@@ -1242,8 +1222,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1278,8 +1259,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1337,8 +1319,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -1381,8 +1364,9 @@ describe('marketplace IPC handlers', () => {
 				};
 
 				vi.mocked(fs.readFile)
-					.mockResolvedValueOnce(JSON.stringify(validCache))
-					.mockRejectedValueOnce({ code: 'ENOENT' });
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 				mockMkdirRemote.mockResolvedValue({ success: true });

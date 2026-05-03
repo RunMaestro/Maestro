@@ -16,6 +16,15 @@ export interface CueFileWatcherConfig {
 	onEvent: (event: CueEvent) => void;
 	triggerName: string;
 	onLog?: (level: string, message: string) => void;
+	/**
+	 * Optional gate: when this returns `false`, debounced events are dropped
+	 * instead of dispatched. The chokidar watcher itself stays subscribed
+	 * (OS file-watch is nearly free) — only the downstream emit + filter +
+	 * dispatch is skipped. Used by the visibility-aware pause; see
+	 * CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations". Defaults to
+	 * always-active when omitted.
+	 */
+	isActive?: () => boolean;
 }
 
 /**
@@ -24,6 +33,7 @@ export interface CueFileWatcherConfig {
  */
 export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 	const { watchGlob, projectRoot, debounceMs, onEvent, triggerName } = config;
+	const isActive = config.isActive ?? (() => true);
 	const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	const watcher = chokidar.watch(watchGlob, {
@@ -49,6 +59,11 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 			filePath,
 			setTimeout(() => {
 				debounceTimers.delete(filePath);
+
+				// Visibility-aware pause: drop the event when inactive. We don't
+				// queue it for later — file changes that happened while hidden
+				// can be re-discovered on resume via re-scan paths.
+				if (!isActive()) return;
 
 				const absolutePath = path.resolve(projectRoot, filePath);
 

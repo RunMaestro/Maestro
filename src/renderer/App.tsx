@@ -128,6 +128,7 @@ import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './ho
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
+import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -782,6 +783,11 @@ function MaestroConsoleInner() {
 	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
 	useCueAutoDiscovery(sessions, encoreFeatures);
 
+	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
+	// Forwards document visibility to the main-process Cue scanner
+	// subsystem so it pauses background work when the window is hidden.
+	useCueVisibilityWiring();
+
 	// --- TAB HANDLERS (extracted hook) ---
 	const {
 		activeTab,
@@ -941,6 +947,7 @@ function MaestroConsoleInner() {
 		handleCloseLightbox,
 		handleNavigateLightbox,
 		handleDeleteLightboxImage,
+		handleUpdateLightboxImage,
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
@@ -2831,6 +2838,7 @@ function MaestroConsoleInner() {
 					onCloseLightbox={handleCloseLightbox}
 					onNavigateLightbox={handleNavigateLightbox}
 					onDeleteLightboxImage={lightboxAllowDelete ? handleDeleteLightboxImage : undefined}
+					onUpdateLightboxImage={lightboxAllowDelete ? handleUpdateLightboxImage : undefined}
 					gitDiffPreview={gitDiffPreview}
 					gitViewerCwd={gitViewerCwd}
 					onCloseGitDiff={handleCloseGitDiff}

@@ -9,7 +9,7 @@
  * session, so the sheet only needs sessionId + the chosen playbook id.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
@@ -90,6 +90,11 @@ export function MarketplaceSheet({
 	// Import state
 	const [isImporting, setIsImporting] = useState(false);
 	const [importError, setImportError] = useState<string | null>(null);
+
+	// Monotonic preview-request id. Each new playbook/document request bumps
+	// it; resolved fetches that don't match are discarded. Prevents a slow
+	// README/document response from clobbering a newer selection.
+	const previewRequestIdRef = useRef(0);
 
 	const handleClose = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -180,15 +185,24 @@ export function MarketplaceSheet({
 			setTargetFolderName(defaultFolderNameFor(playbook));
 			setImportError(null);
 			setIsLoadingDocument(true);
+			const requestId = ++previewRequestIdRef.current;
 			try {
 				const result = await sendRequest<ReadmeResponse>('marketplace_get_readme', {
 					playbookPath: playbook.path,
 				});
-				setReadmeContent(result?.content ?? null);
-			} catch {
+				if (previewRequestIdRef.current !== requestId) return;
+				if (result?.success === false) {
+					setReadmeContent(null);
+					setImportError(result.error ?? 'Failed to load README');
+				} else {
+					setReadmeContent(result?.content ?? null);
+				}
+			} catch (err) {
+				if (previewRequestIdRef.current !== requestId) return;
 				setReadmeContent(null);
+				setImportError(err instanceof Error ? err.message : 'Failed to load README');
 			}
-			setIsLoadingDocument(false);
+			if (previewRequestIdRef.current === requestId) setIsLoadingDocument(false);
 		},
 		[sendRequest]
 	);
@@ -197,22 +211,36 @@ export function MarketplaceSheet({
 		async (filename: string | null) => {
 			if (!selectedPlaybook) return;
 			if (filename === null) {
+				// Cancel any in-flight document fetch and immediately surface
+				// the README — bumping the request id ensures a slow document
+				// response can't overwrite this state later.
+				++previewRequestIdRef.current;
 				setSelectedDocFilename(null);
 				setDocumentContent(null);
+				setIsLoadingDocument(false);
 				return;
 			}
 			setSelectedDocFilename(filename);
 			setIsLoadingDocument(true);
+			const requestId = ++previewRequestIdRef.current;
 			try {
 				const result = await sendRequest<DocumentResponse>('marketplace_get_document', {
 					playbookPath: selectedPlaybook.path,
 					filename,
 				});
-				setDocumentContent(result?.content ?? null);
-			} catch {
+				if (previewRequestIdRef.current !== requestId) return;
+				if (result?.success === false) {
+					setDocumentContent(null);
+					setImportError(result.error ?? 'Failed to load document');
+				} else {
+					setDocumentContent(result?.content ?? null);
+				}
+			} catch (err) {
+				if (previewRequestIdRef.current !== requestId) return;
 				setDocumentContent(null);
+				setImportError(err instanceof Error ? err.message : 'Failed to load document');
 			}
-			setIsLoadingDocument(false);
+			if (previewRequestIdRef.current === requestId) setIsLoadingDocument(false);
 		},
 		[selectedPlaybook, sendRequest]
 	);
@@ -435,8 +463,8 @@ export function MarketplaceSheet({
 		];
 		const previewContent =
 			selectedDocFilename === null
-				? readmeContent || '*No README available*'
-				: documentContent || '*Document not found*';
+				? (readmeContent ?? '*No README available*')
+				: (documentContent ?? '*Document not found*');
 
 		return (
 			<>

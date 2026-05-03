@@ -18,7 +18,10 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
-import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
+import {
+	SettingsModal,
+	__resetLastOpenSettingsTabForTests,
+} from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import { mockTheme } from '../../helpers/mockTheme';
 import type {
@@ -359,6 +362,7 @@ const createDefaultProps = (overrides = {}) => ({
 describe('SettingsModal', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
+		__resetLastOpenSettingsTabForTests();
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([

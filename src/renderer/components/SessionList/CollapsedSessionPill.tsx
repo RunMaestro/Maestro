@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
+import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
 
 interface CollapsedSessionPillProps {
@@ -54,7 +55,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						aria-label={`Switch to ${s.name}`}
 						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
 						style={{
-							...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
+							...(hasNoClaudeProviderSession(s) && !isInBatch
 								? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: {
 										backgroundColor: isInBatch

@@ -270,8 +270,19 @@ export function AutoRunSetupSheet({
 									cursor: 'pointer',
 									touchAction: 'manipulation',
 									WebkitTapHighlightColor: 'transparent',
+									// Replace the default outline with a focus ring
+									// rendered on :focus-visible so keyboard users
+									// retain a visible focus indicator.
 									outline: 'none',
+									boxShadow: 'none',
+									transition: 'box-shadow 0.15s ease',
 									minHeight: '44px',
+								}}
+								onFocus={(e) => {
+									e.currentTarget.style.boxShadow = `0 0 0 2px ${colors.accent}`;
+								}}
+								onBlur={(e) => {
+									e.currentTarget.style.boxShadow = 'none';
 								}}
 								aria-label="Browse Playbook Exchange"
 							>

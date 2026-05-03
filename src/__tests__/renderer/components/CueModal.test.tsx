@@ -679,7 +679,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button
-			const helpButton = screen.getByTitle('Help');
+			const helpButton = screen.getByTitle('About Maestro Cue');
 			fireEvent.click(helpButton);
 
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
@@ -689,7 +689,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button to enter help view
-			const helpButton = screen.getByTitle('Help');
+			const helpButton = screen.getByTitle('About Maestro Cue');
 			fireEvent.click(helpButton);
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
@@ -709,7 +709,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Click help button
-			fireEvent.click(screen.getByTitle('Help'));
+			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
 			// Click the back arrow
@@ -754,7 +754,7 @@ describe('CueModal', () => {
 			});
 
 			// Enter help view
-			fireEvent.click(screen.getByTitle('Help'));
+			fireEvent.click(screen.getByTitle('About Maestro Cue'));
 			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 
 			// Press escape — should go back from help, not trigger confirmation

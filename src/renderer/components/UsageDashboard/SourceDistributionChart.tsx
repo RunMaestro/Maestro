@@ -224,7 +224,10 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Session Type
 				</h3>
 				<div className="flex items-center gap-2">

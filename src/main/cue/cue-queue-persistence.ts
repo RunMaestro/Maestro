@@ -35,6 +35,11 @@ export interface PersistableQueueEntry {
 	command?: CueCommand;
 	chainDepth?: number;
 	queuedAt: number;
+	/** Phase 01 — chain lineage propagated from the parent run so a restored
+	 *  queue entry stays attached to its chain root after a crash. Undefined
+	 *  for root events (and for any entry queued while usageStats is off). */
+	chainRootId?: string;
+	parentEventId?: string;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -75,6 +80,8 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			commandJson: entry.command ? JSON.stringify(entry.command) : null,
 			chainDepth: entry.chainDepth ?? 0,
 			queuedAt: entry.queuedAt,
+			chainRootId: entry.chainRootId ?? null,
+			parentEventId: entry.parentEventId ?? null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -217,6 +224,8 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				command,
 				chainDepth: row.chainDepth,
 				queuedAt: row.queuedAt,
+				chainRootId: row.chainRootId ?? undefined,
+				parentEventId: row.parentEventId ?? undefined,
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

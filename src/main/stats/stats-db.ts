@@ -807,19 +807,16 @@ export class StatsDB {
 	 */
 	getEarliestTimestamp(): number | null {
 		try {
-			// Query the minimum startTime from query_events table
 			const queryResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM query_events')
+				.prepare('SELECT MIN(start_time) as earliest FROM query_events')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum startTime from auto_run_sessions table
 			const autoRunResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM auto_run_sessions')
+				.prepare('SELECT MIN(start_time) as earliest FROM auto_run_sessions')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum createdAt from session_lifecycle table
 			const lifecycleResult = this.database
-				.prepare('SELECT MIN(createdAt) as earliest FROM session_lifecycle')
+				.prepare('SELECT MIN(created_at) as earliest FROM session_lifecycle')
 				.get() as { earliest: number | null } | undefined;
 
 			// Find the minimum across all tables

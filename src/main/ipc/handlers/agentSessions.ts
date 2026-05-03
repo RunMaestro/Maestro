@@ -697,7 +697,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					);
 					const seenAcrossAgents = new Set<string>();
 					const storages = getAllSessionStorages();
-					const historyEntries = historyManager.getAllEntriesPaginated().entries;
+					const historyEntries = (await historyManager.getAllEntriesPaginated()).entries;
 					for (const entry of historyEntries) {
 						if (!entry.sessionName || !entry.agentSessionId || !entry.projectPath) continue;
 						const projectKey = `${entry.projectPath}:${entry.agentSessionId}`;

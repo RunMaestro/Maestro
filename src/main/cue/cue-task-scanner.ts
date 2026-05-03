@@ -21,6 +21,13 @@ export interface CueTaskScannerConfig {
 	onEvent: (event: CueEvent) => void;
 	onLog: (level: string, message: string) => void;
 	triggerName: string;
+	/**
+	 * Optional gate: when this returns `false`, the scanner skips its tick
+	 * (no directory walk, no file reads, no events). Used by the
+	 * visibility-aware pause — CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations".
+	 * Defaults to always-active when omitted.
+	 */
+	isActive?: () => boolean;
 }
 
 /** A pending task extracted from a markdown file */
@@ -86,6 +93,7 @@ function walkDir(dir: string, root: string): string[] {
  */
 export function createCueTaskScanner(config: CueTaskScannerConfig): () => void {
 	const { watchGlob, pollMinutes, projectRoot, onEvent, onLog, triggerName } = config;
+	const isActive = config.isActive ?? (() => true);
 
 	let stopped = false;
 	let initialTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -102,6 +110,10 @@ export function createCueTaskScanner(config: CueTaskScannerConfig): () => void {
 
 	async function doScan(): Promise<void> {
 		if (stopped) return;
+		// Visibility-aware pause: skip the entire tick when inactive.
+		// The interval keeps firing so we resume cleanly on the next visible
+		// tick — no need to tear down and re-create timers.
+		if (!isActive()) return;
 
 		try {
 			const allFiles = walkDir(projectRoot, projectRoot);

@@ -125,6 +125,7 @@ export interface ModalHandlersReturn {
 	handleCloseLightbox: () => void;
 	handleNavigateLightbox: (img: string) => void;
 	handleDeleteLightboxImage: (img: string) => void;
+	handleUpdateLightboxImage: (oldImg: string, newDataUrl: string) => void;
 
 	// Utility close handlers
 	handleCloseAutoRunSetup: () => void;
@@ -605,6 +606,42 @@ export function useModalHandlers(
 		getModalActions().setLightboxImages(currentImages.filter((i) => i !== img));
 	}, []);
 
+	const handleUpdateLightboxImage = useCallback((oldImg: string, newDataUrl: string) => {
+		const lightboxData = useModalStore.getState().getData('lightbox');
+		const isGroupChat = lightboxData?.isGroupChat ?? false;
+
+		if (isGroupChat) {
+			useGroupChatStore
+				.getState()
+				.setGroupChatStagedImages((prev) => prev.map((i) => (i === oldImg ? newDataUrl : i)));
+		} else {
+			const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
+			const session = currentSessions.find((s) => s.id === activeSessionId);
+			if (session) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== session.id) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) => {
+								if (tab.id !== s.activeTabId) return tab;
+								return {
+									...tab,
+									stagedImages: (tab.stagedImages || []).map((i) =>
+										i === oldImg ? newDataUrl : i
+									),
+								};
+							}),
+						};
+					})
+				);
+			}
+		}
+
+		const currentImages = lightboxData?.images ?? [];
+		getModalActions().setLightboxImages(currentImages.map((i) => (i === oldImg ? newDataUrl : i)));
+	}, []);
+
 	// ====================================================================
 	// Group K: Utility Close Handlers
 	// ====================================================================
@@ -1028,6 +1065,7 @@ export function useModalHandlers(
 		handleCloseLightbox,
 		handleNavigateLightbox,
 		handleDeleteLightboxImage,
+		handleUpdateLightboxImage,
 
 		// Utility close handlers
 		handleCloseAutoRunSetup,

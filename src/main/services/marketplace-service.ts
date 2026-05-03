@@ -14,6 +14,7 @@
 import { App } from 'electron';
 import fs from 'fs/promises';
 import fsSync from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
@@ -40,7 +41,12 @@ export function getLocalManifestPath(app: App): string {
 	return path.join(app.getPath('userData'), 'local-manifest.json');
 }
 
-function isLocalPath(pathStr: string): boolean {
+/**
+ * Whether `pathStr` references the local filesystem (absolute or `~`-prefixed)
+ * rather than a GitHub manifest path. Exported so the IPC + WS callers can
+ * gate access — only locally-trusted (IPC) flows may resolve local paths.
+ */
+export function isLocalPath(pathStr: string): boolean {
 	if (path.isAbsolute(pathStr)) return true;
 	if (pathStr.startsWith('~/') || pathStr.startsWith('~\\')) return true;
 	return false;
@@ -48,10 +54,32 @@ function isLocalPath(pathStr: string): boolean {
 
 function resolveTildePath(pathStr: string): string {
 	if (pathStr.startsWith('~/') || pathStr.startsWith('~\\')) {
-		const homedir = require('os').homedir();
-		return path.join(homedir, pathStr.slice(2));
+		return path.join(os.homedir(), pathStr.slice(2));
 	}
 	return pathStr;
+}
+
+/**
+ * Validate a `targetFolderName` from an untrusted client (e.g. mobile WS).
+ * Rejects path separators and traversal sequences so the folder cannot
+ * escape `autoRunFolderPath`. Throws `MarketplaceImportError` on bad input.
+ */
+export function assertSafeTargetFolderName(targetFolderName: string): void {
+	if (!targetFolderName || targetFolderName.trim() === '') {
+		throw new MarketplaceImportError('targetFolderName is required');
+	}
+	const trimmed = targetFolderName.trim();
+	if (
+		trimmed.includes('..') ||
+		trimmed.includes('/') ||
+		trimmed.includes('\\') ||
+		trimmed.startsWith('~') ||
+		path.isAbsolute(trimmed)
+	) {
+		throw new MarketplaceImportError(
+			`targetFolderName must be a single folder name without separators: ${targetFolderName}`
+		);
+	}
 }
 
 function validateSafePath(basePath: string, requestedFile: string): string {
@@ -280,23 +308,21 @@ async function fetchReadme(playbookPath: string): Promise<string | null> {
 			return await fs.readFile(readmePath, 'utf-8');
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-			return null;
+			throw new MarketplaceFetchError(
+				`Failed to read local README: ${error instanceof Error ? error.message : String(error)}`,
+				error
+			);
 		}
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/README.md`;
-	try {
-		const response = await fetch(url);
-		if (!response.ok) {
-			if (response.status === 404) return null;
-			throw new MarketplaceFetchError(
-				`Failed to fetch README: ${response.status} ${response.statusText}`
-			);
-		}
-		return await response.text();
-	} catch (error) {
-		if (error instanceof MarketplaceFetchError) throw error;
-		return null;
+	const response = await fetch(url);
+	if (!response.ok) {
+		if (response.status === 404) return null;
+		throw new MarketplaceFetchError(
+			`Failed to fetch README: ${response.status} ${response.statusText}`
+		);
 	}
+	return await response.text();
 }
 
 export interface GetManifestServiceResult {
@@ -413,6 +439,8 @@ export async function importMarketplacePlaybook(
 ): Promise<ImportPlaybookServiceResult> {
 	const { app, playbookId, targetFolderName, autoRunFolderPath, sessionId, sshConfig } = opts;
 	const isRemote = !!sshConfig;
+
+	assertSafeTargetFolderName(targetFolderName);
 
 	logger.info(
 		`Importing playbook "${playbookId}" to "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
@@ -544,16 +572,22 @@ export async function importMarketplacePlaybook(
 		}
 	}
 
+	// Persist only documents that actually wrote to disk so the playbook
+	// never references missing files. Filter manifest order against the
+	// importedDocs success set.
+	const importedDocSet = new Set(importedDocs);
 	const now = Date.now();
 	const newPlaybook = {
 		id: crypto.randomUUID(),
 		name: marketplacePlaybook.title,
 		createdAt: now,
 		updatedAt: now,
-		documents: marketplacePlaybook.documents.map((d) => ({
-			filename: targetFolderName ? `${targetFolderName}/${d.filename}` : d.filename,
-			resetOnCompletion: d.resetOnCompletion,
-		})),
+		documents: marketplacePlaybook.documents
+			.filter((d) => importedDocSet.has(d.filename))
+			.map((d) => ({
+				filename: targetFolderName ? `${targetFolderName}/${d.filename}` : d.filename,
+				resetOnCompletion: d.resetOnCompletion,
+			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
 		prompt: marketplacePlaybook.prompt ?? '',
@@ -567,8 +601,18 @@ export async function importMarketplacePlaybook(
 		const content = await fs.readFile(playbooksFilePath, 'utf-8');
 		const data = JSON.parse(content);
 		playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
-	} catch {
-		// File doesn't exist or is invalid, start fresh
+	} catch (error) {
+		// ENOENT is normal (first save). Anything else (corrupt JSON, EACCES,
+		// etc.) means there's existing user data we couldn't read — refuse
+		// to silently overwrite it, since starting from [] would drop their
+		// previously-saved playbooks on the next write.
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+			void captureException(error);
+			throw new MarketplaceImportError(
+				`Failed to read existing playbooks file (refusing to overwrite): ${error instanceof Error ? error.message : String(error)}`,
+				error
+			);
+		}
 	}
 	playbooks.push(newPlaybook);
 	await fs.writeFile(playbooksFilePath, JSON.stringify({ playbooks }, null, 2), 'utf-8');
@@ -597,6 +641,20 @@ export function createLocalManifestWatcher(
 		watcher = fsSync.watch(localManifestPath, () => {
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(onChange, debounceMs);
+		});
+
+		// Prevent runtime errors (e.g. Windows UNKNOWN, file removed) from
+		// becoming unhandled rejections. Recoverable filesystem codes stay
+		// warn-only; novel failure modes get reported to Sentry so we keep
+		// production visibility.
+		watcher.on('error', (error) => {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT' || code === 'EPERM' || code === 'UNKNOWN') {
+				logger.warn(`Local manifest watcher error (${code}): ${error.message}`, LOG_CONTEXT);
+				return;
+			}
+			void captureException(error, { operation: 'marketplace:localManifestWatcher' });
+			logger.warn(`Local manifest watcher error: ${error.message}`, LOG_CONTEXT);
 		});
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

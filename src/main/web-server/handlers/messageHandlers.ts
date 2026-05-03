@@ -3319,6 +3319,22 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Reject a `playbookPath` that points at the local filesystem (absolute
+	 * path or `~`-prefixed). Web clients can browse the official + local
+	 * catalog by id, but they must never be able to coerce the server into
+	 * reading arbitrary files via the marketplace fetch helpers.
+	 */
+	private isUntrustedLocalPath(playbookPath: string): boolean {
+		return (
+			playbookPath.startsWith('/') ||
+			playbookPath.startsWith('\\') ||
+			playbookPath.startsWith('~/') ||
+			playbookPath.startsWith('~\\') ||
+			/^[a-zA-Z]:[\\/]/.test(playbookPath)
+		);
+	}
+
+	/**
 	 * Handle marketplace_get_document - fetch a single document's content.
 	 */
 	private handleMarketplaceGetDocument(client: WebClient, message: WebClientMessage): void {
@@ -3327,6 +3343,12 @@ export class WebSocketMessageHandler {
 
 		if (typeof playbookPath !== 'string' || playbookPath.trim() === '') {
 			this.sendError(client, 'Missing or invalid playbookPath', {
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (this.isUntrustedLocalPath(playbookPath)) {
+			this.sendError(client, 'Local filesystem paths are not allowed from web clients', {
 				requestId: message.requestId,
 			});
 			return;
@@ -3353,10 +3375,19 @@ export class WebSocketMessageHandler {
 		this.callbacks
 			.getMarketplaceDocument(playbookPath, filename)
 			.then((result) => {
+				if (!result) {
+					this.send(client, {
+						type: 'marketplace_get_document_result',
+						success: false,
+						error: 'Marketplace not configured',
+						requestId: message.requestId,
+					});
+					return;
+				}
 				this.send(client, {
 					type: 'marketplace_get_document_result',
 					success: true,
-					content: result?.content ?? '',
+					content: result.content,
 					requestId: message.requestId,
 				});
 			})
@@ -3381,6 +3412,12 @@ export class WebSocketMessageHandler {
 			});
 			return;
 		}
+		if (this.isUntrustedLocalPath(playbookPath)) {
+			this.sendError(client, 'Local filesystem paths are not allowed from web clients', {
+				requestId: message.requestId,
+			});
+			return;
+		}
 
 		if (!this.callbacks.getMarketplaceReadme) {
 			this.send(client, {
@@ -3395,10 +3432,19 @@ export class WebSocketMessageHandler {
 		this.callbacks
 			.getMarketplaceReadme(playbookPath)
 			.then((result) => {
+				if (!result) {
+					this.send(client, {
+						type: 'marketplace_get_readme_result',
+						success: false,
+						error: 'Marketplace not configured',
+						requestId: message.requestId,
+					});
+					return;
+				}
 				this.send(client, {
 					type: 'marketplace_get_readme_result',
 					success: true,
-					content: result?.content ?? null,
+					content: result.content,
 					requestId: message.requestId,
 				});
 			})
@@ -3435,6 +3481,23 @@ export class WebSocketMessageHandler {
 			this.sendError(client, 'Missing targetFolderName', { requestId: message.requestId });
 			return;
 		}
+		// Reject path separators and traversal so the import folder cannot
+		// escape the session's Auto Run root. The service-layer guard
+		// (assertSafeTargetFolderName) is the source of truth, but
+		// short-circuiting here returns a cleaner WebSocket error code.
+		const trimmedFolder = targetFolderName.trim();
+		if (
+			trimmedFolder.includes('..') ||
+			trimmedFolder.includes('/') ||
+			trimmedFolder.includes('\\') ||
+			trimmedFolder.startsWith('~') ||
+			/^[a-zA-Z]:[\\/]/.test(trimmedFolder)
+		) {
+			this.sendError(client, 'targetFolderName must be a single folder name without separators', {
+				requestId: message.requestId,
+			});
+			return;
+		}
 
 		if (!this.callbacks.importMarketplacePlaybook) {
 			this.send(client, {
@@ -3447,7 +3510,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.importMarketplacePlaybook(sessionId, playbookId, targetFolderName)
+			.importMarketplacePlaybook(sessionId, playbookId, trimmedFolder)
 			.then((result) => {
 				this.send(client, {
 					type: 'marketplace_import_playbook_result',
