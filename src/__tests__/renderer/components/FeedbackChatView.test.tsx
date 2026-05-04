@@ -147,4 +147,59 @@ describe('FeedbackChatView', () => {
 
 		expect(onCancel).toHaveBeenCalledOnce();
 	});
+
+	it('shows a distinct error screen when agent detection itself throws', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.agents.detect.mockRejectedValue(new Error('IPC channel closed'));
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		// Detection failure should NOT be misclassified as "no providers".
+		await waitFor(() => {
+			expect(screen.getByText('Could not detect AI providers')).toBeTruthy();
+		});
+		expect(screen.queryByText('No supported AI providers detected')).toBeNull();
+
+		// The error message bubbles up to the screen so the user can see what broke.
+		expect(screen.getByText('IPC channel closed')).toBeTruthy();
+
+		// Chat must not have been started.
+		expect(window.maestro.feedback.getConversationPrompt).not.toHaveBeenCalled();
+	});
+
+	it('lets the user dismiss the boot screen if conversation start fails', async () => {
+		const onCancel = vi.fn();
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.agents.detect.mockResolvedValue([
+			{ id: 'claude-code', name: 'Claude Code', available: true },
+		]);
+		window.maestro.feedback.getConversationPrompt.mockRejectedValue(
+			new Error('Prompt fetch failed')
+		);
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={onCancel}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		// Error message + Close button should appear so the user isn't stuck.
+		await waitFor(() => {
+			expect(screen.getByText('Prompt fetch failed')).toBeTruthy();
+		});
+		const closeButton = screen.getByText('Close');
+		expect(closeButton).toBeTruthy();
+		closeButton.click();
+		expect(onCancel).toHaveBeenCalledOnce();
+	});
 });

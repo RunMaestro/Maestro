@@ -38,6 +38,7 @@ import {
 	type FeedbackParsedResponse,
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
+import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 
 // ============================================================================
@@ -129,6 +130,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const [selectedAgent, setSelectedAgent] = useState<ToolType>('claude-code');
 	const [detectedAgents, setDetectedAgents] = useState<Set<string>>(new Set());
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
+	const [agentsDetectError, setAgentsDetectError] = useState<string | null>(null);
 	const [messages, setMessages] = useState<FeedbackMessage[]>([]);
 	const [inputValue, setInputValue] = useState('');
 	const [isLoading, setIsLoading] = useState(false);
@@ -193,8 +195,16 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					if (firstAvailable) setSelectedAgent(firstAvailable.id);
 					setAgentsLoaded(true);
 				}
-			} catch {
-				if (mounted) setAgentsLoaded(true);
+			} catch (error) {
+				// Report so we hear about IPC/runtime failures in production rather
+				// than misclassifying them as "no providers installed".
+				captureException(error, { extra: { source: 'FeedbackChatView.agentDetect' } });
+				if (mounted) {
+					setAgentsDetectError(
+						error instanceof Error ? error.message : 'Failed to detect AI providers.'
+					);
+					setAgentsLoaded(true);
+				}
 			}
 		})();
 		return () => {
@@ -290,6 +300,9 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			// Focus input immediately — no auto-greeting, user speaks first
 			requestAnimationFrame(() => inputRef.current?.focus());
 		} catch (error) {
+			// Release the auto-start latch so a future state change can retry,
+			// and surface the error in the boot screen with a Close action.
+			startedRef.current = false;
 			setSubmitError(error instanceof Error ? error.message : 'Failed to start conversation');
 		}
 	}, [selectedAgent]);
@@ -300,11 +313,11 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	useEffect(() => {
 		if (startedRef.current) return;
 		if (ghAuth.checking || !ghAuth.ok) return;
-		if (!agentsLoaded) return;
+		if (!agentsLoaded || agentsDetectError) return;
 		if (availableTiles.length === 0) return;
 		startedRef.current = true;
 		void startConversation();
-	}, [ghAuth, agentsLoaded, availableTiles, startConversation]);
+	}, [ghAuth, agentsLoaded, agentsDetectError, availableTiles, startConversation]);
 
 	// --- Send message ---
 	const sendMessage = useCallback(async () => {
@@ -547,6 +560,31 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		);
 	}
 
+	// --- Agent detection failed (IPC/runtime error, not "zero providers") ---
+	if (agentsDetectError) {
+		return (
+			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.error }} />
+				<div>
+					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+						Could not detect AI providers
+					</p>
+					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
+						{agentsDetectError}
+					</p>
+				</div>
+				<button
+					type="button"
+					onClick={onCancel}
+					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+				>
+					Close
+				</button>
+			</div>
+		);
+	}
+
 	// --- No supported AI provider detected ---
 	if (agentsLoaded && availableTiles.length === 0) {
 		return (
@@ -582,9 +620,19 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					Starting feedback session...
 				</p>
 				{submitError && (
-					<p className="text-xs" style={{ color: theme.colors.warning }}>
-						{submitError}
-					</p>
+					<>
+						<p className="text-xs" style={{ color: theme.colors.warning }}>
+							{submitError}
+						</p>
+						<button
+							type="button"
+							onClick={onCancel}
+							className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						>
+							Close
+						</button>
+					</>
 				)}
 			</div>
 		);
