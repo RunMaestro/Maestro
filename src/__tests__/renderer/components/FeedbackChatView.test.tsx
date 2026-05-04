@@ -57,42 +57,7 @@ describe('FeedbackChatView', () => {
 		});
 	});
 
-	it('shows provider selection when gh is authenticated', async () => {
-		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
-		window.maestro.agents.detect.mockResolvedValue([
-			{ id: 'claude-code', name: 'Claude Code', available: true },
-		]);
-
-		render(
-			<FeedbackChatView
-				theme={theme}
-				sessions={sessions}
-				onCancel={vi.fn()}
-				onSubmitSuccess={vi.fn()}
-			/>
-		);
-
-		await waitFor(() => {
-			expect(screen.getByText('Start')).toBeTruthy();
-		});
-	});
-
-	it('shows loading spinner during GH auth check', () => {
-		window.maestro.feedback.checkGhAuth.mockReturnValue(new Promise(() => {})); // Never resolves
-
-		render(
-			<FeedbackChatView
-				theme={theme}
-				sessions={sessions}
-				onCancel={vi.fn()}
-				onSubmitSuccess={vi.fn()}
-			/>
-		);
-
-		expect(screen.getByText('Checking GitHub CLI...')).toBeTruthy();
-	});
-
-	it('starts chat without a loading spinner when provider is selected', async () => {
+	it('auto-starts chat when gh is authenticated and a supported agent is detected', async () => {
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
 		window.maestro.agents.detect.mockResolvedValue([
 			{ id: 'claude-code', name: 'Claude Code', available: true },
@@ -111,21 +76,53 @@ describe('FeedbackChatView', () => {
 			/>
 		);
 
-		// Wait for provider selection screen
-		await waitFor(() => {
-			expect(screen.getByText('Start')).toBeTruthy();
-		});
-
-		// Click Start
-		screen.getByText('Start').click();
-
-		// Chat should appear with input but no spinner
+		// Skips the old provider-select screen and lands directly in chat.
 		await waitFor(() => {
 			expect(screen.getByPlaceholderText('Describe your issue or idea...')).toBeTruthy();
 		});
 
-		// No loading spinner should be visible
-		expect(screen.queryByText('Checking GitHub CLI...')).toBeNull();
+		// The provider-select dropdown / Start button should be gone for good.
+		expect(screen.queryByText('Start')).toBeNull();
+		expect(screen.queryByText('AI Provider')).toBeNull();
+
+		// The conversation prompt was fetched (chat actually started).
+		expect(window.maestro.feedback.getConversationPrompt).toHaveBeenCalled();
+	});
+
+	it('shows loading spinner during GH auth check', () => {
+		window.maestro.feedback.checkGhAuth.mockReturnValue(new Promise(() => {})); // Never resolves
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('Checking GitHub CLI...')).toBeTruthy();
+	});
+
+	it('shows the no-providers screen when gh is authenticated but no supported agents are detected', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.agents.detect.mockResolvedValue([]);
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByText('No supported AI providers detected')).toBeTruthy();
+		});
+
+		// The chat should not have been started.
+		expect(window.maestro.feedback.getConversationPrompt).not.toHaveBeenCalled();
 	});
 
 	it('calls onCancel when Close button is clicked on GH error', async () => {
