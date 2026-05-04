@@ -592,13 +592,16 @@ async function spawnJsonLineAgent(
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
-	if (agentSessionId && def?.resumeArgs) {
-		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
-	// Codex requires explicit working directory arg (other agents use process cwd)
+	// Codex requires explicit working directory arg (other agents use process cwd).
+	// Must be emitted before resumeArgs because `resume` is a subcommand of
+	// `codex exec` — once it's consumed, trailing flags like `-C` are parsed
+	// against `codex exec resume`, which doesn't accept them.
 	if (toolType === 'codex' && def?.workingDirArgs) {
 		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
+
+	if (agentSessionId && def?.resumeArgs) {
+		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
 	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)

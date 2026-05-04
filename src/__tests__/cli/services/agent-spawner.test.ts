@@ -2134,8 +2134,13 @@ Some text with [x] in it that's not a checkbox
 			expect(c).toBeGreaterThanOrEqual(0);
 			expect(args[c + 1]).toBe('/working');
 			// resume args are ['resume', '<id>']
-			expect(args).toContain('resume');
-			expect(args).toContain('codex-thread-123');
+			const r = args.indexOf('resume');
+			expect(r).toBeGreaterThanOrEqual(0);
+			expect(args[r + 1]).toBe('codex-thread-123');
+			// `-C` must precede the `resume` subcommand — once Codex consumes
+			// `resume`, trailing flags get parsed by `codex exec resume`, which
+			// rejects `-C`.
+			expect(c).toBeLessThan(r);
 		});
 
 		it('unsupported agent type returns a failure result', async () => {
