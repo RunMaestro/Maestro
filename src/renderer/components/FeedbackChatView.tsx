@@ -300,6 +300,10 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			// Focus input immediately — no auto-greeting, user speaks first
 			requestAnimationFrame(() => inputRef.current?.focus());
 		} catch (error) {
+			// Surface IPC/runtime failures from getConversationPrompt() and
+			// managerRef.current.start() to Sentry so production breakage is
+			// visible — these are unexpected errors, not recoverable conditions.
+			captureException(error, { extra: { source: 'FeedbackChatView.startConversation' } });
 			// Release the auto-start latch so a future state change can retry,
 			// and surface the error in the boot screen with a Close action.
 			startedRef.current = false;
