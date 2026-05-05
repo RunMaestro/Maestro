@@ -308,6 +308,22 @@ function TabBarInner({
 	// Shared props computed once for the rendering loop
 	const allTabs = unifiedTabs ?? [];
 
+	// Map of terminal-tab id → display index, ordered by creation time so the
+	// "Terminal N" label reflects the order the user opened them — not the
+	// position in the visual tab strip. Without this, opening a 2nd terminal
+	// while an AI tab is active inserts the new terminal to the LEFT of the
+	// existing one (insertAfterActiveInUnifiedTabOrder), which would otherwise
+	// make the new tab "Terminal 1" and rename the original to "Terminal 2".
+	const terminalIndexById = useMemo(() => {
+		const terminals = allTabs.flatMap((ut) =>
+			ut.type === 'terminal' ? [{ id: ut.id, createdAt: ut.data.createdAt }] : []
+		);
+		terminals.sort((a, b) => a.createdAt - b.createdAt);
+		const map = new Map<string, number>();
+		terminals.forEach((t, idx) => map.set(t.id, idx));
+		return map;
+	}, [allTabs]);
+
 	/** Render a separator bar between inactive tabs */
 	const separator = (
 		<div
@@ -519,9 +535,7 @@ function TabBarInner({
 							);
 						} else if (unifiedTab.type === 'terminal') {
 							const terminalTab = unifiedTab.data;
-							const terminalIndex = allTabs
-								.filter((ut) => ut.type === 'terminal')
-								.findIndex((ut) => ut.id === unifiedTab.id);
+							const terminalIndex = terminalIndexById.get(unifiedTab.id) ?? 0;
 							return (
 								<React.Fragment key={unifiedTab.id}>
 									{showSeparator && separator}

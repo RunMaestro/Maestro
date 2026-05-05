@@ -4631,6 +4631,66 @@ describe('Unified tabs drag and drop', () => {
 		// Should call onUnifiedTabReorder with index 1 -> 2 (last index)
 		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
 	});
+
+	// Regression: when the user clicks back to an AI tab and then opens a 2nd
+	// terminal, addTerminalTab inserts the new terminal directly after the AI
+	// tab — which places it visually to the LEFT of the existing terminal.
+	// "Terminal N" labels must follow creation order so the older terminal
+	// stays "Terminal 1" and the new one becomes "Terminal 2".
+	it('numbers terminal tabs by creation order, not visual position', () => {
+		const olderTerminal = {
+			id: 'term-older',
+			name: null,
+			shellType: 'zsh',
+			pid: 100,
+			cwd: '/test',
+			createdAt: 1000,
+			state: 'idle' as const,
+		};
+		const newerTerminal = {
+			id: 'term-newer',
+			name: null,
+			shellType: 'zsh',
+			pid: 200,
+			cwd: '/test',
+			createdAt: 2000,
+			state: 'idle' as const,
+		};
+
+		// Newer terminal sits BEFORE the older terminal in visual order
+		// (mirrors what addTerminalTab produces when an AI tab is active).
+		const unifiedTabsReversed = [
+			{ type: 'ai' as const, id: 'ai-tab-1', data: aiTab1 },
+			{ type: 'terminal' as const, id: 'term-newer', data: newerTerminal },
+			{ type: 'terminal' as const, id: 'term-older', data: olderTerminal },
+		];
+
+		render(
+			<TabBar
+				tabs={aiTabs}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabsReversed}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onTerminalTabSelect={vi.fn()}
+				onTerminalTabClose={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('Terminal 1').closest('[data-tab-id]')).toHaveAttribute(
+			'data-tab-id',
+			'term-older'
+		);
+		expect(screen.getByText('Terminal 2').closest('[data-tab-id]')).toHaveAttribute(
+			'data-tab-id',
+			'term-newer'
+		);
+	});
 });
 
 describe('Unified active tab styling consistency', () => {
