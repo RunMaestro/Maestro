@@ -2,25 +2,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
-import { resolveAgentId } from '../services/storage';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 
 interface OpenFileOptions {
 	agent?: string;
 }
 
 export async function openFile(filePath: string, options: OpenFileOptions): Promise<void> {
-	let sessionId: string;
-	if (options.agent) {
-		try {
-			sessionId = resolveAgentId(options.agent);
-		} catch (error) {
-			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
-		}
-	} else {
-		sessionId = resolveSessionId({});
-	}
+	const sessionId = resolveTargetSessionId(options.agent);
 
 	// Resolve relative paths against the agent's working directory, not the CLI's cwd.
 	// This allows `open-file README.md -a <id>` to open files from the agent's project.

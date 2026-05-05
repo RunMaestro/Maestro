@@ -1,7 +1,6 @@
 // Dispatch command — hand off a prompt to the Maestro desktop app and return
-// addressable tab/session IDs. Splits the desktop-handoff half of `send --live`
-// into a standalone verb so callers (Maestro-Discord, Cue) can address the same
-// tab on follow-up calls without owning a persistent channel.
+// addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
+// the same tab on follow-up calls without owning a persistent channel.
 
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
@@ -31,8 +30,8 @@ function emitErrorJson(error: string, code: string): void {
 
 /**
  * Run the dispatch flow. Exported separately from the CLI action so
- * `send --live` can delegate here during the deprecation window without
- * duplicating logic or re-shelling out.
+ * programmatic callers (e.g., Maestro-Discord, Cue) and tests can invoke
+ * dispatch logic without re-shelling out.
  */
 export async function runDispatch(
 	agentIdArg: string,

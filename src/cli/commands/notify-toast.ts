@@ -68,7 +68,9 @@ export async function notifyToast(
 			);
 			process.exit(1);
 		}
-		duration = seconds;
+		// Renderer's notificationStore treats `toast.duration` as already-in-ms,
+		// so convert from seconds before sending across the IPC bridge.
+		duration = Math.round(seconds * 1000);
 	}
 
 	let sessionId: string | undefined;

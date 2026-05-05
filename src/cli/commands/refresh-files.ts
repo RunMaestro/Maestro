@@ -1,24 +1,13 @@
 // Refresh files command - refresh the file tree in the Maestro desktop app
 
-import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
-import { resolveAgentId } from '../services/storage';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 
 interface RefreshFilesOptions {
 	agent?: string;
 }
 
 export async function refreshFiles(options: RefreshFilesOptions): Promise<void> {
-	let sessionId: string;
-	if (options.agent) {
-		try {
-			sessionId = resolveAgentId(options.agent);
-		} catch (error) {
-			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
-		}
-	} else {
-		sessionId = resolveSessionId({});
-	}
+	const sessionId = resolveTargetSessionId(options.agent);
 
 	try {
 		const result = await withMaestroClient(async (client) => {

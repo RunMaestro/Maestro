@@ -3,7 +3,7 @@
 
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
-import { readSessions } from './storage';
+import { readSessions, resolveAgentId } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -183,6 +183,24 @@ export function resolveSessionId(options: { session?: string }): string {
 	}
 
 	return sessions[0].id;
+}
+
+/**
+ * Resolve a target agent (sessionId) from an optional `--agent` value, or fall
+ * back to the first available agent. Centralizes the duplicated try/catch +
+ * resolveSessionId pattern that several desktop-handoff verbs share. Exits the
+ * process on resolution failure so callers can rely on the return value.
+ */
+export function resolveTargetSessionId(agent?: string): string {
+	if (agent) {
+		try {
+			return resolveAgentId(agent);
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
+	}
+	return resolveSessionId({});
 }
 
 /**

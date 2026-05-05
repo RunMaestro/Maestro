@@ -100,7 +100,7 @@ maestro-cli send <agent-id> -s <session-id> -- "--re-run"
 maestro-cli dispatch <agent-id> -- "--force the rewrite"
 ```
 
-Everything after `--` is treated as positional, so any flags you need (`-s`, `-r`, `-t`, `--new-tab`, `-f`, `--tab`) must come before the separator.
+Everything after `--` is treated as positional, so any flags you need must come before the separator. For `send` that's `-s`, `-r`, `-t` (`-t` is the boolean focus flag here); for `dispatch` it's `-t`/`--tab`, `--new-tab`, `-f`.
 
 ### Dispatching to a Desktop Tab
 

@@ -20,12 +20,11 @@ vi.mock('fs', () => ({
 // Mock maestro-client
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
-	resolveSessionId: vi.fn(),
+	resolveTargetSessionId: vi.fn(),
 }));
 
-// Mock storage (used for resolving --agent IDs and relative paths against agent's cwd)
+// Mock storage (used for resolving relative paths against agent's cwd via getSessionById)
 vi.mock('../../../cli/services/storage', () => ({
-	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn().mockReturnValue({
 		id: 'session-123',
 		name: 'Test Agent',
@@ -36,8 +35,7 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import { openFile } from '../../../cli/commands/open-file';
-import { withMaestroClient, resolveSessionId } from '../../../cli/services/maestro-client';
-import { resolveAgentId } from '../../../cli/services/storage';
+import { withMaestroClient, resolveTargetSessionId } from '../../../cli/services/maestro-client';
 import { existsSync } from 'fs';
 
 describe('open-file command', () => {
@@ -54,7 +52,7 @@ describe('open-file command', () => {
 
 	it('should open a valid file with explicit agent', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('session-123');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('session-123');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const mockClient = {
 				sendCommand: vi.fn().mockResolvedValue({ type: 'open_file_tab_result', success: true }),
@@ -64,15 +62,14 @@ describe('open-file command', () => {
 
 		await openFile('/path/to/file.ts', { agent: 'session-123' });
 
-		expect(resolveAgentId).toHaveBeenCalledWith('session-123');
-		expect(resolveSessionId).not.toHaveBeenCalled();
+		expect(resolveTargetSessionId).toHaveBeenCalledWith('session-123');
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Opened file.ts in Maestro'));
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
 	it('should resolve relative file paths to absolute', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('session-123');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('session-123');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const mockClient = {
 				sendCommand: vi.fn().mockImplementation((msg) => {
@@ -90,8 +87,9 @@ describe('open-file command', () => {
 	});
 
 	it('should error when file does not exist', async () => {
+		// The not-found check fires before any agent/session resolution, so we
+		// only need to mock `existsSync` here.
 		vi.mocked(existsSync).mockReturnValue(false);
-		vi.mocked(resolveSessionId).mockReturnValue('session-123');
 
 		await openFile('/nonexistent/file.ts', {});
 
@@ -101,7 +99,7 @@ describe('open-file command', () => {
 
 	it('should error gracefully when Maestro app is not running', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('session-123');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('session-123');
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
 		await openFile('/path/to/file.ts', { agent: 'session-123' });
@@ -114,7 +112,7 @@ describe('open-file command', () => {
 
 	it('should error when server returns failure', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('session-123');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('session-123');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const mockClient = {
 				sendCommand: vi.fn().mockResolvedValue({

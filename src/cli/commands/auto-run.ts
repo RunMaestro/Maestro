@@ -2,8 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
-import { resolveAgentId } from '../services/storage';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -44,17 +43,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
-	let sessionId: string;
-	if (options.agent) {
-		try {
-			sessionId = resolveAgentId(options.agent);
-		} catch (error) {
-			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			return process.exit(1);
-		}
-	} else {
-		sessionId = resolveSessionId({});
-	}
+	const sessionId = resolveTargetSessionId(options.agent);
 
 	const documents = resolvedPaths.map((d) => ({
 		filename: d,
