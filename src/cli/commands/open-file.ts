@@ -3,21 +3,31 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
+import { resolveAgentId } from '../services/storage';
 
 interface OpenFileOptions {
-	session?: string;
+	agent?: string;
 }
 
 export async function openFile(filePath: string, options: OpenFileOptions): Promise<void> {
-	const sessionId = resolveSessionId(options);
+	let sessionId: string;
+	if (options.agent) {
+		try {
+			sessionId = resolveAgentId(options.agent);
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
+	} else {
+		sessionId = resolveSessionId({});
+	}
 
 	// Resolve relative paths against the agent's working directory, not the CLI's cwd.
-	// This allows `open-file README.md -s <id>` to open files from the agent's project.
+	// This allows `open-file README.md -a <id>` to open files from the agent's project.
 	let absolutePath: string;
 	if (path.isAbsolute(filePath)) {
 		absolutePath = filePath;
 	} else {
-		// Try agent's cwd first by reading session info
 		const { getSessionById } = await import('../services/storage');
 		const session = getSessionById(sessionId);
 		const basePath = session?.cwd || process.cwd();

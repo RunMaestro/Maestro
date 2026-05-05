@@ -37,14 +37,12 @@ import { existsSync } from 'fs';
 describe('auto-run command', () => {
 	let consoleSpy: MockInstance;
 	let consoleErrorSpy: MockInstance;
-	let consoleWarnSpy: MockInstance;
 	let processExitSpy: MockInstance;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
@@ -275,46 +273,6 @@ describe('auto-run command', () => {
 		expect(consoleSpy).toHaveBeenCalledWith(
 			expect.stringContaining('Auto-run configured with 1 document')
 		);
-	});
-
-	it('should prefer --agent over --session when both provided', async () => {
-		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('agent-uuid-456');
-		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
-			const mockClient = {
-				sendCommand: vi.fn().mockResolvedValue({
-					type: 'configure_auto_run_result',
-					success: true,
-				}),
-			};
-			return action(mockClient as never);
-		});
-
-		await autoRun(['/path/to/doc.md'], { agent: 'agent-uuid', session: 'session-789' });
-
-		expect(resolveAgentId).toHaveBeenCalledWith('agent-uuid');
-		expect(resolveSessionId).not.toHaveBeenCalled();
-		// --session is still present, so deprecation warning should fire
-		expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('--session is deprecated'));
-	});
-
-	it('should show deprecation warning when --session is used', async () => {
-		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(resolveAgentId).mockReturnValue('session-123');
-		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
-			const mockClient = {
-				sendCommand: vi.fn().mockResolvedValue({
-					type: 'configure_auto_run_result',
-					success: true,
-				}),
-			};
-			return action(mockClient as never);
-		});
-
-		await autoRun(['/path/to/doc.md'], { session: 'session-123' });
-
-		expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('--session is deprecated'));
-		expect(resolveAgentId).toHaveBeenCalledWith('session-123');
 	});
 
 	it('should handle resolveAgentId throwing with clean error message', async () => {

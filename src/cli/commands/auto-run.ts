@@ -7,7 +7,6 @@ import { resolveAgentId } from '../services/storage';
 
 interface AutoRunOptions {
 	agent?: string;
-	session?: string;
 	prompt?: string;
 	loop?: boolean;
 	maxLoops?: string;
@@ -45,15 +44,10 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
-	if (options.session) {
-		console.warn('Warning: --session is deprecated for auto-run, use --agent instead');
-	}
-
 	let sessionId: string;
-	const agentId = options.agent || options.session;
-	if (agentId) {
+	if (options.agent) {
 		try {
-			sessionId = resolveAgentId(agentId);
+			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 			return process.exit(1);
