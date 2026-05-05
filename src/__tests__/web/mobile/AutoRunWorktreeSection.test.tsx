@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AutoRunWorktreeSection } from '../../../web/mobile/AutoRunWorktreeSection';
 
 vi.mock('../../../web/components/ThemeProvider', () => ({
@@ -232,8 +232,12 @@ describe('AutoRunWorktreeSection', () => {
 		);
 		expect(validWithEmptyTarget).toBeUndefined();
 
-		// Resolve branches so the test's pending promise doesn't leak.
-		resolveBranches!({ branches: ['main'], currentBranch: 'main' });
+		// Resolve branches so the test's pending promise doesn't leak. Wrap in
+		// act() because the resolution triggers state setters in the component
+		// (setBranches, setBaseBranch, setNewBranchName, setBranchLoadStatus).
+		await act(async () => {
+			resolveBranches!({ branches: ['main'], currentBranch: 'main' });
+		});
 	});
 
 	it('renders "Failed to load" placeholder when branch fetch rejects', async () => {

@@ -417,19 +417,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					return;
 				}
 
-				// Forward worktree configuration when the CLI requests it.
-				// startBatchRun handles worktree setup, branch checkout, and (optionally)
-				// PR creation on completion via the existing git IPC handlers.
-				const worktree: BatchRunConfig['worktree'] | undefined =
-					config.worktree && config.worktree.enabled
-						? {
-								enabled: true,
-								path: config.worktree.path,
-								branchName: config.worktree.branchName,
-								createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
-								prTargetBranch: config.worktree.prTargetBranch || '',
-							}
-						: undefined;
+				// Capture whether the launch enables worktree dispatch — used below to
+				// decide whether to spawn a child session via the desktop helper.
+				const worktreeEnabled = Boolean(config.worktree?.enabled);
 
 				// CLI/web callers omit prompt → fall back to the default Auto Run prompt
 				// template (autorun-default.md), matching what BatchRunnerModal does for
@@ -437,12 +427,21 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// useBatchProcessor → useDocumentProcessor → spawn, causing claude
 				// `--print` to exit 1 with "Input must be provided either through stdin
 				// or as a prompt argument".
+				//
+				// Note: batchConfig.worktree is intentionally NOT pre-populated from the
+				// raw config payload. The mobile client sends the user-typed branch
+				// (e.g. "Cue Dashboard") and a path computed before sanitization, both
+				// of which can drift from what spawnWorktreeAgentAndDispatch actually
+				// resolves on disk (sanitized branch, or an existingPath returned by
+				// `git worktree add` when the branch already had a worktree). The spawn
+				// helper writes the resolved values back into config.worktree when
+				// createPROnCompletion is true; we mirror that result onto batchConfig
+				// below so PR creation downstream sees the correct path/branch.
 				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
-					...(worktree ? { worktree } : {}),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
@@ -453,7 +452,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// sibling's worktreeConfig.basePath matches first, producing the wrong-
 				// parent attachment reported in PR #946.
 				let targetSessionId = sessionId;
-				if (worktree) {
+				if (worktreeEnabled && config.worktree) {
 					// If the launching session is itself a worktree child, resolve to
 					// its parent so basePath/cwd used for worktree creation come from
 					// the main repo. Falls back to the launching session if the parent
@@ -471,9 +470,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						...batchConfig,
 						worktreeTarget: {
 							mode: 'create-new',
-							newBranchName: worktree.branchName,
-							baseBranch: worktree.prTargetBranch || 'main',
-							createPROnCompletion: worktree.createPROnCompletion,
+							newBranchName: config.worktree.branchName,
+							baseBranch: config.worktree.prTargetBranch || 'main',
+							createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
 						},
 					};
 
@@ -487,10 +486,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 							return;
 						}
 						targetSessionId = newSessionId;
-						// spawnWorktreeAgentAndDispatch may rewrite spawnConfig.worktree
-						// (e.g. when the on-disk worktree already existed at a different
-						// path or createPROnCompletion was requested). Reflect that on
-						// the batchConfig forwarded to startBatchRun.
+						// spawnWorktreeAgentAndDispatch writes the resolved worktree
+						// path/branch back into spawnConfig.worktree when PR creation is
+						// requested (sanitized branch name, or the existingPath that
+						// `git worktree add` returned for an already-attached branch).
+						// Forward that authoritative value to startBatchRun; when PR
+						// creation is off, leave batchConfig.worktree undefined and rely
+						// on worktreeTarget + the spawned session's cwd — the same shape
+						// the desktop launch path produces.
 						if (spawnConfig.worktree) {
 							batchConfig.worktree = spawnConfig.worktree;
 						}

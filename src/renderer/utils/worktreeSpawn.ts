@@ -20,7 +20,6 @@ import {
 	normalizePath,
 	sessionMatchesWorktreeRoot,
 } from './worktreeDedup';
-import { captureException } from './sentry';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
 
 /**
@@ -120,18 +119,17 @@ export async function spawnWorktreeAgentAndDispatch(
 		.getState()
 		.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedWorktreePath));
 
-	// Step 3: Fetch git info for the worktree
+	// Step 3: Fetch git info for the worktree.
+	// gitService.getBranches uses createIpcMethod with defaultValue: [] and no
+	// rethrow, so the IPC wrapper already logs and reports failures to Sentry.
+	// We swallow any leftover rejection here without a second captureException
+	// (would be a duplicate report) — git info is nice-to-have and a failure
+	// must not abort the spawn flow.
 	let gitBranches: string[] | undefined;
 	try {
 		gitBranches = await gitService.getBranches(worktreePath, sshRemoteId);
-	} catch (err) {
-		// Non-fatal — git info is nice-to-have
-		captureException(err, { extra: { worktreePath, sshRemoteId } });
-	}
-
-	// Determine current branch from fetched branches or fallback
-	if (!branchName && gitBranches && gitBranches.length > 0) {
-		branchName = gitBranches[0];
+	} catch {
+		gitBranches = undefined;
 	}
 
 	let dispatchSessionId: string;

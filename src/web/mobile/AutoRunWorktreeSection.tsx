@@ -222,7 +222,10 @@ export function AutoRunWorktreeSection({
 		return null;
 	}
 
-	const branchNameMissing = enabled && !newBranchName.trim();
+	// Don't surface "Branch name is required" while branches are still loading —
+	// the input populates from the seeded default once loadBranches resolves.
+	// Without this gate, the warning flashes briefly on every toggle-on.
+	const branchNameMissing = enabled && branchLoadStatus !== 'loading' && !newBranchName.trim();
 
 	return (
 		<div style={{ marginBottom: '20px' }}>
