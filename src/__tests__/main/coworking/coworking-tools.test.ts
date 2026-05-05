@@ -14,16 +14,20 @@ describe('coworking-tools', () => {
 			cwd: '/home/user/proj',
 			title: 'Terminal 1',
 		});
-		registry.setActiveSession('sess-1');
 	});
 
-	it('listTerminals returns the active-session entries', () => {
-		const out = listTerminals(registry);
+	it('listTerminals returns entries scoped to the caller sessionId', () => {
+		const out = listTerminals('sess-1', registry);
 		expect(out.terminals).toEqual([{ id: 'term:1', cwd: '/home/user/proj', title: 'Terminal 1' }]);
+	});
+
+	it('listTerminals returns [] for a session with no records (even if the registry has others)', () => {
+		expect(listTerminals('sess-other', registry).terminals).toEqual([]);
 	});
 
 	it('readTerminal returns the buffer when the resolver provides it', async () => {
 		const out = await readTerminal(
+			'sess-1',
 			{ id: 'term:1' },
 			{ registry, resolver: async () => '$ ls\nfoo\nbar\n' }
 		);
@@ -33,9 +37,26 @@ describe('coworking-tools', () => {
 		expect(out.totalLines).toBeGreaterThan(0);
 	});
 
+	it('readTerminal forwards the caller sessionId into the resolver', async () => {
+		let seenSession: string | null = null;
+		await readTerminal(
+			'sess-1',
+			{ id: 'term:1' },
+			{
+				registry,
+				resolver: async (sid) => {
+					seenSession = sid;
+					return 'ok';
+				},
+			}
+		);
+		expect(seenSession).toBe('sess-1');
+	});
+
 	it('readTerminal tail-truncates when lines is set and exceeded', async () => {
 		const buf = ['l1', 'l2', 'l3', 'l4', 'l5'].join('\n');
 		const out = await readTerminal(
+			'sess-1',
 			{ id: 'term:1', lines: 2 },
 			{ registry, resolver: async () => buf }
 		);
@@ -47,6 +68,7 @@ describe('coworking-tools', () => {
 	it('readTerminal does not truncate when lines >= total', async () => {
 		const buf = 'one\ntwo';
 		const out = await readTerminal(
+			'sess-1',
 			{ id: 'term:1', lines: 10 },
 			{ registry, resolver: async () => buf }
 		);
@@ -55,14 +77,14 @@ describe('coworking-tools', () => {
 	});
 
 	it('treats a single trailing newline as a terminator, not a line', async () => {
-		// Without the fix this would report totalLines=4 and `lines: 3` would tail-trim
-		// to "foo\nbar\n" + a synthetic empty line.
 		const out = await readTerminal(
+			'sess-1',
 			{ id: 'term:1' },
 			{ registry, resolver: async () => '$ ls\nfoo\nbar\n' }
 		);
 		expect(out.totalLines).toBe(3);
 		const tailed = await readTerminal(
+			'sess-1',
 			{ id: 'term:1', lines: 2 },
 			{ registry, resolver: async () => '$ ls\nfoo\nbar\n' }
 		);
@@ -71,7 +93,11 @@ describe('coworking-tools', () => {
 	});
 
 	it('reports zero lines for an empty buffer', async () => {
-		const out = await readTerminal({ id: 'term:1' }, { registry, resolver: async () => '' });
+		const out = await readTerminal(
+			'sess-1',
+			{ id: 'term:1' },
+			{ registry, resolver: async () => '' }
+		);
 		expect(out.totalLines).toBe(0);
 		expect(out.content).toBe('');
 		expect(out.truncated).toBe(false);
@@ -79,12 +105,41 @@ describe('coworking-tools', () => {
 
 	it('readTerminal throws on unknown id', async () => {
 		await expect(
-			readTerminal({ id: 'term:99' }, { registry, resolver: async () => 'irrelevant' })
+			readTerminal('sess-1', { id: 'term:99' }, { registry, resolver: async () => 'irrelevant' })
 		).rejects.toThrow(/term:99/);
 	});
 
+	it("readTerminal cannot read another session's terminal even with a matching id", async () => {
+		registry.upsertTerminal({
+			id: 'term:1',
+			tabUuid: 'uuid-foreign',
+			sessionId: 'sess-other',
+			cwd: '/other',
+			title: 'Foreign Terminal 1',
+		});
+		// sess-1 has its own term:1 (uuid-a) — calling from sess-1 must resolve to uuid-a.
+		let seenTab: string | null = null;
+		const out = await readTerminal(
+			'sess-1',
+			{ id: 'term:1' },
+			{
+				registry,
+				resolver: async (_sid, tabUuid) => {
+					seenTab = tabUuid;
+					return 'own';
+				},
+			}
+		);
+		expect(seenTab).toBe('uuid-a');
+		expect(out.content).toBe('own');
+		// And calling from a session that has no record at that id must throw.
+		await expect(
+			readTerminal('sess-empty', { id: 'term:1' }, { registry, resolver: async () => 'leak' })
+		).rejects.toThrow(/term:1/);
+	});
+
 	it('readTerminal throws when resolver is not configured', async () => {
-		await expect(readTerminal({ id: 'term:1' }, { registry })).rejects.toThrow(
+		await expect(readTerminal('sess-1', { id: 'term:1' }, { registry })).rejects.toThrow(
 			/resolver not configured/
 		);
 	});

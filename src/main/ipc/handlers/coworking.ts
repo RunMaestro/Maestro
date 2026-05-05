@@ -62,16 +62,10 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	);
 
 	// ---- Registry sync (renderer → main) ----
-
-	ipcMain.handle(
-		'coworking:setActiveSession',
-		withIpcErrorLogging(
-			handlerOpts('setActiveSession'),
-			async (sessionId: string | null): Promise<void> => {
-				coworkingRegistry.setActiveSession(sessionId);
-			}
-		)
-	);
+	//
+	// There is no `setActiveSession` here. The registry holds *every* session's
+	// terminals concurrently and the bridge-bound sessionId scopes tool calls.
+	// See coworking-bridge.ts for how that binding is established at handshake.
 
 	ipcMain.handle(
 		'coworking:syncSessionTerminals',
@@ -109,23 +103,19 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 
 	// ---- Buffer-request resolver (main → renderer → main) ----
 	//
-	// The MCP server bridge calls into `readTerminal`, which calls this resolver
-	// with the renderer-side tabUuid. We webContents.send a request with a unique
-	// responseChannel + the owning sessionId (so the renderer picks the correct
-	// TerminalView from its per-session ref map); the renderer answers via
-	// ipcRenderer.send(responseChannel, content).
+	// The MCP server bridge calls into `readTerminal(sessionId, ...)`, which calls this
+	// resolver with the bridge-bound sessionId + the renderer-side tabUuid. We
+	// webContents.send a request with a unique responseChannel + that sessionId (so the
+	// renderer picks the correct TerminalView from its per-session ref map); the renderer
+	// answers via ipcRenderer.send(responseChannel, content).
 	let nextRequestId = 1;
 	const BUFFER_REQUEST_TIMEOUT_MS = 5000;
 
-	setTerminalBufferResolver(async (tabUuid: string): Promise<string> => {
+	setTerminalBufferResolver(async (sessionId: string, tabUuid: string): Promise<string> => {
 		const win = deps.getMainWindow();
 		if (!win || win.isDestroyed()) {
 			throw new Error('Coworking: main window is not available to read terminal buffer');
 		}
-		// Snapshot the active session at dispatch time. If it changes before the renderer
-		// answers, the answer is whatever that snapshot's TerminalView returns — better than
-		// silently falling through to "try every view" with potentially-stale state.
-		const sessionId = coworkingRegistry.getActiveSessionId();
 		const responseChannel = `coworking:bufferResponse:${nextRequestId++}`;
 		const expectedSenderId = win.webContents.id;
 		return new Promise<string>((resolve, reject) => {

@@ -1,21 +1,30 @@
 /**
- * Mirrors the active session's terminal tab state to the main-process coworking
- * registry. The registry is what the MCP `list_terminals` tool reads from; this
- * hook is what keeps it accurate.
+ * Mirrors *every* Maestro session's terminal-tab state to the main-process
+ * coworking registry — not just the focused session.
  *
- * Strategy: subscribe to the session store and re-sync whenever the active
- * session id, the active session's terminal tabs, or any tab's metadata change.
- * Cheap because it's just an IPC call with a small array.
+ * This is what makes the coworking MCP server safe in the privacy sense: each
+ * agent's MCP subprocess is bound at handshake to its caller's session id (see
+ * coworking-bridge.ts), and tool calls scope to that session only. So the
+ * registry needs every session's data resident at all times — otherwise an
+ * agent running in the background while the user is focused on a different
+ * agent would see "no terminals" for its own session.
  *
- * Gated on the `coworking` Encore flag — when off, we proactively send a null
- * active session so the registry empties and `list_terminals` returns [].
+ * Strategy: subscribe to the session store, recompute the cross-session payload,
+ * and push the full set on any change. Cheap because each push is a small array
+ * and we short-circuit on a stable JSON-equality check. When a session is
+ * removed from the store, we explicitly call `removeSession` so the registry
+ * doesn't carry orphan records forever.
+ *
+ * Gated on the `coworking` Encore flag — when off we proactively clear every
+ * session out of the registry.
  */
 
 import { useEffect, useRef } from 'react';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
+import type { Session } from '../../types';
 
 /** Errors we expect during teardown / pre-init — silently ignore. Anything else
  *  bubbles up to Sentry so we can see real bridge failures in production.
@@ -34,10 +43,33 @@ function reportIfUnexpected(err: unknown, scope: string): void {
 	});
 }
 
+/** Build the per-session record list from a Session, with cwd fallbacks so the
+ *  schema-promised `cwd` is never empty when we can avoid it. */
+function buildRecords(session: Session) {
+	const tabs = session.terminalTabs ?? [];
+	return tabs
+		.map((t, idx) => ({ tab: t, idx }))
+		.filter(({ tab }) => typeof tab.coworkingId === 'number')
+		.map(({ tab, idx }) => ({
+			id: `term:${tab.coworkingId}`,
+			// Prefer the tab's own cwd (kept up to date as the user `cd`s in the shell).
+			// Fall back to the session's cwd, then the project root, so agents always
+			// get *some* working directory hint instead of "" (which violates the schema
+			// description — see PR #948 review notes).
+			cwd: tab.cwd || session.cwd || session.projectRoot || '',
+			title: getTerminalTabDisplayName(tab, idx),
+			tabUuid: tab.id,
+			sessionId: session.id,
+		}));
+}
+
 export function useCoworkingRegistrySync(): void {
-	const activeSession = useSessionStore(selectActiveSession);
+	// Subscribe to the full sessions array. The session store updates immutably,
+	// so this fires on add/remove/terminal-mutation for any session.
+	const sessions = useSessionStore((s) => s.sessions);
 	const enabled = useSettingsStore((s) => s.encoreFeatures?.coworking ?? false);
 	const lastPayloadRef = useRef<string>('');
+	const lastSessionIdsRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		// Bail out cleanly when the coworking bridge isn't exposed (e.g. in test
@@ -47,46 +79,56 @@ export function useCoworkingRegistrySync(): void {
 		const bridge = window.maestro?.coworking;
 		if (!bridge) {
 			lastPayloadRef.current = '';
+			lastSessionIdsRef.current = new Set();
 			return;
 		}
 
 		if (!enabled) {
-			bridge.setActiveSession(null).catch((err) => reportIfUnexpected(err, 'disable'));
+			// Drop everything we previously pushed. We don't need to emit one big
+			// "clear" — calling removeSession per known session is what keeps the
+			// registry tidy without us having to add a new RPC.
+			const prev = lastSessionIdsRef.current;
+			if (prev.size > 0) {
+				(async () => {
+					for (const sid of prev) {
+						try {
+							await bridge.removeSession(sid);
+						} catch (err) {
+							reportIfUnexpected(err, 'disable-clear');
+						}
+					}
+				})();
+			}
 			lastPayloadRef.current = '';
+			lastSessionIdsRef.current = new Set();
 			return;
 		}
 
-		if (!activeSession) {
-			bridge.setActiveSession(null).catch((err) => reportIfUnexpected(err, 'no-active-session'));
-			lastPayloadRef.current = '';
-			return;
-		}
+		// Build the cross-session payload.
+		const perSession = sessions.map((s) => ({ sessionId: s.id, records: buildRecords(s) }));
+		const currentIds = new Set(perSession.map((p) => p.sessionId));
 
-		const sessionId = activeSession.id;
-		// Use the original-array index for `getTerminalTabDisplayName` so the auto-generated
-		// "Terminal N" fallback name stays stable for tabs the agent sees, even if some
-		// pre-feature tabs in the array lack a `coworkingId`.
-		const allTabs = activeSession.terminalTabs ?? [];
-		const records = allTabs
-			.map((t, idx) => ({ tab: t, idx }))
-			.filter(({ tab }) => typeof tab.coworkingId === 'number')
-			.map(({ tab, idx }) => ({
-				id: `term:${tab.coworkingId}`,
-				cwd: tab.cwd ?? '',
-				title: getTerminalTabDisplayName(tab, idx),
-				tabUuid: tab.id,
-				sessionId,
-			}));
+		// Detect sessions that disappeared since the previous run so we can clear
+		// them from the registry instead of leaving stale records.
+		const removed: string[] = [];
+		for (const id of lastSessionIdsRef.current) {
+			if (!currentIds.has(id)) removed.push(id);
+		}
 
 		// Skip the IPC if nothing has changed since last sync (cheap stringify of small payload).
-		const payload = JSON.stringify({ sessionId, records });
+		const payload = JSON.stringify({ perSession, removed });
 		if (payload === lastPayloadRef.current) return;
 		lastPayloadRef.current = payload;
+		lastSessionIdsRef.current = currentIds;
 
 		(async () => {
 			try {
-				await bridge.setActiveSession(sessionId);
-				await bridge.syncSessionTerminals(sessionId, records);
+				for (const sid of removed) {
+					await bridge.removeSession(sid);
+				}
+				for (const { sessionId, records } of perSession) {
+					await bridge.syncSessionTerminals(sessionId, records);
+				}
 			} catch (err) {
 				reportIfUnexpected(err, 'sync');
 				// Roll back the optimistic payload-cache write so the next effect run
@@ -95,5 +137,5 @@ export function useCoworkingRegistrySync(): void {
 				lastPayloadRef.current = '';
 			}
 		})();
-	}, [enabled, activeSession]);
+	}, [enabled, sessions]);
 }

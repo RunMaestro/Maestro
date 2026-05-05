@@ -9,6 +9,12 @@
  *
  * Wire format: newline-delimited JSON-RPC-shaped requests / responses
  * (`{id, method, params}` / `{id, result}` or `{id, error}`).
+ *
+ * Session binding: every connection MUST send `{method: "hello", params:{sessionId}}`
+ * as its first message. The bridge stores that sessionId per-connection and uses it
+ * to scope tool calls. Pre-handshake `listTerminals`/`readTerminal` calls are rejected.
+ * This is what stops Agent A from reading Agent B's terminals when the user switches
+ * focus mid-call (the privacy bug fixed in PR #948).
  */
 
 import { app } from 'electron';
@@ -27,6 +33,10 @@ import { listTerminals, readTerminal } from './coworking-tools';
 const LOG_CTX = '[Coworking][Bridge]';
 
 let server: net.Server | null = null;
+
+/** Per-connection state keyed by socket. The sessionId is set on `hello` and
+ *  stays put for the lifetime of the connection. */
+const connections = new WeakMap<net.Socket, { sessionId: string | null }>();
 
 /** Compute the platform-appropriate IPC bridge socket path. */
 export function getBridgeSocketPath(): string {
@@ -95,6 +105,7 @@ export async function stopCoworkingBridge(): Promise<void> {
 }
 
 function handleConnection(conn: net.Socket): void {
+	connections.set(conn, { sessionId: null });
 	conn.setEncoding('utf8');
 	let buffer = '';
 	conn.on('data', (chunk) => {
@@ -112,6 +123,9 @@ function handleConnection(conn: net.Socket): void {
 	conn.on('error', (err) => {
 		logger.warn(`${LOG_CTX} connection error: ${err.message}`, 'Coworking');
 	});
+	conn.on('close', () => {
+		connections.delete(conn);
+	});
 }
 
 async function handleLine(conn: net.Socket, line: string): Promise<void> {
@@ -123,22 +137,50 @@ async function handleLine(conn: net.Socket, line: string): Promise<void> {
 		conn.end();
 		return;
 	}
-	const resp = await dispatch(req);
+	const resp = await dispatch(conn, req);
 	conn.write(JSON.stringify(resp) + '\n');
 }
 
-async function dispatch(req: CoworkingBridgeRequest): Promise<CoworkingBridgeResponse> {
+async function dispatch(
+	conn: net.Socket,
+	req: CoworkingBridgeRequest
+): Promise<CoworkingBridgeResponse> {
 	const method = req.method as CoworkingBridgeMethod;
+	const state = connections.get(conn);
 	try {
+		if (method === 'hello') {
+			const params = (req.params ?? {}) as { sessionId?: string };
+			if (typeof params.sessionId !== 'string' || params.sessionId.length === 0) {
+				return {
+					id: req.id,
+					error: { code: -32602, message: '`sessionId` is required for hello' },
+				};
+			}
+			if (state) state.sessionId = params.sessionId;
+			return { id: req.id, result: { ok: true } };
+		}
+
+		// Every other RPC requires a bound session.
+		const sessionId = state?.sessionId;
+		if (!sessionId) {
+			return {
+				id: req.id,
+				error: {
+					code: -32002,
+					message: 'coworking bridge: handshake required (send `hello` with sessionId first)',
+				},
+			};
+		}
+
 		if (method === 'listTerminals') {
-			return { id: req.id, result: listTerminals() };
+			return { id: req.id, result: listTerminals(sessionId) };
 		}
 		if (method === 'readTerminal') {
 			const params = (req.params ?? {}) as { id?: string; lines?: number };
 			if (typeof params.id !== 'string') {
 				return { id: req.id, error: { code: -32602, message: '`id` is required' } };
 			}
-			const result = await readTerminal({ id: params.id, lines: params.lines });
+			const result = await readTerminal(sessionId, { id: params.id, lines: params.lines });
 			return { id: req.id, result };
 		}
 		return { id: req.id, error: { code: -32601, message: `Unknown method: ${String(method)}` } };
@@ -149,3 +191,9 @@ async function dispatch(req: CoworkingBridgeRequest): Promise<CoworkingBridgeRes
 		};
 	}
 }
+
+/** Test-only: synthetic dispatch that bypasses the network and exposes per-connection state. */
+export const __testing = {
+	dispatch,
+	connections,
+};

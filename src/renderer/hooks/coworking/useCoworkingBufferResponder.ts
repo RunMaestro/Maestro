@@ -3,6 +3,9 @@
  * per-session `TerminalView` ref map already kept by `MainPanel`. The hook
  * never assumes a particular ref shape; it just calls `getTerminalBuffer`
  * on the matching ref and ships back whatever it returns (or empty string).
+ *
+ * `sessionId` is always set — the bridge binds each MCP connection to its
+ * caller's Maestro session at handshake, so reads are always scoped.
  */
 
 import { useEffect } from 'react';
@@ -22,18 +25,7 @@ export function useCoworkingBufferResponder(
 		const off = bridge.onRequestBuffer((tabUuid, sessionId, responseChannel) => {
 			let content = '';
 			try {
-				if (sessionId) {
-					content = terminalViewRefs.current.get(sessionId)?.getTerminalBuffer(tabUuid) ?? '';
-				} else {
-					// No session id given — try every mounted view (cheap, small map).
-					for (const handle of terminalViewRefs.current.values()) {
-						const got = handle.getTerminalBuffer(tabUuid);
-						if (got) {
-							content = got;
-							break;
-						}
-					}
-				}
+				content = terminalViewRefs.current.get(sessionId)?.getTerminalBuffer(tabUuid) ?? '';
 			} catch (err) {
 				// `getTerminalBuffer` shouldn't throw under normal conditions — if it does,
 				// degrading to empty content is acceptable for the agent UX, but capture

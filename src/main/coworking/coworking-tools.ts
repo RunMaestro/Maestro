@@ -3,14 +3,19 @@
  * to agents. Pure-ish: state comes from the registry; buffer reads delegate
  * to a renderer-buffer-resolver injected at startup so this module stays
  * unit-testable without an Electron runtime.
+ *
+ * `sessionId` is always supplied by the caller (the bridge), resolved from
+ * the MCP subprocess's handshake. There is no "active session" fallback —
+ * that was the privacy bug PR #948 had to fix.
  */
 
 import { coworkingRegistry, type CoworkingRegistry } from './coworking-registry';
 import type { CoworkingTerminalEntry } from './coworking-types';
 
 /** Fetcher for terminal scrollback. The default implementation rounds-trips to the renderer
- *  via webContents.send + a responseChannel; tests inject a stub. */
-export type TerminalBufferResolver = (tabUuid: string) => Promise<string>;
+ *  via webContents.send + a responseChannel; tests inject a stub. The sessionId is forwarded
+ *  so the renderer can pick the correct TerminalView from its per-session ref map. */
+export type TerminalBufferResolver = (sessionId: string, tabUuid: string) => Promise<string>;
 
 let bufferResolver: TerminalBufferResolver | null = null;
 
@@ -19,15 +24,17 @@ export function setTerminalBufferResolver(resolver: TerminalBufferResolver | nul
 	bufferResolver = resolver;
 }
 
-/** List terminals visible to the agent in its current active AI tab session. */
-export function listTerminals(registry: CoworkingRegistry = coworkingRegistry): {
-	terminals: CoworkingTerminalEntry[];
-} {
-	return { terminals: registry.listForActiveSession() };
+/** List terminals visible to the agent in its own session. */
+export function listTerminals(
+	sessionId: string,
+	registry: CoworkingRegistry = coworkingRegistry
+): { terminals: CoworkingTerminalEntry[] } {
+	return { terminals: registry.listForSession(sessionId) };
 }
 
-/** Read scrollback for a single terminal, optionally tail-truncated to `lines`. */
+/** Read scrollback for a single terminal in the caller's session, optionally tail-truncated. */
 export async function readTerminal(
+	sessionId: string,
 	args: { id: string; lines?: number },
 	deps: { registry?: CoworkingRegistry; resolver?: TerminalBufferResolver } = {}
 ): Promise<{ id: string; content: string; truncated: boolean; totalLines: number }> {
@@ -36,13 +43,13 @@ export async function readTerminal(
 	if (!resolver) {
 		throw new Error('coworking tools: buffer resolver not configured');
 	}
-	const tabUuid = registry.resolveTabUuidForActiveSession(args.id);
+	const tabUuid = registry.resolveTabUuidForSession(sessionId, args.id);
 	if (!tabUuid) {
 		throw new Error(
-			`coworking tools: terminal '${args.id}' not found in the active session (it may have been closed or you may need to switch active AI tab)`
+			`coworking tools: terminal '${args.id}' not found in your session (it may have been closed)`
 		);
 	}
-	const full = await resolver(tabUuid);
+	const full = await resolver(sessionId, tabUuid);
 	// A buffer that ends in `\n` would otherwise be counted as one extra empty line
 	// and `lines: N` would return N-1 real lines plus a synthetic trailing blank.
 	// Treat a single trailing newline as a terminator, not a line.

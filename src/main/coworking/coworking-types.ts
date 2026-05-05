@@ -14,6 +14,14 @@ export const COWORKING_MCP_SERVER_NAME = 'maestro-coworking';
 export const COWORKING_SOCKET_ENV_VAR = 'MAESTRO_COWORKING_SOCKET';
 
 /**
+ * Env var name carrying the Maestro session id of the agent process that owns
+ * this MCP subprocess. Set by the main process at agent-CLI spawn time; relied
+ * on at handshake to bind the bridge connection to one Maestro session, so an
+ * agent can never read another agent's terminals regardless of UI focus.
+ */
+export const COWORKING_SESSION_ID_ENV_VAR = 'MAESTRO_COWORKING_SESSION_ID';
+
+/**
  * Description of a terminal tab as advertised to the agent via `list_terminals`.
  * Mirrors `TerminalTab` (renderer-side) but only the MCP-relevant fields and
  * uses the public readable id (`term:N`) instead of the internal UUID.
@@ -61,7 +69,7 @@ export interface CoworkingInstallStatus {
 }
 
 /** Bridge RPC method names. Kept as string literals for backwards-compat. */
-export type CoworkingBridgeMethod = 'listTerminals' | 'readTerminal';
+export type CoworkingBridgeMethod = 'hello' | 'listTerminals' | 'readTerminal';
 
 export interface CoworkingBridgeRequest {
 	id: number;

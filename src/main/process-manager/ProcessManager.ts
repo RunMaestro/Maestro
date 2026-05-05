@@ -20,6 +20,7 @@ import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
+import { COWORKING_SESSION_ID_ENV_VAR } from '../coworking/coworking-types';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -69,12 +70,27 @@ export class ProcessManager extends EventEmitter {
 			this.kill(config.sessionId);
 		}
 
-		const usePty = this.shouldUsePty(config);
+		// Inject the Maestro session id into the agent CLI's env so the coworking MCP
+		// subprocess (spawned by the agent's MCP client, inheriting parent env) can
+		// announce its caller to the bridge. Terminals don't run MCP clients, so we
+		// skip them. Spawn-callers can override by passing the var explicitly.
+		const configWithCoworkingSession =
+			config.toolType === 'terminal'
+				? config
+				: {
+						...config,
+						customEnvVars: {
+							[COWORKING_SESSION_ID_ENV_VAR]: config.sessionId,
+							...(config.customEnvVars ?? {}),
+						},
+					};
+
+		const usePty = this.shouldUsePty(configWithCoworkingSession);
 
 		if (usePty) {
-			return this.ptySpawner.spawn(config);
+			return this.ptySpawner.spawn(configWithCoworkingSession);
 		} else {
-			return this.childProcessSpawner.spawn(config);
+			return this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 	}
 

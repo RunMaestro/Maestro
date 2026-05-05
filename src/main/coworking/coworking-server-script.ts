@@ -36,6 +36,21 @@ if (!SOCKET_PATH) {
   process.exit(1);
 }
 
+// SESSION_ID identifies which Maestro session (left-bar agent) owns this MCP
+// subprocess. Set by the main process at agent-CLI spawn time and inherited
+// down through the agent CLI when it spawns its MCP subprocesses. Without it
+// we cannot prove which session is calling, and would risk leaking another
+// session's terminals — fail closed.
+const SESSION_ID = process.env.MAESTRO_COWORKING_SESSION_ID;
+if (!SESSION_ID) {
+  process.stderr.write(
+    '[maestro-coworking] MAESTRO_COWORKING_SESSION_ID env var is required. ' +
+    'If you are running this MCP server outside Maestro, this is expected. ' +
+    'Inside Maestro, restart the agent so the new env reaches the MCP subprocess.\n'
+  );
+  process.exit(1);
+}
+
 const SERVER_INFO = { name: 'maestro-coworking', version: '1.0.0' };
 // Listed newest-first. The MCP spec says: if the client requests a version we
 // support, echo it back; otherwise pick one we do support. We pick the newest
@@ -52,14 +67,16 @@ const TOOLS = [
   {
     name: 'list_terminals',
     description:
-      "List terminal tabs visible to the agent in the user's currently active AI tab session. " +
-      'Returns an array of { id, cwd, title } where id is a stable readable handle like "term:3".',
+      'List terminal tabs in your own Maestro session (the agent that spawned this MCP server). ' +
+      'Returns an array of { id, cwd, title } where id is a stable readable handle like "term:3". ' +
+      'You will never see terminals belonging to other Maestro sessions, regardless of which tab the user has focused.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'read_terminal',
     description:
-      'Read the scrollback contents of a terminal tab by id. Optionally tail-truncate to the last N lines.',
+      'Read the scrollback contents of a terminal tab by id, scoped to your own Maestro session. ' +
+      'Optionally tail-truncate to the last N lines.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,6 +93,7 @@ const TOOLS = [
 let bridgeConn = null;
 let bridgeBuffer = '';
 let connectPromise = null;
+let helloPromise = null;
 const pending = new Map();
 let nextRpcId = 1;
 // Cap each in-flight RPC so a wedged-but-not-disconnected bridge can't stall
@@ -122,12 +140,14 @@ function connectBridge() {
       c.on('error', (err) => {
         rejectAllPending(err);
         bridgeConn = null;
+        helloPromise = null;
       });
       // Reject pending RPCs on a clean close too — otherwise their callers
       // would hang forever waiting for a reply that will never come.
       c.on('close', () => {
         rejectAllPending(new Error('coworking bridge: connection closed'));
         bridgeConn = null;
+        helloPromise = null;
       });
       bridgeConn = c;
       resolve(c);
@@ -139,15 +159,10 @@ function connectBridge() {
   return connectPromise;
 }
 
-async function bridgeCall(method, params) {
-  // Capture the resolved socket locally so that if bridgeConn is nulled out
-  // between the await and the write (e.g. by a synchronous error handler), we
-  // either succeed or surface the failure immediately instead of leaking the
-  // pending entry.
-  const conn = bridgeConn || (await connectBridge());
-  if (!conn || conn.destroyed) {
-    throw new Error('coworking bridge: not connected');
-  }
+// Send a single RPC against an already-open bridge connection. No handshake
+// gating here — the gate lives in bridgeCall() so this primitive can also be
+// used to perform the handshake itself.
+function rpc(conn, method, params) {
   const id = nextRpcId++;
   let timeoutHandle = null;
   const promise = new Promise((resolve, reject) => {
@@ -175,6 +190,31 @@ async function bridgeCall(method, params) {
     throw err;
   }
   return promise;
+}
+
+// Perform the session-binding handshake exactly once per connection. Cached on
+// helloPromise so concurrent first callers share one in-flight handshake; the
+// connect-close handlers reset it so a reconnect re-handshakes.
+function bridgeHello(conn) {
+  if (helloPromise) return helloPromise;
+  helloPromise = rpc(conn, 'hello', { sessionId: SESSION_ID }).catch((err) => {
+    helloPromise = null;
+    throw err;
+  });
+  return helloPromise;
+}
+
+async function bridgeCall(method, params) {
+  // Capture the resolved socket locally so that if bridgeConn is nulled out
+  // between the await and the write (e.g. by a synchronous error handler), we
+  // either succeed or surface the failure immediately instead of leaking the
+  // pending entry.
+  const conn = bridgeConn || (await connectBridge());
+  if (!conn || conn.destroyed) {
+    throw new Error('coworking bridge: not connected');
+  }
+  await bridgeHello(conn);
+  return rpc(conn, method, params);
 }
 
 // ---------- MCP stdio framing ----------

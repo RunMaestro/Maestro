@@ -34,7 +34,11 @@ export interface CoworkingApi {
 	installAll(): Promise<Array<{ agentId: string; ok: boolean; error?: string }>>;
 
 	// ---- Registry sync (renderer → main) ----
-	setActiveSession(sessionId: string | null): Promise<void>;
+	//
+	// The renderer pushes terminal state for *every* Maestro session, not just the
+	// focused one. There is no setActiveSession — scoping happens via the MCP
+	// subprocess's bridge handshake (see coworking-bridge.ts) so an agent only
+	// ever sees its own session's terminals.
 	syncSessionTerminals(sessionId: string, records: CoworkingTerminalRecord[]): Promise<void>;
 	upsertTerminal(record: CoworkingTerminalRecord): Promise<void>;
 	removeTerminal(tabUuid: string): Promise<void>;
@@ -44,11 +48,11 @@ export interface CoworkingApi {
 	/**
 	 * Subscribe to "give me the scrollback of <tabUuid> in <sessionId>" requests from main.
 	 * The renderer must send the buffer back via the supplied responseChannel. `sessionId`
-	 * is the owning session (used to pick the correct TerminalView ref); may be null if
-	 * the registry has no active session — caller should answer with empty string.
+	 * is the owning session id (used to pick the correct TerminalView ref) — always set,
+	 * because the bridge enforces per-connection session binding at handshake.
 	 */
 	onRequestBuffer(
-		callback: (tabUuid: string, sessionId: string | null, responseChannel: string) => void
+		callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
 	): () => void;
 	sendBufferResponse(responseChannel: string, content: string): void;
 }
@@ -60,7 +64,6 @@ export function createCoworkingApi(): CoworkingApi {
 		uninstall: (agentId) => ipcRenderer.invoke('coworking:uninstall', agentId),
 		installAll: () => ipcRenderer.invoke('coworking:installAll'),
 
-		setActiveSession: (sessionId) => ipcRenderer.invoke('coworking:setActiveSession', sessionId),
 		syncSessionTerminals: (sessionId, records) =>
 			ipcRenderer.invoke('coworking:syncSessionTerminals', sessionId, records),
 		upsertTerminal: (record) => ipcRenderer.invoke('coworking:upsertTerminal', record),
@@ -68,12 +71,8 @@ export function createCoworkingApi(): CoworkingApi {
 		removeSession: (sessionId) => ipcRenderer.invoke('coworking:removeSession', sessionId),
 
 		onRequestBuffer: (callback) => {
-			const handler = (
-				_: unknown,
-				tabUuid: string,
-				sessionId: string | null,
-				responseChannel: string
-			) => callback(tabUuid, sessionId, responseChannel);
+			const handler = (_: unknown, tabUuid: string, sessionId: string, responseChannel: string) =>
+				callback(tabUuid, sessionId, responseChannel);
 			ipcRenderer.on('coworking:requestBuffer', handler);
 			return () => ipcRenderer.removeListener('coworking:requestBuffer', handler);
 		},

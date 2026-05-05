@@ -1,10 +1,15 @@
 /**
- * Coworking registry — main-process mirror of the renderer's terminal-tab state,
- * scoped to the active AI tab's session.
+ * Coworking registry — main-process mirror of every Maestro session's terminal-tab state,
+ * keyed by sessionId.
  *
- * The renderer pushes registry updates (open/close/rename/cwd-change/active-session-change)
- * via the `coworking:*` preload bridge. The MCP server pulls from here when an agent
- * calls `list_terminals`.
+ * The renderer pushes registry updates (open/close/rename/cwd-change) for every session
+ * via the `coworking:*` preload bridge. The MCP server pulls from here when an agent calls
+ * `list_terminals`, scoped to the agent's *own* session id (resolved at bridge-handshake
+ * time from the `MAESTRO_COWORKING_SESSION_ID` env var the agent CLI was spawned with).
+ *
+ * Crucially, there is no "active session" concept here — that singleton was the source
+ * of the focus-bound privacy bug fixed in PR #948. Each MCP connection gets its own
+ * session id and reads only that session's slice.
  */
 
 import { captureException } from '../utils/sentry';
@@ -14,7 +19,6 @@ type ChangeListener = () => void;
 
 class CoworkingRegistry {
 	private records = new Map<string, CoworkingTerminalRecord>();
-	private activeSessionId: string | null = null;
 	private listeners = new Set<ChangeListener>();
 
 	/** Replace the full set of terminals for a given session. Used on initial sync from renderer. */
@@ -55,23 +59,11 @@ class CoworkingRegistry {
 		if (mutated) this.notify();
 	}
 
-	/** Set which session's terminals are advertised to MCP clients. */
-	setActiveSession(sessionId: string | null): void {
-		if (this.activeSessionId === sessionId) return;
-		this.activeSessionId = sessionId;
-		this.notify();
-	}
-
-	getActiveSessionId(): string | null {
-		return this.activeSessionId;
-	}
-
-	/** List the public-facing entries the agent should see for the current active session. */
-	listForActiveSession(): CoworkingTerminalEntry[] {
-		if (!this.activeSessionId) return [];
+	/** List the public-facing entries for a specific session id. */
+	listForSession(sessionId: string): CoworkingTerminalEntry[] {
 		const out: CoworkingTerminalEntry[] = [];
 		for (const rec of this.records.values()) {
-			if (rec.sessionId !== this.activeSessionId) continue;
+			if (rec.sessionId !== sessionId) continue;
 			out.push({ id: rec.id, cwd: rec.cwd, title: rec.title });
 		}
 		// Stable sort by numeric portion of `term:N` so output order matches user expectation.
@@ -83,19 +75,17 @@ class CoworkingRegistry {
 		return out;
 	}
 
-	/** Resolve a public id (e.g. "term:3") to the renderer-side UUID, scoped to the active session. */
-	resolveTabUuidForActiveSession(publicId: string): string | null {
-		if (!this.activeSessionId) return null;
+	/** Resolve a public id (e.g. "term:3") to the renderer-side UUID, scoped to one session. */
+	resolveTabUuidForSession(sessionId: string, publicId: string): string | null {
 		for (const rec of this.records.values()) {
-			if (rec.sessionId === this.activeSessionId && rec.id === publicId) {
+			if (rec.sessionId === sessionId && rec.id === publicId) {
 				return rec.tabUuid;
 			}
 		}
 		return null;
 	}
 
-	/** Subscribe to any registry change. Returns an unsubscribe fn. Used by MCP server to
-	 *  emit `notifications/tools/list_changed` when active-session/terminals change. */
+	/** Subscribe to any registry change. Returns an unsubscribe fn. */
 	onChange(listener: ChangeListener): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
@@ -104,7 +94,6 @@ class CoworkingRegistry {
 	/** Test-only: clear all state. */
 	reset(): void {
 		this.records.clear();
-		this.activeSessionId = null;
 		this.listeners.clear();
 	}
 

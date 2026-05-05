@@ -3336,7 +3336,6 @@ interface MaestroAPI {
 		install: (agentId: string) => Promise<void>;
 		uninstall: (agentId: string) => Promise<void>;
 		installAll: () => Promise<Array<{ agentId: string; ok: boolean; error?: string }>>;
-		setActiveSession: (sessionId: string | null) => Promise<void>;
 		syncSessionTerminals: (
 			sessionId: string,
 			records: Array<{
@@ -3357,7 +3356,7 @@ interface MaestroAPI {
 		removeTerminal: (tabUuid: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		onRequestBuffer: (
-			callback: (tabUuid: string, sessionId: string | null, responseChannel: string) => void
+			callback: (tabUuid: string, sessionId: string, responseChannel: string) => void
 		) => () => void;
 		sendBufferResponse: (responseChannel: string, content: string) => void;
 	};
