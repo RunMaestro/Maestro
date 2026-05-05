@@ -20,15 +20,17 @@ import type {
 	PipelineNode,
 } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
-import { pipelinesToYaml } from '../../components/CuePipelineEditor/utils/pipelineToYaml';
+import { pipelinesToYamlByOwnerCwd } from '../../components/CuePipelineEditor/utils/pipelineToYaml';
 import { validatePipelines } from '../../components/CuePipelineEditor/utils/pipelineValidation';
-import { resolveNodeWriteRoot } from '../../components/CuePipelineEditor/utils/pipelineRoots';
+import {
+	resolveNodeWriteRoot,
+	resolvePipelineOwnerCwds,
+} from '../../components/CuePipelineEditor/utils/pipelineRoots';
 import type { CueSettings } from '../../../shared/cue';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { notifyToast } from '../../stores/notificationStore';
 import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
-import { computeCommonAncestorPath, isDescendantOrEqual } from '../../../shared/cue-path-utils';
 import { flushAllPendingEdits } from './pendingEditsRegistry';
 import { cueDebugLog } from '../../../shared/cueDebug';
 
@@ -210,78 +212,36 @@ export function usePipelinePersistence({
 		const resolveNodeRoot = (node: PipelineNode): { root: string | null; hasBinding: boolean } =>
 			resolveNodeWriteRoot(node, sessionsById, sessionsByName);
 
-		// Partition pipelines by project root. A pipeline must live in exactly
-		// one root — cross-root pipelines are rejected so each .maestro/cue.yaml
-		// remains the sole owner of its pipelines (prevents the historical
-		// mirroring / deleted-pipeline-reappears class of bugs).
-		const pipelinesByRoot = new Map<string, CuePipeline[]>();
-		const unresolvedPipelines: string[] = [];
+		// Per-agent-cwd partitioning: each pipeline writes to one yaml per
+		// participating agent's project root. A pipeline that fails to
+		// resolve all of its agent bindings is a per-pipeline validation
+		// error rather than silently dropping subs. This replaces the
+		// historical "collapse multi-root pipelines onto a common ancestor"
+		// behavior, which silently produced misplaced cue.yaml files at
+		// shared parent dirs (~/Projects, ~) instead of in each agent's cwd.
+		const ownerCwdsByPipeline = new Map<string, Set<string>>();
+		const writablePipelines: CuePipeline[] = [];
 
 		for (const pipeline of validPipelines) {
-			// Both agent and command nodes contribute a project root via their
-			// bound session (commands inherit cwd + agent_id from their owning
-			// session). Treat them uniformly so command-only pipelines aren't
-			// silently dropped from the save — that bug made user-created
-			// pipelines like "Cyber Stocks" (trigger + shell commands, no agent)
-			// vanish on every save.
-			const bindings = pipeline.nodes.filter((n) => n.type === 'agent' || n.type === 'command');
-			if (bindings.length === 0) continue; // validatePipelines already flagged this
-
-			const roots = new Set<string>();
-			let missingRoot = false;
-			let sawBinding = false;
-			for (const node of bindings) {
-				const { root, hasBinding } = resolveNodeRoot(node);
-				if (!hasBinding) continue;
-				sawBinding = true;
-				if (!root) {
-					missingRoot = true;
-					continue;
-				}
-				roots.add(root);
-			}
-
-			if (!sawBinding) continue; // pipeline had only unbound nodes
-
-			if (roots.size === 0) {
-				unresolvedPipelines.push(pipeline.name);
-				continue;
-			}
-			if (roots.size > 1) {
-				// When all roots are subdirectories of a common ancestor, the
-				// pipeline can live at that ancestor's .maestro/cue.yaml. This
-				// enables cross-directory pipelines (e.g. project/ + project/Digest)
-				// while preserving the single-owner invariant.
-				const commonRoot = computeCommonAncestorPath([...roots]);
-				const allDescendants =
-					commonRoot !== null && [...roots].every((r) => isDescendantOrEqual(r, commonRoot));
-				if (!allDescendants) {
+			const result = resolvePipelineOwnerCwds(pipeline, sessionsById, sessionsByName);
+			if (!result.ok) {
+				if (result.reason === 'unresolved') {
 					errors.push(
-						`"${pipeline.name}": nodes span unrelated project roots (${[...roots].join(', ')}) — a Cue pipeline must live in a single project.`
+						`"${pipeline.name}": one or more agents/commands have no resolvable project root — assign a working directory to the bound session(s) or remove the dangling reference.`
 					);
-					continue;
 				}
-				// Collapse to the common ancestor root for YAML output.
-				roots.clear();
-				roots.add(commonRoot);
-			}
-			if (missingRoot) {
-				errors.push(
-					`"${pipeline.name}": one or more agents/commands have no resolvable project root — assign a working directory to the bound session(s).`
-				);
+				// 'no-bindings' pipelines are caught by validatePipelines elsewhere.
 				continue;
 			}
-
-			const root = [...roots][0];
-			const existing = pipelinesByRoot.get(root) ?? [];
-			existing.push(pipeline);
-			pipelinesByRoot.set(root, existing);
+			ownerCwdsByPipeline.set(pipeline.name, result.cwds);
+			writablePipelines.push(pipeline);
 		}
 
-		if (unresolvedPipelines.length > 0) {
-			errors.push(
-				`No project root found for pipeline(s): ${unresolvedPipelines.join(', ')} — agents/commands need a working directory.`
-			);
+		// Union of every owner cwd across every writable pipeline — the set
+		// of yaml files we'll touch on this save.
+		const currentRoots = new Set<string>();
+		for (const cwds of ownerCwdsByPipeline.values()) {
+			for (const cwd of cwds) currentRoots.add(cwd);
 		}
 
 		// Compute roots that are still referenced by error-node pipelines. These
@@ -299,17 +259,17 @@ export function usePipelinePersistence({
 		// Safety net: if the editor has pipelines but nothing will be written and
 		// no previously-saved root needs clearing, the save would silently succeed
 		// with no effect. Surface that rather than masking it as "Saved".
-		if (validPipelines.length > 0 && pipelinesByRoot.size === 0 && errors.length === 0) {
+		if (validPipelines.length > 0 && currentRoots.size === 0 && errors.length === 0) {
 			errors.push(
 				'Nothing to save — pipelines are empty. Add a trigger and an agent, then try again.'
 			);
 		}
 
 		cueDebugLog('save:partition', {
-			byRoot: Object.fromEntries(
-				[...pipelinesByRoot.entries()].map(([root, pipes]) => [root, pipes.map((p) => p.name)])
+			ownerCwdsByPipeline: Object.fromEntries(
+				[...ownerCwdsByPipeline.entries()].map(([name, cwds]) => [name, [...cwds]])
 			),
-			unresolvedPipelines,
+			currentRoots: [...currentRoots],
 			errorPipelines: pipelinesWithErrors.map((p) => p.name),
 			validationErrors: errors,
 		});
@@ -326,54 +286,80 @@ export function usePipelinePersistence({
 
 		setSaveStatus('saving');
 		try {
-			const currentRoots = new Set(pipelinesByRoot.keys());
 			const touchedRoots = new Set<string>([...currentRoots, ...previousRoots]);
-			let totalPipelinesWritten = 0;
 			let rootsCleared = 0;
 
-			// Write each root's YAML with only that root's pipelines.
-			// Skip roots that are also referenced by error-node pipelines: those
-			// pipelines exist on disk with valid YAML that we cannot reproduce
-			// without their missing agents. Writing the root here would silently
-			// strip those pipelines from disk (data loss).
-			for (const root of currentRoots) {
-				if (errorPipelineRoots.has(root)) continue;
-				const rootPipelines = pipelinesByRoot.get(root)!;
-				const { yaml: yamlContent, promptFiles } = pipelinesToYaml(rootPipelines, cueSettings);
+			// Convert all writable pipelines to per-cwd yaml in one shot. Each
+			// subscription record carries `agent_id` (set by the records
+			// emitter); the splitter looks each id up in `sessionsById` and
+			// groups records by the owner's projectRoot.
+			const sessionsByIdForEmit = new Map<string, { projectRoot?: string }>();
+			for (const [id, s] of sessionsById) {
+				sessionsByIdForEmit.set(id, { projectRoot: s.projectRoot });
+			}
+			const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd(
+				writablePipelines,
+				cueSettings,
+				sessionsByIdForEmit
+			);
+			if (unresolved.length > 0) {
+				// Defense-in-depth: validation above should have caught these.
+				// Surface the specific subs so the failure is debuggable.
+				throw new Error(
+					`Unresolvable agent_id on ${unresolved.length} subscription(s): ${unresolved
+						.map((u) => `"${u.subName}" (agent_id=${u.agentId || '<missing>'})`)
+						.join(', ')}`
+				);
+			}
+
+			// Write each cwd's yaml. Skip cwds also referenced by error-node
+			// pipelines: those pipelines exist on disk with valid YAML that we
+			// cannot reproduce without their missing agents. Writing the cwd
+			// here would silently strip those pipelines from disk (data loss).
+			for (const [cwd, { yaml: yamlContent, promptFiles }] of byCwd) {
+				if (errorPipelineRoots.has(cwd)) continue;
 				const promptFilesObj: Record<string, string> = {};
 				for (const [filePath, content] of promptFiles) {
 					promptFilesObj[filePath] = content;
 				}
 				cueDebugLog('save:writeYaml:request', {
-					root,
+					root: cwd,
 					yamlBytes: yamlContent.length,
 					promptFileCount: Object.keys(promptFilesObj).length,
 					promptFileKeys: Object.keys(promptFilesObj),
 					yaml: yamlContent,
 				});
-				await cueService.writeYaml(root, yamlContent, promptFilesObj);
+				await cueService.writeYaml(cwd, yamlContent, promptFilesObj);
 
 				// Write-back verification: read the YAML we just wrote and
 				// confirm our content is on disk. Guards against any silent
 				// IPC failure path — if disk doesn't match memory, we throw
 				// so the user sees an error instead of a fake "Saved".
-				const onDisk = await cueService.readYaml(root);
+				const onDisk = await cueService.readYaml(cwd);
 				cueDebugLog('save:writeYaml:verify', {
-					root,
+					root: cwd,
 					match: onDisk === yamlContent,
 					diskBytes: onDisk?.length ?? null,
 					expectedBytes: yamlContent.length,
 				});
 				if (onDisk === null) {
-					throw new Error(`writeYaml to "${root}" did not persist: no file on disk`);
+					throw new Error(`writeYaml to "${cwd}" did not persist: no file on disk`);
 				}
 				if (onDisk !== yamlContent) {
 					throw new Error(
-						`writeYaml to "${root}" did not persist the expected content (${onDisk.length} bytes on disk vs ${yamlContent.length} expected)`
+						`writeYaml to "${cwd}" did not persist the expected content (${onDisk.length} bytes on disk vs ${yamlContent.length} expected)`
 					);
 				}
-				totalPipelinesWritten += rootPipelines.length;
 			}
+
+			// Pipeline write count for the success toast. A pipeline counts as
+			// "written" if at least one of its owner cwds wasn't skipped due to
+			// an error-pipeline collision.
+			const totalPipelinesWritten = writablePipelines.filter((p) => {
+				const cwds = ownerCwdsByPipeline.get(p.name);
+				if (!cwds) return false;
+				return [...cwds].some((c) => !errorPipelineRoots.has(c));
+			}).length;
 
 			// Delete cue.yaml (and clean up prompts + .maestro/) for any root
 			// whose last pipeline was removed this save. Deleting the file is
@@ -397,23 +383,20 @@ export function usePipelinePersistence({
 				rootsCleared++;
 			}
 
-			// Refresh every session whose project root was touched — or is a
-			// descendant of a touched root — so the engine reloads the freshly
-			// written YAML. Descendant sessions need refreshing because they
-			// inherit their config from the ancestor root via fallback.
+			// Refresh every session whose project root was touched so the engine
+			// reloads the freshly written YAML. Under the per-agent-cwd model
+			// each session reads only its OWN cwd's cue.yaml, so an exact-match
+			// check is sufficient — there is no longer an ancestor-walk fallback
+			// that would force descendant sessions to refresh too.
 			for (const session of sessions) {
 				if (!session.projectRoot) continue;
-				const needsRefresh =
-					touchedRoots.has(session.projectRoot) ||
-					[...touchedRoots].some((root) => isDescendantOrEqual(session.projectRoot!, root));
-				if (needsRefresh) {
-					cueDebugLog('save:refreshSession', {
-						sessionId: session.id,
-						sessionName: session.name,
-						projectRoot: session.projectRoot,
-					});
-					await cueService.refreshSession(session.id, session.projectRoot);
-				}
+				if (!touchedRoots.has(session.projectRoot)) continue;
+				cueDebugLog('save:refreshSession', {
+					sessionId: session.id,
+					sessionName: session.name,
+					projectRoot: session.projectRoot,
+				});
+				await cueService.refreshSession(session.id, session.projectRoot);
 			}
 
 			// Refs MUST update before setIsDirty(false) — the dirty-tracking

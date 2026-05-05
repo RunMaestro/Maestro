@@ -18,6 +18,8 @@ export interface AgentNodeDataProps {
 	pipelineCount: number;
 	pipelineColors: string[];
 	onConfigure?: (compositeId: string) => void;
+	/** Pulse the node when this agent currently has an active Cue run. */
+	isRunning?: boolean;
 	theme?: Theme;
 }
 
@@ -27,6 +29,15 @@ export const AgentNode = memo(function AgentNode({
 }: NodeProps<AgentNodeDataProps>) {
 	const theme = data.theme;
 	const accentColor = data.pipelineColor;
+	const isRunning = data.isRunning === true;
+
+	// Selection takes precedence over the running pulse so user-driven focus
+	// always wins. When neither is active the node renders flat.
+	const animation = selected
+		? 'pipeline-node-pulse 2s ease-in-out infinite'
+		: isRunning
+			? 'pipeline-node-pulse 1.4s ease-in-out infinite'
+			: undefined;
 
 	return (
 		<div
@@ -37,9 +48,13 @@ export const AgentNode = memo(function AgentNode({
 				borderRadius: 8,
 				willChange: 'transform',
 				backgroundColor: theme?.colors.bgMain ?? '#1e1e2e',
-				border: `2px solid ${selected ? accentColor : (theme?.colors.border ?? '#333')}`,
-				boxShadow: selected ? `0 4px 16px ${accentColor}30` : '0 2px 8px rgba(0,0,0,0.3)',
-				animation: selected ? 'pipeline-node-pulse 2s ease-in-out infinite' : undefined,
+				border: `2px solid ${selected || isRunning ? accentColor : (theme?.colors.border ?? '#333')}`,
+				boxShadow: selected
+					? `0 4px 16px ${accentColor}30`
+					: isRunning
+						? `0 0 16px ${accentColor}50`
+						: '0 2px 8px rgba(0,0,0,0.3)',
+				animation,
 				['--node-color-40' as string]: `${accentColor}40`,
 				['--node-color-60' as string]: `${accentColor}60`,
 				['--node-color-30' as string]: `${accentColor}30`,

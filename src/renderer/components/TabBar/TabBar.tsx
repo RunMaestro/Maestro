@@ -68,6 +68,7 @@ function TabBarInner({
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
 	onSendTerminalBufferToAgent,
+	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
 	onSendBrowserContentToAgent,
 	colorBlindMode,
@@ -552,6 +553,7 @@ function TabBarInner({
 										onCopyBuffer={onCopyTerminalBuffer}
 										onPublishBufferGist={ghCliAvailable ? onPublishTerminalBufferGist : undefined}
 										onSendBufferToAgent={onSendTerminalBufferToAgent}
+										onConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}

@@ -43,7 +43,6 @@ export function HamburgerMenuContent({
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
-		setSettingsTab,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
@@ -176,7 +175,6 @@ export function HamburgerMenuContent({
 			<button
 				onClick={() => {
 					setSettingsModalOpen(true);
-					setSettingsTab('general');
 					setMenuOpen(false);
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"

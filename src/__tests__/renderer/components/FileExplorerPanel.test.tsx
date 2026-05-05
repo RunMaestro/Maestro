@@ -1375,11 +1375,26 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
 		});
 
-		it('invokes cancelFileTreeLoad with session id when Stop loading clicked', () => {
+		it('hides Stop loading for local sessions even when cancelFileTreeLoad is provided', () => {
+			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={[]}
+					cancelFileTreeLoad={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
+		});
+
+		it('invokes cancelFileTreeLoad with session id when Stop loading clicked on SSH session', () => {
 			const session = createMockSession({
 				id: 'session-xyz',
 				fileTree: [],
 				fileTreeLoading: true,
+				sshRemoteId: 'remote-1',
 			});
 			const cancelFileTreeLoad = vi.fn();
 			render(

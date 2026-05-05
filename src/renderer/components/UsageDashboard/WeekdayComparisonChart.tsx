@@ -98,7 +98,10 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 	if (!hasData) {
 		return (
 			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium mb-4"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Weekday vs Weekend
 				</h3>
 				<div

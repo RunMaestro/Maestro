@@ -39,6 +39,7 @@ import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './au
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
 import { createStatsApi } from './stats';
+import { createCueStatsApi } from './cueStats';
 import { createNotificationApi } from './notifications';
 import { createLeaderboardApi } from './leaderboard';
 import { createAttachmentsApi } from './attachments';
@@ -51,6 +52,7 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createCueBackupApi } from './cueBackup';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
@@ -186,6 +188,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Stats API
 	stats: createStatsApi(),
 
+	// Cue Stats API (Cue Dashboard aggregation query)
+	cueStats: createCueStatsApi(),
+
 	// Leaderboard API
 	leaderboard: createLeaderboardApi(),
 
@@ -200,6 +205,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
+
+	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	cueBackup: createCueBackupApi(),
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
@@ -262,6 +270,8 @@ export {
 	createGroupChatApi,
 	// Stats
 	createStatsApi,
+	// Cue Stats (Phase 03 aggregation query)
+	createCueStatsApi,
 	// Notifications
 	createNotificationApi,
 	// Leaderboard
@@ -286,6 +296,8 @@ export {
 	createDirectorNotesApi,
 	// Cue
 	createCueApi,
+	// Cue Backup
+	createCueBackupApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI
@@ -400,6 +412,12 @@ export type {
 	SessionCreatedEvent,
 	StatsAggregation,
 } from './stats';
+export type {
+	// From cueStats (Phase 03)
+	CueStatsApi,
+	CueStatsAggregation,
+	CueStatsTimeRange,
+} from './cueStats';
 export type {
 	// From notifications
 	NotificationApi,

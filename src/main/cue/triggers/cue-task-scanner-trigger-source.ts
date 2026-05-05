@@ -6,6 +6,7 @@
  * centralized `passesFilter` helper before emitting.
  */
 
+import { isCueActive } from '../cue-active-state';
 import { createCueTaskScanner } from '../cue-task-scanner';
 import { passesFilter } from './cue-trigger-filter';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
@@ -29,6 +30,7 @@ export function createCueTaskScannerTriggerSource(
 				projectRoot: ctx.session.projectRoot,
 				triggerName: ctx.subscription.name,
 				onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
+				isActive: isCueActive,
 				onEvent: (event) => {
 					if (!ctx.enabled()) return;
 					if (!passesFilter(ctx.subscription, event, ctx.onLog)) return;

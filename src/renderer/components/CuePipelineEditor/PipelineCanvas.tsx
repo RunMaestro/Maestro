@@ -8,9 +8,12 @@
 import React from 'react';
 import ReactFlow, {
 	Background,
+	ConnectionLineType,
 	ConnectionMode,
 	Controls,
 	MiniMap,
+	getBezierPath,
+	type ConnectionLineComponentProps,
 	type Node,
 	type Edge,
 	type OnNodesChange,
@@ -29,6 +32,7 @@ import type {
 	CuePipelineSessionInfo as SessionInfo,
 	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
+import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import type { CueSettings } from '../../../shared/cue';
 import { Hand, MousePointer2 } from 'lucide-react';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
@@ -52,6 +56,46 @@ const nodeTypes = {
 	command: CommandNode,
 	error: ErrorNode,
 	'pipeline-group': PipelineGroupNode,
+};
+
+/**
+ * Custom drag-preview component for the connection line.
+ *
+ * ReactFlow's default `<ConnectionLine>` paints `.react-flow__connection-path`
+ * with `stroke: #b1b1b7` at 1px — invisible against our dark theme. Setting
+ * `connectionLineStyle` alone proved insufficient (no visible line during
+ * drag, only the committed edge appearing on release). A custom component
+ * bypasses any styling/specificity issues with the default render path
+ * entirely — we own the `<path>` element and its attributes.
+ *
+ * Visual contract: dashed bezier in CUE_COLOR at 2px, matching the look of
+ * committed edges (which also use bezier + CUE_COLOR via PipelineEdge.tsx)
+ * so the drag → release transition feels continuous.
+ */
+const PipelineConnectionLine = (props: ConnectionLineComponentProps) => {
+	const { fromX, fromY, toX, toY, fromPosition, toPosition } = props;
+	const [path] = getBezierPath({
+		sourceX: fromX,
+		sourceY: fromY,
+		sourcePosition: fromPosition,
+		targetX: toX,
+		targetY: toY,
+		targetPosition: toPosition,
+	});
+	return (
+		<g>
+			<path
+				d={path}
+				fill="none"
+				stroke={CUE_COLOR}
+				strokeWidth={2}
+				strokeDasharray="6 3"
+				strokeLinecap="round"
+				className="react-flow__connection-path"
+			/>
+			<circle cx={toX} cy={toY} r={4} fill={CUE_COLOR} stroke="none" />
+		</g>
+	);
 };
 
 export type CanvasInteractionMode = 'hand' | 'pointer';
@@ -223,18 +267,44 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 		() => ({ backgroundColor: theme.colors.bgMain }),
 		[theme.colors.bgMain]
 	);
+	// Bottom-left zoom/lock controls: shift right past the trigger drawer
+	// (220px wide) so they stay visible when the drawer is open. ReactFlow's
+	// default `left: 15px` is overridden via the `style` prop.
 	const controlsStyle = React.useMemo(
-		() => ({ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }),
-		[theme.colors.bgActivity, theme.colors.border]
+		() => ({
+			backgroundColor: theme.colors.bgActivity,
+			borderColor: theme.colors.border,
+			left: triggerDrawerOpen ? 235 : 15,
+			transition: 'left 200ms ease',
+		}),
+		[theme.colors.bgActivity, theme.colors.border, triggerDrawerOpen]
 	);
+	// Bottom-right minimap: shift left past the agent drawer (240px wide)
+	// so the minimap stays visible when the drawer is open. Overrides
+	// ReactFlow's default `right: 10px`.
 	const miniMapStyle = React.useMemo(
 		() => ({
 			backgroundColor: theme.colors.bgActivity,
 			border: `1px solid ${theme.colors.border}`,
+			right: agentDrawerOpen ? 250 : 10,
+			transition: 'right 200ms ease',
 		}),
-		[theme.colors.bgActivity, theme.colors.border]
+		[theme.colors.bgActivity, theme.colors.border, agentDrawerOpen]
 	);
 	const miniMapMaskColor = React.useMemo(() => `${theme.colors.bgMain}cc`, [theme.colors.bgMain]);
+	// Drag-preview line shown while connecting one handle to another. Without
+	// an explicit style, ReactFlow uses its default `stroke: #b1b1b7` at 1px
+	// — invisible against most theme backgrounds. Match the committed-edge
+	// look (CUE_COLOR, 2px, dashed) so the user sees a clear preview while
+	// dragging and a smooth visual transition into the final edge on release.
+	const connectionLineStyle = React.useMemo(
+		() => ({
+			stroke: CUE_COLOR,
+			strokeWidth: 2,
+			strokeDasharray: '6 3',
+		}),
+		[]
+	);
 	const miniMapNodeColor = React.useCallback(
 		(node: Node) => {
 			if (node.type === 'trigger') {
@@ -299,14 +369,24 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				onDragOver={onDragOver}
 				onDrop={onDrop}
 				connectionMode={ConnectionMode.Loose}
+				connectionLineType={ConnectionLineType.Bezier}
+				connectionLineStyle={connectionLineStyle}
+				connectionLineComponent={PipelineConnectionLine}
 				minZoom={0.1}
 				maxZoom={2}
 				// All Pipelines view is read-only. These ReactFlow props are the
 				// first line of defense — the parent also guards each callback.
-				// Hand mode also disables node/group dragging so left-drag on a
-				// node falls through to the canvas pan instead of moving it.
+				// Hand mode disables node/group dragging so left-drag on a node
+				// falls through to the canvas pan instead of moving the node.
+				// Connections, however, are scoped to handles (not the node
+				// body) and should always work regardless of canvas mode —
+				// matches n8n / Zapier / Figma's behavior, where handle
+				// affordances are unaffected by pan vs. select. The
+				// drag-preview line also requires nodesConnectable=true to
+				// render, so gating this on mode broke the preview in hand
+				// mode.
 				nodesDraggable={!isReadOnly && interactionMode === 'pointer'}
-				nodesConnectable={!isReadOnly && interactionMode === 'pointer'}
+				nodesConnectable={!isReadOnly}
 				elementsSelectable={!isReadOnly}
 				// Hand mode: left-drag pans (ReactFlow default). Pointer mode:
 				// left-drag box-selects, middle/right-drag still pans as an
@@ -344,19 +424,22 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Canvas interaction-mode toggle (hand pans, pointer box-selects). */}
+			{/* Canvas interaction-mode toggle (hand pans, pointer box-selects).
+			    Shifts right when the trigger drawer is open so it stays visible
+			    next to the drawer's edge. */}
 			<div
 				style={{
 					position: 'absolute',
 					top: 8,
-					left: 8,
-					zIndex: 10,
+					left: triggerDrawerOpen ? 228 : 8,
+					zIndex: 21,
 					display: 'flex',
 					gap: 2,
 					padding: 2,
 					backgroundColor: `${theme.colors.bgActivity}f5`,
 					border: `1px solid ${theme.colors.border}`,
 					borderRadius: 6,
+					transition: 'left 200ms ease',
 				}}
 			>
 				{(

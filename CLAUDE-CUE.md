@@ -12,7 +12,7 @@ Each agent has a project root. Cue looks for `.maestro/cue.yaml` (preferred) or 
                        ┌─────────────────────────────────────────────────┐
   YAML config  ───►    │ CueSessionRuntimeService                        │
   (.maestro/cue.yaml)  │  • initSession / refreshSession / removeSession │
-                       │  • ancestor cue.yaml fallback                   │
+                       │  • per-agent-cwd config (no ancestor walk)       │
                        │  • ownership conflict resolution                │
                        │  • registers trigger sources per subscription   │
                        └────────────┬────────────────────────────────────┘
@@ -82,9 +82,8 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 `initSession` (`cue-session-runtime-service.ts:107-200`) is the choke point:
 
-- **YAML discovery.** Calls `loadCueConfigDetailed(projectRoot)`. If the local file is empty AND `no_ancestor_fallback !== true`, walks up parent directories looking for the first non-empty `cue.yaml` and adopts it (with a `[CUE] using ancestor config from` log).
-- **Ownership.** When two sessions resolve to the same effective `cue.yaml` (shared `projectRoot`), `computeOwnershipWarning` (`cue-session-state.ts`) tags the non-owner. Subscriptions without an explicit `agent_id` are **suppressed** for the non-owner — both at trigger-source registration AND in `notifyAgentCompleted` (`cue-completion-service.ts:110, 143`). Without this gate, the same chain would dispatch twice. Tie-breaker is configurable via `settings.owner_agent_id` (UUID or display name) — falls back to first-by-session-list when unset.
-- **Ancestor pipelines.** Even when the local file has its own subs, ancestor subs whose `agent_id` targets THIS session are merged in (`cue-session-runtime-service.ts:217`). This is how a top-level repo cue.yaml can drive subprojects.
+- **YAML discovery.** Calls `loadCueConfigDetailed(projectRoot)` and uses ONLY the file at `<projectRoot>/.maestro/cue.yaml`. There is no parent-directory walk and no ancestor fallback — each session reads its own cue.yaml and nothing else. Cross-agent pipelines are stitched at runtime via `agent_id` references in `source_session_ids` / `fan_out_ids`, not via parent-directory inheritance. The matching writer side is `pipelinesToYamlByOwnerCwd` (`pipelineToYaml.ts`), which emits one yaml per participating agent's cwd.
+- **Ownership.** When two sessions resolve to the same effective `cue.yaml` (shared `projectRoot`), `computeOwnershipWarning` (`cue-session-state.ts`) tags the non-owner. Subscriptions without an explicit `agent_id` are **suppressed** for the non-owner — both at trigger-source registration AND in `notifyAgentCompleted` (`cue-completion-service.ts:110, 143`). Without this gate, the same chain would dispatch twice. Tie-breaker is configurable via `settings.owner_agent_id` (UUID or display name) — falls back to first-by-session-list when unset. The Cue dashboard hides ownership-flagged sessions by default (toggle in the header reveals them) so cross-agent shared-cwd noise doesn't crowd the table.
 - **Teardown.** `removeSession` stops trigger sources and unregisters from the registry. Queued events are kept unless `clearQueue(sessionId)` is called explicitly. `refreshSession` is teardown + re-init (used on YAML save and on agent rename).
 
 ## Subscription model
@@ -189,6 +188,42 @@ Single SQLite database, WAL mode. Tables:
 - **`cue-env-sanitizer.ts`** drops env vars whose name doesn't match `[a-zA-Z_][a-zA-Z0-9_]*` OR whose uppercase form is in a blocklist (`PATH, HOME, USER, SHELL, LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES, NODE_OPTIONS`). Case-insensitive — Windows `Path` is the same as `PATH`.
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
 - **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
+
+## Telemetry
+
+Telemetry submission to `runmaestro.ai/api/v1/cue/stats` is **gated on both Encore flags** (`encoreFeatures.maestroCue` AND `encoreFeatures.usageStats`) — same predicate as `cue-stats.ts:isCueStatsEnabled`. Older app versions don't have the code path, so back-compat is automatic.
+
+**Two events** cover all server-side rollups:
+
+- `trigger_fired` — emitted from `cue-dispatch-service.ts:dispatchSubscription` ONCE per dispatch (not per fan-out target). Carries the source `event_type`, hashed `subscription_id_hash`, hashed `pipeline_id_hash`, hashed `trigger_id_hash`.
+- `run_completed` — emitted from `cue-engine.ts:onRunCompleted` once per natural completion. Carries `task_kind` (`agent_handoff` | `command_node` | `trigger_action`), hashed `subscription_id_hash`, hashed `pipeline_id_hash`, **raw** `chain_root_id`, `parent_run_id`, `duration_ms`, `status`. Server derives "pipelines executed" via `COUNT(DISTINCT pipeline_id_hash)` and "chains executed" via `COUNT(DISTINCT chain_root_id)`.
+
+**Hashing**: `sha256(installationId + ":" + name).slice(0, 16)`. Stable per-install, not cross-correlatable. `chain_root_id` stays raw (already a random UUID, no PII).
+
+**Outbox** (`cue_telemetry_outbox` table in `cue.db`): events recorded synchronously into SQLite from the dispatch / completion hot paths. Failures to insert are non-fatal — at most one missed event per dropped row.
+
+**Submission cadence** (in priority order):
+
+1. **Primary**: autorun completion (`stats:end-autorun` in `src/main/ipc/handlers/stats.ts`) — the user's natural quiet window, fire-and-forget after the existing `broadcastStatsUpdate`.
+2. **Threshold fallback**: if the outbox grows past 200 rows without an autorun completing, the next `recordTriggerFired` / `recordRunCompleted` triggers an inline flush.
+3. **App-quit flush**: `app-lifecycle/quit-handler.ts:performCleanup` calls `flushTelemetry({ reason: 'app-quit' })` so events captured between the last autorun and shutdown aren't deferred to the next launch.
+
+There is **no timer-based flush** — burning battery on idle installs is not the goal.
+
+**Kill-switches** (both honored):
+
+- `MAESTRO_DISABLE_CUE_TELEMETRY=1` env var → hard local disable.
+- `X-Cue-Telemetry-Backoff: <seconds>` response header → server-side throttle. Honored until the deadline expires; subsequent flushes return `{ ok: false, reason: 'backoff' }`.
+
+**Limits**: 500 events / 256 KB per request. Server returns `202` + `{dropped: N}` on overflow; client also pre-checks payload size and drops half the batch (oldest first) on local overflow rather than retrying forever.
+
+**Failure modes**:
+
+- 2xx → delete submitted rows from the outbox.
+- 4xx → drop the batch (server thinks it's bad and won't accept on retry).
+- 5xx / network error → leave rows in the outbox; next flush retries them.
+
+Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwing — telemetry is best-effort and must not break dispatch or completion. The module returns early on any gate failure (no installationId, Encore off, kill-switch on).
 
 ## Top gotchas (read before editing)
 

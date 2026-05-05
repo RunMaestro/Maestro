@@ -5,7 +5,7 @@
  * Pure presentational. Parent CueModal owns all data + callbacks.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -24,6 +24,8 @@ export interface CueDashboardProps {
 	onRetry: () => void;
 	sessions: CueSessionStatus[];
 	activeRuns: CueRunResult[];
+	/** Recent completed/failed runs — used to compute average runtime stat. */
+	activityLog: CueRunResult[];
 	queueStatus: Record<string, number>;
 	graphSessions: CueGraphSession[];
 	dashboardPipelines: CuePipeline[];
@@ -50,6 +52,7 @@ export function CueDashboard({
 	onRetry,
 	sessions,
 	activeRuns,
+	activityLog,
 	queueStatus,
 	graphSessions,
 	dashboardPipelines,
@@ -64,6 +67,39 @@ export function CueDashboard({
 	onStopRun,
 	onStopAll,
 }: CueDashboardProps) {
+	// Average runtime across the loaded activity log. Excludes still-running
+	// entries (durationMs is final-state only). null when no finished runs are
+	// available so the stat card can render an em dash instead of "0ms".
+	const averageRuntimeMs = useMemo(() => {
+		const finished = activityLog.filter((r) => r.status !== 'running');
+		if (finished.length === 0) return null;
+		const total = finished.reduce((sum, r) => sum + r.durationMs, 0);
+		return total / finished.length;
+	}, [activityLog]);
+
+	// Hide sessions flagged with an ownershipWarning by default — these are
+	// non-owners of a shared cue.yaml (e.g. a Codex / OpenCode agent sitting
+	// at the same cwd as the agent that actually owns the subs). They add
+	// visual noise to a dashboard a user normally only cares about for the
+	// agents that ARE wired into a pipeline. Toggle reveals them when
+	// debugging shared-cwd ownership.
+	const [showWarningSessions, setShowWarningSessions] = useState(false);
+
+	// Sort alphabetically (locale-aware so emoji-prefixed names sort sensibly)
+	// then optionally drop ownership-warning rows. Done in one memo so a sort
+	// + filter swap doesn't re-render twice.
+	const visibleSessions = useMemo(() => {
+		const sorted = [...sessions].sort((a, b) =>
+			a.sessionName.localeCompare(b.sessionName, undefined, { sensitivity: 'base' })
+		);
+		return showWarningSessions ? sorted : sorted.filter((s) => !s.ownershipWarning);
+	}, [sessions, showWarningSessions]);
+
+	const hiddenWarningCount = useMemo(
+		() => sessions.filter((s) => s.ownershipWarning).length,
+		[sessions]
+	);
+
 	// Distinct agents referenced by any pipeline's agent nodes — "agents
 	// associated with Cue" in the dashboard sense.
 	const agentCount = useMemo(() => {
@@ -114,20 +150,41 @@ export function CueDashboard({
 				theme={theme}
 				pipelineCount={dashboardPipelines.length}
 				executionCount={executionCount}
-				activeRunCount={activeRuns.length}
+				averageRuntimeMs={averageRuntimeMs}
 				agentCount={agentCount}
 			/>
 
 			{/* Sessions with Cue */}
 			<div>
-				<h3
-					className="text-xs font-bold uppercase tracking-wider mb-3"
-					style={{ color: theme.colors.textDim }}
-				>
-					Sessions with Cue
-				</h3>
+				<div className="flex items-center justify-between mb-3">
+					<h3
+						className="text-xs font-bold uppercase tracking-wider"
+						style={{ color: theme.colors.textDim }}
+					>
+						Sessions with Cue
+					</h3>
+					{hiddenWarningCount > 0 && (
+						<label
+							className="flex items-center gap-1.5 text-xs cursor-pointer select-none hover:opacity-80 transition-opacity"
+							style={{ color: theme.colors.textDim }}
+							title="Show sessions flagged with an ownership warning (non-owners of a shared cue.yaml)."
+						>
+							<input
+								type="checkbox"
+								checked={showWarningSessions}
+								onChange={(e) => setShowWarningSessions(e.target.checked)}
+								className="cursor-pointer"
+								style={{ accentColor: theme.colors.accent }}
+							/>
+							<span>
+								Show {hiddenWarningCount} flagged session
+								{hiddenWarningCount === 1 ? '' : 's'}
+							</span>
+						</label>
+					)}
+				</div>
 				<SessionsTable
-					sessions={sessions}
+					sessions={visibleSessions}
 					theme={theme}
 					onViewInPipeline={onViewInPipeline}
 					onEditYaml={onEditYaml}

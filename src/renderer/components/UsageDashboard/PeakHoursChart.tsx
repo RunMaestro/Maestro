@@ -102,7 +102,10 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 		>
 			{/* Header */}
 			<div className="flex items-center justify-between mb-3">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Peak Hours
 				</h3>
 				<div className="flex items-center gap-2">

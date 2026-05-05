@@ -82,6 +82,8 @@ export interface TabBarProps {
 	onPublishTerminalBufferGist?: (tabId: string) => void;
 	/** Handler to send a terminal tab's buffer to another agent */
 	onSendTerminalBufferToAgent?: (tabId: string) => void;
+	/** Handler to open the startup-command modal for a terminal tab */
+	onTerminalTabConfigureStartupCommand?: (tabId: string) => void;
 	/** Handler to copy the rendered text of a browser tab to the clipboard */
 	onCopyBrowserContent?: (tabId: string) => void;
 	/** Handler to send the rendered text of a browser tab to another agent */

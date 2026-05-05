@@ -48,6 +48,10 @@ export interface LogEntry {
 	timestamp: number;
 	text: string;
 	source: 'user' | 'stdout' | 'stderr' | 'thinking' | 'tool';
+	/** Base64 data URLs attached to a user message (e.g. pasted images).
+	 *  Mirrors the renderer-side LogEntry.images so optimistic chat history
+	 *  shows the same attachments the agent receives. */
+	images?: string[];
 	metadata?: {
 		toolState?: {
 			name?: string;
@@ -187,7 +191,7 @@ export interface UseMobileSessionManagementReturn {
 	/** Handler to toggle bookmark on a session */
 	handleToggleBookmark: (sessionId: string) => void;
 	/** Add a user input log entry to session logs */
-	addUserLogEntry: (text: string, inputMode: 'ai' | 'terminal') => void;
+	addUserLogEntry: (text: string, inputMode: 'ai' | 'terminal', images?: string[]) => void;
 	/** WebSocket handlers for session state updates */
 	sessionsHandlers: MobileSessionHandlers;
 }
@@ -455,18 +459,22 @@ export function useMobileSessionManagement(
 	);
 
 	// Add a user input log entry to session logs
-	const addUserLogEntry = useCallback((text: string, inputMode: 'ai' | 'terminal') => {
-		const userLogEntry: LogEntry = {
-			id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-			timestamp: Date.now(),
-			text,
-			source: 'user',
-		};
-		setSessionLogs((prev) => {
-			const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
-			return { ...prev, [logKey]: [...prev[logKey], userLogEntry] };
-		});
-	}, []);
+	const addUserLogEntry = useCallback(
+		(text: string, inputMode: 'ai' | 'terminal', images?: string[]) => {
+			const userLogEntry: LogEntry = {
+				id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+				timestamp: Date.now(),
+				text,
+				source: 'user',
+				...(images && images.length > 0 ? { images } : {}),
+			};
+			setSessionLogs((prev) => {
+				const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
+				return { ...prev, [logKey]: [...prev[logKey], userLogEntry] };
+			});
+		},
+		[]
+	);
 
 	// WebSocket handlers for session updates
 	const sessionsHandlers = useMemo(

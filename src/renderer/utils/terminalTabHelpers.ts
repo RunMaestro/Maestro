@@ -352,6 +352,37 @@ export function updateTerminalTabPid(session: Session, tabId: string, pid: numbe
 }
 
 /**
+ * Configure the startup command and (optional) cwd for a terminal tab.
+ * Empty `command` clears the configuration.
+ * Empty `cwd` clears the override (PTY falls back to tab.cwd / session.cwd).
+ */
+export function setTerminalTabStartupCommand(
+	session: Session,
+	tabId: string,
+	command: string,
+	cwd: string
+): Session {
+	const terminalTabs = session.terminalTabs || [];
+	if (!terminalTabs.find((tab) => tab.id === tabId)) {
+		return session;
+	}
+	const trimmedCommand = command.trim();
+	const trimmedCwd = cwd.trim();
+	return {
+		...session,
+		terminalTabs: terminalTabs.map((tab) =>
+			tab.id === tabId
+				? {
+						...tab,
+						startupCommand: trimmedCommand === '' ? undefined : trimmedCommand,
+						startupCommandCwd: trimmedCwd === '' ? undefined : trimmedCwd,
+					}
+				: tab
+		),
+	};
+}
+
+/**
  * Update the current working directory for a terminal tab.
  * Called when the shell reports a directory change (e.g., via OSC sequences or shell integration).
  *

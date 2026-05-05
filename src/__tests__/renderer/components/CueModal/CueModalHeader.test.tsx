@@ -46,6 +46,13 @@ describe('CueModalHeader', () => {
 		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline');
 	});
 
+	it('clicking Backup tab calls setActiveTab("backup")', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByText('Backup'));
+		expect(props.setActiveTab).toHaveBeenCalledWith('backup');
+	});
+
 	it('master toggle click fires handleToggle', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
@@ -69,17 +76,15 @@ describe('CueModalHeader', () => {
 	it('help button fires onOpenHelp', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
-		const help = screen.getByTitle('Help');
+		const help = screen.getByTitle('About Maestro Cue');
 		fireEvent.click(help);
 		expect(props.onOpenHelp).toHaveBeenCalled();
 	});
 
 	it('close button fires onClose', () => {
 		const props = makeProps();
-		const { container } = render(<CueModalHeader {...props} />);
-		// Last button in header is close (X)
-		const buttons = container.querySelectorAll('button');
-		fireEvent.click(buttons[buttons.length - 1]);
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByTitle('Close'));
 		expect(props.onClose).toHaveBeenCalled();
 	});
 
@@ -88,6 +93,7 @@ describe('CueModalHeader', () => {
 		render(<CueModalHeader {...props} />);
 		expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
 		expect(screen.queryByText('Pipeline Editor')).not.toBeInTheDocument();
+		expect(screen.queryByText('Backup')).not.toBeInTheDocument();
 		expect(screen.queryByText('Disabled')).not.toBeInTheDocument();
 		expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 		expect(screen.getByTitle('Back to dashboard')).toBeInTheDocument();

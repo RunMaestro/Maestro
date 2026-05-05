@@ -349,6 +349,20 @@ export interface UseSettingsReturn {
 	autoHideMenuBar: boolean;
 	setAutoHideMenuBar: (value: boolean) => void;
 
+	// Main header panel pill toggles
+	showAgentName: boolean;
+	setShowAgentName: (value: boolean) => void;
+	showSessionIdPill: boolean;
+	setShowSessionIdPill: (value: boolean) => void;
+	showSessionCostPill: boolean;
+	setShowSessionCostPill: (value: boolean) => void;
+
+	// Worktree display in left panel agent list
+	showWorktreePill: boolean;
+	setShowWorktreePill: (value: boolean) => void;
+	showWorktreeBranchName: boolean;
+	setShowWorktreeBranchName: (value: boolean) => void;
+
 	// Group Chat settings
 	moderatorStandingInstructions: string;
 	setModeratorStandingInstructions: (value: string) => void;

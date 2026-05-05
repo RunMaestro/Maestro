@@ -207,10 +207,20 @@ export const TerminalView = memo(
 							}
 						: undefined;
 
+				// When a startup command is configured, spawn the PTY in its configured cwd
+				// (if any) so the command runs in the right directory. Otherwise keep the
+				// existing fallback chain.
+				const spawnCwd =
+					(tab.startupCommand && tab.startupCommandCwd) ||
+					tab.cwd ||
+					session.cwd ||
+					session.projectRoot ||
+					'';
+
 				window.maestro.process
 					.spawnTerminalTab({
 						sessionId: terminalSessionId,
-						cwd: tab.cwd || session.cwd || session.projectRoot || '',
+						cwd: spawnCwd,
 						shell: defaultShell || undefined,
 						shellArgs,
 						shellEnvVars,
@@ -221,6 +231,16 @@ export const TerminalView = memo(
 					.then((result) => {
 						if (result.success) {
 							onTabPidChangeRef.current(tabId, result.pid);
+							// Run the user-configured startup command. The PTY buffers stdin,
+							// so the shell will execute it once initialization (rc files, etc.)
+							// finishes.
+							if (tab.startupCommand) {
+								window.maestro.process
+									.write(terminalSessionId, tab.startupCommand + '\n')
+									.catch(() => {
+										// Write failures are surfaced by the process exit handler
+									});
+							}
 						} else {
 							// Spawn failed — close the tab and notify via batched toast
 							setTimeout(() => closeTerminalTab(tabId), 0);

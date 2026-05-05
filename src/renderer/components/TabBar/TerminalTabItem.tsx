@@ -9,6 +9,7 @@ import {
 	Clipboard,
 	ArrowRightCircle,
 	Share2,
+	Play,
 } from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
@@ -49,6 +50,8 @@ export interface TerminalTabItemProps {
 	onPublishBufferGist?: (tabId: string) => void;
 	/** Send the terminal buffer to another agent. */
 	onSendBufferToAgent?: (tabId: string) => void;
+	/** Open the startup-command configuration modal for this tab. */
+	onConfigureStartupCommand?: (tabId: string) => void;
 	totalTabs?: number;
 	tabIndex?: number;
 	shortcutHint?: number | null;
@@ -84,6 +87,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	onCopyBuffer,
 	onPublishBufferGist,
 	onSendBufferToAgent,
+	onConfigureStartupCommand,
 	totalTabs,
 	tabIndex,
 	shortcutHint,
@@ -231,6 +235,14 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			setOverlayOpen(false);
 		},
 		[onSendBufferToAgent, tab.id, setOverlayOpen]
+	);
+	const handleConfigureStartupCommandClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onConfigureStartupCommand?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onConfigureStartupCommand, tab.id, setOverlayOpen]
 	);
 
 	// Determine icon state color
@@ -399,6 +411,23 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Rename
+									</button>
+								)}
+
+								{/* Startup Command */}
+								{onConfigureStartupCommand && (
+									<button
+										onClick={handleConfigureStartupCommandClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+										title={
+											tab.startupCommand
+												? `Current: ${tab.startupCommand}`
+												: 'Configure a command to run when this terminal starts'
+										}
+									>
+										<Play className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Startup Command…
 									</button>
 								)}
 

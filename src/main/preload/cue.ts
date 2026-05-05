@@ -56,6 +56,11 @@ export function createCueApi() {
 		// Get currently active Cue runs
 		getActiveRuns: (): Promise<CueRunResult[]> => ipcRenderer.invoke('cue:getActiveRuns'),
 
+		// Snapshot the in-flight stdout/stderr for an active Cue run (live logs).
+		// Returns null when the runId isn't currently active.
+		getRunLiveOutput: (runId: string): Promise<{ stdout: string; stderr: string } | null> =>
+			ipcRenderer.invoke('cue:getRunLiveOutput', { runId }),
+
 		// Get activity log (recent completed/failed runs)
 		getActivityLog: (limit?: number): Promise<CueRunResult[]> =>
 			ipcRenderer.invoke('cue:getActivityLog', { limit }),
@@ -68,6 +73,11 @@ export function createCueApi() {
 
 		// Disable the Cue engine (runtime control)
 		disable: (): Promise<void> => ipcRenderer.invoke('cue:disable'),
+
+		// Visibility-aware pause — the renderer flips this on visibilitychange
+		// so the scanner subsystem skips expensive background work while the
+		// app is hidden. Idempotent.
+		setActive: (active: boolean): Promise<void> => ipcRenderer.invoke('cue:setActive', active),
 
 		// Stop a specific running Cue execution
 		stopRun: (runId: string): Promise<boolean> => ipcRenderer.invoke('cue:stopRun', { runId }),

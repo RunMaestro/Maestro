@@ -54,6 +54,18 @@ import {
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
+import {
+	insertImageAnnotation,
+	clearImageAnnotationCache,
+	countImageAnnotations,
+} from './image-annotations';
+import {
+	incrementShortcutUsage,
+	getShortcutUsageByDay,
+	getShortcutUsageTotal,
+	clearShortcutUsageCache,
+} from './shortcut-usage';
+import type { ShortcutUsageDay } from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
 
 /**
@@ -152,6 +164,8 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearImageAnnotationCache();
+			clearShortcutUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -776,6 +790,34 @@ export class StatsDB {
 	}
 
 	// ============================================================================
+	// Image Annotations (delegated)
+	// ============================================================================
+
+	insertImageAnnotation(createdAt: number): string {
+		return insertImageAnnotation(this.database, createdAt);
+	}
+
+	countImageAnnotations(range: StatsTimeRange): number {
+		return countImageAnnotations(this.database, range);
+	}
+
+	// ============================================================================
+	// Shortcut Usage (delegated)
+	// ============================================================================
+
+	incrementShortcutUsage(firedAt: number): string {
+		return incrementShortcutUsage(this.database, firedAt);
+	}
+
+	getShortcutUsageByDay(range: StatsTimeRange): ShortcutUsageDay[] {
+		return getShortcutUsageByDay(this.database, range);
+	}
+
+	getShortcutUsageTotal(range: StatsTimeRange): number {
+		return getShortcutUsageTotal(this.database, range);
+	}
+
+	// ============================================================================
 	// Data Management (delegated)
 	// ============================================================================
 
@@ -807,19 +849,16 @@ export class StatsDB {
 	 */
 	getEarliestTimestamp(): number | null {
 		try {
-			// Query the minimum startTime from query_events table
 			const queryResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM query_events')
+				.prepare('SELECT MIN(start_time) as earliest FROM query_events')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum startTime from auto_run_sessions table
 			const autoRunResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM auto_run_sessions')
+				.prepare('SELECT MIN(start_time) as earliest FROM auto_run_sessions')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum createdAt from session_lifecycle table
 			const lifecycleResult = this.database
-				.prepare('SELECT MIN(createdAt) as earliest FROM session_lifecycle')
+				.prepare('SELECT MIN(created_at) as earliest FROM session_lifecycle')
 				.get() as { earliest: number | null } | undefined;
 
 			// Find the minimum across all tables

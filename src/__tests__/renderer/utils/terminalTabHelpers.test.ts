@@ -29,6 +29,7 @@ import {
 	updateTerminalTabPid,
 	updateTerminalTabCwd,
 	renameTerminalTab,
+	setTerminalTabStartupCommand,
 	reorderTerminalTabs,
 } from '../../../renderer/utils/terminalTabHelpers';
 import type { Session, TerminalTab } from '../../../renderer/types';
@@ -498,6 +499,54 @@ describe('renameTerminalTab', () => {
 	it('returns original session when tab not found', () => {
 		const session = createMockSession({ terminalTabs: [] });
 		const updated = renameTerminalTab(session, 'nonexistent', 'Name');
+		expect(updated).toBe(session);
+	});
+});
+
+describe('setTerminalTabStartupCommand', () => {
+	it('sets command and cwd on the matching tab', () => {
+		const tab = createMockTerminalTab({ id: 'tab-1' });
+		const session = createMockSession({ terminalTabs: [tab] });
+		const updated = setTerminalTabStartupCommand(session, 'tab-1', 'npm run dev', '/proj');
+		expect(updated.terminalTabs![0].startupCommand).toBe('npm run dev');
+		expect(updated.terminalTabs![0].startupCommandCwd).toBe('/proj');
+	});
+
+	it('trims whitespace from command and cwd', () => {
+		const tab = createMockTerminalTab({ id: 'tab-1' });
+		const session = createMockSession({ terminalTabs: [tab] });
+		const updated = setTerminalTabStartupCommand(session, 'tab-1', '  npm test  ', '  /a  ');
+		expect(updated.terminalTabs![0].startupCommand).toBe('npm test');
+		expect(updated.terminalTabs![0].startupCommandCwd).toBe('/a');
+	});
+
+	it('clears the configuration when command is empty', () => {
+		const tab = createMockTerminalTab({
+			id: 'tab-1',
+			startupCommand: 'old',
+			startupCommandCwd: '/x',
+		});
+		const session = createMockSession({ terminalTabs: [tab] });
+		const updated = setTerminalTabStartupCommand(session, 'tab-1', '', '');
+		expect(updated.terminalTabs![0].startupCommand).toBeUndefined();
+		expect(updated.terminalTabs![0].startupCommandCwd).toBeUndefined();
+	});
+
+	it('clears only the cwd override when cwd is empty but command is set', () => {
+		const tab = createMockTerminalTab({
+			id: 'tab-1',
+			startupCommand: 'old',
+			startupCommandCwd: '/old',
+		});
+		const session = createMockSession({ terminalTabs: [tab] });
+		const updated = setTerminalTabStartupCommand(session, 'tab-1', 'new', '');
+		expect(updated.terminalTabs![0].startupCommand).toBe('new');
+		expect(updated.terminalTabs![0].startupCommandCwd).toBeUndefined();
+	});
+
+	it('returns original session when tab not found', () => {
+		const session = createMockSession({ terminalTabs: [] });
+		const updated = setTerminalTabStartupCommand(session, 'nonexistent', 'cmd', '');
 		expect(updated).toBe(session);
 	});
 });

@@ -52,6 +52,7 @@ import {
 	closeTerminalTab as closeTerminalTabHelper,
 	selectTerminalTab as selectTerminalTabHelper,
 	renameTerminalTab as renameTerminalTabHelper,
+	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore, selectActiveSession } from './sessionStore';
@@ -228,6 +229,12 @@ export interface TabStoreActions {
 	 * Rename a terminal tab in the active session.
 	 */
 	renameTerminalTab: (tabId: string, name: string) => void;
+
+	/**
+	 * Configure the startup command (and optional cwd override) for a terminal tab.
+	 * Empty `command` clears the configuration.
+	 */
+	setTerminalTabStartupCommand: (tabId: string, command: string, cwd: string) => void;
 
 	// === File tab content operations ===
 
@@ -544,6 +551,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const session = getActiveSession();
 		if (!session) return;
 		const updatedSession = renameTerminalTabHelper(session, tabId, name);
+		updateActiveSession(updatedSession);
+	},
+
+	setTerminalTabStartupCommand: (tabId, command, cwd) => {
+		const session = getActiveSession();
+		if (!session) return;
+		const updatedSession = setTerminalTabStartupCommandHelper(session, tabId, command, cwd);
+		if (updatedSession === session) return;
 		updateActiveSession(updatedSession);
 	},
 

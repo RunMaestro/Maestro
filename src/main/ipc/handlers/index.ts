@@ -43,6 +43,7 @@ import {
 } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
+import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
@@ -55,6 +56,7 @@ import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
+import { registerCueBackupHandlers } from './cue-backup';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
@@ -91,6 +93,8 @@ export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingS
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
+export { registerCueStatsHandlers };
+export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
@@ -109,6 +113,7 @@ export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
+export { registerCueBackupHandlers };
 export { registerWakatimeHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
@@ -251,6 +256,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
+	// Register Cue Stats handlers for the Cue Dashboard aggregation query
+	registerCueStatsHandlers({
+		settingsStore: deps.settingsStore,
+	});
 	// Register document graph handlers for file watching
 	registerDocumentGraphHandlers({
 		getMainWindow: deps.getMainWindow,
@@ -298,6 +307,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register Feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
+	});
+	// Register Cue Backup handlers (Cue modal Backup tab)
+	registerCueBackupHandlers({
+		sessionsStore: deps.sessionsStore,
 	});
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();

@@ -126,6 +126,12 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 					message:
 						'No dispatch fired. Check that each agent on this trigger has a prompt configured.',
 				});
+			} else {
+				notifyToast({
+					type: 'success',
+					title: `"${subscriptionName}" triggered`,
+					message: 'Manual run dispatched — watch the pipeline for activity.',
+				});
 			}
 			await refresh();
 		},

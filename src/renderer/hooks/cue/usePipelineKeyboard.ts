@@ -10,7 +10,7 @@
  *     while typing in inputs and when modifier keys are held.
  */
 
-import { useEffect, type RefObject } from 'react';
+import { useEffect, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { Node, Edge } from 'reactflow';
 import type { CanvasInteractionMode } from '../../components/CuePipelineEditor/PipelineCanvas';
 
@@ -30,7 +30,7 @@ export interface UsePipelineKeyboardParams {
 	setSelectedEdgeId: (id: string | null) => void;
 	setTriggerDrawerOpen: (open: boolean) => void;
 	setAgentDrawerOpen: (open: boolean) => void;
-	setInteractionMode: (mode: CanvasInteractionMode) => void;
+	setInteractionMode: Dispatch<SetStateAction<CanvasInteractionMode>>;
 	handleSave: () => void | Promise<void>;
 	/**
 	 * Root element of the pipeline editor. Used to distinguish inputs inside
@@ -111,7 +111,10 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 				if (isInputInsideEditor) return;
 				e.preventDefault();
 				e.stopPropagation();
-				setInteractionMode(e.key === 'p' || e.key === 'P' ? 'hand' : 'pointer');
+				const target = e.key === 'p' || e.key === 'P' ? 'hand' : 'pointer';
+				setInteractionMode((prev) =>
+					prev === target ? (target === 'hand' ? 'pointer' : 'hand') : target
+				);
 			}
 		};
 

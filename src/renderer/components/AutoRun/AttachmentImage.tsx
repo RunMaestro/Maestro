@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
-import { Image, X, Search } from 'lucide-react';
+import { Image, X, Search, PenLine } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { imageCache } from '../../hooks';
 import type { Theme } from '../../types';
@@ -282,12 +282,14 @@ export function ImagePreview({
 	theme,
 	onRemove,
 	onImageClick,
+	onAnnotate,
 }: {
 	src: string;
 	filename: string;
 	theme: Theme;
 	onRemove: () => void;
 	onImageClick: (filename: string) => void;
+	onAnnotate?: () => void;
 }) {
 	return (
 		<div className="relative inline-block group" style={{ margin: '4px' }}>
@@ -298,6 +300,24 @@ export function ImagePreview({
 				style={{ border: `1px solid ${theme.colors.border}` }}
 				onClick={() => onImageClick(filename)}
 			/>
+			{onAnnotate && (
+				<button
+					type="button"
+					onClick={(e) => {
+						e.stopPropagation();
+						onAnnotate();
+					}}
+					title="Annotate image"
+					aria-label="Annotate image"
+					className="absolute -top-2 -left-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+					style={{
+						backgroundColor: theme.colors.bgActivity,
+						color: theme.colors.textMain,
+					}}
+				>
+					<PenLine className="w-3 h-3" />
+				</button>
+			)}
 			<button
 				onClick={(e) => {
 					e.stopPropagation();

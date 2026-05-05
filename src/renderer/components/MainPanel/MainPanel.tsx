@@ -200,6 +200,7 @@ export const MainPanel = React.memo(
 			onTerminalTabSelect,
 			onTerminalTabClose,
 			onTerminalTabRename,
+			onTerminalTabConfigureStartupCommand,
 		} = props;
 
 		// Get the active tab for header display
@@ -757,6 +758,7 @@ export const MainPanel = React.memo(
 									onTerminalTabSelect={onTerminalTabSelect}
 									onTerminalTabClose={onTerminalTabClose}
 									onTerminalTabRename={onTerminalTabRename}
+									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
 									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
 									onPublishTerminalBufferGist={
 										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined

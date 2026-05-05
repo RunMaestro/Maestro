@@ -49,7 +49,9 @@ export interface LightboxData {
 
 /** Settings modal data */
 export interface SettingsModalData {
-	tab: SettingsTab;
+	/** When omitted, SettingsModal restores the last in-session tab and falls
+	 *  back to 'general' on first open. Set to a specific tab to deep-link. */
+	tab?: SettingsTab;
 	promptId?: string;
 }
 
@@ -86,6 +88,14 @@ export interface RenameInstanceModalData {
 export interface RenameTabModalData {
 	tabId: string;
 	initialName: string;
+}
+
+/** Terminal tab startup command modal data */
+export interface TerminalStartupCommandModalData {
+	tabId: string;
+	initialCommand: string;
+	initialCwd: string;
+	defaultCwd: string;
 }
 
 /** Rename group modal data */
@@ -194,6 +204,7 @@ export type ModalId =
 	| 'promptComposer'
 	// Tab Management
 	| 'renameTab'
+	| 'terminalStartupCommand'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations
@@ -263,6 +274,7 @@ export interface ModalDataMap {
 	confirm: ConfirmModalData;
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
+	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	wizardResume: WizardResumeModalData;
@@ -481,10 +493,13 @@ export function getModalActions() {
 
 	return {
 		// Settings Modal
+		// Pass `tab: undefined` (not a default of 'general') when no tab is
+		// requested — the modal restores the last tab the user viewed in this
+		// session and falls back to General internally.
 		setSettingsModalOpen: (open: boolean) =>
-			open ? openModal('settings', { tab: 'general' }) : closeModal('settings'),
+			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
 		setSettingsTab: (tab: SettingsTab) => updateModalData('settings', { tab }),
-		openSettings: (tab?: SettingsTab) => openModal('settings', { tab: tab ?? 'general' }),
+		openSettings: (tab?: SettingsTab) => openModal('settings', { tab }),
 		closeSettings: () => closeModal('settings'),
 
 		// New Instance Modal
@@ -658,6 +673,11 @@ export function getModalActions() {
 				openModal('renameTab', { tabId: '', initialName });
 			}
 		},
+
+		// Terminal Tab Startup Command Modal
+		openTerminalStartupCommandModal: (data: TerminalStartupCommandModalData) =>
+			openModal('terminalStartupCommand', data),
+		closeTerminalStartupCommandModal: () => closeModal('terminalStartupCommand'),
 
 		// Rename Group Modal
 		setRenameGroupModalOpen: (open: boolean) => {
@@ -919,7 +939,9 @@ export function useModalActions() {
 	return {
 		// Settings Modal
 		settingsModalOpen,
-		settingsTab: settingsData?.tab ?? 'general',
+		// `undefined` means "no explicit tab requested" — SettingsModal restores
+		// the last in-session tab, falling back to 'general' on first open.
+		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,
 		...actions,
 

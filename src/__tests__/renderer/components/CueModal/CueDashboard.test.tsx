@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CueDashboard } from '../../../../renderer/components/CueModal/CueDashboard';
 import type { Theme } from '../../../../renderer/types';
@@ -10,8 +10,12 @@ vi.mock('../../../../renderer/components/CueModal/SessionsTable', () => ({
 vi.mock('../../../../renderer/components/CueModal/ActiveRunsList', () => ({
 	ActiveRunsList: () => <div data-testid="active-runs" />,
 }));
+const statsSpy = vi.fn();
 vi.mock('../../../../renderer/components/CueModal/CueDashboardStats', () => ({
-	CueDashboardStats: () => <div data-testid="cue-dashboard-stats" />,
+	CueDashboardStats: (props: Record<string, unknown>) => {
+		statsSpy(props);
+		return <div data-testid="cue-dashboard-stats" />;
+	},
 }));
 
 const theme = {
@@ -37,6 +41,7 @@ function makeProps(
 		onRetry: vi.fn(),
 		sessions: [],
 		activeRuns: [],
+		activityLog: [],
 		queueStatus: {},
 		graphSessions: [],
 		dashboardPipelines: [],
@@ -55,6 +60,10 @@ function makeProps(
 }
 
 describe('CueDashboard', () => {
+	beforeEach(() => {
+		statsSpy.mockClear();
+	});
+
 	it('loading=true renders loading indicator', () => {
 		render(<CueDashboard {...makeProps({ loading: true })} />);
 		expect(screen.getByText(/Loading Cue status/)).toBeInTheDocument();
@@ -101,5 +110,31 @@ describe('CueDashboard', () => {
 		const runs = [{ runId: 'r1' } as any, { runId: 'r2' } as any];
 		render(<CueDashboard {...makeProps({ activeRuns: runs })} />);
 		expect(screen.getByText('2')).toBeInTheDocument();
+	});
+
+	it('passes null averageRuntimeMs when activity log is empty', () => {
+		render(<CueDashboard {...makeProps()} />);
+		expect(statsSpy).toHaveBeenCalled();
+		expect(statsSpy.mock.calls[0]![0].averageRuntimeMs).toBeNull();
+	});
+
+	it('averages durationMs across finished runs, ignoring still-running entries', () => {
+		const log = [
+			{ status: 'completed', durationMs: 1000 },
+			{ status: 'failed', durationMs: 2000 },
+			{ status: 'timeout', durationMs: 3000 },
+			{ status: 'running', durationMs: 0 },
+		] as any[];
+		render(<CueDashboard {...makeProps({ activityLog: log })} />);
+		expect(statsSpy.mock.calls[0]![0].averageRuntimeMs).toBe(2000);
+	});
+
+	it('returns null when every activity log entry is still running', () => {
+		const log = [
+			{ status: 'running', durationMs: 0 },
+			{ status: 'running', durationMs: 0 },
+		] as any[];
+		render(<CueDashboard {...makeProps({ activityLog: log })} />);
+		expect(statsSpy.mock.calls[0]![0].averageRuntimeMs).toBeNull();
 	});
 });

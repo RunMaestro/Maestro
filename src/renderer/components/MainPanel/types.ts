@@ -182,6 +182,8 @@ export interface MainPanelProps {
 	onTerminalTabSelect?: (tabId: string) => void;
 	onTerminalTabClose?: (tabId: string) => void;
 	onTerminalTabRename?: (tabId: string) => void;
+	/** Handler to open the startup-command modal for a terminal tab */
+	onTerminalTabConfigureStartupCommand?: (tabId: string) => void;
 	onOpenFileTab?: (filePath: string) => void;
 	/** Handler to update file tab editMode when toggled in FilePreview */
 	onFileTabEditModeChange?: (tabId: string, editMode: boolean) => void;

@@ -39,6 +39,30 @@ const FEATURE_FLAGS = {
 	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Anthropic, Ollama)
 };
 
+type SettingsTabId =
+	| 'general'
+	| 'display'
+	| 'llm'
+	| 'shortcuts'
+	| 'theme'
+	| 'notifications'
+	| 'aicommands'
+	| 'ssh'
+	| 'environment'
+	| 'encore'
+	| 'prompts';
+
+// In-memory only — last tab the user was on. Resets on app restart, so the
+// modal still defaults to General on a fresh launch. Honors any explicit
+// `initialTab` prop (e.g. when a caller deep-links into a specific tab).
+let lastOpenSettingsTab: SettingsTabId | null = null;
+
+// Test-only: reset the remembered tab so suites that assume a fresh open
+// (e.g. "modal opens to General") aren't polluted by prior tests in the file.
+export function __resetLastOpenSettingsTabForTests(): void {
+	lastOpenSettingsTab = null;
+}
+
 interface SettingsModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -109,19 +133,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteHonorGitignore,
 	} = useSettings();
 
-	const [activeTab, setActiveTab] = useState<
-		| 'general'
-		| 'display'
-		| 'llm'
-		| 'shortcuts'
-		| 'theme'
-		| 'notifications'
-		| 'aicommands'
-		| 'ssh'
-		| 'environment'
-		| 'encore'
-		| 'prompts'
-	>('general');
+	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
+	// than a restore effect) avoids racing with the persist effect below — under
+	// React StrictMode a restore-via-effect double-fires and clobbers the saved
+	// value with the initial 'general' before the restored value lands.
+	const [activeTab, setActiveTab] = useState<SettingsTabId>(
+		() => initialTab || lastOpenSettingsTab || 'general'
+	);
 	const [testingLLM, setTestingLLM] = useState(false);
 	const [testResult, setTestResult] = useState<{
 		status: 'success' | 'error' | null;
@@ -178,12 +196,20 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const isRecordingShortcutRef = useRef(false);
 	const promptsEscapeHandlerRef = useRef<(() => boolean) | null>(null);
 
+	// Honor a deep-link initialTab change while the modal is already mounted
+	// (e.g. caller switches tab without closing). Mount-time restoration is
+	// handled by the lazy useState init above, not here.
 	useEffect(() => {
-		if (isOpen) {
-			// Set initial tab if provided, otherwise default to 'general'
-			setActiveTab(initialTab || 'general');
+		if (isOpen && initialTab) {
+			setActiveTab(initialTab);
 		}
 	}, [isOpen, initialTab]);
+
+	// Persist the current tab in module memory so the next open lands here.
+	// In-memory only — resets on app restart by design.
+	useEffect(() => {
+		lastOpenSettingsTab = activeTab;
+	}, [activeTab]);
 
 	// Store onClose in a ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);
@@ -421,7 +447,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							onClear={search.clear}
 						/>
 					</div>
-					<button onClick={onClose} className="cursor-pointer px-4">
+					<button onClick={onClose} className="cursor-pointer pl-4 pr-6">
 						<X className="w-5 h-5 opacity-50 hover:opacity-100" />
 					</button>
 				</div>

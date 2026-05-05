@@ -58,8 +58,6 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: (root: string) => mockLoadCueConfig(root),
 	loadCueConfigDetailed: (root: string) => mockLoadCueConfigDetailed(root),
 	watchCueYaml: (root: string, onChange: () => void) => mockWatchCueYaml(root, onChange),
-	findAncestorCueConfigRoot: () => null,
-	findAncestorCueConfigRoots: () => [],
 }));
 
 // Trigger sources whose real implementations would need real IO — keep their

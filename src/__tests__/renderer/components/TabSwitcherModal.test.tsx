@@ -572,12 +572,47 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByText('20%')).toBeInTheDocument();
 			});
 
-			it('caps at 100%', () => {
+			it('caps at 100% when tokens fill the window exactly', () => {
+				// Use values that fill the window without overflowing so we exercise
+				// the Math.min(100, …) cap rather than the overflow branch (which now
+				// returns untrustworthy zeros — see issue #762).
+				const tab = createTestTab({
+					usageStats: {
+						inputTokens: 199500,
+						outputTokens: 0,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 500,
+						totalCostUsd: 5.0,
+						contextWindow: 200000,
+					},
+				});
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[tab]}
+						activeTabId={tab.id}
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				// 200000 / 200000 = 100%
+				expect(screen.getByText('100%')).toBeInTheDocument();
+			});
+
+			it('hides the gauge when accumulated tokens overflow without a fallback', () => {
+				// Issue #762: an accumulated multi-tool turn can blow past the configured
+				// window before any session-level percentage has been preserved. We must
+				// not surface that as "0%" — hide the gauge instead so users don't read
+				// untrustworthy data.
 				const tab = createTestTab({
 					usageStats: {
 						inputTokens: 150000,
 						outputTokens: 0,
-						cacheReadInputTokens: 100000, // Excluded from calculation (cumulative)
+						cacheReadInputTokens: 100000,
 						cacheCreationInputTokens: 100000,
 						totalCostUsd: 5.0,
 						contextWindow: 200000,
@@ -596,8 +631,8 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// (150000 + 100000) / 200000 = 125% -> capped at 100% (cacheRead excluded)
-				expect(screen.getByText('100%')).toBeInTheDocument();
+				// No percentage badge should render (raw=350000 > window=200000, no fallback).
+				expect(screen.queryByText(/^\d+%$/)).not.toBeInTheDocument();
 			});
 		});
 	});

@@ -153,6 +153,8 @@ export interface SessionBroadcastData {
 	/** Worktree subagent support */
 	parentSessionId?: string | null;
 	worktreeBranch?: string | null;
+	/** The session's configured Auto Run folder; null when not set yet. */
+	autoRunFolderPath?: string | null;
 }
 
 // =============================================================================
@@ -176,6 +178,18 @@ export interface AutoRunState {
 	totalTasksAcrossAllDocs?: number;
 	/** Completed tasks across all documents (multi-document progress) */
 	completedTasksAcrossAllDocs?: number;
+	/** True if batch is paused waiting for error resolution (Phase 5.10) */
+	errorPaused?: boolean;
+	/** Human-readable description of the error that paused the run */
+	errorMessage?: string;
+	/** Error type tag (e.g. 'rate_limit', 'auth', 'context_window') */
+	errorType?: string;
+	/** Whether the error is recoverable (resume vs. abort) */
+	errorRecoverable?: boolean;
+	/** Document index that hit the error (for skip-document UI) */
+	errorDocumentIndex?: number;
+	/** Description of the task that failed (for UI display) */
+	errorTaskDescription?: string;
 }
 
 /**
@@ -251,7 +265,8 @@ export type ExecuteCommandCallback = (
 	command: string,
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
-	force?: boolean
+	force?: boolean,
+	images?: string[]
 ) => Promise<boolean>;
 
 /**
@@ -299,7 +314,11 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
-export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
+export type OpenFileTabCallback = (
+	sessionId: string,
+	filePath: string,
+	switchToAgent: boolean
+) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
@@ -323,6 +342,17 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+
+/**
+ * Updates the Auto Run folder for an existing session. Mirrors what the desktop
+ * app does when the user picks a different folder via `dialog.selectFolder` —
+ * the renderer reloads the document list from the new path and persists the
+ * choice to session storage. Used by the web UI's `FolderPickerSheet`.
+ */
+export type SetSessionAutoRunFolderCallback = (
+	sessionId: string,
+	folderPath: string
+) => Promise<{ success: boolean; error?: string }>;
 
 /**
  * Notification kinds supported by the desktop app.
@@ -437,6 +467,75 @@ export type GetBionifyReadingModeCallback = () => boolean;
  */
 export type GetCustomCommandsCallback = () => CustomAICommand[];
 
+// =============================================================================
+// External Session Inspection (maestro-cli session list / session show)
+// =============================================================================
+
+/**
+ * Single open AI tab surfaced by `maestro-cli session list`.
+ *
+ * `tabId` is the addressable identifier consumers (Maestro-Discord, Cue) pass
+ * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
+ * an alias kept for symmetry with `dispatch`'s response shape — the duplicate
+ * field lets polling consumers use whichever name they prefer.
+ */
+export interface DesktopSessionEntry {
+	tabId: string;
+	sessionId: string;
+	/** Maestro agent (LeftBar entity) ID this tab belongs to. */
+	agentId: string;
+	agentName: string;
+	toolType: string;
+	/** User-defined tab name; null when the user hasn't named the tab. */
+	name: string | null;
+	/** Provider session id (e.g. Claude `session_id`) bound to this tab. */
+	agentSessionId: string | null;
+	state: 'idle' | 'busy';
+	createdAt: number;
+	starred: boolean;
+}
+
+/**
+ * One message in a session-history response.
+ *
+ * `role` is a coarse derived label intended for conversational consumers
+ * (Discord bots etc.). `source` preserves the raw `LogEntry.source` so callers
+ * that need finer detail (e.g. distinguishing tool output from assistant text)
+ * can still discriminate.
+ */
+export interface SessionHistoryMessage {
+	id: string;
+	role: 'user' | 'assistant' | 'system' | 'tool' | 'thinking' | 'error' | 'unknown';
+	source: string;
+	content: string;
+	/** ISO-8601 timestamp. */
+	timestamp: string;
+}
+
+export interface SessionHistoryResult {
+	tabId: string;
+	sessionId: string;
+	agentId: string;
+	agentSessionId: string | null;
+	messages: SessionHistoryMessage[];
+}
+
+export interface GetSessionHistoryOptions {
+	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */
+	sinceMs?: number;
+	/** After other filters, keep only the last N messages. */
+	tail?: number;
+}
+
+/** Callback to enumerate all open AI tabs across all desktop agents. */
+export type ListDesktopSessionsCallback = () => DesktopSessionEntry[];
+
+/** Callback to fetch a tab's full conversation history by tabId. */
+export type GetSessionHistoryCallback = (
+	tabId: string,
+	options?: GetSessionHistoryOptions
+) => SessionHistoryResult | null;
+
 /**
  * Callback type for fetching history entries.
  * Uses HistoryEntry from shared/types.ts as the canonical type.
@@ -444,7 +543,9 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
 export type GetHistoryCallback = (
 	projectPath?: string,
 	sessionId?: string
-) => import('../../shared/types').HistoryEntry[];
+) =>
+	| import('../../shared/types').HistoryEntry[]
+	| Promise<import('../../shared/types').HistoryEntry[]>;
 
 /**
  * Callback to get all connected web clients.
@@ -498,6 +599,33 @@ export interface AutoRunDocument {
 	path: string;
 	taskCount: number;
 	completedCount: number;
+	/** Subfolder (relative path without filename), empty string for root */
+	folder?: string;
+}
+
+/**
+ * Playbook document entry surfaced to web/CLI clients.
+ * Matches PlaybookDocumentEntry in shared/types.ts but kept local to the
+ * web-server module to avoid pulling shared types into the web bundle.
+ */
+export interface WebPlaybookDocument {
+	filename: string;
+	resetOnCompletion: boolean;
+}
+
+/**
+ * Saved Playbook configuration (subset surfaced to web/mobile clients).
+ * Worktree settings are intentionally omitted — they're desktop-only.
+ */
+export interface WebPlaybook {
+	id: string;
+	name: string;
+	createdAt: number;
+	updatedAt: number;
+	documents: WebPlaybookDocument[];
+	loopEnabled: boolean;
+	maxLoops?: number | null;
+	prompt: string;
 }
 
 /**
@@ -629,6 +757,36 @@ export type SaveAutoRunDocCallback = (
 	content: string
 ) => Promise<boolean>;
 export type StopAutoRunCallback = (sessionId: string) => Promise<boolean>;
+export type ResetAutoRunDocTasksCallback = (
+	sessionId: string,
+	filename: string
+) => Promise<boolean>;
+export type ResumeAutoRunErrorCallback = (sessionId: string) => Promise<boolean>;
+export type SkipAutoRunDocumentCallback = (sessionId: string) => Promise<boolean>;
+export type AbortAutoRunErrorCallback = (sessionId: string) => Promise<boolean>;
+export type ListPlaybooksCallback = (sessionId: string) => Promise<WebPlaybook[]>;
+export type CreatePlaybookCallback = (
+	sessionId: string,
+	playbook: {
+		name: string;
+		documents: WebPlaybookDocument[];
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	}
+) => Promise<WebPlaybook | null>;
+export type UpdatePlaybookCallback = (
+	sessionId: string,
+	playbookId: string,
+	updates: Partial<{
+		name: string;
+		documents: WebPlaybookDocument[];
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	}>
+) => Promise<WebPlaybook | null>;
+export type DeletePlaybookCallback = (sessionId: string, playbookId: string) => Promise<boolean>;
 export type GetFileTreeCallback = (sessionId: string, subPath?: string) => Promise<FileTreeNode[]>;
 export type GetFileContentCallback = (
 	sessionId: string,

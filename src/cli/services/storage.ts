@@ -474,6 +474,19 @@ export function resolveGroupId(partialId: string): string {
 }
 
 /**
+ * Returns the mtime (ms since epoch) of a session's history file as a cheap
+ * recency proxy. Returns 0 when the file doesn't exist or can't be stat'd, so
+ * sessions that have never been used sort below ones that have.
+ */
+export function getSessionHistoryMtimeMs(sessionId: string): number {
+	try {
+		return fs.statSync(getSessionHistoryPath(sessionId)).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
  * Get a session by ID (supports partial IDs)
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {

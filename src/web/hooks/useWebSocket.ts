@@ -79,6 +79,9 @@ export interface SessionData {
 	// Worktree subagent support
 	parentSessionId?: string | null; // If this is a worktree child, links to parent session
 	worktreeBranch?: string | null; // Git branch for this worktree child
+	// The session's configured Auto Run folder (null/undefined when not yet set).
+	// Used by the mobile/web folder picker to highlight the current selection.
+	autoRunFolderPath?: string | null;
 }
 
 /**
@@ -95,6 +98,13 @@ export interface AutoRunState {
 	currentDocumentIndex?: number; // Current document being processed (0-based)
 	totalTasksAcrossAllDocs?: number; // Total tasks across all documents
 	completedTasksAcrossAllDocs?: number; // Completed tasks across all documents
+	// Error pause fields (Phase 5.10) — present when batch is paused awaiting resolution
+	errorPaused?: boolean;
+	errorMessage?: string;
+	errorType?: string;
+	errorRecoverable?: boolean;
+	errorDocumentIndex?: number;
+	errorTaskDescription?: string;
 }
 
 /**

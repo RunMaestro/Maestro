@@ -11,6 +11,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { openBrowser } from './commands/open-browser';
@@ -162,11 +163,40 @@ program
 	)
 	.action(dispatch);
 
+// Session inspection commands - read-only access to desktop conversation state.
+// Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
+// left off without owning a persistent channel — pair with `dispatch` to write
+// and `session show` to follow up.
+const session = program
+	.command('session')
+	.description('Inspect open desktop tabs and their conversation history');
+
+session
+	.command('list')
+	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(sessionList);
+
+session
+	.command('show <tab-id>')
+	.description('Print conversation history for a desktop tab')
+	.option(
+		'--since <timestamp>',
+		'Only return messages after this timestamp (ISO-8601 or epoch ms/sec)'
+	)
+	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
+	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
+	.action(sessionShow);
+
 // Open file command - open a file in the Maestro desktop app
 program
 	.command('open-file <file-path>')
 	.description('Open a file as a preview tab in the Maestro desktop app')
-	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'-s, --session <id>',
+		"Target agent (defaults to auto-detect by file path's owning agent)"
+	)
+	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
 	.action(openFile);
 
 // Open browser command - open a URL in a browser tab in the Maestro desktop app

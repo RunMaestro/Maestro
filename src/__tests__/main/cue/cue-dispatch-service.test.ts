@@ -84,7 +84,9 @@ describe('createCueDispatchService', () => {
 				0,
 				undefined,
 				undefined,
-				undefined
+				undefined,
+				undefined, // chainRootId
+				undefined // parentEventId
 			);
 		});
 	});
@@ -198,7 +200,9 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined,
-				undefined
+				undefined,
+				undefined, // chainRootId
+				undefined // parentEventId
 			);
 		});
 
@@ -224,7 +228,9 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined,
-				undefined
+				undefined,
+				undefined, // chainRootId
+				undefined // parentEventId
 			);
 		});
 	});

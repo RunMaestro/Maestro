@@ -6,7 +6,7 @@
  * Long-press on a tab shows a popover with rename, star, and move actions.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useLongPress } from '../hooks/useLongPress';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -540,6 +540,14 @@ function TabActionsPopover({
 	);
 }
 
+/**
+ * A tab is considered "unread" if hasUnread is set OR the tab is busy
+ * (mirrors the agent-level bell filter in LeftPanel).
+ */
+function tabHasUnreadActivity(tab: AITabData): boolean {
+	return Boolean(tab.hasUnread) || tab.state === 'busy';
+}
+
 export function TabBar({
 	tabs,
 	activeTabId,
@@ -557,6 +565,7 @@ export function TabBar({
 	const colors = useThemeColors();
 	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
 	const [showNewTabMenu, setShowNewTabMenu] = useState(false);
+	const [showUnreadOnly, setShowUnreadOnly] = useState(false);
 	const newTabMenuRef = useRef<HTMLDivElement>(null);
 
 	const handleTabLongPress = useCallback((tab: AITabData, tabIdx: number, rect: DOMRect) => {
@@ -579,6 +588,31 @@ export function TabBar({
 		return () => document.removeEventListener('mousedown', handleClickOutside);
 	}, [showNewTabMenu]);
 
+	// Bell filter — derived state for whether the indicator dot should appear
+	// on the bell button and which tabs to render. The button stays clickable
+	// even when there are no unread tabs (matches the desktop Left Bar bell):
+	// toggling it on with everything quiet just narrows the bar to the active
+	// tab.
+	//
+	// Exclude the currently focused AI tab from the badge calc — its activity
+	// is already in front of the user, so flagging it as off-tab unread would
+	// be misleading and toggling the bell wouldn't reveal anything new.
+	const hasUnreadTabs = tabs.some(
+		(tab) => !(inputMode === 'ai' && tab.id === activeTabId) && tabHasUnreadActivity(tab)
+	);
+
+	const visibleTabs = showUnreadOnly
+		? tabs.filter((tab) => tab.id === activeTabId || tabHasUnreadActivity(tab))
+		: tabs;
+
+	// Pre-build an id→index map so the render loop's lookup of the original
+	// (unfiltered) tab index stays O(1) instead of O(n) per tab.
+	const tabIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		tabs.forEach((tab, index) => map.set(tab.id, index));
+		return map;
+	}, [tabs]);
+
 	const canClose = tabs.length > 1;
 
 	return (
@@ -590,7 +624,7 @@ export function TabBar({
 				borderBottom: `1px solid ${colors.border}`,
 			}}
 		>
-			{/* Pinned buttons - search and new tab */}
+			{/* Pinned buttons - bell, search, and new tab */}
 			<div
 				style={{
 					flexShrink: 0,
@@ -600,6 +634,61 @@ export function TabBar({
 					gap: '6px',
 				}}
 			>
+				{/* Bell filter — narrows the bar to the active tab plus any with
+				    unread/busy activity. Always clickable so users can hide quiet
+				    tabs even when nothing is currently unread. */}
+				<button
+					onClick={() => {
+						triggerHaptic(HAPTIC_PATTERNS.tap);
+						setShowUnreadOnly((prev) => !prev);
+					}}
+					style={{
+						position: 'relative',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						width: '28px',
+						height: '28px',
+						borderRadius: '14px',
+						border: `1px solid ${showUnreadOnly ? colors.accent : colors.border}`,
+						backgroundColor: showUnreadOnly ? colors.accent : colors.bgMain,
+						color: showUnreadOnly ? '#fff' : colors.textDim,
+						cursor: 'pointer',
+						marginBottom: '4px',
+						padding: 0,
+					}}
+					aria-pressed={showUnreadOnly}
+					aria-label={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+					title={showUnreadOnly ? 'Showing unread tabs only' : 'Filter unread tabs'}
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+						<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+					</svg>
+					{hasUnreadTabs && !showUnreadOnly && (
+						<span
+							style={{
+								position: 'absolute',
+								top: '2px',
+								right: '2px',
+								width: '6px',
+								height: '6px',
+								borderRadius: '50%',
+								backgroundColor: colors.accent,
+							}}
+						/>
+					)}
+				</button>
+
 				{/* Search tabs button */}
 				{onOpenTabSearch && (
 					<button
@@ -776,19 +865,24 @@ export function TabBar({
 				}}
 				className="hide-scrollbar"
 			>
-				{tabs.map((tab, index) => (
-					<Tab
-						key={tab.id}
-						tab={tab}
-						tabIndex={index}
-						isActive={inputMode === 'ai' && tab.id === activeTabId}
-						canClose={canClose}
-						colors={colors}
-						onSelect={() => onSelectTab(tab.id)}
-						onClose={() => onCloseTab(tab.id)}
-						onLongPress={handleTabLongPress}
-					/>
-				))}
+				{visibleTabs.map((tab) => {
+					// Keep tabIndex aligned with the unfiltered tabs array so
+					// Move Left / Move Right reorder math stays correct.
+					const tabIndex = tabIndexById.get(tab.id) ?? -1;
+					return (
+						<Tab
+							key={tab.id}
+							tab={tab}
+							tabIndex={tabIndex}
+							isActive={inputMode === 'ai' && tab.id === activeTabId}
+							canClose={canClose}
+							colors={colors}
+							onSelect={() => onSelectTab(tab.id)}
+							onClose={() => onCloseTab(tab.id)}
+							onLongPress={handleTabLongPress}
+						/>
+					);
+				})}
 
 				{/* Terminal tab */}
 				{onSelectTerminal && (

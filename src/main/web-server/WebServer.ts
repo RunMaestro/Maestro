@@ -73,6 +73,7 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -81,6 +82,14 @@ import type {
 	GetAutoRunDocContentCallback,
 	SaveAutoRunDocCallback,
 	StopAutoRunCallback,
+	ResetAutoRunDocTasksCallback,
+	ResumeAutoRunErrorCallback,
+	SkipAutoRunDocumentCallback,
+	AbortAutoRunErrorCallback,
+	ListPlaybooksCallback,
+	CreatePlaybookCallback,
+	UpdatePlaybookCallback,
+	DeletePlaybookCallback,
 	GetSettingsCallback,
 	SetSettingCallback,
 	GetGroupsCallback,
@@ -117,6 +126,8 @@ import type {
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
 	NotifyCenterFlashCallback,
+	ListDesktopSessionsCallback,
+	GetSessionHistoryCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -457,6 +468,10 @@ export class WebServer {
 		this.callbackRegistry.setConfigureAutoRunCallback(callback);
 	}
 
+	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
+		this.callbackRegistry.setSessionAutoRunFolderCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -475,6 +490,38 @@ export class WebServer {
 
 	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
 		this.callbackRegistry.setStopAutoRunCallback(callback);
+	}
+
+	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {
+		this.callbackRegistry.setResetAutoRunDocTasksCallback(callback);
+	}
+
+	setResumeAutoRunErrorCallback(callback: ResumeAutoRunErrorCallback): void {
+		this.callbackRegistry.setResumeAutoRunErrorCallback(callback);
+	}
+
+	setSkipAutoRunDocumentCallback(callback: SkipAutoRunDocumentCallback): void {
+		this.callbackRegistry.setSkipAutoRunDocumentCallback(callback);
+	}
+
+	setAbortAutoRunErrorCallback(callback: AbortAutoRunErrorCallback): void {
+		this.callbackRegistry.setAbortAutoRunErrorCallback(callback);
+	}
+
+	setListPlaybooksCallback(callback: ListPlaybooksCallback): void {
+		this.callbackRegistry.setListPlaybooksCallback(callback);
+	}
+
+	setCreatePlaybookCallback(callback: CreatePlaybookCallback): void {
+		this.callbackRegistry.setCreatePlaybookCallback(callback);
+	}
+
+	setUpdatePlaybookCallback(callback: UpdatePlaybookCallback): void {
+		this.callbackRegistry.setUpdatePlaybookCallback(callback);
+	}
+
+	setDeletePlaybookCallback(callback: DeletePlaybookCallback): void {
+		this.callbackRegistry.setDeletePlaybookCallback(callback);
 	}
 
 	setGetSettingsCallback(callback: GetSettingsCallback): void {
@@ -595,6 +642,14 @@ export class WebServer {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
+	}
+
+	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
+		this.callbackRegistry.setListDesktopSessionsCallback(callback);
+	}
+
+	setGetSessionHistoryCallback(callback: GetSessionHistoryCallback): void {
+		this.callbackRegistry.setGetSessionHistoryCallback(callback);
 	}
 
 	broadcastGroupsChanged(groups: GroupData[]): void {
@@ -746,8 +801,10 @@ export class WebServer {
 				command: string,
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
-				force?: boolean
-			) => this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force),
+				force?: boolean,
+				images?: string[]
+			) =>
+				this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force, images),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
@@ -764,8 +821,8 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			openFileTab: async (sessionId: string, filePath: string) =>
-				this.callbackRegistry.openFileTab(sessionId, filePath),
+			openFileTab: async (sessionId: string, filePath: string, switchToAgent: boolean) =>
+				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string) =>
@@ -782,6 +839,8 @@ export class WebServer {
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
 			) => this.callbackRegistry.configureAutoRun(sessionId, config),
+			setSessionAutoRunFolder: async (sessionId: string, folderPath: string) =>
+				this.callbackRegistry.setSessionAutoRunFolder(sessionId, folderPath),
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getLiveSessionInfo: (sessionId: string) =>
 				this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -792,6 +851,26 @@ export class WebServer {
 			saveAutoRunDoc: async (sessionId: string, filename: string, content: string) =>
 				this.callbackRegistry.saveAutoRunDoc(sessionId, filename, content),
 			stopAutoRun: async (sessionId: string) => this.callbackRegistry.stopAutoRun(sessionId),
+			resetAutoRunDocTasks: async (sessionId: string, filename: string) =>
+				this.callbackRegistry.resetAutoRunDocTasks(sessionId, filename),
+			resumeAutoRunError: async (sessionId: string) =>
+				this.callbackRegistry.resumeAutoRunError(sessionId),
+			skipAutoRunDocument: async (sessionId: string) =>
+				this.callbackRegistry.skipAutoRunDocument(sessionId),
+			abortAutoRunError: async (sessionId: string) =>
+				this.callbackRegistry.abortAutoRunError(sessionId),
+			listPlaybooks: async (sessionId: string) => this.callbackRegistry.listPlaybooks(sessionId),
+			createPlaybook: async (
+				sessionId: string,
+				playbook: Parameters<CallbackRegistry['createPlaybook']>[1]
+			) => this.callbackRegistry.createPlaybook(sessionId, playbook),
+			updatePlaybook: async (
+				sessionId: string,
+				playbookId: string,
+				updates: Parameters<CallbackRegistry['updatePlaybook']>[2]
+			) => this.callbackRegistry.updatePlaybook(sessionId, playbookId, updates),
+			deletePlaybook: async (sessionId: string, playbookId: string) =>
+				this.callbackRegistry.deletePlaybook(sessionId, playbookId),
 			getSettings: () => this.callbackRegistry.getSettings(),
 			setSetting: async (key: string, value: any) => this.callbackRegistry.setSetting(key, value),
 			getGroups: () => this.callbackRegistry.getGroups(),
@@ -844,6 +923,8 @@ export class WebServer {
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
+			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
+				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),
 			writeToTerminal: (sessionId: string, data: string) =>
 				this.writeToTerminalCallback?.(sessionId, data) ?? false,
 			resizeTerminal: (sessionId: string, cols: number, rows: number) =>
@@ -858,6 +939,9 @@ export class WebServer {
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
 			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
+			listDesktopSessions: () => this.callbackRegistry.listDesktopSessions(),
+			getSessionHistory: (tabId, options) =>
+				this.callbackRegistry.getSessionHistory(tabId, options),
 		});
 	}
 

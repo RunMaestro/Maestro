@@ -38,7 +38,10 @@ import type {
 } from '../../../shared/cue-pipeline-types';
 import { getNextPipelineColor } from '../../components/CuePipelineEditor/pipelineColors';
 import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
-import { resolvePipelineOffset } from '../../components/CuePipelineEditor/utils/pipelineGraph';
+import {
+	resolvePipelineOffset,
+	resolveNonOverlappingPipelineOffset,
+} from '../../components/CuePipelineEditor/utils/pipelineGraph';
 import { DEFAULT_TRIGGER_LABELS } from '../../components/CuePipelineEditor/utils/pipelineValidation';
 import { generateUUID } from '../../../shared/uuid';
 
@@ -184,15 +187,36 @@ export function usePipelineCanvasCallbacks({
 				if (dx === 0 && dy === 0) return;
 				const movedId = drag.pipelineId;
 				const yOffsets = stableYOffsetsRef.current;
-				setPipelineState((prev) => ({
-					...prev,
-					pipelines: prev.pipelines.map((pipeline) => {
-						const current = resolvePipelineOffset(pipeline, yOffsets);
-						const next =
-							pipeline.id === movedId ? { x: current.x + dx, y: current.y + dy } : current;
-						return { ...pipeline, viewOffset: next };
-					}),
-				}));
+				setPipelineState((prev) => {
+					const movedPipeline = prev.pipelines.find((p) => p.id === movedId);
+					if (!movedPipeline) return prev;
+
+					const currentMovedOffset = resolvePipelineOffset(movedPipeline, yOffsets);
+					const desiredMovedOffset = {
+						x: currentMovedOffset.x + dx,
+						y: currentMovedOffset.y + dy,
+					};
+
+					// Slide the dropped pipeline to a free spot if its desired
+					// position would overlap any other pipeline group's bounding box.
+					const others = prev.pipelines
+						.filter((p) => p.id !== movedId)
+						.map((p) => ({ pipeline: p, offset: resolvePipelineOffset(p, yOffsets) }));
+					const adjustedMovedOffset = resolveNonOverlappingPipelineOffset(
+						movedPipeline,
+						desiredMovedOffset,
+						others
+					);
+
+					return {
+						...prev,
+						pipelines: prev.pipelines.map((pipeline) => {
+							const current = resolvePipelineOffset(pipeline, yOffsets);
+							const next = pipeline.id === movedId ? adjustedMovedOffset : current;
+							return { ...pipeline, viewOffset: next };
+						}),
+					};
+				});
 				persistLayout();
 				return;
 			}

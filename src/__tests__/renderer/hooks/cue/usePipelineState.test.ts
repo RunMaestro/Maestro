@@ -33,6 +33,29 @@ vi.mock('../../../../renderer/hooks/cue/usePipelineLayout', () => ({
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml', () => ({
 	pipelinesToYaml: vi.fn(() => ({ yaml: 'test', promptFiles: new Map() })),
+	pipelinesToYamlByOwnerCwd: vi.fn(
+		(
+			pipelines: Array<{ nodes: Array<{ type: string; data: Record<string, unknown> }> }>,
+			_settings: unknown,
+			sessionsById: ReadonlyMap<string, { projectRoot?: string }>
+		) => {
+			const byCwd = new Map<string, { yaml: string; promptFiles: Map<string, string> }>();
+			for (const p of pipelines) {
+				for (const n of p.nodes) {
+					let sessionId: string | undefined;
+					if (n.type === 'agent') sessionId = n.data.sessionId as string | undefined;
+					else if (n.type === 'command') sessionId = n.data.owningSessionId as string | undefined;
+					if (!sessionId) continue;
+					const cwd = sessionsById.get(sessionId)?.projectRoot;
+					if (!cwd) continue;
+					if (!byCwd.has(cwd)) {
+						byCwd.set(cwd, { yaml: 'test', promptFiles: new Map() });
+					}
+				}
+			}
+			return { byCwd, unresolved: [] as Array<{ subName: string; agentId: string }> };
+		}
+	),
 }));
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline', () => ({
@@ -1016,7 +1039,7 @@ describe('usePipelineState', () => {
 		});
 
 		expect(result.current.validationErrors).toContainEqual(
-			expect.stringContaining('No project root found')
+			expect.stringContaining('no resolvable project root')
 		);
 		expect(mockWriteYaml).not.toHaveBeenCalled();
 	});
@@ -1064,8 +1087,16 @@ describe('usePipelineState', () => {
 	});
 
 	it('handleSave succeeds with valid pipeline and project root', async () => {
+		// `makeAgentNode('a1', 'Agent 1')` sets sessionId='session-a1', so the
+		// session id must match for the per-agent-cwd writer to find the cwd
+		// via sessionsById (the new emit path is id-only, not name-fallback).
 		const sessions = [
-			{ id: 's1', name: 'Agent 1', toolType: 'claude-code', projectRoot: '/test/project' },
+			{
+				id: 'session-a1',
+				name: 'Agent 1',
+				toolType: 'claude-code',
+				projectRoot: '/test/project',
+			},
 		];
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions })));
 

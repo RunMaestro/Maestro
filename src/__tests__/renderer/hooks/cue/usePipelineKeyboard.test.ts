@@ -237,28 +237,47 @@ describe('usePipelineKeyboard', () => {
 	});
 
 	describe('Interaction mode (P / S)', () => {
-		it('plain "p" switches to hand mode', () => {
+		// setInteractionMode is now a functional updater (Dispatch<SetStateAction>)
+		// to support toggle semantics: pressing P from 'hand' flips to 'pointer'.
+		// Helper: invoke the latest captured updater with a given prev state.
+		function applyUpdater(
+			mock: ReturnType<typeof vi.fn>,
+			prev: 'hand' | 'pointer'
+		): 'hand' | 'pointer' {
+			const updater = mock.mock.calls.at(-1)?.[0] as (p: 'hand' | 'pointer') => 'hand' | 'pointer';
+			return updater(prev);
+		}
+
+		it('plain "p" switches to hand mode (from pointer)', () => {
 			const h = setup();
 			dispatch('p');
-			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+			expect(h.setInteractionMode).toHaveBeenCalled();
+			expect(applyUpdater(h.setInteractionMode, 'pointer')).toBe('hand');
 		});
 
 		it('plain "P" (uppercase) switches to hand mode', () => {
 			const h = setup();
 			dispatch('P');
-			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+			expect(applyUpdater(h.setInteractionMode, 'pointer')).toBe('hand');
 		});
 
-		it('plain "s" switches to pointer mode', () => {
+		it('plain "s" switches to pointer mode (from hand)', () => {
 			const h = setup();
 			dispatch('s');
-			expect(h.setInteractionMode).toHaveBeenCalledWith('pointer');
+			expect(applyUpdater(h.setInteractionMode, 'hand')).toBe('pointer');
 		});
 
 		it('plain "S" (uppercase) switches to pointer mode', () => {
 			const h = setup();
 			dispatch('S');
-			expect(h.setInteractionMode).toHaveBeenCalledWith('pointer');
+			expect(applyUpdater(h.setInteractionMode, 'hand')).toBe('pointer');
+		});
+
+		it('pressing same mode key twice toggles back', () => {
+			// Pressing 'p' while already in 'hand' should flip to 'pointer'.
+			const h = setup();
+			dispatch('p');
+			expect(applyUpdater(h.setInteractionMode, 'hand')).toBe('pointer');
 		});
 
 		it('does not change mode when typing in an input INSIDE the editor', () => {
@@ -278,7 +297,7 @@ describe('usePipelineKeyboard', () => {
 			const externalInput = document.createElement('textarea');
 			document.body.appendChild(externalInput);
 			const ev = dispatch('p', { target: externalInput });
-			expect(h.setInteractionMode).toHaveBeenCalledWith('hand');
+			expect(applyUpdater(h.setInteractionMode, 'pointer')).toBe('hand');
 			expect(ev.defaultPrevented).toBe(true);
 		});
 

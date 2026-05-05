@@ -54,7 +54,7 @@ export type {
 	ModeratorConfig,
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
-import type { AgentError } from '../../shared/types';
+import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
@@ -513,6 +513,12 @@ export interface TerminalTab {
 	exitCode?: number; // Exit code when state === 'exited'
 	scrollTop?: number; // Saved scroll position (restored on tab re-focus)
 	searchQuery?: string; // Preserved search query for the xterm.js search addon
+	// Command to run automatically each time the PTY is spawned for this tab
+	// (e.g. on app restart). Empty/undefined disables the feature.
+	startupCommand?: string;
+	// Working directory for the startup command. When set, the PTY is spawned in
+	// this directory. Falls back to tab.cwd / session.cwd when unset.
+	startupCommandCwd?: string;
 }
 
 /**
@@ -669,12 +675,10 @@ export interface Session {
 	batchRunnerPrompt?: string;
 	// Timestamp when the batch runner prompt was last modified
 	batchRunnerPromptModifiedAt?: number;
-	// CLI activity - present when CLI is running a playbook on this session
-	cliActivity?: {
-		playbookId: string;
-		playbookName: string;
-		startedAt: number;
-	};
+	// CLI activity - present when CLI is running a playbook on this session.
+	// Shape lives in shared/types.ts (SessionCliActivity) so the persistence
+	// diff comparator stays in lock-step with this producer's contract.
+	cliActivity?: SessionCliActivity;
 
 	// Tab management for AI mode (multi-tab Claude Code sessions)
 	// Each tab represents a separate Claude Code conversation

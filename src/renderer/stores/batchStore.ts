@@ -144,6 +144,10 @@ export const useBatchStore = create<BatchStore>()((set) => ({
 
 	updateTaskCount: (filename, completed, total) =>
 		set((s) => {
+			const existing = s.documentTaskCounts.get(filename);
+			if (existing && existing.completed === completed && existing.total === total) {
+				return {};
+			}
 			const next = new Map(s.documentTaskCounts);
 			next.set(filename, { completed, total });
 			return { documentTaskCounts: next };

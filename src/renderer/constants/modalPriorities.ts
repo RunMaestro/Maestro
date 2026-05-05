@@ -50,6 +50,9 @@ export const MODAL_PRIORITIES = {
 	/** Rename tab modal */
 	RENAME_TAB: 875,
 
+	/** Terminal tab startup command configuration modal */
+	TERMINAL_STARTUP_COMMAND: 873,
+
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
 
@@ -215,8 +218,14 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
+	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
+
+	/** Maestro Cue backup diff viewer (above Cue modal + help) */
+	CUE_BACKUP_DIFF: 470,
 
 	/** Maestro Cue help modal (above Cue modal) */
 	CUE_HELP: 465,
@@ -244,6 +253,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Save markdown modal */
 	SAVE_MARKDOWN: 160,
+
+	/** Image annotator modal - above lightbox so Escape closes annotator first */
+	IMAGE_ANNOTATOR: 165,
 
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,

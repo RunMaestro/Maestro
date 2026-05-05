@@ -28,6 +28,9 @@ export interface CueEventRecord {
 	createdAt: number;
 	completedAt: number | null;
 	payload: string | null;
+	pipelineId?: string | null;
+	chainRootId?: string | null;
+	parentEventId?: string | null;
 }
 
 // ============================================================================
@@ -44,13 +47,24 @@ const CREATE_CUE_EVENTS_SQL = `
     status TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     completed_at INTEGER,
-    payload TEXT
+    payload TEXT,
+    pipeline_id TEXT,
+    chain_root_id TEXT,
+    parent_event_id TEXT
   )
 `;
 
+// Phase 01 additive columns. These are nullable on purpose: existing callers
+// that don't pass lineage / pipeline metadata (e.g. when usageStats is off)
+// must continue to record events. The migration block in initCueDb() ALTERs
+// existing databases to match the CREATE TABLE schema.
+const CUE_EVENTS_ADDITIVE_COLUMNS = ['pipeline_id', 'chain_root_id', 'parent_event_id'] as const;
+
 const CREATE_CUE_EVENTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_events_created ON cue_events(created_at);
-  CREATE INDEX IF NOT EXISTS idx_cue_events_session ON cue_events(session_id)
+  CREATE INDEX IF NOT EXISTS idx_cue_events_session ON cue_events(session_id);
+  CREATE INDEX IF NOT EXISTS idx_cue_events_pipeline ON cue_events(pipeline_id);
+  CREATE INDEX IF NOT EXISTS idx_cue_events_chain_root ON cue_events(chain_root_id)
 `;
 
 const CREATE_CUE_HEARTBEAT_SQL = `
@@ -88,13 +102,38 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
     action TEXT,
     command_json TEXT,
     chain_depth INTEGER DEFAULT 0,
-    queued_at INTEGER NOT NULL
+    queued_at INTEGER NOT NULL,
+    chain_root_id TEXT,
+    parent_event_id TEXT
   )
 `;
+
+// Phase 01 additive columns on the persisted queue. Kept separate from the
+// `cue_events` additive set because the two tables migrate independently:
+// queue rows are transient (deleted on dispatch), so the migration only needs
+// to keep schema in sync without backfilling values.
+const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = ['chain_root_id', 'parent_event_id'] as const;
 
 const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_session ON cue_event_queue(session_id);
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_queued ON cue_event_queue(queued_at)
+`;
+
+// Telemetry outbox — buffers telemetry events between flushes. Rows are
+// inserted from the dispatch / run-completion hot paths, read in batches by
+// the submitter, and deleted only after a successful POST to runmaestro.ai.
+// Failed flushes leave rows in place so the next flush retries them. Bounded
+// in practice by the outbox-threshold flush trigger.
+const CREATE_CUE_TELEMETRY_OUTBOX_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_telemetry_outbox (
+    id TEXT PRIMARY KEY,
+    event_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`;
+
+const CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_telemetry_outbox_created ON cue_telemetry_outbox(created_at)
 `;
 
 // ============================================================================
@@ -151,6 +190,7 @@ export function initCueDb(
 
 	// Create tables
 	db.prepare(CREATE_CUE_EVENTS_SQL).run();
+	migrateCueEventsAdditiveColumns(db);
 	for (const sql of CREATE_CUE_EVENTS_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
@@ -158,9 +198,12 @@ export function initCueDb(
 	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
 	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
 	db.prepare(CREATE_CUE_EVENT_QUEUE_SQL).run();
+	migrateCueEventQueueAdditiveColumns(db);
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
+	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
+	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -192,12 +235,53 @@ function getDb(): Database.Database {
 	return db;
 }
 
+/**
+ * Idempotent migration: ensures the `cue_events` table carries the Phase 01
+ * additive columns (`pipeline_id`, `chain_root_id`, `parent_event_id`). Safe to
+ * run on fresh databases (CREATE TABLE already added the columns, so nothing
+ * is missing) and on existing databases where ALTER TABLE backfills only the
+ * columns that aren't already present. Mirrors the conditional-ALTER pattern
+ * used by `src/main/stats/migrations.ts`.
+ */
+function migrateCueEventsAdditiveColumns(database: Database.Database): void {
+	const existing = database.pragma('table_info(cue_events)') as Array<{ name: string }>;
+	const existingNames = new Set(existing.map((row) => row.name));
+	for (const column of CUE_EVENTS_ADDITIVE_COLUMNS) {
+		if (!existingNames.has(column)) {
+			database.prepare(`ALTER TABLE cue_events ADD COLUMN ${column} TEXT`).run();
+		}
+	}
+}
+
+/**
+ * Idempotent migration: ensures the `cue_event_queue` table carries the Phase
+ * 01 chain-lineage columns (`chain_root_id`, `parent_event_id`) so persisted
+ * queue rows survive a crash with their lineage intact. Without this, recovery
+ * would orphan resumed runs into fresh chain roots in stats. Mirrors the
+ * conditional-ALTER pattern of `migrateCueEventsAdditiveColumns`.
+ */
+function migrateCueEventQueueAdditiveColumns(database: Database.Database): void {
+	const existing = database.pragma('table_info(cue_event_queue)') as Array<{ name: string }>;
+	const existingNames = new Set(existing.map((row) => row.name));
+	for (const column of CUE_EVENT_QUEUE_ADDITIVE_COLUMNS) {
+		if (!existingNames.has(column)) {
+			database.prepare(`ALTER TABLE cue_event_queue ADD COLUMN ${column} TEXT`).run();
+		}
+	}
+}
+
 // ============================================================================
 // Event Journal
 // ============================================================================
 
 /**
  * Record a new Cue event in the journal.
+ *
+ * `pipelineId`, `chainRootId`, `parentEventId` are Phase 01 additive fields:
+ * the dispatch path snapshots them at write time so per-pipeline and per-chain
+ * stats queries don't have to recompute lineage from in-memory state that's
+ * already been discarded. All three are optional and stored as NULL when
+ * omitted (e.g. when the usageStats Encore flag is off).
  */
 export function recordCueEvent(event: {
 	id: string;
@@ -207,11 +291,14 @@ export function recordCueEvent(event: {
 	subscriptionName: string;
 	status: string;
 	payload?: string;
+	pipelineId?: string | null;
+	chainRootId?: string | null;
+	parentEventId?: string | null;
 }): void {
 	getDb()
 		.prepare(
-			`INSERT OR REPLACE INTO cue_events (id, type, trigger_name, session_id, subscription_name, status, created_at, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT OR REPLACE INTO cue_events (id, type, trigger_name, session_id, subscription_name, status, created_at, payload, pipeline_id, chain_root_id, parent_event_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			event.id,
@@ -221,7 +308,10 @@ export function recordCueEvent(event: {
 			event.subscriptionName,
 			event.status,
 			Date.now(),
-			event.payload ?? null
+			event.payload ?? null,
+			event.pipelineId ?? null,
+			event.chainRootId ?? null,
+			event.parentEventId ?? null
 		);
 }
 
@@ -326,6 +416,9 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		created_at: number;
 		completed_at: number | null;
 		payload: string | null;
+		pipeline_id: string | null;
+		chain_root_id: string | null;
+		parent_event_id: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -338,6 +431,9 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 		createdAt: row.created_at,
 		completedAt: row.completed_at,
 		payload: row.payload,
+		pipelineId: row.pipeline_id,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
 	}));
 }
 
@@ -450,6 +546,11 @@ export interface CueQueuedEventRecord {
 	commandJson: string | null;
 	chainDepth: number;
 	queuedAt: number;
+	/** Phase 01 — chain root identity copied from the parent run, NULL for roots
+	 *  and for queue rows persisted before usageStats was enabled. */
+	chainRootId: string | null;
+	/** Phase 01 — immediate parent's runId, NULL for roots. */
+	parentEventId: string | null;
 }
 
 /** Persist a queued event. Throws on DB failure — use safePersistQueuedEvent for
@@ -459,8 +560,9 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 		.prepare(
 			`INSERT OR REPLACE INTO cue_event_queue
 			 (id, session_id, subscription_name, event_json, prompt, output_prompt,
-			  cli_output_json, action, command_json, chain_depth, queued_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  cli_output_json, action, command_json, chain_depth, queued_at,
+			  chain_root_id, parent_event_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			record.id,
@@ -473,7 +575,9 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			record.action,
 			record.commandJson,
 			record.chainDepth,
-			record.queuedAt
+			record.queuedAt,
+			record.chainRootId,
+			record.parentEventId
 		);
 }
 
@@ -505,6 +609,8 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		command_json: string | null;
 		chain_depth: number;
 		queued_at: number;
+		chain_root_id: string | null;
+		parent_event_id: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -519,6 +625,8 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		commandJson: row.command_json,
 		chainDepth: row.chain_depth,
 		queuedAt: row.queued_at,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
 	}));
 }
 
@@ -570,4 +678,76 @@ export function safeRemoveQueuedEvent(id: string): void {
 		);
 		captureException(err, { operation: 'safeRemoveQueuedEvent', id });
 	}
+}
+
+// ============================================================================
+// Telemetry Outbox
+// ============================================================================
+
+export interface CueTelemetryOutboxRow {
+	id: string;
+	eventJson: string;
+	createdAt: number;
+}
+
+/**
+ * Insert a telemetry event into the outbox. Failures are non-fatal — the
+ * dispatch / run-completion hot paths must never throw because of telemetry.
+ * A dropped row means at most one missed event in the next batch.
+ */
+export function insertTelemetryEvent(id: string, eventJson: string): void {
+	if (!db) return;
+	try {
+		db.prepare(
+			`INSERT OR REPLACE INTO cue_telemetry_outbox (id, event_json, created_at) VALUES (?, ?, ?)`
+		).run(id, eventJson, Date.now());
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to insert telemetry event (id=${id}): ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
+}
+
+/**
+ * Read up to `limit` outbox rows ordered by `created_at` (oldest first) so the
+ * submitter sends events in the order they were captured.
+ */
+export function getTelemetryBatch(limit: number): CueTelemetryOutboxRow[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, event_json, created_at FROM cue_telemetry_outbox ORDER BY created_at ASC LIMIT ?`
+		)
+		.all(limit) as Array<{ id: string; event_json: string; created_at: number }>;
+	return rows.map((row) => ({
+		id: row.id,
+		eventJson: row.event_json,
+		createdAt: row.created_at,
+	}));
+}
+
+/**
+ * Delete outbox rows by id after a successful submission. Missing rows are a
+ * no-op (a concurrent flush could have removed them already).
+ */
+export function deleteTelemetryEvents(ids: string[]): void {
+	if (!db || ids.length === 0) return;
+	const placeholders = ids.map(() => '?').join(',');
+	db.prepare(`DELETE FROM cue_telemetry_outbox WHERE id IN (${placeholders})`).run(...ids);
+}
+
+/** Count rows in the outbox. Used by the threshold-flush guard. */
+export function countTelemetryEvents(): number {
+	if (!db) return 0;
+	const row = db.prepare(`SELECT COUNT(*) AS c FROM cue_telemetry_outbox`).get() as
+		| { c: number }
+		| undefined;
+	return row?.c ?? 0;
+}
+
+/** Truncate the outbox. Used by tests and the kill-switch reset path. */
+export function clearTelemetryOutbox(): void {
+	if (!db) return;
+	db.prepare(`DELETE FROM cue_telemetry_outbox`).run();
 }

@@ -301,5 +301,87 @@ describe('cue-task-scanner', () => {
 
 			cleanup();
 		});
+
+		// PR-B 1.4: visibility-aware pause
+		describe('isActive gate', () => {
+			it('skips the directory walk when isActive returns false', async () => {
+				const onEvent = vi.fn();
+				let active = false;
+
+				const cleanup = createCueTaskScanner({
+					watchGlob: '**/*.md',
+					pollMinutes: 1,
+					projectRoot: '/project',
+					onEvent,
+					onLog: vi.fn(),
+					triggerName: 'test-scanner',
+					isActive: () => active,
+				});
+
+				await vi.advanceTimersByTimeAsync(3000);
+
+				expect(onEvent).not.toHaveBeenCalled();
+				// Walk never happened — readdirSync should not have been called
+				expect(mockReaddirSync).not.toHaveBeenCalled();
+				expect(mockReadFileSync).not.toHaveBeenCalled();
+
+				cleanup();
+			});
+
+			it('resumes scanning on the next interval when isActive flips back to true', async () => {
+				const onEvent = vi.fn();
+				let active = false;
+
+				mockReaddirSync.mockImplementation((_dir: string, opts: { withFileTypes: boolean }) => {
+					if (opts?.withFileTypes) {
+						return [{ name: 'task.md', isDirectory: () => false, isFile: () => true }];
+					}
+					return [];
+				});
+				mockReadFileSync.mockReturnValue('- [ ] task\n');
+
+				const cleanup = createCueTaskScanner({
+					watchGlob: '**/*.md',
+					pollMinutes: 1,
+					projectRoot: '/project',
+					onEvent,
+					onLog: vi.fn(),
+					triggerName: 'test-scanner',
+					isActive: () => active,
+				});
+
+				// Initial scan happens but is paused
+				await vi.advanceTimersByTimeAsync(3000);
+				expect(mockReaddirSync).not.toHaveBeenCalled();
+
+				// Activate — next interval tick should now scan
+				active = true;
+				await vi.advanceTimersByTimeAsync(60_000); // pollMinutes * 60_000 = 1 min
+				expect(mockReaddirSync).toHaveBeenCalled();
+
+				cleanup();
+			});
+
+			it('defaults to always-active when isActive is omitted', async () => {
+				const onEvent = vi.fn();
+
+				mockReaddirSync.mockImplementation(() => []);
+
+				const cleanup = createCueTaskScanner({
+					watchGlob: '**/*.md',
+					pollMinutes: 1,
+					projectRoot: '/project',
+					onEvent,
+					onLog: vi.fn(),
+					triggerName: 'test-scanner',
+					// No isActive — should behave as always-active.
+				});
+
+				await vi.advanceTimersByTimeAsync(3000);
+				expect(mockReaddirSync).toHaveBeenCalled();
+
+				cleanup();
+			});
+		});
 	});
 });

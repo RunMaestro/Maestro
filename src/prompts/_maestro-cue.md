@@ -96,9 +96,118 @@ Topologies available:
 - **Fan-out:** one subscription's `fan_out: [agentA, agentB]` dispatches in parallel with per-target `fan_out_prompts`. Use `fan_out_node_keys` to give each target its own visual node.
 - **Fan-in:** `source_session: [a, b, c]` fires once ALL listed sources complete (subject to `fan_in_timeout_minutes` / `fan_in_timeout_on_fail`). Each upstream output is available as `{{CUE_OUTPUT_<NAME>}}` (uppercased session name); `include_output_from` narrows which sources contribute to `{{CUE_SOURCE_OUTPUT}}`. **Reserve for cases where you genuinely need synchronized convergence** — e.g. summarizing three parallel research agents into one digest. Don't reach for fan-in just because several triggers happen to share a target.
 - **Forwarding:** an intermediate agent can pass an upstream's output through to a downstream agent by listing the source name in `forward_output_from: [<name>]`. The forwarded value is exposed downstream as `{{CUE_FORWARDED_<NAME>}}`.
-- **`cli_output`:** an object `cli_output: { target: "<source-agent-id>" }`. When set, the run's stdout is returned to that agent (typically the one that ran `maestro-cli send` or `cue trigger --source-agent-id`).
+- **Command node:** a subscription with `action: command` that runs a shell command (`command.mode: shell`) or a `maestro-cli` call (`command.mode: cli`) instead of an AI prompt. Emits `agent.completed` like any other run, so a downstream agent reads its stdout via `{{CUE_SOURCE_OUTPUT}}` (use `source_sub: <command-sub-name>` to pin the chain to that command and not other completions in the same session). See **Command Nodes** below for the full schema.
+- **`cli_output`:** an object `cli_output: { target: "<source-agent-id>" }`. When set, the run's stdout is returned to that agent (typically the one that ran `maestro-cli send` or `cue trigger --source-agent-id`). **Deprecated** — prefer a downstream `action: command` subscription with `command.mode: cli`.
 
 All of the topologies above can (and usually should) live inside a single pipeline — set the same `pipeline_name` on every subscription that participates.
+
+### Command Nodes (`action: command`)
+
+A **Command node** is a subscription that runs a shell command or invokes `maestro-cli` instead of dispatching a prompt to an AI agent. There is no separate top-level YAML key, no `event: command` type, and no separate node-graph — it's just a normal subscription with `action: command` plus a `command:` block. It lives in the same `subscriptions:` array as agent-prompt subs and shares all the standard fields (`pipeline_name`, `target_node_key`, `source_session`, etc.).
+
+**Schema:**
+
+```yaml
+- name: <unique-within-file>
+  event: <any of the 9 event types — see Event Types table>
+  enabled: true
+  action: command            # required to become a Command node
+  command:                   # required when action: command
+    # ---- mode: 'shell' ----
+    mode: shell
+    shell: 'gh pr list --json number,title'   # required, non-empty string
+    # ---- OR mode: 'cli' ----
+    mode: cli
+    cli:
+      command: send          # required; only 'send' is supported today
+      target: <session-id-or-name>             # required, supports template vars
+      message: '{{CUE_SOURCE_OUTPUT}}'         # optional; default is exactly this
+  # standard subscription fields all still apply (pipeline_name, target_node_key,
+  # source_session, source_sub, event-specific fields like interval_minutes, etc.)
+```
+
+**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present. **`fan_out` is rejected** on `action: command` subs — Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+
+**Fields that are NOT configurable per node** (and what they actually use):
+
+| Asked-for            | Reality                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `working_dir`        | Always the **owning session's `projectRoot`** (or the remote `projectRoot` when SSH-wrapped).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `timeout` (per-node) | Inherits `settings.timeout_minutes` (default 30). CLI mode is additionally clamped to a hard 30 s ceiling.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `env`                | Local mode: full `process.env`. SSH mode: `process.env` plus the wrapper's `customEnvVars`. No per-subscription overrides.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Shell selection      | Local: `spawn(..., { shell: true })` uses the user's default shell. SSH: hard-coded `bash -c`. Not configurable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Exit-code handling   | exit `0` → `completed`; non-zero → `failed`; killed-on-timeout → `timeout`. Hard-coded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Retry policy         | None. A failed run is just `failed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Max output size      | No cap on capture itself. Multiple distinct caps apply downstream: **`{{CUE_SOURCE_OUTPUT}}` is sliced to `SOURCE_OUTPUT_MAX_CHARS = 5000`** before reaching the next agent's prompt — head-slice on the run-manager's output-prompt path (`cue-run-manager.ts`), tail-slice on the completion-service downstream chain path (`cue-completion-service.ts`). Independent of that, **CLI mode** truncates the forwarded message at **30 000 chars on Windows / 100 000 on POSIX** to stay under argv ceilings. **History** entries truncate `stdout` at 10 000 chars. The full uncapped stdout only exists in the in-memory `CueRunResult.stdout`. |
+
+**SSH behavior:**
+
+- `mode: shell` honors the owning session's SSH remote config — runs on the remote host via `bash -c <substituted-command>` with the remote `projectRoot` as cwd.
+- `mode: cli` is intentionally **local-only**. `maestro-cli send` targets the local Maestro daemon, so SSH-wrapping it would point at the wrong daemon.
+
+**Trigger compatibility:** **All 9 event types can fire a Command node directly** (`app.startup`, `time.heartbeat`, `time.scheduled`, `file.changed`, `agent.completed`, `github.pull_request`, `github.issue`, `task.pending`, `cli.trigger`). Event-specific required fields (`interval_minutes`, `schedule_times`, `watch`, `repo`, `source_session`, etc.) apply normally regardless of `action`. The only `action: command`-specific restriction is the `fan_out` rejection above.
+
+**Output exposure & chaining (READ THIS):** Command runs route through the **same** completion path as agent runs and emit `agent.completed`. Downstream subscriptions chain off Command nodes the exact same way they chain off prompt subs — there is **no** separate `{{CUE_COMMAND_OUTPUT}}` variable, no separate event type:
+
+| Variable                      | Value when source is a Command node                                                                                                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{CUE_SOURCE_OUTPUT}}`       | The command's captured stdout, sliced to `SOURCE_OUTPUT_MAX_CHARS = 5000` (head-slice on the output-prompt path, tail-slice on the downstream chain path — see "Max output size" above). |
+| `{{CUE_SOURCE_STATUS}}`       | `completed` \| `failed` \| `timeout`                                                                                                                                                     |
+| `{{CUE_SOURCE_EXIT_CODE}}`    | Numeric exit code (or `null` on spawn failure or signal-kill, e.g. timeout).                                                                                                             |
+| `{{CUE_SOURCE_DURATION}}`     | Milliseconds.                                                                                                                                                                            |
+| `{{CUE_SOURCE_SESSION}}`      | Owning session **name** (Command nodes have no session of their own).                                                                                                                    |
+| `{{CUE_SOURCE_TRIGGERED_BY}}` | The Command subscription's `name`.                                                                                                                                                       |
+
+**Important chaining nuance:** because a Command node shares its owner's session, every completion in that session (the command run AND any agent run hosted there) emits `agent.completed` for the same `sourceSessionId`. To pin a chain sub to a specific upstream Command node, **set `source_sub` to the command sub's name** so the chain matches by `triggeredBy` instead of just by session:
+
+```yaml
+- name: after-shell-step
+  event: agent.completed
+  source_session: <owning-session-name>
+  source_sub: my-shell-step # filters by triggeredBy = this sub name
+  prompt: |
+    The shell step said:
+    {{CUE_SOURCE_OUTPUT}}
+```
+
+Without `source_sub`, the chain also fires on every other agent.completed in that session. `source_sub` accepts either a single name (`source_sub: my-shell-step`) or an array of names (`source_sub: [step-a, step-b]`) to OR-match completions from any of the listed upstream subscriptions — useful when one downstream chain should fan-in over several command nodes.
+
+**Worked example — `app.startup` → shell → agent:**
+
+```yaml
+# Pipeline: Morning Repo Snapshot (color: #06b6d4)
+
+subscriptions:
+  - name: snapshot-shell
+    pipeline_name: Morning Repo Snapshot
+    target_node_key: 1d3e9c12-7a4b-4e9f-9c11-2f6d8b3a4c01
+    event: app.startup
+    enabled: true
+    action: command
+    command:
+      mode: shell
+      shell: |
+        git log --since=yesterday --pretty='%h %s' &&
+        echo --- &&
+        gh pr list --state open --json number,title,author --limit 10
+
+  - name: snapshot-summary
+    pipeline_name: Morning Repo Snapshot
+    target_node_key: 5e8d4a76-2b1f-4c3a-9e7d-3f4b8c1a6d92
+    event: agent.completed
+    enabled: true
+    source_session: <owning-session-name> # the session that owns cue.yaml
+    source_sub: snapshot-shell # pin to the shell step only
+    agent_id: <briefer-agent-id>
+    prompt: |
+      Today's repo state (from the shell snapshot):
+
+      {{CUE_SOURCE_OUTPUT}}
+
+      Status: {{CUE_SOURCE_STATUS}}, exit {{CUE_SOURCE_EXIT_CODE}}.
+
+      Give me a 5-bullet briefing: what shipped, what's open, who's blocked.
+```
 
 ### Template Variables Available in Cue Prompts
 
@@ -143,8 +252,9 @@ When a user asks you to add, modify, or debug a Cue subscription:
 2. Keep subscription `name` values unique within the file — the engine keys on them.
 3. **Group related chains under one pipeline.** Before adding a new subscription, check whether it belongs in an existing pipeline (matching theme, agent set, or domain) — if so, reuse that `pipeline_name` instead of creating a new pipeline. If the user describes several related automations in one request, emit them as multiple subscriptions sharing a single `pipeline_name`, not as separate pipelines.
 4. **Within a pipeline, give each subscription its own `target_node_key`** (any UUID) so the Pipeline Editor renders the chains as separate visual lines instead of collapsing them onto one fan-in agent node. This applies whether the chains share an `agent_id` or not. Only reuse a `target_node_key` across subscriptions when you actually want a real fan-in node (multiple triggers/upstreams converging onto one shared agent node). If two chains genuinely need isolated context/models/project-roots, also give them distinct `agent_id`s (create with `{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <project>` if needed); otherwise reusing one `agent_id` is fine and often preferred.
-5. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration, https://docs.runmaestro.ai/maestro-cue-events, https://docs.runmaestro.ai/maestro-cue-advanced, https://docs.runmaestro.ai/maestro-cue-examples. Don't guess field names.
-6. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` — the engine reloads automatically when the file changes.
+5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** — see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
+6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration, https://docs.runmaestro.ai/maestro-cue-events, https://docs.runmaestro.ai/maestro-cue-advanced, https://docs.runmaestro.ai/maestro-cue-examples. Don't guess field names.
+7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` — the engine reloads automatically when the file changes.
 
 ### Shared Workspaces: `settings.owner_agent_id`
 
@@ -276,6 +386,48 @@ subscriptions:
     {{CUE_TASK_LIST}}
 
     Pick up the highest-priority unchecked task and complete it.
+```
+
+**"Run this shell command, then have an agent work on the output" → `action: command` (shell) → `agent.completed` chain**
+
+```yaml
+- name: gather-pr-list
+  event: time.heartbeat
+  enabled: true
+  interval_minutes: 30
+  action: command
+  command:
+    mode: shell
+    shell: 'gh pr list --state open --json number,title,author,updatedAt --limit 20'
+
+- name: triage-prs
+  event: agent.completed
+  enabled: true
+  source_session: <owning-session-name>
+  source_sub: gather-pr-list # pin chain to the shell step only
+  agent_id: <triage-agent-id>
+  prompt: |
+    Open PRs (from `gh pr list`):
+
+    {{CUE_SOURCE_OUTPUT}}
+
+    Flag anything stale (>3 days no update) and suggest a reviewer for each.
+```
+
+**"After this agent finishes, send its output to another agent over `maestro-cli`" → `action: command` (cli)**
+
+```yaml
+- name: forward-summary
+  event: agent.completed
+  enabled: true
+  source_session: <upstream-agent-name>
+  action: command
+  command:
+    mode: cli
+    cli:
+      command: send
+      target: <downstream-agent-id-or-name>
+      # message defaults to '{{CUE_SOURCE_OUTPUT}}' when omitted
 ```
 
 After authoring, write the YAML to `<project-root>/.maestro/cue.yaml` (create the `.maestro/` directory if it doesn't exist), then run `{{MAESTRO_CLI_PATH}} cue list` to confirm the engine sees it.

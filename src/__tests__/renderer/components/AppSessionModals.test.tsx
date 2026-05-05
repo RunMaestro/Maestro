@@ -50,6 +50,7 @@ vi.mock('../../../renderer/stores/modalStore', () => {
 	return {
 		useModalStore: Object.assign((selector: any) => selector(store.getState()), store),
 		selectModalOpen: (id: string) => (state: any) => state.modals.get(id)?.open ?? false,
+		selectModalData: (id: string) => (state: any) => state.modals.get(id)?.data,
 		getModalActions: () => ({
 			setNewInstanceModalOpen: vi.fn(),
 			setDeleteAgentSession: vi.fn(),

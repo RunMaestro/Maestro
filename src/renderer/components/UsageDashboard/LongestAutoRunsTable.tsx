@@ -143,7 +143,10 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 		>
 			<div className="flex items-center gap-2 mb-4">
 				<Trophy className="w-4 h-4" style={{ color: theme.colors.accent }} />
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+				<h3
+					className="text-sm font-medium"
+					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
+				>
 					Top {Math.min(topSessions.length, MAX_ROWS)} Longest Auto Runs
 				</h3>
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>

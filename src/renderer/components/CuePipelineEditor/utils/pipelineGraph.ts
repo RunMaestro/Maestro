@@ -128,6 +128,112 @@ export function resolvePipelineOffset(
 	return { x: 0, y: autoYOffsets.get(pipeline.id) ?? 0 };
 }
 
+// ─── Pipeline bounding-box & overlap resolution ──────────────────────────────
+
+/** Visual breathing room when sliding a dropped pipeline to clear an overlap. */
+const PIPELINE_OVERLAP_GAP = 16;
+
+interface PipelineBBox {
+	minX: number;
+	minY: number;
+	maxX: number;
+	maxY: number;
+}
+
+/**
+ * Computes the All-Pipelines-view bounding box for a single pipeline at a
+ * given offset. Returns null for empty pipelines (no nodes ⇒ no box).
+ *
+ * Box dimensions match the translucent group card rendered in
+ * `convertToReactFlowNodes` (NODE_BG_WIDTH/HEIGHT + PIPELINE_GROUP_PADDING),
+ * so collision tests align with what the user sees.
+ */
+function pipelineBoundingBox(
+	pipeline: CuePipelineState['pipelines'][number],
+	offset: { x: number; y: number }
+): PipelineBBox | null {
+	if (pipeline.nodes.length === 0) return null;
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	for (const n of pipeline.nodes) {
+		const x = n.position.x + offset.x;
+		const y = n.position.y + offset.y;
+		minX = Math.min(minX, x);
+		minY = Math.min(minY, y);
+		maxX = Math.max(maxX, x + NODE_BG_WIDTH);
+		maxY = Math.max(maxY, y + NODE_BG_HEIGHT);
+	}
+	return {
+		minX: minX - PIPELINE_GROUP_PADDING,
+		minY: minY - PIPELINE_GROUP_PADDING,
+		maxX: maxX + PIPELINE_GROUP_PADDING,
+		maxY: maxY + PIPELINE_GROUP_PADDING,
+	};
+}
+
+function rectsOverlap(a: PipelineBBox, b: PipelineBBox): boolean {
+	return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+}
+
+/**
+ * Adjusts `desiredOffset` so the moved pipeline's bounding box doesn't overlap
+ * any other pipeline's. On overlap, picks the cardinal direction (left/right/
+ * up/down) with the smallest push needed to clear ALL overlapping neighbors,
+ * then iterates (a single push can introduce a new overlap with a third
+ * pipeline). Caps iterations to avoid pathological loops.
+ *
+ * Used by the pipeline-group drag-stop handler so a user can drop a pipeline
+ * group anywhere and have it slide into the nearest free slot rather than
+ * land on top of an existing group.
+ */
+export function resolveNonOverlappingPipelineOffset(
+	pipeline: CuePipelineState['pipelines'][number],
+	desiredOffset: { x: number; y: number },
+	others: {
+		pipeline: CuePipelineState['pipelines'][number];
+		offset: { x: number; y: number };
+	}[]
+): { x: number; y: number } {
+	const otherBoxes = others
+		.map((o) => pipelineBoundingBox(o.pipeline, o.offset))
+		.filter((b): b is PipelineBBox => b !== null);
+	if (otherBoxes.length === 0) return desiredOffset;
+
+	let offset = { ...desiredOffset };
+	const MAX_ITERATIONS = 8;
+	for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+		const movedBox = pipelineBoundingBox(pipeline, offset);
+		if (!movedBox) return offset;
+		const overlapping = otherBoxes.filter((b) => rectsOverlap(movedBox, b));
+		if (overlapping.length === 0) return offset;
+
+		// Min push along each cardinal axis to clear ALL currently-overlapping boxes.
+		let pushRight = 0;
+		let pushLeft = 0;
+		let pushDown = 0;
+		let pushUp = 0;
+		for (const ob of overlapping) {
+			pushRight = Math.max(pushRight, ob.maxX - movedBox.minX + PIPELINE_OVERLAP_GAP);
+			pushLeft = Math.max(pushLeft, movedBox.maxX - ob.minX + PIPELINE_OVERLAP_GAP);
+			pushDown = Math.max(pushDown, ob.maxY - movedBox.minY + PIPELINE_OVERLAP_GAP);
+			pushUp = Math.max(pushUp, movedBox.maxY - ob.minY + PIPELINE_OVERLAP_GAP);
+		}
+		const candidates = [
+			{ dx: pushRight, dy: 0 },
+			{ dx: -pushLeft, dy: 0 },
+			{ dx: 0, dy: pushDown },
+			{ dx: 0, dy: -pushUp },
+		];
+		// Pick the smallest displacement that clears the current set.
+		candidates.sort((a, b) => Math.abs(a.dx) + Math.abs(a.dy) - (Math.abs(b.dx) + Math.abs(b.dy)));
+		const best = candidates[0];
+		offset = { x: offset.x + best.dx, y: offset.y + best.dy };
+	}
+	return offset;
+}
+
 // ─── Node conversion ─────────────────────────────────────────────────────────
 
 /**
@@ -162,6 +268,10 @@ export function convertToReactFlowNodes(
 		 *  when the trigger has no `subscriptionName` stamped (legacy
 		 *  never-saved pipelines) so the spinner still surfaces something. */
 		runningSubscriptionsByPipeline?: Map<string, Set<string>>;
+		/** Per-pipeline set of agent `sessionName`s currently executing a Cue
+		 *  run. Used to pulse running agent nodes so the active leg is visible
+		 *  even when the user isn't watching the edges between them. */
+		runningAgentsByPipeline?: Map<string, Set<string>>;
 	},
 	theme?: Theme,
 	/** Pre-computed Y-offsets to use instead of recomputing from bounding boxes.
@@ -345,6 +455,8 @@ export function convertToReactFlowNodes(
 					const srcNode = pipeline.nodes.find((n) => n.id === e.source);
 					return srcNode?.type === 'agent';
 				}).length;
+				const runningAgentsForPipeline = triggerOptions?.runningAgentsByPipeline?.get(pipeline.id);
+				const isAgentRunning = !!runningAgentsForPipeline?.has(agentData.sessionName);
 				const nodeData: AgentNodeDataProps = {
 					compositeId,
 					sessionId: agentData.sessionId,
@@ -358,6 +470,7 @@ export function convertToReactFlowNodes(
 					pipelineCount: agentPipelineCount.get(agentData.sessionId) ?? 1,
 					pipelineColors,
 					onConfigure: onConfigureNode,
+					isRunning: isAgentRunning,
 					theme,
 				};
 				nodes.push({
@@ -440,13 +553,21 @@ export function convertToReactFlowNodes(
  *
  * Non-agent targets (cli_output, error nodes) never animate — they don't
  * correspond to a dispatchable run.
+ *
+ * Optimistic-trigger override: when a pipeline appears in
+ * `optimisticTriggeredPipelineIds`, every edge in that pipeline is flagged
+ * `isRunning` for the brief optimistic window after a manual Play click. This
+ * gives instant "your click registered" feedback even before any agent has
+ * spun up — useful for sub-second shell-only triggers that would otherwise
+ * complete before the per-agent rule could light anything up.
  */
 export function convertToReactFlowEdges(
 	pipelines: CuePipelineState['pipelines'],
 	selectedPipelineId: string | null,
 	selectedEdgeId?: string | null,
 	theme?: Theme,
-	runningAgentsByPipeline?: Map<string, Set<string>>
+	runningAgentsByPipeline?: Map<string, Set<string>>,
+	optimisticTriggeredPipelineIds?: Set<string>
 ): Edge[] {
 	const edges: Edge[] = [];
 
@@ -460,6 +581,7 @@ export function convertToReactFlowEdges(
 		if (!isActive) continue;
 
 		const runningAgents = runningAgentsByPipeline?.get(pipeline.id);
+		const isOptimisticallyTriggered = !!optimisticTriggeredPipelineIds?.has(pipeline.id);
 		// Build node lookup once per pipeline so the per-edge target lookup is O(1).
 		const nodeById = new Map<string, (typeof pipeline.nodes)[number]>();
 		for (const n of pipeline.nodes) nodeById.set(n.id, n);
@@ -470,7 +592,8 @@ export function convertToReactFlowEdges(
 			const targetSessionName =
 				targetNode?.type === 'agent' ? (targetNode.data as AgentNodeData).sessionName : undefined;
 			const isRunning =
-				!!targetSessionName && !!runningAgents && runningAgents.has(targetSessionName);
+				isOptimisticallyTriggered ||
+				(!!targetSessionName && !!runningAgents && runningAgents.has(targetSessionName));
 
 			const edgeData: PipelineEdgeData = {
 				pipelineColor: pipeline.color,

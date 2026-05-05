@@ -33,6 +33,11 @@ export interface ActiveRun {
 	phase: RunPhase;
 	/** The runId of the currently executing child process (differs from result.runId during output prompt phase) */
 	processRunId?: string;
+	/** Phase 01 — chain lineage carried for the completion notification. Equals
+	 *  `result.runId` for root runs and the inherited value for descendants.
+	 *  Persisted to `cue_events.chain_root_id` at write time and propagated to
+	 *  the next dispatched run via `AgentCompletionData.chainRootId`. */
+	chainRootId?: string;
 }
 
 /** A queued event waiting for a concurrency slot */
@@ -54,6 +59,11 @@ export interface QueuedEvent {
 	command?: CueCommand;
 	/** Phase 12A — DB row id for the persisted copy, when persistence is enabled. */
 	persistId?: string;
+	/** Phase 01 — chain lineage propagated from the dispatching parent. When
+	 *  unset, the resulting run becomes a fresh chain root (its own `runId`
+	 *  becomes the `chainRootId` and `parentEventId` stays NULL). */
+	chainRootId?: string;
+	parentEventId?: string;
 }
 
 export interface CueRunManagerDeps {
@@ -76,7 +86,8 @@ export interface CueRunManagerDeps {
 		sessionId: string,
 		result: CueRunResult,
 		subscriptionName: string,
-		chainDepth?: number
+		chainDepth?: number,
+		chainRootId?: string
 	) => void;
 	/** Called when a run is manually stopped — pushes to activity log only (no chain propagation) */
 	onRunStopped: (result: CueRunResult) => void;
@@ -103,6 +114,16 @@ export interface CueRunManagerDeps {
 	 * main process if persistence ever needs to be disabled).
 	 */
 	queuePersistence?: CueQueuePersistence;
+	/**
+	 * Phase 01 — gate for `pipeline_id` / `chain_root_id` / `parent_event_id`
+	 * writes on `cue_events`. When false, every safeRecordCueEvent call from
+	 * this manager passes `null` for the three additive columns, leaving the
+	 * row's stats fields blank. Independent of the master Cue toggle —
+	 * the engine still runs, it just doesn't record stats lineage. Optional
+	 * for back-compat with tests that don't construct the run manager via
+	 * the engine; when omitted, defaults to off (no stats writes).
+	 */
+	getUsageStatsEnabled?: () => boolean;
 }
 
 export interface CueRunManager {
@@ -134,7 +155,17 @@ export interface CueRunManager {
 		 * Trailing-positional rather than wedged into the middle so existing
 		 * 4-arg `execute(...)` call sites keep working without churn.
 		 */
-		pipelineName?: string
+		pipelineName?: string,
+		/**
+		 * Phase 01 — chain lineage values. `chainRootId` is the inherited
+		 * root identity (or undefined when this run is itself a root, in
+		 * which case `doExecuteCueRun` snapshots `runId` as the root id at
+		 * record time). `parentEventId` is the immediate parent run's
+		 * `runId`, or undefined for root events. Both also persisted on
+		 * `QueuedEvent` so they survive concurrency-gated buffering.
+		 */
+		chainRootId?: string,
+		parentEventId?: string
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -197,6 +228,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// We record the event directly in its final `timeout` state, so
 				// there's no separate running→timeout flip needed — the row is
 				// born finalized (unlike normal runs, which start as `running`).
+				const droppedLineage = buildLineageColumns({
+					runId: droppedRunId,
+					chainRootId: entry.chainRootId,
+					parentEventId: entry.parentEventId,
+					pipelineName: entry.pipelineName,
+				});
 				safeRecordCueEvent({
 					id: droppedRunId,
 					type: entry.event.type,
@@ -209,6 +246,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						droppedFromQueue: true,
 						queuedForMs: ageMs,
 					}),
+					...droppedLineage,
 				});
 				// Emit as `queueDropped` (stale reason) rather than `runFinished`
 				// with status: 'timeout'. Previously this path incremented
@@ -245,7 +283,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.chainDepth,
 				entry.cliOutput,
 				entry.action,
-				entry.command
+				entry.command,
+				entry.chainRootId,
+				entry.parentEventId
 			);
 		}
 
@@ -253,6 +293,33 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		if (queue.length === 0) {
 			eventQueue.delete(sessionId);
 		}
+	}
+
+	/**
+	 * Phase 01 — assemble the three additive `cue_events` columns. Returns
+	 * `{ pipelineId, chainRootId, parentEventId }` set to live values when
+	 * `getUsageStatsEnabled()` is true, or all-null when disabled (so the
+	 * row's stats lineage stays NULL even when we have the data in memory).
+	 * Centralized so every safeRecordCueEvent call site honors the same gate
+	 * without duplicating the conditional.
+	 */
+	function buildLineageColumns(args: {
+		runId: string;
+		chainRootId?: string;
+		parentEventId?: string;
+		pipelineName?: string;
+	}): { pipelineId: string | null; chainRootId: string | null; parentEventId: string | null } {
+		if (!deps.getUsageStatsEnabled?.()) {
+			return { pipelineId: null, chainRootId: null, parentEventId: null };
+		}
+		// Root events use their own runId as the chain root; descendants
+		// inherit via the explicit chainRootId arg.
+		const effectiveChainRootId = args.chainRootId ?? args.runId;
+		return {
+			pipelineId: args.pipelineName ?? null,
+			chainRootId: effectiveChainRootId,
+			parentEventId: args.parentEventId ?? null,
+		};
 	}
 
 	async function doExecuteCueRun(
@@ -265,12 +332,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		chainDepth?: number,
 		cliOutput?: { target: string },
 		action?: CueSubscription['action'],
-		command?: CueCommand
+		command?: CueCommand,
+		incomingChainRootId?: string,
+		parentEventId?: string
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
 		const runId = crypto.randomUUID();
 		const abortController = new AbortController();
+		// Snapshot the chain root identity at run-start: descendants inherit it
+		// from the dispatching parent; roots become their own root id. Held on
+		// ActiveRun so the completion notification can propagate it to the
+		// next run in the chain.
+		const effectiveChainRootId = incomingChainRootId ?? runId;
 
 		const result: CueRunResult = {
 			runId,
@@ -288,9 +362,20 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			endedAt: '',
 		};
 
-		activeRuns.set(runId, { result, abortController, phase: 'running' });
+		activeRuns.set(runId, {
+			result,
+			abortController,
+			phase: 'running',
+			chainRootId: effectiveChainRootId,
+		});
 		deps.onPreventSleep?.(`cue:run:${runId}`);
 		const timeoutMs = (settings?.timeout_minutes ?? 30) * 60 * 1000;
+		const parentLineage = buildLineageColumns({
+			runId,
+			chainRootId: incomingChainRootId,
+			parentEventId,
+			pipelineName,
+		});
 		safeRecordCueEvent({
 			id: runId,
 			type: event.type,
@@ -299,6 +384,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			subscriptionName,
 			status: 'running',
 			payload: JSON.stringify(event.payload),
+			...parentLineage,
 		});
 		deps.onLog('cue', `[CUE] Run started: ${subscriptionName}`, {
 			type: 'runStarted',
@@ -371,6 +457,16 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					},
 				};
 
+				// Output-prompt phase is logically a child of the parent run:
+				// inherit the same chain root, point parent at the parent run.
+				// This keeps stats queries that walk by chain_root_id from
+				// orphaning the second leg of a two-phase run.
+				const outputLineage = buildLineageColumns({
+					runId: outputRunId,
+					chainRootId: effectiveChainRootId,
+					parentEventId: runId,
+					pipelineName,
+				});
 				safeRecordCueEvent({
 					id: outputRunId,
 					type: event.type,
@@ -379,6 +475,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					subscriptionName: `${subscriptionName}:output`,
 					status: 'running',
 					payload: JSON.stringify(outputEvent.payload),
+					...outputLineage,
 				});
 
 				// Track the output prompt's process ID so stopRun can kill it
@@ -556,8 +653,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					status: result.status,
 				} satisfies CueLogPayload);
 
-				// Notify engine of completion (for activity log + chain propagation)
-				deps.onRunCompleted(sessionId, result, subscriptionName, chainDepth);
+				// Notify engine of completion (for activity log + chain propagation).
+				// Forward this run's chainRootId so the engine can stamp it onto
+				// the AgentCompletionData passed to the completion service —
+				// the next run dispatched off this completion inherits the
+				// same root identity (or this run's runId, if it was itself
+				// a root).
+				deps.onRunCompleted(sessionId, result, subscriptionName, chainDepth, effectiveChainRootId);
 			}
 		}
 	}
@@ -574,7 +676,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			action?: CueSubscription['action'],
 			command?: CueCommand,
 			queuedAtOverride?: number,
-			pipelineName?: string
+			pipelineName?: string,
+			chainRootId?: string,
+			parentEventId?: string
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -644,6 +748,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					action,
 					command,
 					persistId,
+					chainRootId,
+					parentEventId,
 				};
 				queue.push(queuedEntry);
 
@@ -661,6 +767,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						command,
 						chainDepth,
 						queuedAt,
+						chainRootId,
+						parentEventId,
 					});
 				}
 
@@ -683,7 +791,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				chainDepth,
 				cliOutput,
 				action,
-				command
+				command,
+				chainRootId,
+				parentEventId
 			);
 		},
 
