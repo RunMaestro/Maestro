@@ -54,9 +54,9 @@ interface ImportResponse {
 }
 
 function defaultFolderNameFor(playbook: MarketplacePlaybook): string {
-	return `${playbook.category}/${playbook.title}`
+	return playbook.title
 		.toLowerCase()
-		.replace(/[^a-z0-9/]+/g, '-')
+		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/-+/g, '-')
 		.replace(/^-|-$/g, '');
 }
