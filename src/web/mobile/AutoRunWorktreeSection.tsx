@@ -168,6 +168,14 @@ export function AutoRunWorktreeSection({
 			onChange({ status: 'enabled-invalid', reason: 'Worktree path could not be computed' });
 			return;
 		}
+		// Guard against PR creation with an empty target branch. Without this,
+		// "Create PR on completion" can latch on before loadBranches resolves
+		// (baseBranch is still '') and emit a config that the desktop's PR
+		// creation step would silently dispatch with prTargetBranch: ''.
+		if (createPR && !baseBranch) {
+			onChange({ status: 'enabled-invalid', reason: 'Base branch is required for PR creation' });
+			return;
+		}
 		onChange({
 			status: 'enabled-valid',
 			config: {

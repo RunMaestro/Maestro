@@ -10,7 +10,7 @@
 import React from 'react';
 import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
@@ -24,6 +24,8 @@ import { logger } from '../../utils/logger';
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
+import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { notifyToast } from '../../stores/notificationStore';
 
 // ============================================================================
 // Dependencies interface
@@ -443,12 +445,80 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					...(worktree ? { worktree } : {}),
 				};
 
+				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
+				// spawn a child session linked to the launching parent BEFORE calling
+				// startBatchRun. Without this, startBatchRun creates the worktree on
+				// disk but no session is bound to the launching agent — chokidar in
+				// useWorktreeHandlers eventually attaches the new directory to whichever
+				// sibling's worktreeConfig.basePath matches first, producing the wrong-
+				// parent attachment reported in PR #946.
+				let targetSessionId = sessionId;
+				if (worktree) {
+					// If the launching session is itself a worktree child, resolve to
+					// its parent so basePath/cwd used for worktree creation come from
+					// the main repo. Falls back to the launching session if the parent
+					// can't be loaded (mirrors desktop behavior).
+					let parentForSpawn = session;
+					if (session.parentSessionId) {
+						const parent = selectSessionById(session.parentSessionId)(useSessionStore.getState());
+						if (parent) parentForSpawn = parent;
+					}
+
+					// Build a WorktreeRunTarget from the mobile/web LaunchWorktreeConfig.
+					// Mobile currently only supports create-new; existing-open/closed are
+					// desktop-only flows.
+					const spawnConfig: BatchRunConfig = {
+						...batchConfig,
+						worktreeTarget: {
+							mode: 'create-new',
+							newBranchName: worktree.branchName,
+							baseBranch: worktree.prTargetBranch || 'main',
+							createPROnCompletion: worktree.createPROnCompletion,
+						},
+					};
+
+					try {
+						const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, spawnConfig);
+						if (!newSessionId) {
+							window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+								success: false,
+								error: 'Failed to spawn worktree agent',
+							});
+							return;
+						}
+						targetSessionId = newSessionId;
+						// spawnWorktreeAgentAndDispatch may rewrite spawnConfig.worktree
+						// (e.g. when the on-disk worktree already existed at a different
+						// path or createPROnCompletion was requested). Reflect that on
+						// the batchConfig forwarded to startBatchRun.
+						if (spawnConfig.worktree) {
+							batchConfig.worktree = spawnConfig.worktree;
+						}
+						// Setting worktreeTarget tells startBatchRun to skip its own
+						// setupWorktree call — the spawn helper already created the
+						// directory and built the session.
+						batchConfig.worktreeTarget = spawnConfig.worktreeTarget;
+					} catch (err) {
+						logger.error('[Remote] Failed to spawn worktree agent:', undefined, err);
+						notifyToast({
+							type: 'error',
+							title: 'Worktree Error',
+							message: err instanceof Error ? err.message : String(err),
+						});
+						window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						});
+						return;
+					}
+				}
+
 				// Send success response immediately - startBatchRun is long-running
 				// and would exceed the IPC/CLI timeout if awaited.
 				window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
 					success: true,
 				});
-				startBatchRun(sessionId, batchConfig, folderPath).catch((err) => {
+				startBatchRun(targetSessionId, batchConfig, folderPath).catch((err) => {
 					logger.error('[Remote] Failed to start auto-run:', undefined, err);
 				});
 				return;

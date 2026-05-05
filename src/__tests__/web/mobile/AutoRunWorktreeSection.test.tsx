@@ -181,6 +181,61 @@ describe('AutoRunWorktreeSection', () => {
 		expect(screen.getByText(/Branch name is required/i)).toBeInTheDocument();
 	});
 
+	it('emits enabled-invalid when createPR is on but baseBranch is empty', async () => {
+		const onChange = vi.fn();
+		// Slow loadBranches: pending so baseBranch stays '' while the user toggles
+		// createPR and types a branch name. Without the guard this race emits
+		// enabled-valid with prTargetBranch: '' and the desktop's PR creation
+		// step receives a blank target. (Greptile P1 on PR #946.)
+		let resolveBranches: (value: { branches: string[]; currentBranch?: string }) => void;
+		const slowLoadBranches = vi.fn(
+			() =>
+				new Promise<{ branches: string[]; currentBranch?: string }>((resolve) => {
+					resolveBranches = resolve;
+				})
+		);
+
+		render(
+			<AutoRunWorktreeSection
+				isGitRepo={true}
+				worktreeBasePath="/repo/worktrees"
+				loadBranches={slowLoadBranches}
+				loadWorktrees={loadWorktrees}
+				onChange={onChange}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('switch', { name: /Dispatch to a separate worktree/i }));
+		await waitFor(() => expect(slowLoadBranches).toHaveBeenCalled());
+
+		// Type a branch name while branches are still loading (baseBranch === '').
+		const branchInput = screen.getByLabelText(/Worktree branch name/i);
+		fireEvent.change(branchInput, { target: { value: 'my-feature' } });
+
+		// Toggle createPR on while baseBranch is still empty.
+		fireEvent.click(
+			screen.getByRole('checkbox', { name: /Automatically create PR when complete/i })
+		);
+
+		await waitFor(() => {
+			const last = onChange.mock.calls.at(-1)?.[0];
+			expect(last?.status).toBe('enabled-invalid');
+			expect(last?.reason).toMatch(/Base branch is required/i);
+		});
+
+		// Sanity: nothing was emitted with an empty prTargetBranch and createPR=true.
+		const validWithEmptyTarget = onChange.mock.calls.find(
+			([call]) =>
+				call?.status === 'enabled-valid' &&
+				call?.config?.createPROnCompletion === true &&
+				call?.config?.prTargetBranch === ''
+		);
+		expect(validWithEmptyTarget).toBeUndefined();
+
+		// Resolve branches so the test's pending promise doesn't leak.
+		resolveBranches!({ branches: ['main'], currentBranch: 'main' });
+	});
+
 	it('renders "Failed to load" placeholder when branch fetch rejects', async () => {
 		const onChange = vi.fn();
 		const rejecting = vi.fn().mockRejectedValue(new Error('boom'));
