@@ -90,6 +90,10 @@ export function MarketplaceSheet({
 	// Import state
 	const [isImporting, setIsImporting] = useState(false);
 	const [importError, setImportError] = useState<string | null>(null);
+	// Preview-fetch errors (README / document load) — shown in the preview
+	// area, not in the import footer, so users aren't misled into thinking
+	// an import failed when only the preview fetch did.
+	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// Monotonic preview-request id. Each new playbook/document request bumps
 	// it; resolved fetches that don't match are discarded. Prevents a slow
@@ -117,6 +121,7 @@ export function MarketplaceSheet({
 				setDocumentContent(null);
 				setTargetFolderName('');
 				setImportError(null);
+				setPreviewError(null);
 			} else {
 				handleClose();
 			}
@@ -184,6 +189,7 @@ export function MarketplaceSheet({
 			setDocumentContent(null);
 			setTargetFolderName(defaultFolderNameFor(playbook));
 			setImportError(null);
+			setPreviewError(null);
 			setIsLoadingDocument(true);
 			const requestId = ++previewRequestIdRef.current;
 			try {
@@ -193,14 +199,14 @@ export function MarketplaceSheet({
 				if (previewRequestIdRef.current !== requestId) return;
 				if (result?.success === false) {
 					setReadmeContent(null);
-					setImportError(result.error ?? 'Failed to load README');
+					setPreviewError(result.error ?? 'Failed to load README');
 				} else {
 					setReadmeContent(result?.content ?? null);
 				}
 			} catch (err) {
 				if (previewRequestIdRef.current !== requestId) return;
 				setReadmeContent(null);
-				setImportError(err instanceof Error ? err.message : 'Failed to load README');
+				setPreviewError(err instanceof Error ? err.message : 'Failed to load README');
 			}
 			if (previewRequestIdRef.current === requestId) setIsLoadingDocument(false);
 		},
@@ -221,6 +227,7 @@ export function MarketplaceSheet({
 				return;
 			}
 			setSelectedDocFilename(filename);
+			setPreviewError(null);
 			setIsLoadingDocument(true);
 			const requestId = ++previewRequestIdRef.current;
 			try {
@@ -231,14 +238,14 @@ export function MarketplaceSheet({
 				if (previewRequestIdRef.current !== requestId) return;
 				if (result?.success === false) {
 					setDocumentContent(null);
-					setImportError(result.error ?? 'Failed to load document');
+					setPreviewError(result.error ?? 'Failed to load document');
 				} else {
 					setDocumentContent(result?.content ?? null);
 				}
 			} catch (err) {
 				if (previewRequestIdRef.current !== requestId) return;
 				setDocumentContent(null);
-				setImportError(err instanceof Error ? err.message : 'Failed to load document');
+				setPreviewError(err instanceof Error ? err.message : 'Failed to load document');
 			}
 			if (previewRequestIdRef.current === requestId) setIsLoadingDocument(false);
 		},
@@ -487,6 +494,7 @@ export function MarketplaceSheet({
 							setSelectedDocFilename(null);
 							setTargetFolderName('');
 							setImportError(null);
+							setPreviewError(null);
 						}}
 						style={{
 							width: '36px',
@@ -595,6 +603,20 @@ export function MarketplaceSheet({
 					{isLoadingDocument ? (
 						<div style={{ textAlign: 'center', padding: '24px 0', color: colors.textDim }}>
 							Loading...
+						</div>
+					) : previewError ? (
+						<div
+							role="alert"
+							style={{
+								padding: '12px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.error}40`,
+								backgroundColor: `${colors.error}15`,
+								color: colors.error,
+								fontSize: '13px',
+							}}
+						>
+							{previewError}
 						</div>
 					) : (
 						<MobileMarkdownRenderer content={previewContent} />
