@@ -666,16 +666,16 @@ Commands for interacting with the running Maestro desktop app. These are especia
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--session`, the owning agent is auto-detected by which session's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--session <id>` to target an explicit agent — the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent — the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
 
 ```bash
-maestro-cli open-file <file-path> [-s <id>] [--no-switch]
+maestro-cli open-file <file-path> [-a <id>] [--no-switch]
 ```
 
-| Flag                 | Description                                                        |
-| -------------------- | ------------------------------------------------------------------ |
-| `-s, --session <id>` | Target agent (defaults to auto-detect by file path's owning agent) |
-| `--no-switch`        | Don't switch the Maestro UI to the target agent/tab                |
+| Flag               | Description                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) |
+| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                |
 
 #### Open a Browser Tab
 

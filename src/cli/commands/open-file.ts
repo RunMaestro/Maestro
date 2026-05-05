@@ -7,7 +7,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../services/storage';
 
 interface OpenFileOptions {
-	session?: string;
+	agent?: string;
 	switch?: boolean;
 }
 
@@ -55,9 +55,9 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
  * Resolve the file path and the target agent.
  *
  * - Relative paths are resolved against the shell's CWD (process.cwd()).
- * - With `--session`, the file must live inside that session's cwd; otherwise we
+ * - With `--agent`, the file must live inside that agent's cwd; otherwise we
  *   error out (strict — explicit flag means the user is asserting ownership).
- * - Without `--session`, we auto-detect the owning agent by longest cwd-prefix
+ * - Without `--agent`, we auto-detect the owning agent by longest cwd-prefix
  *   match. On tie, we pick the most-recently-active candidate by history-file
  *   mtime. With zero owners, we error.
  */
@@ -66,10 +66,10 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 		? path.resolve(filePath)
 		: path.resolve(process.cwd(), filePath);
 
-	if (options.session) {
-		const session = getSessionById(options.session);
+	if (options.agent) {
+		const session = getSessionById(options.agent);
 		if (!session) {
-			console.error(`Error: Agent not found: ${options.session}`);
+			console.error(`Error: Agent not found: ${options.agent}`);
 			process.exit(1);
 		}
 		if (!isPathInside(absolutePath, session.cwd)) {
@@ -85,7 +85,7 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 
 	if (owners.length === 0) {
 		console.error(
-			`Error: ${absolutePath} is not inside any agent's working directory. Pick an agent with --session <id>.`
+			`Error: ${absolutePath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
 		);
 		process.exit(1);
 	}
@@ -97,7 +97,7 @@ function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarg
 	const winner = pickMostRecentlyActive(owners);
 	const others = owners.filter((s) => s.id !== winner.id).map((s) => s.name);
 	console.error(
-		`Note: ${owners.length} agents own this path; opened in ${winner.name}. Other candidates: ${others.join(', ')}. Use --session to override.`
+		`Note: ${owners.length} agents own this path; opened in ${winner.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
 	);
 	return { sessionId: winner.id, absolutePath };
 }
