@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
 import * as os from 'os';
-import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
@@ -260,14 +260,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								tmpDir,
 								`maestro-sysprompt-${config.sessionId}-${Date.now()}.txt`
 							);
-							fs.writeFileSync(systemPromptTempFile, config.appendSystemPrompt, 'utf-8');
+							await fsp.writeFile(systemPromptTempFile, config.appendSystemPrompt, 'utf-8');
 							// Schedule cleanup early so the file is removed even if spawn fails.
 							// 30s gives the agent plenty of time to read it after spawning.
+							// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
+							// silence ENOENT (file already gone), capture other codes via Sentry.
 							const tempFileToClean = systemPromptTempFile;
 							setTimeout(() => {
-								try {
-									fs.unlinkSync(tempFileToClean);
-								} catch (cleanupErr: unknown) {
+								fsp.unlink(tempFileToClean).catch((cleanupErr: unknown) => {
 									if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
 										captureException(
 											cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)),
@@ -277,7 +277,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 											}
 										);
 									}
-								}
+								});
 							}, 30_000);
 							finalArgs = [...finalArgs, '--append-system-prompt-file', systemPromptTempFile];
 							logger.debug(
