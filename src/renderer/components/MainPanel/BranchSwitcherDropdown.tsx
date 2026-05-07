@@ -111,22 +111,32 @@ export function BranchSwitcherDropdown({
 		async (branch: string) => {
 			if (branch === currentBranch || switching) return;
 			setSwitching(branch);
-			const result = await gitService.switchBranch(cwd, branch, sshRemoteId);
-			setSwitching(null);
-			if (result.success) {
-				notifyCenterFlash({
-					message: `Switched to ${branch}`,
-					color: 'green',
-				});
-				onSwitched();
-				onClose();
-			} else {
+			try {
+				const result = await gitService.switchBranch(cwd, branch, sshRemoteId);
+				if (result.success) {
+					notifyCenterFlash({
+						message: `Switched to ${branch}`,
+						color: 'green',
+					});
+					onSwitched();
+					onClose();
+				} else {
+					notifyToast({
+						color: 'red',
+						title: 'Branch switch failed',
+						message: result.stderr.trim() || 'git switch returned a non-zero exit code.',
+						dismissible: true,
+					});
+				}
+			} catch (err) {
 				notifyToast({
 					color: 'red',
 					title: 'Branch switch failed',
-					message: result.stderr.trim() || 'git switch returned a non-zero exit code.',
+					message: err instanceof Error ? err.message : String(err),
 					dismissible: true,
 				});
+			} finally {
+				setSwitching(null);
 			}
 		},
 		[cwd, sshRemoteId, currentBranch, switching, onSwitched, onClose]

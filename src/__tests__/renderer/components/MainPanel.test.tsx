@@ -1872,6 +1872,34 @@ describe('MainPanel', () => {
 			expect(gitService.getBranches).toHaveBeenCalled();
 		});
 
+		it('should open branch switcher on Shift+Enter on SSH remote git badge (keyboard a11y)', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			const mockGetConfigs = vi.fn().mockResolvedValue({
+				success: true,
+				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockImplementation(mockGetConfigs);
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
+			});
+
+			// The chip's button is the parent of the SSH remote name span.
+			const chipButton = screen.getByText('my-ssh-remote').closest('button');
+			expect(chipButton).not.toBeNull();
+			fireEvent.keyDown(chipButton!, { key: 'Enter', shiftKey: true });
+
+			// Branch switcher dropdown opens via the keyboard path.
+			expect(await screen.findByPlaceholderText(/Filter branches/)).toBeInTheDocument();
+			expect(gitService.getBranches).toHaveBeenCalled();
+		});
+
 		it('should open git log when single-clicking on SSH remote git badge', async () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({

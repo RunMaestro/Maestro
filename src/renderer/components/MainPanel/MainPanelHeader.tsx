@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
 	Wand2,
 	ExternalLink,
@@ -159,6 +159,26 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 		setBranchSwitcherOpen((v) => !v);
 	};
 
+	// Keyboard a11y: Shift+Enter on the chip opens the branch switcher, mirroring double-click.
+	// Plain Enter falls through to the default button activation, which fires onClick.
+	const handleBranchChipKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+		if (e.key === 'Enter' && e.shiftKey) {
+			e.preventDefault();
+			handleBranchChipDoubleClick();
+		}
+	};
+
+	// Cancel the 220ms single-click debounce on unmount so the callback can't
+	// fire against a stale parent (resource leak / React 17 setState warning).
+	useEffect(() => {
+		return () => {
+			if (branchClickTimerRef.current) {
+				clearTimeout(branchClickTimerRef.current);
+				branchClickTimerRef.current = null;
+			}
+		};
+	}, []);
+
 	return (
 		<div
 			ref={headerRef}
@@ -222,7 +242,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] outline-none ${
 									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
 								}`}
-								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch} - click: log, double-click: switch branch)` : ''}`}
+								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch} - click / Enter: log, double-click / Shift+Enter: switch branch)` : ''}`}
 								onClick={(e) => {
 									e.stopPropagation();
 									handleBranchChipClick();
@@ -231,6 +251,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									e.stopPropagation();
 									handleBranchChipDoubleClick();
 								}}
+								onKeyDown={activeSession.isGitRepo ? handleBranchChipKeyDown : undefined}
 							>
 								<Server className="w-3 h-3 shrink-0" />
 								<span className="truncate uppercase">{sshRemoteName}</span>
@@ -250,9 +271,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									e.stopPropagation();
 									handleBranchChipDoubleClick();
 								}}
+								onKeyDown={activeSession.isGitRepo ? handleBranchChipKeyDown : undefined}
 								title={
 									activeSession.isGitRepo && gitInfo?.branch
-										? `${gitInfo.branch} - click: log, double-click: switch branch`
+										? `${gitInfo.branch} - click / Enter: log, double-click / Shift+Enter: switch branch`
 										: undefined
 								}
 							>

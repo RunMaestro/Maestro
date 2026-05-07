@@ -17,6 +17,7 @@ import { GitGraphView } from './GitGraphView';
 import 'react-diff-view/style/index.css';
 
 const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
+const COMMIT_FETCH_LIMIT = 200;
 type ViewMode = 'list' | 'graph';
 
 interface GitLogEntry {
@@ -57,12 +58,19 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [selectedCommitDiff, setSelectedCommitDiff] = useState<string | null>(null);
 	const [loadingDiff, setLoadingDiff] = useState(false);
 	const [viewMode, setViewMode] = useState<ViewMode>(() => {
-		const stored =
-			typeof window !== 'undefined' ? localStorage.getItem(VIEW_MODE_STORAGE_KEY) : null;
-		return stored === 'graph' ? 'graph' : 'list';
+		try {
+			const stored =
+				typeof window !== 'undefined' ? localStorage.getItem(VIEW_MODE_STORAGE_KEY) : null;
+			return stored === 'graph' ? 'graph' : 'list';
+		} catch {
+			return 'list';
+		}
 	});
 	const [graphNodes, setGraphNodes] = useState<GitGraphNode[]>([]);
-	const [graphLoading, setGraphLoading] = useState(false);
+	// Initialised to true so the first frame after toggling to graph view shows
+	// the spinner instead of flashing "No commits found" before the effect fires.
+	const [graphLoading, setGraphLoading] = useState(true);
+	const [graphError, setGraphError] = useState<string | null>(null);
 	// Commit clicked from the graph that isn't part of `entries` (e.g. a side-branch
 	// commit only visible via `git log --all`). Drives the right-side detail panel
 	// when the list mode's selected entry would otherwise be out of sync.
@@ -110,7 +118,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 			try {
 				// Fetch log entries and total count in parallel
 				const [logResult, countResult] = await Promise.all([
-					window.maestro.git.log(cwd, { limit: 200 }, sshRemoteId),
+					window.maestro.git.log(cwd, { limit: COMMIT_FETCH_LIMIT }, sshRemoteId),
 					window.maestro.git.commitCount(cwd, sshRemoteId),
 				]);
 
@@ -137,14 +145,20 @@ export const GitLogViewer = memo(function GitLogViewer({
 		if (viewMode !== 'graph') return;
 		let cancelled = false;
 		setGraphLoading(true);
-		gitService
-			.getGraph(cwd, { limit: 100 }, sshRemoteId)
-			.then((nodes) => {
+		setGraphError(null);
+		(async () => {
+			try {
+				const nodes = await gitService.getGraph(cwd, { limit: COMMIT_FETCH_LIMIT }, sshRemoteId);
 				if (!cancelled) setGraphNodes(nodes);
-			})
-			.finally(() => {
+			} catch (err) {
+				if (!cancelled) {
+					setGraphError(err instanceof Error ? err.message : String(err));
+					setGraphNodes([]);
+				}
+			} finally {
 				if (!cancelled) setGraphLoading(false);
-			});
+			}
+		})();
 		return () => {
 			cancelled = true;
 		};
@@ -164,6 +178,22 @@ export const GitLogViewer = memo(function GitLogViewer({
 			}
 		},
 		[cwd]
+	);
+
+	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
+	// doesn't rebuild the entire GitgraphCore on every parent render.
+	const handleGraphCommitClick = useCallback(
+		(hash: string) => {
+			const idx = entries.findIndex((e) => e.hash === hash);
+			if (idx >= 0) {
+				setGraphSelected(null);
+				setSelectedIndex(idx);
+			} else {
+				const node = graphNodes.find((n) => n.hash === hash);
+				if (node) setGraphSelected(node);
+			}
+		},
+		[entries, graphNodes, setSelectedIndex]
 	);
 
 	// Auto-load diff for selected commit (priority: graph-only selection, else list selection)
@@ -461,6 +491,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 										Loading graph...
 									</p>
 								</div>
+							) : graphError ? (
+								<div className="flex items-center justify-center h-full p-6">
+									<p className="text-sm text-red-500">{graphError}</p>
+								</div>
 							) : graphNodes.length === 0 ? (
 								<div className="flex items-center justify-center h-full">
 									<p className="text-sm" style={{ color: theme.colors.textDim }}>
@@ -472,16 +506,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									nodes={graphNodes}
 									theme={theme}
 									selectedHash={displayedCommit?.hash}
-									onCommitClick={(hash) => {
-										const idx = entries.findIndex((e) => e.hash === hash);
-										if (idx >= 0) {
-											setGraphSelected(null);
-											setSelectedIndex(idx);
-										} else {
-											const node = graphNodes.find((n) => n.hash === hash);
-											if (node) setGraphSelected(node);
-										}
-									}}
+									onCommitClick={handleGraphCommitClick}
 								/>
 							)
 						) : loading ? (

@@ -478,11 +478,15 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				const limit = options?.limit || 200;
+				// Use ASCII Unit Separator (U+001F, written as %x1f in git's pretty-format)
+				// between fields. `|` was tempting but author names and subjects can legally
+				// contain it, which silently corrupts every field after the offending one.
+				// US is a non-printing control character that never appears in real text.
 				const args = [
 					'log',
 					'--all',
 					`--max-count=${limit}`,
-					'--pretty=format:GRAPH_START%H|%P|%an|%ad|%D|%s',
+					'--pretty=format:GRAPH_START%H%x1f%P%x1f%an%x1f%ad%x1f%D%x1f%s',
 					'--date=iso-strict',
 				];
 				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
@@ -495,7 +499,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					.map((block) => {
 						const trimmed = block.trim();
 						const [hash = '', parents = '', author = '', date = '', refs = '', ...subj] =
-							trimmed.split('|');
+							trimmed.split('\x1f');
 						return {
 							hash,
 							shortHash: hash.slice(0, 7),
@@ -503,7 +507,9 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							author,
 							date,
 							refs: refs ? refs.split(', ').filter((r) => r.trim()) : [],
-							subject: subj.join('|'),
+							// Re-join with the same separator in case the subject itself contained one
+							// (extremely unlikely for a control character, but cheap to be correct).
+							subject: subj.join('\x1f'),
 						};
 					});
 				return { nodes, error: null };
@@ -518,6 +524,20 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('switch'),
 			async (cwd: string, branchName: string, sshRemoteId?: string, remoteCwd?: string) => {
+				// Reject flag-like names so a caller can't pass e.g. "-c new-branch" or "-C"
+				// and have git interpret it as a switch flag. execFile blocks shell
+				// injection but not flag injection.
+				if (
+					typeof branchName !== 'string' ||
+					branchName.length === 0 ||
+					branchName.startsWith('-')
+				) {
+					return {
+						success: false,
+						stdout: '',
+						stderr: `Invalid branch name: ${branchName}`,
+					};
+				}
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				const result = await execGit(['switch', branchName], cwd, sshRemote, effectiveRemoteCwd);
