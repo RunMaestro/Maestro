@@ -1597,13 +1597,43 @@ export default function MobileApp() {
 	}, []);
 
 	const handleAutoRunLaunch = useCallback(
-		(config: LaunchConfig) => {
+		async (config: LaunchConfig) => {
 			if (!activeSessionId) return;
-			launchAutoRun(activeSessionId, config);
+			const sessionId = activeSessionId;
+
+			// Capture the pre-launch state so we can revert if the launch fails.
+			// `connecting` (pulsing orange) gives the launching agent immediate
+			// visual feedback while the worktree spawn / initial dispatch occurs;
+			// the server's `session_state_change` broadcasts overwrite this once
+			// the agent actually transitions to busy.
+			let previousState: string | undefined;
+			setSessions((prev) => {
+				const target = prev.find((s) => s.id === sessionId);
+				if (!target) return prev;
+				previousState = target.state;
+				if (target.state === 'connecting') return prev;
+				return prev.map((s) => (s.id === sessionId ? { ...s, state: 'connecting' } : s));
+			});
+
 			setShowAutoRunSetup(false);
 			triggerHaptic(HAPTIC_PATTERNS.success);
+
+			const result = await launchAutoRun(sessionId, config);
+
+			if (!result.success) {
+				const fallback = previousState ?? 'idle';
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId && s.state === 'connecting' ? { ...s, state: fallback } : s
+					)
+				);
+				webLogger.warn(
+					`Auto Run launch failed for session ${sessionId}: ${result.error ?? 'unknown error'}`,
+					'Mobile'
+				);
+			}
 		},
-		[activeSessionId, launchAutoRun]
+		[activeSessionId, launchAutoRun, setSessions]
 	);
 
 	// Connect on mount - use empty dependency array to only connect once

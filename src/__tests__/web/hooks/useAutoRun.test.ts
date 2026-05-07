@@ -1,9 +1,12 @@
 /**
  * Tests for useAutoRun (web mobile).
  *
- * Focused on the Run-in-Worktree additions:
+ * Covers:
  * - launchAutoRun forwards the optional `worktree` payload through
- *   `configure_auto_run`.
+ *   `configure_auto_run` and returns a Promise<LaunchAutoRunResult>.
+ * - launchAutoRun resolves with success=false (and an error message) when the
+ *   server reports failure or the request rejects — used by the mobile App
+ *   to revert the optimistic "connecting" indicator (Gap 1).
  * - loadGitBranches dispatches `get_git_branches` and unwraps the response.
  * - listWorktrees dispatches `list_worktrees` and unwraps the response.
  */
@@ -19,97 +22,152 @@ describe('useAutoRun (mobile/web)', () => {
 	beforeEach(() => {
 		send.mockClear();
 		sendRequest.mockReset();
+		sendRequest.mockResolvedValue({ success: true });
 	});
 
-	it('launchAutoRun omits worktree when none is supplied', () => {
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		act(() => {
-			result.current.launchAutoRun('s-1', {
+	describe('launchAutoRun', () => {
+		it('omits worktree when none is supplied and resolves with the server result', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			let response: { success: boolean; error?: string } | undefined;
+			await act(async () => {
+				response = await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+					prompt: 'p',
+				});
+			});
+
+			expect(sendRequest).toHaveBeenCalledTimes(1);
+			expect(sendRequest).toHaveBeenCalledWith('configure_auto_run', {
+				sessionId: 's-1',
 				documents: [{ filename: 'doc.md' }],
 				prompt: 'p',
+				loopEnabled: undefined,
+				maxLoops: undefined,
+				launch: true,
 			});
+			expect(response).toEqual({ success: true, error: undefined });
 		});
 
-		expect(send).toHaveBeenCalledTimes(1);
-		const payload = send.mock.calls[0][0];
-		expect(payload.type).toBe('configure_auto_run');
-		expect(payload.sessionId).toBe('s-1');
-		expect(payload.launch).toBe(true);
-		expect(payload.worktree).toBeUndefined();
-	});
+		it('forwards worktree config when enabled', async () => {
+			const worktree: LaunchWorktreeConfig = {
+				enabled: true,
+				path: '/repo/worktrees/auto-run-main-0503',
+				branchName: 'auto-run-main-0503',
+				createPROnCompletion: true,
+				prTargetBranch: 'main',
+			};
 
-	it('launchAutoRun forwards worktree config when enabled', () => {
-		const worktree: LaunchWorktreeConfig = {
-			enabled: true,
-			path: '/repo/worktrees/auto-run-main-0503',
-			branchName: 'auto-run-main-0503',
-			createPROnCompletion: true,
-			prTargetBranch: 'main',
-		};
-
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		act(() => {
-			result.current.launchAutoRun('s-1', {
-				documents: [{ filename: 'doc.md' }],
-				worktree,
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await act(async () => {
+				await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+					worktree,
+				});
 			});
+
+			const payload = sendRequest.mock.calls[0][1];
+			expect(payload.worktree).toEqual(worktree);
 		});
 
-		const payload = send.mock.calls[0][0];
-		expect(payload.worktree).toEqual(worktree);
-	});
-
-	it('launchAutoRun strips a disabled worktree config', () => {
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		act(() => {
-			result.current.launchAutoRun('s-1', {
-				documents: [{ filename: 'doc.md' }],
-				worktree: {
-					enabled: false,
-					path: '/x',
-					branchName: 'b',
-					createPROnCompletion: false,
-					prTargetBranch: 'main',
-				},
+		it('strips a disabled worktree config', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await act(async () => {
+				await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+					worktree: {
+						enabled: false,
+						path: '/x',
+						branchName: 'b',
+						createPROnCompletion: false,
+						prTargetBranch: 'main',
+					},
+				});
 			});
-		});
-		expect(send.mock.calls[0][0].worktree).toBeUndefined();
-	});
-
-	it('loadGitBranches sends get_git_branches and returns branches list', async () => {
-		sendRequest.mockResolvedValueOnce({
-			branches: ['main', 'feature/x'],
-			currentBranch: 'main',
+			expect(sendRequest.mock.calls[0][1].worktree).toBeUndefined();
 		});
 
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		const out = await result.current.loadGitBranches('s-1');
+		it('returns success=false when the server reports an error', async () => {
+			sendRequest.mockResolvedValueOnce({ success: false, error: 'Bad request' });
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
 
-		expect(sendRequest).toHaveBeenCalledWith('get_git_branches', { sessionId: 's-1' });
-		expect(out).toEqual({ branches: ['main', 'feature/x'], currentBranch: 'main' });
-	});
+			let response: { success: boolean; error?: string } | undefined;
+			await act(async () => {
+				response = await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+				});
+			});
 
-	it('loadGitBranches propagates transport errors to the caller', async () => {
-		sendRequest.mockRejectedValueOnce(new Error('boom'));
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		await expect(result.current.loadGitBranches('s-1')).rejects.toThrow('boom');
-	});
-
-	it('listWorktrees sends list_worktrees and unwraps response', async () => {
-		sendRequest.mockResolvedValueOnce({
-			worktrees: [{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }],
+			expect(response).toEqual({ success: false, error: 'Bad request' });
 		});
 
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		const out = await result.current.listWorktrees('s-1');
+		it('returns success=false when sendRequest rejects (timeout / disconnect)', async () => {
+			sendRequest.mockRejectedValueOnce(new Error('Request timed out'));
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
 
-		expect(sendRequest).toHaveBeenCalledWith('list_worktrees', { sessionId: 's-1' });
-		expect(out).toEqual([{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }]);
+			let response: { success: boolean; error?: string } | undefined;
+			await act(async () => {
+				response = await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+				});
+			});
+
+			expect(response).toEqual({ success: false, error: 'Request timed out' });
+		});
+
+		it('treats a missing success field as failure', async () => {
+			sendRequest.mockResolvedValueOnce({});
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			let response: { success: boolean; error?: string } | undefined;
+			await act(async () => {
+				response = await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+				});
+			});
+
+			expect(response).toEqual({ success: false, error: undefined });
+		});
 	});
 
-	it('listWorktrees propagates transport errors to the caller', async () => {
-		sendRequest.mockRejectedValueOnce(new Error('boom'));
-		const { result } = renderHook(() => useAutoRun(sendRequest, send));
-		await expect(result.current.listWorktrees('s-1')).rejects.toThrow('boom');
+	describe('loadGitBranches', () => {
+		it('sends get_git_branches and returns branches list', async () => {
+			sendRequest.mockResolvedValueOnce({
+				branches: ['main', 'feature/x'],
+				currentBranch: 'main',
+			});
+
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			const out = await result.current.loadGitBranches('s-1');
+
+			expect(sendRequest).toHaveBeenCalledWith('get_git_branches', { sessionId: 's-1' });
+			expect(out).toEqual({ branches: ['main', 'feature/x'], currentBranch: 'main' });
+		});
+
+		it('propagates transport errors to the caller', async () => {
+			sendRequest.mockRejectedValueOnce(new Error('boom'));
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await expect(result.current.loadGitBranches('s-1')).rejects.toThrow('boom');
+		});
+	});
+
+	describe('listWorktrees', () => {
+		it('sends list_worktrees and unwraps response', async () => {
+			sendRequest.mockResolvedValueOnce({
+				worktrees: [{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }],
+			});
+
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			const out = await result.current.listWorktrees('s-1');
+
+			expect(sendRequest).toHaveBeenCalledWith('list_worktrees', { sessionId: 's-1' });
+			expect(out).toEqual([{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }]);
+		});
+
+		it('propagates transport errors to the caller', async () => {
+			sendRequest.mockRejectedValueOnce(new Error('boom'));
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await expect(result.current.listWorktrees('s-1')).rejects.toThrow('boom');
+		});
 	});
 });
