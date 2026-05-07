@@ -97,6 +97,14 @@ export interface PlaybookDraft {
 }
 
 /**
+ * Result of an Auto Run launch attempt.
+ */
+export interface LaunchAutoRunResult {
+	success: boolean;
+	error?: string;
+}
+
+/**
  * Return value from useAutoRun hook.
  */
 export interface UseAutoRunReturn {
@@ -110,7 +118,7 @@ export interface UseAutoRunReturn {
 	loadDocumentContent: (sessionId: string, filename: string) => Promise<void>;
 	saveDocumentContent: (sessionId: string, filename: string, content: string) => Promise<boolean>;
 	resetDocumentTasks: (sessionId: string, filename: string) => Promise<boolean>;
-	launchAutoRun: (sessionId: string, config: LaunchConfig) => boolean;
+	launchAutoRun: (sessionId: string, config: LaunchConfig) => Promise<LaunchAutoRunResult>;
 	stopAutoRun: (sessionId: string) => Promise<boolean>;
 	loadGitBranches: (sessionId: string) => Promise<{ branches: string[]; currentBranch?: string }>;
 	listWorktrees: (sessionId: string) => Promise<WorktreeSummary[]>;
@@ -131,11 +139,13 @@ export interface UseAutoRunReturn {
  * Hook for managing Auto Run state and operations.
  *
  * @param sendRequest - WebSocket sendRequest function for request-response operations
- * @param send - WebSocket send function for fire-and-forget messages
+ * @param _send - Reserved for fire-and-forget messages (currently unused; kept
+ *   in the signature for caller compatibility while every operation flows
+ *   through `sendRequest` so callers can await responses)
  */
 export function useAutoRun(
 	sendRequest: UseWebSocketReturn['sendRequest'],
-	send: UseWebSocketReturn['send'],
+	_send: UseWebSocketReturn['send'],
 	autoRunState: AutoRunState | null = null
 ): UseAutoRunReturn {
 	const [documents, setDocuments] = useState<AutoRunDocument[]>([]);
@@ -211,19 +221,32 @@ export function useAutoRun(
 	);
 
 	const launchAutoRun = useCallback(
-		(sessionId: string, config: LaunchConfig): boolean => {
-			return send({
-				type: 'configure_auto_run',
-				sessionId,
-				documents: config.documents,
-				prompt: config.prompt,
-				loopEnabled: config.loopEnabled,
-				maxLoops: config.maxLoops,
-				launch: true,
-				...(config.worktree && config.worktree.enabled ? { worktree: config.worktree } : {}),
-			});
+		async (sessionId: string, config: LaunchConfig): Promise<LaunchAutoRunResult> => {
+			try {
+				const response = await sendRequest<{ success?: boolean; error?: string }>(
+					'configure_auto_run',
+					{
+						sessionId,
+						documents: config.documents,
+						prompt: config.prompt,
+						loopEnabled: config.loopEnabled,
+						maxLoops: config.maxLoops,
+						launch: true,
+						...(config.worktree && config.worktree.enabled ? { worktree: config.worktree } : {}),
+					}
+				);
+				return {
+					success: response.success ?? false,
+					error: response.error,
+				};
+			} catch (error) {
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : 'Unknown error',
+				};
+			}
 		},
-		[send]
+		[sendRequest]
 	);
 
 	const loadGitBranches = useCallback(
