@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react';
 import { WorktreeRunSection } from '../../../renderer/components/WorktreeRunSection';
 import type { Session } from '../../../renderer/types';
-import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { gitService } from '../../../renderer/services/git';
 
