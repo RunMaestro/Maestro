@@ -2224,6 +2224,63 @@ describe('TabBar', () => {
 			expect(activeTabName).not.toHaveClass('truncate');
 		});
 
+		it('truncates browser tab titles for both active and inactive tabs', () => {
+			const longTitle = 'A very very very long browser tab title that should be truncated';
+			const otherLongTitle =
+				'Another extremely long browser tab title that should also be truncated';
+			render(
+				<TabBar
+					tabs={[createTab({ id: 'tab-1', name: 'Chat' })]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					unifiedTabs={[
+						{
+							type: 'browser',
+							id: 'browser-1',
+							data: {
+								id: 'browser-1',
+								url: 'https://example.com',
+								title: longTitle,
+								createdAt: 1,
+								canGoBack: false,
+								canGoForward: false,
+								isLoading: false,
+							} as any,
+						},
+						{
+							type: 'browser',
+							id: 'browser-2',
+							data: {
+								id: 'browser-2',
+								url: 'https://example.org',
+								title: otherLongTitle,
+								createdAt: 2,
+								canGoBack: false,
+								canGoForward: false,
+								isLoading: false,
+							} as any,
+						},
+					]}
+					activeBrowserTabId="browser-1"
+					onBrowserTabSelect={mockOnBrowserTabSelect}
+					onBrowserTabClose={mockOnBrowserTabClose}
+				/>
+			);
+
+			// Active browser tab: still truncated, with a slightly larger max width
+			const activeTitle = screen.getByText(longTitle);
+			expect(activeTitle).toHaveClass('truncate');
+			expect(activeTitle).toHaveClass('max-w-[180px]');
+
+			// Inactive browser tab: truncated with the standard max width
+			const inactiveTitle = screen.getByText(otherLongTitle);
+			expect(inactiveTitle).toHaveClass('truncate');
+			expect(inactiveTitle).toHaveClass('max-w-[140px]');
+		});
+
 		it('handles many tabs', () => {
 			const tabs = Array.from({ length: 50 }, (_, i) =>
 				createTab({ id: `tab-${i}`, name: `Tab ${i + 1}` })
