@@ -191,20 +191,24 @@ export const gitService = {
 	},
 
 	/**
-	 * Get topology graph nodes (commits with parent hashes) for graph rendering
+	 * Get topology graph nodes (commits with parent hashes) for graph rendering.
+	 * Throws on a main-process git error so the caller can render a real error
+	 * state instead of an indistinguishable empty list.
 	 */
 	async getGraph(
 		cwd: string,
 		options?: { limit?: number },
-		sshRemoteId?: string
+		sshRemoteId?: string,
+		remoteCwd?: string
 	): Promise<GitGraphNode[]> {
 		return createIpcMethod({
 			call: async () => {
-				const result = await window.maestro.git.graph(cwd, options, sshRemoteId);
+				const result = await window.maestro.git.graph(cwd, options, sshRemoteId, remoteCwd);
+				if (result.error) throw new Error(result.error);
 				return result.nodes || [];
 			},
 			errorContext: 'Git graph',
-			defaultValue: [],
+			rethrow: true,
 		});
 	},
 
@@ -215,11 +219,17 @@ export const gitService = {
 	async switchBranch(
 		cwd: string,
 		branchName: string,
-		sshRemoteId?: string
+		sshRemoteId?: string,
+		remoteCwd?: string
 	): Promise<GitSwitchResult> {
 		return createIpcMethod({
 			call: async () => {
-				const result = await window.maestro.git.switchBranch(cwd, branchName, sshRemoteId);
+				const result = await window.maestro.git.switchBranch(
+					cwd,
+					branchName,
+					sshRemoteId,
+					remoteCwd
+				);
 				return { success: result.success, stderr: result.stderr };
 			},
 			errorContext: 'Git switch',
