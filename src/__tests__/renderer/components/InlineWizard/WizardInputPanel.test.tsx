@@ -18,7 +18,6 @@ import {
 	formatEnterToSend,
 } from '../../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../../renderer/types';
-import type { Session } from '../../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../../helpers/mockSession';
 
 import { mockTheme } from '../../../helpers/mockTheme';
