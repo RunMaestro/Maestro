@@ -14,7 +14,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
-import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { createMockTheme } from '../../helpers/mockTheme';
