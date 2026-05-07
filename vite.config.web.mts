@@ -67,9 +67,14 @@ export default defineConfig(({ mode }) => ({
 		outDir: path.join(__dirname, 'dist/web'),
 		emptyOutDir: true,
 
-		// Vite 8 changed the default CSS minifier to lightningcss, which is
-		// strict about malformed CSS that earlier versions tolerated. Pin to
-		// esbuild to match prior behavior.
+		// TODO(vite-css): revisit this pin once one of these is true:
+		//   1) lightningcss tolerates xterm's malformed selectors (the web
+		//      config also pulls xterm CSS via @xterm/xterm)
+		//   2) xterm.js fixes its CSS upstream
+		//   3) we pre-process xterm's CSS through a tolerant pass before vite
+		// Vite 8 flipped the default CSS minifier to lightningcss, which is
+		// strict about malformed CSS that esbuild's minifier silently passed
+		// through. esbuild here matches prior (Vite 5-7) behavior.
 		cssMinify: 'esbuild',
 
 		// Generate source maps for debugging
