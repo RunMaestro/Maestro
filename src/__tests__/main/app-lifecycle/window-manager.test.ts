@@ -1149,5 +1149,50 @@ describe('app-lifecycle/window-manager', () => {
 				})
 			);
 		});
+
+		// Electron 41 removed the legacy `'crashed'` event in favor of
+		// `'render-process-gone'`. These tests pin the wiring so a future
+		// revert can't silently drop renderer-crash reporting.
+		describe('webContents crash event wiring', () => {
+			it('registers a render-process-gone listener', async () => {
+				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+				const windowManager = createWindowManager({
+					windowStateStore: mockWindowStateStore as unknown as Parameters<
+						typeof createWindowManager
+					>[0]['windowStateStore'],
+					isDevelopment: false,
+					preloadPath: '/path/to/preload.js',
+					rendererPath: '/path/to/index.html',
+					devServerUrl: 'http://localhost:5173',
+					useNativeTitleBar: false,
+					autoHideMenuBar: false,
+				});
+
+				windowManager.createWindow();
+
+				expect(webContentsEventHandlers.has('render-process-gone')).toBe(true);
+			});
+
+			it('does not register the deprecated crashed listener', async () => {
+				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+				const windowManager = createWindowManager({
+					windowStateStore: mockWindowStateStore as unknown as Parameters<
+						typeof createWindowManager
+					>[0]['windowStateStore'],
+					isDevelopment: false,
+					preloadPath: '/path/to/preload.js',
+					rendererPath: '/path/to/index.html',
+					devServerUrl: 'http://localhost:5173',
+					useNativeTitleBar: false,
+					autoHideMenuBar: false,
+				});
+
+				windowManager.createWindow();
+
+				expect(webContentsEventHandlers.has('crashed')).toBe(false);
+			});
+		});
 	});
 });
