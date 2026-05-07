@@ -57,6 +57,19 @@ export interface GitLogEntry {
 }
 
 /**
+ * Git graph node — like GitLogEntry but with parent hashes for topology rendering.
+ */
+export interface GitGraphNode {
+	hash: string;
+	shortHash: string;
+	parents: string[];
+	author: string;
+	date: string;
+	refs: string[];
+	subject: string;
+}
+
+/**
  * Discovered worktree event data
  */
 export interface WorktreeDiscoveredData {
@@ -232,6 +245,29 @@ export function createGitApi() {
 			entries: GitLogEntry[];
 			error: string | null;
 		}> => ipcRenderer.invoke('git:log', cwd, options, sshRemoteId),
+
+		/**
+		 * Get topology graph data (commits with parent hashes) for graph rendering
+		 */
+		graph: (
+			cwd: string,
+			options?: { limit?: number },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ nodes: GitGraphNode[]; error: string | null }> =>
+			ipcRenderer.invoke('git:graph', cwd, options, sshRemoteId, remoteCwd),
+
+		/**
+		 * Switch the current working tree to an existing branch.
+		 * Returns success=false on dirty working tree (stderr contains git's message).
+		 */
+		switchBranch: (
+			cwd: string,
+			branchName: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; stdout: string; stderr: string }> =>
+			ipcRenderer.invoke('git:switch', cwd, branchName, sshRemoteId, remoteCwd),
 
 		/**
 		 * Get commit count

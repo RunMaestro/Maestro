@@ -464,6 +464,72 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		)
 	);
 
+	// Topology data for graph view: includes parent hashes for lane rendering.
+	ipcMain.handle(
+		'git:graph',
+		withIpcErrorLogging(
+			handlerOpts('graph'),
+			async (
+				cwd: string,
+				options?: { limit?: number },
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const limit = options?.limit || 200;
+				const args = [
+					'log',
+					'--all',
+					`--max-count=${limit}`,
+					'--pretty=format:GRAPH_START%H|%P|%an|%ad|%D|%s',
+					'--date=iso-strict',
+				];
+				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return { nodes: [], error: result.stderr };
+				}
+				const nodes = result.stdout
+					.split('GRAPH_START')
+					.filter((c) => c.trim())
+					.map((block) => {
+						const trimmed = block.trim();
+						const [hash = '', parents = '', author = '', date = '', refs = '', ...subj] =
+							trimmed.split('|');
+						return {
+							hash,
+							shortHash: hash.slice(0, 7),
+							parents: parents ? parents.split(' ').filter(Boolean) : [],
+							author,
+							date,
+							refs: refs ? refs.split(', ').filter((r) => r.trim()) : [],
+							subject: subj.join('|'),
+						};
+					});
+				return { nodes, error: null };
+			}
+		)
+	);
+
+	// Switch to an existing branch in the current working tree.
+	// Returns success=false with stderr text on failure (e.g., dirty working tree).
+	ipcMain.handle(
+		'git:switch',
+		withIpcErrorLogging(
+			handlerOpts('switch'),
+			async (cwd: string, branchName: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const result = await execGit(['switch', branchName], cwd, sshRemote, effectiveRemoteCwd);
+				return {
+					success: result.exitCode === 0,
+					stdout: result.stdout,
+					stderr: result.stderr,
+				};
+			}
+		)
+	);
+
 	ipcMain.handle(
 		'git:commitCount',
 		withIpcErrorLogging(

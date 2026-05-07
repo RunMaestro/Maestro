@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
-import { GitCommit, GitBranch, Tag } from 'lucide-react';
+import { GitCommit, GitBranch, Tag, List, Network } from 'lucide-react';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -12,7 +12,12 @@ import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { gitService, type GitGraphNode } from '../services/git';
+import { GitGraphView } from './GitGraphView';
 import 'react-diff-view/style/index.css';
+
+const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
+type ViewMode = 'list' | 'graph';
 
 interface GitLogEntry {
 	hash: string;
@@ -51,6 +56,27 @@ export const GitLogViewer = memo(function GitLogViewer({
 	const [error, setError] = useState<string | null>(null);
 	const [selectedCommitDiff, setSelectedCommitDiff] = useState<string | null>(null);
 	const [loadingDiff, setLoadingDiff] = useState(false);
+	const [viewMode, setViewMode] = useState<ViewMode>(() => {
+		const stored =
+			typeof window !== 'undefined' ? localStorage.getItem(VIEW_MODE_STORAGE_KEY) : null;
+		return stored === 'graph' ? 'graph' : 'list';
+	});
+	const [graphNodes, setGraphNodes] = useState<GitGraphNode[]>([]);
+	const [graphLoading, setGraphLoading] = useState(false);
+	// Commit clicked from the graph that isn't part of `entries` (e.g. a side-branch
+	// commit only visible via `git log --all`). Drives the right-side detail panel
+	// when the list mode's selected entry would otherwise be out of sync.
+	const [graphSelected, setGraphSelected] = useState<GitGraphNode | null>(null);
+
+	useEffect(() => {
+		try {
+			localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+		} catch {
+			// localStorage may be unavailable; ignore.
+		}
+		// When leaving graph mode, clear graph-only selection so list selection drives the right panel.
+		if (viewMode !== 'graph') setGraphSelected(null);
+	}, [viewMode]);
 
 	const listRef = useRef<HTMLDivElement>(null);
 	const dialogRef = useRef<HTMLDivElement>(null);
@@ -106,6 +132,24 @@ export const GitLogViewer = memo(function GitLogViewer({
 		loadLog();
 	}, [cwd]);
 
+	// Lazy-load graph data the first time the user switches to the Graph view (and on cwd change).
+	useEffect(() => {
+		if (viewMode !== 'graph') return;
+		let cancelled = false;
+		setGraphLoading(true);
+		gitService
+			.getGraph(cwd, { limit: 100 }, sshRemoteId)
+			.then((nodes) => {
+				if (!cancelled) setGraphNodes(nodes);
+			})
+			.finally(() => {
+				if (!cancelled) setGraphLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [viewMode, cwd, sshRemoteId]);
+
 	// Load diff when selected entry changes
 	const loadCommitDiff = useCallback(
 		async (hash: string) => {
@@ -122,12 +166,35 @@ export const GitLogViewer = memo(function GitLogViewer({
 		[cwd]
 	);
 
-	// Auto-load diff for selected commit
+	// Auto-load diff for selected commit (priority: graph-only selection, else list selection)
 	useEffect(() => {
+		if (graphSelected) {
+			loadCommitDiff(graphSelected.hash);
+			return;
+		}
 		if (entries.length > 0 && entries[selectedIndex]) {
 			loadCommitDiff(entries[selectedIndex].hash);
 		}
-	}, [selectedIndex, entries, loadCommitDiff]);
+	}, [selectedIndex, entries, loadCommitDiff, graphSelected]);
+
+	// Effective commit displayed on the right side: graph-clicked commit overrides list selection.
+	const displayedCommit: {
+		hash: string;
+		shortHash: string;
+		subject: string;
+		author: string;
+		date: string;
+	} | null = graphSelected
+		? graphSelected
+		: entries[selectedIndex]
+			? {
+					hash: entries[selectedIndex].hash,
+					shortHash: entries[selectedIndex].shortHash,
+					subject: entries[selectedIndex].subject,
+					author: entries[selectedIndex].author,
+					date: entries[selectedIndex].date,
+				}
+			: null;
 
 	useModalLayer(MODAL_PRIORITIES.GIT_LOG, 'Git Log Viewer', () => onCloseRef.current(), {
 		focusTrap: 'lenient',
@@ -336,24 +403,88 @@ export const GitLogViewer = memo(function GitLogViewer({
 								: `${entries.length} commits`}
 						</span>
 					</div>
-					<button
-						onClick={onClose}
-						className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
-						Close (Esc)
-					</button>
+					<div className="flex items-center gap-2">
+						{/* List | Graph toggle */}
+						<div
+							className="flex items-center rounded overflow-hidden border"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<button
+								onClick={() => setViewMode('list')}
+								className="flex items-center gap-1 px-2.5 py-1 text-xs transition-colors"
+								style={{
+									backgroundColor: viewMode === 'list' ? theme.colors.bgActivity : 'transparent',
+									color: viewMode === 'list' ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title="List view"
+								aria-pressed={viewMode === 'list'}
+							>
+								<List className="w-3.5 h-3.5" />
+								List
+							</button>
+							<button
+								onClick={() => setViewMode('graph')}
+								className="flex items-center gap-1 px-2.5 py-1 text-xs transition-colors"
+								style={{
+									backgroundColor: viewMode === 'graph' ? theme.colors.bgActivity : 'transparent',
+									color: viewMode === 'graph' ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title="Graph view"
+								aria-pressed={viewMode === 'graph'}
+							>
+								<Network className="w-3.5 h-3.5" />
+								Graph
+							</button>
+						</div>
+						<button
+							onClick={onClose}
+							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+						>
+							Close (Esc)
+						</button>
+					</div>
 				</div>
 
 				{/* Content */}
 				<div className="flex-1 flex overflow-hidden">
-					{/* Left side: Commit list */}
+					{/* Left side: Commit list OR graph (graph gets more room for lanes) */}
 					<div
 						ref={listRef}
-						className="w-2/5 border-r overflow-y-auto"
+						className={`${viewMode === 'graph' ? 'w-3/5' : 'w-2/5'} border-r overflow-y-auto overflow-x-auto`}
 						style={{ borderColor: theme.colors.border }}
 					>
-						{loading ? (
+						{viewMode === 'graph' ? (
+							graphLoading ? (
+								<div className="flex items-center justify-center h-full">
+									<p className="text-sm" style={{ color: theme.colors.textDim }}>
+										Loading graph...
+									</p>
+								</div>
+							) : graphNodes.length === 0 ? (
+								<div className="flex items-center justify-center h-full">
+									<p className="text-sm" style={{ color: theme.colors.textDim }}>
+										No commits found
+									</p>
+								</div>
+							) : (
+								<GitGraphView
+									nodes={graphNodes}
+									theme={theme}
+									selectedHash={displayedCommit?.hash}
+									onCommitClick={(hash) => {
+										const idx = entries.findIndex((e) => e.hash === hash);
+										if (idx >= 0) {
+											setGraphSelected(null);
+											setSelectedIndex(idx);
+										} else {
+											const node = graphNodes.find((n) => n.hash === hash);
+											if (node) setGraphSelected(node);
+										}
+									}}
+								/>
+							)
+						) : loading ? (
 							<div className="flex items-center justify-center h-full">
 								<p className="text-sm" style={{ color: theme.colors.textDim }}>
 									Loading git log...
@@ -457,7 +588,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 					{/* Right side: Commit details & diff */}
 					<div className="flex-1 overflow-y-auto">
-						{entries[selectedIndex] && (
+						{displayedCommit && (
 							<div className="p-6">
 								{/* Commit header */}
 								<div className="mb-6">
@@ -465,7 +596,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 										className="text-lg font-semibold mb-2"
 										style={{ color: theme.colors.textMain }}
 									>
-										{entries[selectedIndex].subject}
+										{displayedCommit.subject}
 									</h3>
 									<div
 										className="flex items-center gap-4 text-sm"
@@ -475,10 +606,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 											className="font-mono px-2 py-1 rounded"
 											style={{ backgroundColor: theme.colors.bgActivity }}
 										>
-											{entries[selectedIndex].hash}
+											{displayedCommit.hash}
 										</span>
-										<span>{entries[selectedIndex].author}</span>
-										<span>{new Date(entries[selectedIndex].date).toLocaleString('en-US')}</span>
+										<span>{displayedCommit.author}</span>
+										<span>{new Date(displayedCommit.date).toLocaleString('en-US')}</span>
 									</div>
 								</div>
 

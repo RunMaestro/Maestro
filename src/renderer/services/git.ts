@@ -30,6 +30,21 @@ export interface GitNumstat {
 	}>;
 }
 
+export interface GitGraphNode {
+	hash: string;
+	shortHash: string;
+	parents: string[];
+	author: string;
+	date: string;
+	refs: string[];
+	subject: string;
+}
+
+export interface GitSwitchResult {
+	success: boolean;
+	stderr: string;
+}
+
 /**
  * All git service methods support SSH remote execution via optional sshRemoteId parameter.
  * When sshRemoteId is provided, operations execute on the remote host via SSH.
@@ -192,6 +207,43 @@ export const gitService = {
 			},
 			errorContext: 'Git tags',
 			defaultValue: [],
+		});
+	},
+
+	/**
+	 * Get topology graph nodes (commits with parent hashes) for graph rendering
+	 */
+	async getGraph(
+		cwd: string,
+		options?: { limit?: number },
+		sshRemoteId?: string
+	): Promise<GitGraphNode[]> {
+		return createIpcMethod({
+			call: async () => {
+				const result = await window.maestro.git.graph(cwd, options, sshRemoteId);
+				return result.nodes || [];
+			},
+			errorContext: 'Git graph',
+			defaultValue: [],
+		});
+	},
+
+	/**
+	 * Switch to an existing branch in the current working tree.
+	 * Returns success=false with stderr text on failure (e.g., dirty working tree).
+	 */
+	async switchBranch(
+		cwd: string,
+		branchName: string,
+		sshRemoteId?: string
+	): Promise<GitSwitchResult> {
+		return createIpcMethod({
+			call: async () => {
+				const result = await window.maestro.git.switchBranch(cwd, branchName, sshRemoteId);
+				return { success: result.success, stderr: result.stderr };
+			},
+			errorContext: 'Git switch',
+			defaultValue: { success: false, stderr: 'IPC call failed' },
 		});
 	},
 };

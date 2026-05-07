@@ -305,6 +305,7 @@
 		"@fastify/rate-limit": "^9.1.0",
 		"@fastify/static": "^7.0.4",
 		"@fastify/websocket": "^9.0.0",
+		"@gitgraph/react": "^1.6.0",
 		"@lezer/highlight": "^1.2.3",
 		"@opencode-ai/sdk": "^1.17.13",
 		"@sentry/electron": "^7.13.0",
