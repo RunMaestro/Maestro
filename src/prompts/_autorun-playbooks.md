@@ -68,6 +68,12 @@ Sub-bullets are allowed under a single `- [ ]` checkbox to describe compound wor
 
 Each `- [ ]` task starts a fresh AI context and receives the entire document. This is token-heavy, so favor grouping related operations and separating unrelated work.
 
+### Early Exit (Halt Marker)
+
+A running agent can abort the entire Auto Run mid-playbook by writing the marker `<!-- maestro:halt: reason here -->` (or bare `<!-- maestro:halt -->`) into the current document. When the engine sees this marker after a task, it stops dispatch immediately — no further tasks in the current document, no further documents in the playbook. The optional reason is recorded in the History panel and emitted to the JSONL stream as a `halt` event.
+
+The default Auto Run prompt already instructs executing agents that this option exists and when to use it (true playbook-wide blockers, not ordinary task failures). You generally do not need to mention the marker in your playbook unless you want to call out specific halt-worthy conditions, e.g. "If the build is broken before you start, halt the playbook." A stale halt marker left in a document will block re-runs with an error — the user must remove it before the playbook will start again.
+
 ### Structured Output Artifacts
 
 When the effort produces documentation, research, notes, or knowledge artifacts (not just code), instruct agents to create **structured Markdown files** with:

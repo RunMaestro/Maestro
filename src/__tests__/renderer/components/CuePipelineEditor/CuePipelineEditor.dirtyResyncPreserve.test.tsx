@@ -6,15 +6,19 @@
  * seconds later it pops back to its previous position. Root cause: the
  * `displayNodes <- computedNodes` resync effect ran on every `activeRuns`
  * polling tick (its deps include the running-state Sets returned fresh from
- * usePipelineState's memos), unconditionally overwriting positions. While
- * `pipelineState` was still dirty (drag committed locally but not saved to
- * disk), the recomputed `computedNodes` could lag the live `displayNodes`
- * positions and a poll-driven recompute would snap the node back.
+ * usePipelineState's memos), unconditionally overwriting positions —
+ * including ReactFlow's live drag-updated positions on `displayNodes`.
  *
- * Fix: while `isDirty` is true, the resync preserves per-node positions from
- * the live `displayNodes` and only merges in non-positional updates from
- * `computedNodes` (data, badges, running flags, etc.). Once the user saves
- * (`isDirty -> false`), full resync resumes.
+ * Fix: track the `pipelineState.pipelines` reference between resyncs. When
+ * pipelines is the SAME reference across two effect fires, the resync was
+ * triggered by a non-positional dep (running flags / theme / etc.), so we
+ * preserve `displayNodes` positions and only merge non-positional updates
+ * from `computedNodes`. When `pipelines` reference changes (drag committed,
+ * node added/removed, discard, mount), full sync to `computedNodes` resumes.
+ *
+ * The previous attempt gated on `isDirty`, which proved unreliable because
+ * the dirty effect runs after the resync effect and isn't load-bearing for
+ * "did the source-of-truth positions change."
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,7 +37,15 @@ vi.mock('reactflow', () => ({
 		setViewport: vi.fn(),
 	}),
 	useNodesInitialized: () => false,
-	applyNodeChanges: (_changes: any[], nodes: any[]) => nodes,
+	applyNodeChanges: (changes: any[], nodes: any[]) => {
+		const positionById = new Map<string, { x: number; y: number }>();
+		for (const c of changes) {
+			if (c?.type === 'position' && c.position) positionById.set(c.id, c.position);
+		}
+		return nodes.map((n) =>
+			positionById.has(n.id) ? { ...n, position: positionById.get(n.id) } : n
+		);
+	},
 	Background: () => null,
 	Controls: () => null,
 	MiniMap: () => null,
@@ -46,13 +58,7 @@ vi.mock('reactflow', () => ({
 vi.mock('../../../../renderer/components/CuePipelineEditor/PipelineCanvas', () => ({
 	PipelineCanvas: React.memo((props: any) => {
 		capturedNodes = props.nodes;
-		// `setDisplayNodes` is forwarded into usePipelineCanvasCallbacks via the
-		// `display.setDisplayNodes` slot — but PipelineCanvas itself doesn't
-		// accept it directly. We surface it instead through the canvasCallbacks
-		// hook by wiring it into onNodesChange. Tests below trigger position
-		// updates by calling onNodesChange with a position change.
-		(window as any).__test_onNodesChange = props.onNodesChange;
-		capturedSetDisplayNodes = (window as any).__test_onNodesChange ?? null;
+		capturedSetDisplayNodes = props.onNodesChange ?? null;
 		return <div data-testid="pipeline-canvas" />;
 	}),
 }));
@@ -95,10 +101,6 @@ vi.mock('../../../../renderer/hooks/cue/usePipelineSelection', () => ({
 	}),
 }));
 
-// `convertToReactFlowNodes` is the source of the "polling-driven recompute"
-// in this regression. The test toggles its return value between renders to
-// simulate computedNodes carrying stale positions while the user has already
-// dragged a node locally.
 const mockConvertToReactFlowNodes = vi.fn();
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph', () => ({
 	convertToReactFlowNodes: (...args: any[]) => mockConvertToReactFlowNodes(...args),
@@ -109,25 +111,17 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph',
 import { CuePipelineEditor } from '../../../../renderer/components/CuePipelineEditor/CuePipelineEditor';
 import { mockTheme } from '../../../helpers/mockTheme';
 
-function buildStateHookReturn(overrides: Record<string, unknown> = {}) {
+/**
+ * Build a stateHook return value where the `pipelines` array reference is
+ * stable across calls when `pipelinesRef` is reused. This mirrors the real
+ * usePipelineState behavior: `pipelineState.pipelines` only gets a new array
+ * identity when something actually mutates it (drag commit, add, delete,
+ * discard) — NOT on every render.
+ */
+function buildStateHookReturn(pipelines: any[], overrides: Record<string, unknown> = {}) {
 	return {
 		pipelineState: {
-			pipelines: [
-				{
-					id: 'p1',
-					name: 'Pipeline 1',
-					color: '#06b6d4',
-					nodes: [
-						{
-							id: 'agent-1',
-							type: 'agent',
-							position: { x: 0, y: 0 },
-							data: { sessionId: 's1', sessionName: 'Agent', toolType: 'claude-code' },
-						},
-					],
-					edges: [],
-				},
-			],
+			pipelines,
 			selectedPipelineId: 'p1',
 		},
 		setPipelineState: vi.fn(),
@@ -178,7 +172,26 @@ function makeNode(id: string, x: number, y: number) {
 	};
 }
 
-describe('CuePipelineEditor — dirty-state position preservation', () => {
+function makePipelines() {
+	return [
+		{
+			id: 'p1',
+			name: 'Pipeline 1',
+			color: '#06b6d4',
+			nodes: [
+				{
+					id: 'agent-1',
+					type: 'agent',
+					position: { x: 0, y: 0 },
+					data: { sessionId: 's1', sessionName: 'Agent', toolType: 'claude-code' },
+				},
+			],
+			edges: [],
+		},
+	];
+}
+
+describe('CuePipelineEditor — resync preserves live positions when pipelineState is unchanged', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		capturedNodes = [];
@@ -197,79 +210,43 @@ describe('CuePipelineEditor — dirty-state position preservation', () => {
 		);
 	}
 
-	it('clean state: resync overwrites displayNodes from computedNodes', () => {
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: false }));
-		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
-
-		const { rerender } = renderEditor();
-		expect(capturedNodes).toEqual([
-			expect.objectContaining({ id: 'p1:agent-1', position: { x: 0, y: 0 } }),
-		]);
-
-		// Simulate a polling tick: usePipelineState returns a new running-state
-		// Set identity (which forces computedNodes to recompute) but no real
-		// position changes. Clean state should follow computedNodes verbatim.
-		mockUsePipelineState.mockReturnValue(
-			buildStateHookReturn({ isDirty: false, runningPipelineIds: new Set(['p1']) })
-		);
-		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
-		rerender(
-			<CuePipelineEditor
-				sessions={[]}
-				graphSessions={[]}
-				onSwitchToSession={vi.fn()}
-				onClose={vi.fn()}
-				theme={mockTheme}
-			/>
-		);
-
-		expect(capturedNodes).toEqual([
-			expect.objectContaining({ id: 'p1:agent-1', position: { x: 0, y: 0 } }),
-		]);
-	});
-
-	it('dirty state: live displayNodes positions are preserved across resyncs', () => {
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: true }));
+	it('initial mount: displayNodes mirrors computedNodes', () => {
+		const pipelines = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelines));
 		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
 
 		renderEditor();
 		expect(capturedNodes).toEqual([
 			expect.objectContaining({ id: 'p1:agent-1', position: { x: 0, y: 0 } }),
 		]);
+	});
 
-		// User drags the node — onNodesChange flushes the position change into
-		// the live displayNodes. We simulate that by calling the captured
-		// callback ReactFlow normally drives.
+	it('polling tick (same pipelines ref): live drag position is preserved', () => {
+		// pipelines array kept identity-stable across renders to simulate the
+		// real "pipelineState.pipelines didn't actually change" condition.
+		const pipelines = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelines));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+
+		const { rerender } = renderEditor();
+
+		// User drags the node — onNodesChange (which the editor wires through to
+		// applyNodeChanges → setDisplayNodes) flushes the new position into the
+		// live displayNodes. pipelineState is NOT updated here; that would
+		// happen in onNodeDragStop, which we omit to model the real-world
+		// failure mode where the commit is missed.
 		expect(capturedSetDisplayNodes).toBeTruthy();
 		capturedSetDisplayNodes!([
 			{ type: 'position', id: 'p1:agent-1', position: { x: 350, y: 100 }, dragging: false },
 		]);
 
-		// A poll tick fires before save. computedNodes recomputes from
-		// pipelineState which still holds the OLD position. Without the fix,
-		// the resync would snap the node back to (0, 0).
+		// Poll tick: usePipelineState produces a fresh `runningPipelineIds` Set
+		// identity (which forces computedNodes to recompute), but the SAME
+		// `pipelines` reference is reused — nothing structural changed.
 		mockUsePipelineState.mockReturnValue(
-			buildStateHookReturn({ isDirty: true, runningPipelineIds: new Set(['p1']) })
+			buildStateHookReturn(pipelines, { runningPipelineIds: new Set(['p1']) })
 		);
 		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
-
-		// Force a re-render to flush the resync effect.
-		const { rerender } = render(
-			<CuePipelineEditor
-				sessions={[]}
-				graphSessions={[]}
-				onSwitchToSession={vi.fn()}
-				onClose={vi.fn()}
-				theme={mockTheme}
-			/>
-		);
-		// Re-arm captures from the second mount and trigger the same drag flow.
-		capturedSetDisplayNodes!([
-			{ type: 'position', id: 'p1:agent-1', position: { x: 350, y: 100 }, dragging: false },
-		]);
-		mockUsePipelineState.mockReturnValue(
-			buildStateHookReturn({ isDirty: true, runningPipelineIds: new Set(['p1']) })
-		);
 		rerender(
 			<CuePipelineEditor
 				sessions={[]}
@@ -280,20 +257,90 @@ describe('CuePipelineEditor — dirty-state position preservation', () => {
 			/>
 		);
 
-		// After the resync, the dragged position must survive.
 		const movedNode = capturedNodes.find((n) => n.id === 'p1:agent-1');
 		expect(movedNode).toBeTruthy();
 		expect(movedNode!.position).toEqual({ x: 350, y: 100 });
 	});
 
-	it('dirty state: new nodes appearing in computedNodes are still added to displayNodes', () => {
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: true }));
+	it('pipelineState changes (drag committed): full resync to computedNodes', () => {
+		const pipelinesA = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelinesA));
 		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
 
 		const { rerender } = renderEditor();
 
-		// Simulate a node drop / paste that adds a new node to computedNodes.
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: true }));
+		// User drags. Real flow: onNodesChange updates displayNodes, then
+		// onNodeDragStop commits to pipelineState. Both happen.
+		capturedSetDisplayNodes!([
+			{ type: 'position', id: 'p1:agent-1', position: { x: 350, y: 100 }, dragging: false },
+		]);
+
+		// pipelineState now has a NEW pipelines reference reflecting the drop.
+		const pipelinesB = makePipelines();
+		pipelinesB[0].nodes[0].position = { x: 350, y: 100 };
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelinesB));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 350, 100)]);
+
+		rerender(
+			<CuePipelineEditor
+				sessions={[]}
+				graphSessions={[]}
+				onSwitchToSession={vi.fn()}
+				onClose={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+
+		const movedNode = capturedNodes.find((n) => n.id === 'p1:agent-1');
+		expect(movedNode!.position).toEqual({ x: 350, y: 100 });
+	});
+
+	it('pipelineState changes (discard): positions reset to discarded values', () => {
+		// Initial state: node at (0, 0). User drags to (500, 500) but doesn't
+		// save. Then handleDiscard fires, restoring pipelineState from disk.
+		// The discarded position must overwrite the user's local drag.
+		const pipelinesInitial = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelinesInitial));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+
+		const { rerender } = renderEditor();
+
+		capturedSetDisplayNodes!([
+			{ type: 'position', id: 'p1:agent-1', position: { x: 500, y: 500 }, dragging: false },
+		]);
+
+		// Discard: pipelineState reverts to disk values. New `pipelines` ref.
+		const pipelinesAfterDiscard = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelinesAfterDiscard));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+
+		rerender(
+			<CuePipelineEditor
+				sessions={[]}
+				graphSessions={[]}
+				onSwitchToSession={vi.fn()}
+				onClose={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+
+		const node = capturedNodes.find((n) => n.id === 'p1:agent-1');
+		expect(node!.position).toEqual({ x: 0, y: 0 });
+	});
+
+	it('polling with new node added (same pipelines ref): edge case — new nodes still appear', () => {
+		// Even though `pipelines` ref is unchanged in this contrived scenario,
+		// the merge path picks up new ids from computedNodes. Guards against a
+		// regression where the preserve branch dropped previously-unseen nodes.
+		const pipelines = makePipelines();
+		mockUsePipelineState.mockReturnValue(buildStateHookReturn(pipelines));
+		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
+
+		const { rerender } = renderEditor();
+
+		mockUsePipelineState.mockReturnValue(
+			buildStateHookReturn(pipelines, { runningPipelineIds: new Set(['p1']) })
+		);
 		mockConvertToReactFlowNodes.mockReturnValue([
 			makeNode('p1:agent-1', 0, 0),
 			makeNode('p1:agent-2', 500, 500),
@@ -309,36 +356,8 @@ describe('CuePipelineEditor — dirty-state position preservation', () => {
 			/>
 		);
 
-		const ids = capturedNodes.map((n) => n.id).sort();
-		expect(ids).toEqual(['p1:agent-1', 'p1:agent-2']);
+		expect(capturedNodes.map((n) => n.id).sort()).toEqual(['p1:agent-1', 'p1:agent-2']);
 		const newNode = capturedNodes.find((n) => n.id === 'p1:agent-2');
 		expect(newNode!.position).toEqual({ x: 500, y: 500 });
-	});
-
-	it('dirty state: nodes removed from computedNodes are dropped from displayNodes', () => {
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: true }));
-		mockConvertToReactFlowNodes.mockReturnValue([
-			makeNode('p1:agent-1', 0, 0),
-			makeNode('p1:agent-2', 100, 100),
-		]);
-
-		const { rerender } = renderEditor();
-		expect(capturedNodes.map((n) => n.id).sort()).toEqual(['p1:agent-1', 'p1:agent-2']);
-
-		// One node deleted in pipelineState — computedNodes returns only the survivor.
-		mockUsePipelineState.mockReturnValue(buildStateHookReturn({ isDirty: true }));
-		mockConvertToReactFlowNodes.mockReturnValue([makeNode('p1:agent-1', 0, 0)]);
-
-		rerender(
-			<CuePipelineEditor
-				sessions={[]}
-				graphSessions={[]}
-				onSwitchToSession={vi.fn()}
-				onClose={vi.fn()}
-				theme={mockTheme}
-			/>
-		);
-
-		expect(capturedNodes.map((n) => n.id)).toEqual(['p1:agent-1']);
 	});
 });

@@ -67,7 +67,7 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 // Import after mocks
-import { runPlaybook } from '../../../cli/services/batch-processor';
+import { runPlaybook, detectHaltMarker } from '../../../cli/services/batch-processor';
 import {
 	spawnAgent,
 	readDocAndCountTasks,
@@ -1043,6 +1043,150 @@ describe('batch-processor', () => {
 			// Should complete without infinite loop
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent).toBeDefined();
+		});
+	});
+
+	describe('detectHaltMarker', () => {
+		it('returns halted=false when no marker is present', () => {
+			expect(detectHaltMarker('# Doc\n\n- [ ] Task one\n- [ ] Task two')).toEqual({
+				halted: false,
+			});
+		});
+
+		it('returns halted=true with no reason for the bare marker', () => {
+			expect(detectHaltMarker('- [x] Task\n<!-- maestro:halt -->')).toEqual({
+				halted: true,
+				reason: undefined,
+			});
+		});
+
+		it('returns halted=true with reason for the colon form', () => {
+			expect(detectHaltMarker('- [x] Task\n<!-- maestro:halt: build is broken -->')).toEqual({
+				halted: true,
+				reason: 'build is broken',
+			});
+		});
+
+		it('is case-insensitive on the marker keyword', () => {
+			expect(detectHaltMarker('<!-- MAESTRO:HALT: nope -->')).toEqual({
+				halted: true,
+				reason: 'nope',
+			});
+		});
+
+		it('tolerates whitespace inside the marker', () => {
+			expect(detectHaltMarker('<!--   maestro:halt   :   spaced out   -->')).toEqual({
+				halted: true,
+				reason: 'spaced out',
+			});
+		});
+
+		it('does not match unrelated comments', () => {
+			expect(detectHaltMarker('<!-- TODO: halt later -->')).toEqual({ halted: false });
+			expect(detectHaltMarker('<!-- maestro:something -->')).toEqual({ halted: false });
+		});
+	});
+
+	describe('runPlaybook - halt marker pre-scan', () => {
+		it('emits HALT_MARKER_PRESENT error when a stale marker exists before any work', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Task\n<!-- maestro:halt: stale from prior run -->',
+				taskCount: 1,
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const errorEvent = events.find((e) => e.type === 'error');
+			expect(errorEvent).toBeDefined();
+			expect(errorEvent?.code).toBe('HALT_MARKER_PRESENT');
+			expect(errorEvent?.message).toContain('stale from prior run');
+
+			// Pre-scan must run before any agent spawn
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+	});
+
+	describe('runPlaybook - mid-execution halt marker', () => {
+		it('emits halt event and stops dispatch when the agent writes the marker', async () => {
+			// Calls 1-4: initial scan, pre-scan halt check, doc-loop initial count,
+			// in-loop content read for prompt template — all clean.
+			// Call 5: post-spawn re-read — agent has written the halt marker.
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 4) {
+					return { content: '- [ ] Task one\n- [ ] Task two', taskCount: 2 };
+				}
+				return {
+					content: '- [x] Task one\n- [ ] Task two\n<!-- maestro:halt: missing migration -->',
+					taskCount: 1,
+				};
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				documents: [
+					{ filename: 'first', resetOnCompletion: false },
+					{ filename: 'second', resetOnCompletion: false },
+				],
+			});
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { skipSynopsis: true })
+			);
+
+			const haltEvent = events.find((e) => e.type === 'halt');
+			expect(haltEvent).toBeDefined();
+			expect(haltEvent?.document).toBe('first');
+			expect(haltEvent?.reason).toBe('missing migration');
+
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.success).toBe(false);
+			expect(completeEvent?.halted).toBe(true);
+			expect(completeEvent?.haltReason).toBe('missing migration');
+
+			// The second document must NOT be reached
+			const docStartEvents = events.filter((e) => e.type === 'document_start');
+			expect(docStartEvents.map((e) => e.document)).toEqual(['first']);
+
+			// CLI activity unregistered cleanly
+			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+
+		it('halts even when the agent did not check off the unfinishable task', async () => {
+			// 1 doc / 1 task call sequence:
+			//   1: initial scan, 2: doc-loop count, 3: in-loop content read,
+			//   4: post-spawn re-read (halt marker appears here)
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] Task one', taskCount: 1 };
+				}
+				// Same task count — agent left it unchecked but wrote the marker
+				return {
+					content: '- [ ] Task one\n<!-- maestro:halt: cannot proceed -->',
+					taskCount: 1,
+				};
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { skipSynopsis: true })
+			);
+
+			const haltEvent = events.find((e) => e.type === 'halt');
+			expect(haltEvent?.reason).toBe('cannot proceed');
+
+			const completeEvent = events.find((e) => e.type === 'complete');
+			expect(completeEvent?.halted).toBe(true);
+			expect(completeEvent?.totalTasksCompleted).toBe(0);
 		});
 	});
 });
