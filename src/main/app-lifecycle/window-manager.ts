@@ -516,11 +516,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				logger.info('Window became responsive again', 'Window');
 			});
 
-			// Handle page crashes (less severe than render-process-gone)
-			mainWindow.webContents.on('crashed', (_event, killed) => {
-				logger.error('WebContents crashed', 'Window', { killed });
-				reportCrashToSentry('WebContents crashed', killed ? 'warning' : 'error', { killed });
-			});
+			// Note: the legacy 'crashed' event was removed in Electron 41 and
+			// is now subsumed by 'render-process-gone' above (which reports to
+			// Sentry with full reason/exitCode detail and handles auto-reload).
 
 			// Handle page load failures (network issues, invalid URLs, etc.)
 			mainWindow.webContents.on(
