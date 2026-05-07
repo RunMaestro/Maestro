@@ -54,13 +54,20 @@ export default defineConfig(({ mode }) => ({
 					: path.join(__dirname, 'src/renderer/wdyr.ts'),
 		},
 	},
-	esbuild: {
-		// Strip console.* and debugger in production builds
+	// Vite 8 with Rolldown uses oxc; the older esbuild config is silently
+	// ignored in this path. Express the same drop intent via oxc.
+	oxc: {
+		jsxRefresh: mode !== 'production',
 		drop: mode === 'production' ? ['console', 'debugger'] : [],
 	},
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// Vite 8 changed the default CSS minifier to lightningcss, which is
+		// strict about malformed CSS that earlier versions tolerated. Pin to
+		// esbuild to match prior behavior; xterm's CSS contains intentionally
+		// odd selectors that lightningcss rejects.
+		cssMinify: 'esbuild',
 		// Disable modulepreload polyfill — Electron loads from local filesystem
 		modulePreload: false,
 		rollupOptions: {

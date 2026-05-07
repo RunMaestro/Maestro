@@ -48,8 +48,9 @@ export default defineConfig(({ mode }) => ({
 		__GIT_HASH__: JSON.stringify(gitHash),
 	},
 
-	esbuild: {
-		// Strip console.log and console.debug in production builds
+	// Vite 8 with Rolldown uses oxc; the older esbuild config is silently
+	// ignored in this path. Express the same drop intent via oxc.
+	oxc: {
 		drop: mode === 'production' ? ['console', 'debugger'] : [],
 	},
 
@@ -65,6 +66,11 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: path.join(__dirname, 'dist/web'),
 		emptyOutDir: true,
+
+		// Vite 8 changed the default CSS minifier to lightningcss, which is
+		// strict about malformed CSS that earlier versions tolerated. Pin to
+		// esbuild to match prior behavior.
+		cssMinify: 'esbuild',
 
 		// Generate source maps for debugging
 		sourcemap: true,
