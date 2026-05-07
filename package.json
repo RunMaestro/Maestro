@@ -329,7 +329,6 @@
 		"electron": "^41.5.0",
 		"electron-builder": "^26.8.1",
 		"electron-devtools-installer": "^4.0.0",
-		"electron-playwright-helpers": "^2.1.0",
 		"electron-rebuild": "^3.2.9",
 		"esbuild": "^0.24.2",
 		"eslint": "^9.39.2",
