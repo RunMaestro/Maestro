@@ -72,6 +72,16 @@ Key behaviors:
 - Output goes through `stripControlSequences()` then `DataBufferManager.emitDataBuffered()`
 - On exit, buffer is flushed before emitting `exit` event
 
+#### node-pty version pinning
+
+`node-pty` is currently pinned at exact `1.2.0-beta.12` (no caret) in `package.json`. The pin is deliberate, not drift:
+
+- The `1.2.0-beta` line carries a fix for a ptmx file-descriptor leak that surfaces under sustained terminal use; stable `1.1.0` does not have it.
+- Beta channels of native modules don't follow semver predictably (e.g., `1.2.0-beta.13` could ship a build-script change that breaks `electron-rebuild`), so the caret would be a stealth risk we don't want.
+- Move back to a caret range (`^1.2.0` or whatever the next stable major is) once the leak fix lands in a non-beta release.
+
+Any change to this pin must rebuild the native module against the current Electron version (`npm run postinstall` does this automatically) and validate with the targeted PTY/process-manager test set.
+
 ### ChildProcessSpawner (`spawners/ChildProcessSpawner.ts`)
 
 Spawns via Node's `child_process.spawn()`. This is the workhorse for AI agent interactions.
