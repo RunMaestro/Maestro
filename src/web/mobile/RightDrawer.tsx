@@ -39,6 +39,8 @@ export interface RightDrawerProps {
 	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
 	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
 	onAutoRunOpenFolderPicker?: () => void;
+	/** Open the Playbook Exchange (marketplace) sheet from the inline panel's empty state. */
+	onAutoRunOpenMarketplace?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	/** Callback when a git file is tapped for diff viewing */
@@ -72,6 +74,7 @@ export function RightDrawer({
 	onAutoRunOpenSetup,
 	onAutoRunSelectedDocumentChange,
 	onAutoRunOpenFolderPicker,
+	onAutoRunOpenMarketplace,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -255,6 +258,7 @@ export function RightDrawer({
 							onOpenDocument={onAutoRunOpenDocument}
 							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
 							onOpenFolderPicker={onAutoRunOpenFolderPicker}
+							onOpenMarketplace={onAutoRunOpenMarketplace}
 						/>
 					)}
 					{currentTab === 'git' && (
@@ -688,6 +692,7 @@ function AutoRunTabContent({
 	onOpenDocument,
 	onSelectedDocumentChange,
 	onOpenFolderPicker,
+	onOpenMarketplace,
 }: {
 	sessionId: string;
 	autoRunState: AutoRunState | null;
@@ -697,6 +702,7 @@ function AutoRunTabContent({
 	onOpenDocument?: (filename: string) => void;
 	onSelectedDocumentChange?: (filename: string | null) => void;
 	onOpenFolderPicker?: () => void;
+	onOpenMarketplace?: () => void;
 }) {
 	const handleOpenSetup = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -714,6 +720,7 @@ function AutoRunTabContent({
 				onExpandDocument={onOpenDocument}
 				onSelectedDocumentChange={onSelectedDocumentChange}
 				onOpenFolderPicker={onOpenFolderPicker}
+				onOpenMarketplace={onOpenMarketplace}
 			/>
 		</div>
 	);

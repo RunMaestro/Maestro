@@ -33,6 +33,8 @@ export interface AutoRunPanelProps {
 	onSelectedDocumentChange?: (filename: string | null) => void;
 	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
 	onOpenFolderPicker?: () => void;
+	/** Open the Playbook Exchange (marketplace) sheet — surfaced as a Docs Overview CTA in the empty state. */
+	onOpenMarketplace?: () => void;
 }
 
 /**
@@ -51,6 +53,7 @@ export function AutoRunPanel({
 	onAbortAfterError,
 	onSelectedDocumentChange,
 	onOpenFolderPicker,
+	onOpenMarketplace,
 }: AutoRunPanelProps) {
 	const colors = useThemeColors();
 
@@ -167,6 +170,7 @@ export function AutoRunPanel({
 					onAbortAfterError={onAbortAfterError}
 					onSelectedDocumentChange={onSelectedDocumentChange}
 					onOpenFolderPicker={onOpenFolderPicker}
+					onOpenMarketplace={onOpenMarketplace}
 				/>
 			</div>
 
