@@ -281,7 +281,7 @@
 		"js-yaml": "^4.1.1",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
-		"node-pty": "^1.1.0",
+		"node-pty": "1.2.0-beta.12",
 		"perfect-freehand": "^1.2.3",
 		"picomatch": "^4.0.3",
 		"qrcode": "^1.5.4",
