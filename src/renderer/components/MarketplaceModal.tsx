@@ -188,32 +188,36 @@ function PlaybookTile({
 				}),
 			}}
 		>
-			{/* BETA badge — top-left corner, full opacity, present whenever beta */}
-			{beta && (
-				<span
-					className="absolute top-2 left-2 px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide z-10"
-					style={{
-						backgroundColor: BETA_BADGE_BG,
-						color: BADGE_FG,
-					}}
-					title="This playbook is still maturing. Expect rough edges and possible breaking changes between releases."
-				>
-					BETA
-				</span>
-			)}
-
-			{/* Incompatibility badge — top-right corner, full opacity, only when gated */}
-			{!compatible && (
-				<span
-					className="absolute top-2 right-2 px-2 py-0.5 rounded text-[11px] font-semibold z-10"
-					style={{
-						backgroundColor: INCOMPAT_BADGE_BG,
-						color: BADGE_FG,
-					}}
-					title={`This playbook needs Maestro ${playbook.minMaestroVersion} or newer. You're running ${runningVersion}. Update Maestro to install this playbook.`}
-				>
-					Requires Maestro {playbook.minMaestroVersion}+
-				</span>
+			{/* Status badges — top-right corner, full opacity. When both present,
+			    incompatibility sits at the far right (most important) with BETA
+			    to its left so they share the same row. */}
+			{(beta || !compatible) && (
+				<div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+					{beta && (
+						<span
+							className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide"
+							style={{
+								backgroundColor: BETA_BADGE_BG,
+								color: BADGE_FG,
+							}}
+							title="This playbook is still maturing. Expect rough edges and possible breaking changes between releases."
+						>
+							BETA
+						</span>
+					)}
+					{!compatible && (
+						<span
+							className="px-2 py-0.5 rounded text-[11px] font-semibold"
+							style={{
+								backgroundColor: INCOMPAT_BADGE_BG,
+								color: BADGE_FG,
+							}}
+							title={`This playbook needs Maestro ${playbook.minMaestroVersion} or newer. You're running ${runningVersion}. Update Maestro to install this playbook.`}
+						>
+							Requires Maestro {playbook.minMaestroVersion}+
+						</span>
+					)}
+				</div>
 			)}
 
 			<div style={{ opacity: bodyOpacity, filter: iconFilter }}>
@@ -511,19 +515,19 @@ function PlaybookDetailView({
 							Description
 						</h4>
 						<p className="text-sm" style={{ color: theme.colors.textMain }}>
-							{playbook.description}{' '}
-							<button
-								onClick={() => onSelectDocument('')}
-								className="hover:opacity-80 transition-colors px-1 rounded"
-								style={{
-									color: theme.colors.accent,
-									backgroundColor: !selectedDocFilename
-										? `${theme.colors.accent}20`
-										: 'transparent',
-								}}
-							>
-								Read more...
-							</button>
+							{playbook.description}
+							{selectedDocFilename ? (
+								<>
+									{' '}
+									<button
+										onClick={() => onSelectDocument('')}
+										className="hover:opacity-80 transition-colors px-1 rounded"
+										style={{ color: theme.colors.accent }}
+									>
+										Read more...
+									</button>
+								</>
+							) : null}
 						</p>
 					</div>
 

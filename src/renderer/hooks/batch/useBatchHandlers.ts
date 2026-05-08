@@ -24,6 +24,7 @@ import type {
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -814,10 +815,21 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				// If we can't fetch processes, proceed without terminal task info
 			}
 
-			if (busyAgents.length === 0 && !hasActiveAutoRuns && activeTerminalTasks.length === 0) {
+			// Check for an unsent feedback draft so the user doesn't lose typed feedback
+			const hasFeedbackDraft = useFeedbackDraftStore.getState().hasDraft;
+
+			if (
+				busyAgents.length === 0 &&
+				!hasActiveAutoRuns &&
+				activeTerminalTasks.length === 0 &&
+				!hasFeedbackDraft
+			) {
 				window.maestro.app.confirmQuit();
 			} else {
-				getModalActions().setQuitConfirmModalOpen(true, { activeTerminalTasks });
+				getModalActions().setQuitConfirmModalOpen(true, {
+					activeTerminalTasks,
+					hasFeedbackDraft,
+				});
 			}
 		});
 

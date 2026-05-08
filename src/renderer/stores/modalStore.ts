@@ -135,6 +135,7 @@ export interface DirectorNotesData {
 /** Cue modal data */
 export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
+	hasFeedbackDraft?: boolean;
 }
 
 export interface CueModalData {
@@ -625,8 +626,10 @@ export function getModalActions() {
 		closeConfirmation: () => closeModal('confirm'),
 
 		// Quit Confirmation Modal
-		setQuitConfirmModalOpen: (open: boolean, data?: { activeTerminalTasks?: string[] }) =>
-			open ? openModal('quitConfirm', data) : closeModal('quitConfirm'),
+		setQuitConfirmModalOpen: (
+			open: boolean,
+			data?: { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+		) => (open ? openModal('quitConfirm', data) : closeModal('quitConfirm')),
 
 		// Rename Instance Modal
 		setRenameInstanceModalOpen: (open: boolean) => {
@@ -1018,6 +1021,7 @@ export function useModalActions() {
 		// Quit Confirmation Modal
 		quitConfirmModalOpen,
 		activeTerminalTasks: (quitConfirmData?.activeTerminalTasks as string[]) ?? [],
+		hasFeedbackDraft: quitConfirmData?.hasFeedbackDraft ?? false,
 
 		// Rename Instance Modal
 		renameInstanceModalOpen,

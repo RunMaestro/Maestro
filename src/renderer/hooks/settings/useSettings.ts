@@ -308,6 +308,8 @@ export interface UseSettingsReturn {
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
+	newBrowserTabPlacement: 'end' | 'after-current';
+	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
 	newTerminalPlacement: 'end' | 'after-current';
 	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
 	openedFilePlacement: 'end' | 'after-current';

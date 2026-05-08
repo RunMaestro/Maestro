@@ -35,19 +35,21 @@ export function findActiveUnifiedTabIndex(session: Session, order: UnifiedTabRef
 
 /**
  * Resolve the placement preference for a given tab type from user settings:
- *   - AI and browser tabs use `newTabPlacement`
+ *   - AI tabs use `newTabPlacement`
+ *   - Browser tabs use `newBrowserTabPlacement`
  *   - Terminal tabs use `newTerminalPlacement`
  *   - File preview tabs use `openedFilePlacement`
  */
 function resolvePlacementForType(type: UnifiedTabRef['type']): 'end' | 'after-current' {
 	const settings = useSettingsStore.getState();
 	switch (type) {
+		case 'browser':
+			return settings.newBrowserTabPlacement;
 		case 'terminal':
 			return settings.newTerminalPlacement;
 		case 'file':
 			return settings.openedFilePlacement;
 		case 'ai':
-		case 'browser':
 		default:
 			return settings.newTabPlacement;
 	}

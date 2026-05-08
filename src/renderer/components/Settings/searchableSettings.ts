@@ -190,6 +190,8 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'title',
 			'placement',
 			'new tab',
+			'new browser',
+			'browser tab',
 			'new terminal',
 			'opened file',
 			'file tab',

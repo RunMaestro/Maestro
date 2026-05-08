@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, MessageSquare } from 'lucide-react';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -20,6 +20,8 @@ interface QuitConfirmModalProps {
 	busyAgentNames: string[];
 	/** Active terminal tasks (e.g., "rc: npm test") */
 	activeTerminalTasks?: string[];
+	/** True when the Feedback modal has an unsent draft (typed text, attachments, or messages) */
+	hasFeedbackDraft?: boolean;
 	/** Callback when user confirms quit */
 	onConfirmQuit: () => void;
 	/** Callback when user cancels (stays in app) */
@@ -37,6 +39,7 @@ export function QuitConfirmModal({
 	busyAgentCount,
 	busyAgentNames,
 	activeTerminalTasks = [],
+	hasFeedbackDraft = false,
 	onConfirmQuit,
 	onCancel,
 }: QuitConfirmModalProps): JSX.Element {
@@ -118,13 +121,23 @@ export function QuitConfirmModal({
 								{activeTerminalTasks.length === 1 ? 'task is' : 'tasks are'} running.{' '}
 							</>
 						)}
-						Quitting now will interrupt{' '}
-						{busyAgentCount > 0 && hasTerminalTasks
-							? 'all active work'
-							: busyAgentCount > 0
-								? 'their work'
-								: 'these tasks'}
-						.
+						{hasFeedbackDraft && <>You have unsent feedback in the Feedback window. </>}
+						{busyAgentCount === 0 && !hasTerminalTasks && hasFeedbackDraft
+							? 'Quitting now will discard your draft.'
+							: (() => {
+									const target =
+										busyAgentCount > 0 && hasTerminalTasks
+											? 'all active work'
+											: busyAgentCount > 0
+												? 'their work'
+												: 'these tasks';
+									return (
+										<>
+											Quitting now will interrupt {target}
+											{hasFeedbackDraft ? ' and discard your feedback draft' : ''}.
+										</>
+									);
+								})()}
 					</p>
 
 					{/* List of busy agents */}
@@ -206,6 +219,31 @@ export function QuitConfirmModal({
 									</span>
 								)}
 							</div>
+						</div>
+					)}
+
+					{/* Feedback draft warning */}
+					{hasFeedbackDraft && (
+						<div
+							className="mt-4 p-3 rounded-lg border"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							<div className="text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+								Unsent Feedback
+							</div>
+							<span
+								className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
+								style={{
+									backgroundColor: `${theme.colors.warning}15`,
+									color: theme.colors.warning,
+								}}
+							>
+								<MessageSquare className="w-3 h-3" />
+								Draft will be discarded
+							</span>
 						</div>
 					)}
 

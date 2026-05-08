@@ -353,6 +353,7 @@ export interface SettingsStoreState {
 	browserHomeUrl: string;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
+	newBrowserTabPlacement: 'end' | 'after-current';
 	newTerminalPlacement: 'end' | 'after-current';
 	openedFilePlacement: 'end' | 'after-current';
 	fileTabAutoRefreshEnabled: boolean;
@@ -466,6 +467,7 @@ export interface SettingsStoreActions {
 	setBrowserHomeUrl: (value: string) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
+	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
 	setOpenedFilePlacement: (value: 'end' | 'after-current') => void;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
@@ -659,6 +661,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
+		newBrowserTabPlacement: 'after-current',
 		newTerminalPlacement: 'after-current',
 		openedFilePlacement: 'after-current',
 		fileTabAutoRefreshEnabled: false,
@@ -1167,6 +1170,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setNewTabPlacement: (value) => {
 			set({ newTabPlacement: value });
 			window.maestro.settings.set('newTabPlacement', value);
+		},
+
+		setNewBrowserTabPlacement: (value) => {
+			set({ newBrowserTabPlacement: value });
+			window.maestro.settings.set('newBrowserTabPlacement', value);
 		},
 
 		setNewTerminalPlacement: (value) => {
@@ -2334,6 +2342,13 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['newBrowserTabPlacement'] !== undefined) {
+			const placement = allSettings['newBrowserTabPlacement'];
+			if (placement === 'end' || placement === 'after-current') {
+				patch.newBrowserTabPlacement = placement;
+			}
+		}
+
 		if (allSettings['newTerminalPlacement'] !== undefined) {
 			const placement = allSettings['newTerminalPlacement'];
 			if (placement === 'end' || placement === 'after-current') {
@@ -2568,6 +2583,7 @@ export function getSettingsActions() {
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
 		setNewTabPlacement: state.setNewTabPlacement,
+		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,
 		setNewTerminalPlacement: state.setNewTerminalPlacement,
 		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,

@@ -326,9 +326,16 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	newTabPlacement: {
 		description:
-			'Where new AI and browser tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+			'Where new AI tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
 		type: 'string',
 		default: 'end',
+		category: 'editor',
+	},
+	newBrowserTabPlacement: {
+		description:
+			'Where new browser tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
 		category: 'editor',
 	},
 	newTerminalPlacement: {

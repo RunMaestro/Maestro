@@ -89,6 +89,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setAutomaticTabNamingEnabled,
 		newTabPlacement,
 		setNewTabPlacement,
+		newBrowserTabPlacement,
+		setNewBrowserTabPlacement,
 		newTerminalPlacement,
 		setNewTerminalPlacement,
 		openedFilePlacement,
@@ -950,7 +952,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							New tab placement
 						</div>
 						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
-							Where new AI and browser tabs appear in the tab bar.
+							Where new AI tabs appear in the tab bar.
 						</div>
 						<ToggleButtonGroup
 							options={[
@@ -959,6 +961,25 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							]}
 							value={newTabPlacement}
 							onChange={setNewTabPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* New Browser Tab Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New browser tab placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new browser tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newBrowserTabPlacement}
+							onChange={setNewBrowserTabPlacement}
 							theme={theme}
 						/>
 					</div>
