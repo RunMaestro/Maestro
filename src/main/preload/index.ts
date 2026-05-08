@@ -52,6 +52,7 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createCueBackupApi } from './cueBackup';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
@@ -205,6 +206,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
+	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	cueBackup: createCueBackupApi(),
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
 
@@ -292,6 +296,8 @@ export {
 	createDirectorNotesApi,
 	// Cue
 	createCueApi,
+	// Cue Backup
+	createCueBackupApi,
 	// WakaTime
 	createWakatimeApi,
 	// Maestro CLI

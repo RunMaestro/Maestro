@@ -97,6 +97,19 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
+	// Snapshot the in-flight stdout/stderr for an active Cue run. Returns null
+	// when the runId isn't currently active. Powers the dashboard's
+	// expand-active-run-row "live logs" UX (renderer polls this while expanded).
+	ipcMain.handle(
+		'cue:getRunLiveOutput',
+		withIpcErrorLogging(
+			handlerOpts('getRunLiveOutput'),
+			async (options: { runId: string }): Promise<{ stdout: string; stderr: string } | null> => {
+				return requireEngine().getRunLiveOutput(options.runId);
+			}
+		)
+	);
+
 	// Get activity log (recent completed/failed runs)
 	ipcMain.handle(
 		'cue:getActivityLog',

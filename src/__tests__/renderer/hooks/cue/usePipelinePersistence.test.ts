@@ -27,9 +27,37 @@ vi.mock('../../../../renderer/stores/notificationStore', () => ({
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml', () => ({
 	pipelinesToYaml: vi.fn((pipelines: unknown[]) => ({
-		yaml: pipelines.length === 0 ? '' : 'yaml-content',
+		yaml: (pipelines as unknown[]).length === 0 ? '' : 'yaml-content',
 		promptFiles: new Map(),
 	})),
+	// Per-agent-cwd emitter — the mock walks each pipeline's agent /
+	// command nodes, looks up the owner's projectRoot via the sessionsById
+	// map, and emits one byCwd entry per distinct projectRoot. Mirrors what
+	// the real implementation does for these simple test pipelines without
+	// pulling in the full pipelinesToSubscriptionRecords pipeline.
+	pipelinesToYamlByOwnerCwd: vi.fn(
+		(
+			pipelines: Array<{ nodes: Array<{ type: string; data: Record<string, unknown> }> }>,
+			_settings: unknown,
+			sessionsById: ReadonlyMap<string, { projectRoot?: string }>
+		) => {
+			const byCwd = new Map<string, { yaml: string; promptFiles: Map<string, string> }>();
+			for (const p of pipelines) {
+				for (const n of p.nodes) {
+					let sessionId: string | undefined;
+					if (n.type === 'agent') sessionId = n.data.sessionId as string | undefined;
+					else if (n.type === 'command') sessionId = n.data.owningSessionId as string | undefined;
+					if (!sessionId) continue;
+					const cwd = sessionsById.get(sessionId)?.projectRoot;
+					if (!cwd) continue;
+					if (!byCwd.has(cwd)) {
+						byCwd.set(cwd, { yaml: 'yaml-content', promptFiles: new Map() });
+					}
+				}
+			}
+			return { byCwd, unresolved: [] as Array<{ subName: string; agentId: string }> };
+		}
+	),
 }));
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline', () => ({

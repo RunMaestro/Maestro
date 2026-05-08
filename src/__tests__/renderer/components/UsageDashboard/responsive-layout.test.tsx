@@ -62,7 +62,7 @@ vi.mock('lucide-react', () => {
 		// New SummaryCards momentum-row icons
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
-		GitBranch: createIcon('git-branch', '🌿'),
+		PenLine: createIcon('pen-line', '✏️'),
 	};
 });
 
@@ -234,6 +234,7 @@ const createSampleData = () => ({
 	avgSessionDuration: 144000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 });
 
 describe('UsageDashboard Responsive Layout', () => {

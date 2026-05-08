@@ -46,6 +46,7 @@ import {
 	invalidateCacheForFiles,
 	BacklinkUpdateData,
 	GraphData,
+	PartialUpdate,
 } from './graphDataBuilder';
 import {
 	MindMap,
@@ -355,6 +356,19 @@ export function DocumentGraphView({
 	const abortBacklinkScanRef = useRef<(() => void) | null>(null);
 	const currentGraphDataRef = useRef<GraphData | null>(null);
 
+	// Progressive expansion state — true while BFS is still walking outward after
+	// the focus node has been rendered. Drives the non-blocking "expanding graph"
+	// badge in the bottom-left corner.
+	const [expandingGraph, setExpandingGraph] = useState(false);
+	const [expandProgress, setExpandProgress] = useState<{
+		depth: number;
+		loaded: number;
+	} | null>(null);
+	// Tracks whether the streaming flow has emitted at least the focus node.
+	// Once true, the final state-replacement at the end of loadGraphData becomes
+	// a no-op overlay rather than a fresh setNodes() that would visibly flash.
+	const streamingActiveRef = useRef(false);
+
 	/**
 	 * Handle escape - show confirmation modal
 	 */
@@ -519,6 +533,54 @@ export function DocumentGraphView({
 	}, []);
 
 	/**
+	 * Handle streaming partial updates from buildGraphData. The focus node
+	 * arrives first (so the user sees the graph instantly), then each BFS depth
+	 * arrives as it completes. This is what makes the modal feel responsive
+	 * over SSH.
+	 */
+	const handlePartialUpdate = useCallback(
+		(update: PartialUpdate) => {
+			const { nodes: newMindMapNodes, links: newMindMapLinks } = convertToMindMapData(
+				update.newNodes.map((n) => ({ id: n.id, data: n.data })),
+				update.newEdges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+				previewCharLimit
+			);
+
+			if (update.phase === 'focus') {
+				// First update — replace any stale state from a previous build with
+				// just the focus node, dismiss the spinner, and flag the BFS
+				// expansion as in-flight.
+				streamingActiveRef.current = true;
+				setNodes(newMindMapNodes);
+				setLinks(newMindMapLinks);
+				setDocumentOnlyNodes(newMindMapNodes);
+				setDocumentOnlyLinks(newMindMapLinks);
+				setAllNodesWithExternal(newMindMapNodes);
+				setAllLinksWithExternal(newMindMapLinks);
+				setLoadedDocuments(update.loadedDocuments);
+				setActiveFocusFile(focusFilePath);
+				setLoading(false);
+				setExpandingGraph(true);
+				setExpandProgress({ depth: 0, loaded: update.loadedDocuments });
+				return;
+			}
+
+			// depth-complete: append to every list. We append in both the
+			// document-only and "with external" lists so the toggle stays in sync;
+			// external-domain nodes get folded in at the end of the build.
+			setNodes((prev) => [...prev, ...newMindMapNodes]);
+			setLinks((prev) => [...prev, ...newMindMapLinks]);
+			setDocumentOnlyNodes((prev) => [...prev, ...newMindMapNodes]);
+			setDocumentOnlyLinks((prev) => [...prev, ...newMindMapLinks]);
+			setAllNodesWithExternal((prev) => [...prev, ...newMindMapNodes]);
+			setAllLinksWithExternal((prev) => [...prev, ...newMindMapLinks]);
+			setLoadedDocuments(update.loadedDocuments);
+			setExpandProgress({ depth: update.currentDepth, loaded: update.loadedDocuments });
+		},
+		[previewCharLimit, focusFilePath]
+	);
+
+	/**
 	 * Load and build graph data
 	 */
 	const loadGraphData = useCallback(
@@ -534,6 +596,9 @@ export function DocumentGraphView({
 			setProgress(null);
 			setBacklinksLoading(false);
 			setBacklinkProgress(null);
+			streamingActiveRef.current = false;
+			setExpandingGraph(false);
+			setExpandProgress(null);
 
 			if (resetPagination) {
 				setMaxNodes(defaultMaxNodes);
@@ -553,6 +618,7 @@ export function DocumentGraphView({
 					maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
+					onPartialUpdate: handlePartialUpdate,
 					sshRemoteId,
 				});
 
@@ -620,11 +686,26 @@ export function DocumentGraphView({
 					focusFilePath,
 				});
 
-				setNodes(mindMapNodes);
-				setLinks(mindMapLinks);
+				// If the streaming flow has already populated nodes/links, only
+				// flip the visible list when toggling state requires it (e.g. the
+				// user has external-links enabled and externals just arrived).
+				// Otherwise replace state — the streaming path may have been a
+				// no-op (e.g. focus file failed to parse and we got the empty
+				// fallback return).
+				if (!streamingActiveRef.current) {
+					setNodes(mindMapNodes);
+					setLinks(mindMapLinks);
+				} else if (includeExternalLinks) {
+					setNodes(allMindMapNodes);
+					setLinks(allMindMapLinks);
+				}
 
 				// Set active focus file from the required focusFilePath prop
 				setActiveFocusFile(focusFilePath);
+
+				// Streaming BFS is done — clear the in-flight badge.
+				setExpandingGraph(false);
+				setExpandProgress(null);
 
 				// Start background backlink scan after initial graph is displayed
 				if (graphData.startBacklinkScan) {
@@ -637,6 +718,8 @@ export function DocumentGraphView({
 			} catch (err) {
 				logger.error('Failed to build graph data:', undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to load document graph');
+				setExpandingGraph(false);
+				setExpandProgress(null);
 			} finally {
 				setLoading(false);
 			}
@@ -647,6 +730,7 @@ export function DocumentGraphView({
 			maxNodes,
 			defaultMaxNodes,
 			handleProgress,
+			handlePartialUpdate,
 			focusFilePath,
 			neighborDepth,
 			previewCharLimit,
@@ -2053,6 +2137,27 @@ export function DocumentGraphView({
 									? 'Loading...'
 									: `Load more (${totalDocuments - loadedDocuments} remaining)`}
 							</button>
+						)}
+						{/* BFS expansion indicator — visible after the focus node has
+						    rendered while we're still walking outward */}
+						{expandingGraph && (
+							<span
+								className="flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+								style={{
+									backgroundColor: `${theme.colors.accent}15`,
+									color: theme.colors.textDim,
+								}}
+								title="Fanning out from the focus document"
+							>
+								<Spinner size={12} color={theme.colors.accent} />
+								<span>
+									Expanding graph
+									{expandProgress && expandProgress.depth > 0
+										? ` (depth ${expandProgress.depth}, ${expandProgress.loaded} docs)`
+										: ''}
+									...
+								</span>
+							</span>
 						)}
 						{/* Backlink loading indicator */}
 						{backlinksLoading && (

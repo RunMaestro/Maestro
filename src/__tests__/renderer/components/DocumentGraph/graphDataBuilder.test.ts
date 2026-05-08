@@ -17,6 +17,7 @@ import {
 	type DocumentNodeData,
 	type ProgressData,
 	type BacklinkUpdateData,
+	type PartialUpdate,
 	BATCH_SIZE_BEFORE_YIELD,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
@@ -481,6 +482,114 @@ describe('graphDataBuilder', () => {
 			});
 
 			expect(progressFiles).toContain('readme.md');
+		});
+	});
+
+	describe('streaming partial updates (onPartialUpdate)', () => {
+		it('emits the focus node before any depth has been parsed', async () => {
+			const updates: PartialUpdate[] = [];
+			const onPartialUpdate = (update: PartialUpdate) => {
+				updates.push({
+					...update,
+					newNodes: [...update.newNodes],
+					newEdges: [...update.newEdges],
+				});
+			};
+
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 2,
+				onPartialUpdate,
+			});
+
+			expect(updates.length).toBeGreaterThan(0);
+			const first = updates[0];
+			expect(first.phase).toBe('focus');
+			expect(first.currentDepth).toBe(0);
+			expect(first.newNodes).toHaveLength(1);
+			expect(first.newNodes[0].id).toBe('doc-readme.md');
+			expect(first.newEdges).toHaveLength(0);
+			expect(first.loadedDocuments).toBe(1);
+		});
+
+		it('emits one depth-complete update per BFS ring containing only the new nodes', async () => {
+			const updates: PartialUpdate[] = [];
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 2,
+				onPartialUpdate: (u) => updates.push(u),
+			});
+
+			const depthUpdates = updates.filter((u) => u.phase === 'depth-complete');
+			expect(depthUpdates.length).toBeGreaterThanOrEqual(1);
+
+			// loadedDocuments must be monotonic
+			const loaded = updates.map((u) => u.loadedDocuments);
+			for (let i = 1; i < loaded.length; i++) {
+				expect(loaded[i]).toBeGreaterThanOrEqual(loaded[i - 1]);
+			}
+
+			// Cumulatively the partial updates should produce the same node set as
+			// the final return — that's the contract the renderer relies on.
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 2,
+				onPartialUpdate: () => {},
+			});
+			const streamedIds = new Set<string>();
+			for (const u of updates) {
+				for (const n of u.newNodes) streamedIds.add(n.id);
+			}
+			const finalIds = new Set(result.nodes.map((n) => n.id));
+			expect(streamedIds).toEqual(finalIds);
+		});
+
+		it('does not emit duplicate edges across depth slices', async () => {
+			const seenEdgeIds = new Set<string>();
+			let duplicates = 0;
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 5,
+				onPartialUpdate: (u) => {
+					for (const edge of u.newEdges) {
+						if (seenEdgeIds.has(edge.id)) duplicates++;
+						else seenEdgeIds.add(edge.id);
+					}
+				},
+			});
+
+			expect(duplicates).toBe(0);
+		});
+
+		it('still calls onPartialUpdate with the focus when given a focus that has no outgoing links', async () => {
+			const updates: PartialUpdate[] = [];
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'standalone.md',
+				maxDepth: 2,
+				onPartialUpdate: (u) => updates.push(u),
+			});
+
+			// standalone.md links to nothing — only the focus emit should fire
+			expect(updates.length).toBe(1);
+			expect(updates[0].phase).toBe('focus');
+			expect(updates[0].newNodes[0].id).toBe('doc-standalone.md');
+		});
+
+		it('does not emit anything when focus file fails to parse', async () => {
+			const updates: PartialUpdate[] = [];
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'does-not-exist.md',
+				onPartialUpdate: (u) => updates.push(u),
+			});
+
+			expect(updates).toEqual([]);
+			expect(result.nodes).toHaveLength(0);
 		});
 	});
 

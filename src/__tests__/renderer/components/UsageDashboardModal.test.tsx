@@ -48,10 +48,10 @@ vi.mock('lucide-react', () => {
 		PanelTop: createIcon('panel-top', '🔲'),
 		// LongestAutoRunsTable + SummaryCards (Best Day) icons
 		Trophy: createIcon('trophy', '🏆'),
-		// SummaryCards streak/best/active/worktree icons
+		// SummaryCards streak/best/active/image-annotations icons
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
-		GitBranch: createIcon('git-branch', '🌿'),
+		PenLine: createIcon('pen-line', '✏️'),
 		// ChartErrorBoundary icons
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),
@@ -63,6 +63,9 @@ vi.mock('lucide-react', () => {
 		Cpu: createIcon('cpu', '🖥️'),
 		DollarSign: createIcon('dollar', '💲'),
 		Activity: createIcon('activity', '📈'),
+		// KeyboardStats icons
+		Keyboard: createIcon('keyboard', '⌨️'),
+		Sparkles: createIcon('sparkles', '✨'),
 	};
 });
 
@@ -90,6 +93,9 @@ const mockGetDatabaseSize = vi.fn();
 const mockSaveFile = vi.fn();
 const mockWriteFile = vi.fn();
 
+const mockGetShortcutUsageByDay = vi.fn(() => Promise.resolve([]));
+const mockGetShortcutUsageTotal = vi.fn(() => Promise.resolve(0));
+
 const mockMaestro = {
 	stats: {
 		getAggregation: mockGetAggregation,
@@ -98,6 +104,8 @@ const mockMaestro = {
 		getAutoRunSessions: mockGetAutoRunSessions,
 		getAutoRunTasks: mockGetAutoRunTasks,
 		getDatabaseSize: mockGetDatabaseSize,
+		getShortcutUsageByDay: mockGetShortcutUsageByDay,
+		getShortcutUsageTotal: mockGetShortcutUsageTotal,
 	},
 	dialog: {
 		saveFile: mockSaveFile,
@@ -174,6 +182,7 @@ const createSampleData = () => ({
 	avgSessionDuration: 144000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 });
 
 describe('UsageDashboardModal', () => {
@@ -233,7 +242,7 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(5);
+				expect(tabs).toHaveLength(6);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
@@ -1565,7 +1574,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(5);
+				expect(tabs).toHaveLength(6);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -1635,12 +1644,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to last tab (Auto Run, index 4)
+			// Press ArrowLeft while on first tab - should wrap to last tab (Shortcuts, index 5)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs[4]).toHaveAttribute('aria-selected', 'true'); // Auto Run tab
+				expect(tabs[5]).toHaveAttribute('aria-selected', 'true'); // Shortcuts tab
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
@@ -1654,11 +1663,11 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to last tab (Auto Run, index 4)
+			// Navigate to last tab (Shortcuts, index 5)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('tab')[4]).toHaveAttribute('aria-selected', 'true');
+				expect(screen.getAllByRole('tab')[5]).toHaveAttribute('aria-selected', 'true');
 			});
 
 			// Press ArrowRight - should wrap to first tab (Overview)
@@ -1667,7 +1676,7 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-				expect(tabs[4]).toHaveAttribute('aria-selected', 'false');
+				expect(tabs[5]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
 

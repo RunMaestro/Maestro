@@ -5,14 +5,9 @@
  * are implemented in responsibility-focused config modules.
  */
 
-import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { CueConfig } from './cue-types';
-import {
-	readCueConfigFile,
-	resolveCueConfigPath,
-	watchCueConfigFile,
-} from './config/cue-config-repository';
+import { readCueConfigFile, watchCueConfigFile } from './config/cue-config-repository';
 import { materializeCueConfig, parseCueConfigDocument } from './config/cue-config-normalizer';
 import {
 	partitionValidSubscriptions,
@@ -172,44 +167,10 @@ export function validateCueConfig(config: unknown): { valid: boolean; errors: st
 	return validateCueConfigDocument(config);
 }
 
-/** Maximum number of parent directories to walk when searching for an ancestor config. */
-const ANCESTOR_SEARCH_DEPTH = 5;
-
-/**
- * Walk parent directories from `projectRoot` looking for a cue.yaml.
- * Returns the ancestor's project root if found, `null` otherwise.
- *
- * Stops at filesystem root or after {@link ANCESTOR_SEARCH_DEPTH} levels.
- * Does NOT return `projectRoot` itself — only strict ancestors.
- */
-export function findAncestorCueConfigRoot(projectRoot: string): string | null {
-	const roots = findAncestorCueConfigRoots(projectRoot);
-	return roots.length > 0 ? roots[0] : null;
-}
-
-/**
- * Walk parent directories from `projectRoot` and return EVERY ancestor that
- * has a cue.yaml, in closest-first order. Used by callers that need to keep
- * walking when the closest ancestor's cue.yaml has nothing relevant to them
- * (e.g. a sub-agent's session whose subs live at a HIGHER ancestor while a
- * closer ancestor hosts an unrelated pipeline).
- *
- * Stops at filesystem root or after {@link ANCESTOR_SEARCH_DEPTH} levels.
- * Does NOT include `projectRoot` itself — only strict ancestors.
- */
-export function findAncestorCueConfigRoots(projectRoot: string): string[] {
-	const roots: string[] = [];
-	let current = path.resolve(projectRoot);
-
-	for (let depth = 0; depth < ANCESTOR_SEARCH_DEPTH; depth++) {
-		const parent = path.dirname(current);
-		if (parent === current) break; // reached filesystem root
-		current = parent;
-
-		if (resolveCueConfigPath(current) !== null) {
-			roots.push(current);
-		}
-	}
-
-	return roots;
-}
+// findAncestorCueConfigRoot{,s} were removed when Cue moved to the
+// per-agent-cwd model. Each session now reads only its own cue.yaml at
+// `<session.cwd>/.maestro/cue.yaml`; cross-agent pipelines are stitched at
+// runtime via `agent_id` references in `source_session_ids` / `fan_out_ids`,
+// not via parent-directory inheritance. Worktrees that previously inherited
+// a parent's cue.yaml must now create their own. See `pipelinesToYamlByOwnerCwd`
+// for the writer side of this contract.

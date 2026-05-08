@@ -573,10 +573,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Dispatches a CustomEvent for App.tsx to handle (avoids hook ordering issues)
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenFileTab(
-			(sessionId: string, filePath: string) => {
+			(sessionId: string, filePath: string, switchToAgent: boolean) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openFileTab', {
-						detail: { sessionId, filePath },
+						detail: { sessionId, filePath, switchToAgent },
 					})
 				);
 			}

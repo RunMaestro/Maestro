@@ -68,9 +68,11 @@ function TabBarInner({
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
 	onSendTerminalBufferToAgent,
+	onTerminalTabConfigureStartupCommand,
 	onCopyBrowserContent,
 	onSendBrowserContentToAgent,
 	colorBlindMode,
+	sshRemote,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
@@ -394,6 +396,7 @@ function TabBarInner({
 						onSearchMessages={onOpenOutputSearch ?? onOpenTabSearch}
 						tabSwitcherKeys={tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't']}
 						searchOutputKeys={shortcuts.searchOutput?.keys ?? ['Meta', 'f']}
+						openTabCount={unifiedTabs?.length ?? tabs.length}
 					/>
 				)}
 				<button
@@ -514,6 +517,7 @@ function TabBarInner({
 										tabIndex={originalIndex}
 										colorBlindMode={colorBlindMode}
 										shortcutHint={shortcutHint}
+										sshRemote={sshRemote}
 									/>
 								</React.Fragment>
 							);
@@ -552,6 +556,7 @@ function TabBarInner({
 										onCopyBuffer={onCopyTerminalBuffer}
 										onPublishBufferGist={ghCliAvailable ? onPublishTerminalBufferGist : undefined}
 										onSendBufferToAgent={onSendTerminalBufferToAgent}
+										onConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}

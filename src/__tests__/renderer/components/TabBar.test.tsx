@@ -3478,6 +3478,37 @@ describe('FileTab overlay menu', () => {
 		vi.useRealTimers();
 	});
 
+	it('hides Reveal in Finder/Explorer on file tabs when sshRemote is true', async () => {
+		vi.useFakeTimers();
+
+		render(
+			<TabBar
+				tabs={defaultTabs}
+				activeTabId="tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={vi.fn()}
+				onFileTabClose={vi.fn()}
+				sshRemote
+			/>
+		);
+
+		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
+
+		await act(async () => {
+			fireEvent.mouseEnter(fileTabElement!);
+			vi.advanceTimersByTime(450);
+		});
+
+		expect(screen.queryByText(/Reveal in (Finder|Explorer|File Manager)/)).not.toBeInTheDocument();
+
+		vi.useRealTimers();
+	});
+
 	it('shows Close Tab action and calls onFileTabClose when clicked', async () => {
 		vi.useFakeTimers();
 		const mockFileTabClose = vi.fn();

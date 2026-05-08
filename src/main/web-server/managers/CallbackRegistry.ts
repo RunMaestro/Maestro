@@ -352,9 +352,9 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async openFileTab(sessionId: string, filePath: string): Promise<boolean> {
+	async openFileTab(sessionId: string, filePath: string, switchToAgent: boolean): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
-		return this.callbacks.openFileTab(sessionId, filePath);
+		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
 	}
 
 	async refreshFileTree(sessionId: string): Promise<boolean> {

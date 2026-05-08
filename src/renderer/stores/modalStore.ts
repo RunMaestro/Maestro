@@ -90,6 +90,14 @@ export interface RenameTabModalData {
 	initialName: string;
 }
 
+/** Terminal tab startup command modal data */
+export interface TerminalStartupCommandModalData {
+	tabId: string;
+	initialCommand: string;
+	initialCwd: string;
+	defaultCwd: string;
+}
+
 /** Rename group modal data */
 export interface RenameGroupModalData {
 	groupId: string;
@@ -127,6 +135,7 @@ export interface DirectorNotesData {
 /** Cue modal data */
 export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
+	hasFeedbackDraft?: boolean;
 }
 
 export interface CueModalData {
@@ -196,6 +205,7 @@ export type ModalId =
 	| 'promptComposer'
 	// Tab Management
 	| 'renameTab'
+	| 'terminalStartupCommand'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations
@@ -265,6 +275,7 @@ export interface ModalDataMap {
 	confirm: ConfirmModalData;
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
+	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	wizardResume: WizardResumeModalData;
@@ -615,8 +626,10 @@ export function getModalActions() {
 		closeConfirmation: () => closeModal('confirm'),
 
 		// Quit Confirmation Modal
-		setQuitConfirmModalOpen: (open: boolean, data?: { activeTerminalTasks?: string[] }) =>
-			open ? openModal('quitConfirm', data) : closeModal('quitConfirm'),
+		setQuitConfirmModalOpen: (
+			open: boolean,
+			data?: { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+		) => (open ? openModal('quitConfirm', data) : closeModal('quitConfirm')),
 
 		// Rename Instance Modal
 		setRenameInstanceModalOpen: (open: boolean) => {
@@ -663,6 +676,11 @@ export function getModalActions() {
 				openModal('renameTab', { tabId: '', initialName });
 			}
 		},
+
+		// Terminal Tab Startup Command Modal
+		openTerminalStartupCommandModal: (data: TerminalStartupCommandModalData) =>
+			openModal('terminalStartupCommand', data),
+		closeTerminalStartupCommandModal: () => closeModal('terminalStartupCommand'),
 
 		// Rename Group Modal
 		setRenameGroupModalOpen: (open: boolean) => {
@@ -1003,6 +1021,7 @@ export function useModalActions() {
 		// Quit Confirmation Modal
 		quitConfirmModalOpen,
 		activeTerminalTasks: (quitConfirmData?.activeTerminalTasks as string[]) ?? [],
+		hasFeedbackDraft: quitConfirmData?.hasFeedbackDraft ?? false,
 
 		// Rename Instance Modal
 		renameInstanceModalOpen,

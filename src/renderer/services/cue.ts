@@ -155,6 +155,18 @@ export const cueService = {
 		});
 	},
 
+	// Read-side: getter for live in-flight stdout/stderr of an active Cue run.
+	// Returns `null` when the runId is no longer active (or was never active),
+	// so the dashboard's expand-row UI degrades silently to "no live output"
+	// rather than throwing on completed/stopped runs.
+	async getRunLiveOutput(runId: string): Promise<{ stdout: string; stderr: string } | null> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.getRunLiveOutput(runId),
+			errorContext: 'Cue getRunLiveOutput',
+			defaultValue: null,
+		});
+	},
+
 	async stopAll(): Promise<void> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.stopAll(),

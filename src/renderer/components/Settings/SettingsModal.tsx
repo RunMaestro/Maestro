@@ -126,6 +126,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// AI Commands
 		customAICommands,
 		setCustomAICommands,
+		speckitEnabled,
+		setSpeckitEnabled,
+		openspecEnabled,
+		setOpenspecEnabled,
+		bmadEnabled,
+		setBmadEnabled,
 		// SSH Remote file indexing settings
 		sshRemoteIgnorePatterns,
 		setSshRemoteIgnorePatterns,
@@ -133,19 +139,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteHonorGitignore,
 	} = useSettings();
 
-	const [activeTab, setActiveTab] = useState<
-		| 'general'
-		| 'display'
-		| 'llm'
-		| 'shortcuts'
-		| 'theme'
-		| 'notifications'
-		| 'aicommands'
-		| 'ssh'
-		| 'environment'
-		| 'encore'
-		| 'prompts'
-	>('general');
+	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
+	// than a restore effect) avoids racing with the persist effect below — under
+	// React StrictMode a restore-via-effect double-fires and clobbers the saved
+	// value with the initial 'general' before the restored value lands.
+	const [activeTab, setActiveTab] = useState<SettingsTabId>(
+		() => initialTab || lastOpenSettingsTab || 'general'
+	);
 	const [testingLLM, setTestingLLM] = useState(false);
 	const [testResult, setTestResult] = useState<{
 		status: 'success' | 'error' | null;
@@ -202,21 +202,20 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const isRecordingShortcutRef = useRef(false);
 	const promptsEscapeHandlerRef = useRef<(() => boolean) | null>(null);
 
+	// Honor a deep-link initialTab change while the modal is already mounted
+	// (e.g. caller switches tab without closing). Mount-time restoration is
+	// handled by the lazy useState init above, not here.
 	useEffect(() => {
-		if (isOpen) {
-			// Explicit initialTab wins (deep-link). Otherwise restore the last tab the
-			// user viewed in this app session, falling back to 'general' on first open.
-			setActiveTab(initialTab || lastOpenSettingsTab || 'general');
+		if (isOpen && initialTab) {
+			setActiveTab(initialTab);
 		}
 	}, [isOpen, initialTab]);
 
-	// Remember the last tab the user viewed so re-opening the modal lands there.
+	// Persist the current tab in module memory so the next open lands here.
 	// In-memory only — resets on app restart by design.
 	useEffect(() => {
-		if (isOpen) {
-			lastOpenSettingsTab = activeTab;
-		}
-	}, [isOpen, activeTab]);
+		lastOpenSettingsTab = activeTab;
+	}, [activeTab]);
 
 	// Store onClose in a ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);
@@ -438,7 +437,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			aria-label="Settings"
 		>
 			<div
-				className="w-[960px] h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col"
+				className="w-[960px] h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Search Bar + Close Button */}
@@ -659,7 +658,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 								{/* Spec Kit Commands Section */}
 								<div data-setting-id="aicommands-speckit">
-									<SpecKitCommandsPanel theme={theme} />
+									<SpecKitCommandsPanel
+										theme={theme}
+										enabled={speckitEnabled}
+										onEnabledChange={setSpeckitEnabled}
+									/>
 								</div>
 
 								{/* Divider */}
@@ -667,7 +670,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 								{/* OpenSpec Commands Section */}
 								<div data-setting-id="aicommands-openspec">
-									<OpenSpecCommandsPanel theme={theme} />
+									<OpenSpecCommandsPanel
+										theme={theme}
+										enabled={openspecEnabled}
+										onEnabledChange={setOpenspecEnabled}
+									/>
 								</div>
 
 								{/* Divider */}
@@ -675,7 +682,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 								{/* BMAD Commands Section */}
 								<div data-setting-id="aicommands-bmad">
-									<BmadCommandsPanel theme={theme} />
+									<BmadCommandsPanel
+										theme={theme}
+										enabled={bmadEnabled}
+										onEnabledChange={setBmadEnabled}
+									/>
 								</div>
 							</div>
 						)}

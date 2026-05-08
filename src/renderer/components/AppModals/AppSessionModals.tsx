@@ -7,8 +7,10 @@ import { NewAgentChoiceModal } from '../NewAgentChoiceModal';
 import { RenameSessionModal } from '../RenameSessionModal';
 import { RenameTabModal } from '../RenameTabModal';
 import { TerminalTabRenameModal } from '../TerminalTabRenameModal';
+import { TerminalStartupCommandModal } from '../TerminalStartupCommandModal';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { useModalStore, selectModalOpen } from '../../stores/modalStore';
+import { useModalStore, selectModalOpen, selectModalData } from '../../stores/modalStore';
+import { useTabStore } from '../../stores/tabStore';
 
 /**
  * Props for the AppSessionModals component
@@ -144,6 +146,12 @@ export const AppSessionModals = memo(function AppSessionModals({
 	const newAgentChoiceOpen = useModalStore(selectModalOpen('newAgentChoice'));
 	const closeNewAgentChoice = () => useModalStore.getState().closeModal('newAgentChoice');
 
+	const startupCommandOpen = useModalStore(selectModalOpen('terminalStartupCommand'));
+	const startupCommandData = useModalStore(selectModalData('terminalStartupCommand'));
+	const setTerminalTabStartupCommand = useTabStore((s) => s.setTerminalTabStartupCommand);
+	const closeStartupCommandModal = () =>
+		useModalStore.getState().closeModal('terminalStartupCommand');
+
 	return (
 		<>
 			{/* --- NEW AGENT CHOICE MODAL --- */}
@@ -220,6 +228,21 @@ export const AppSessionModals = memo(function AppSessionModals({
 					defaultName={getTerminalTabDisplayName(renamingTerminalTab, renamingTerminalTabIndex)}
 					onSave={onRenameTab}
 					onClose={onCloseRenameTabModal}
+				/>
+			)}
+
+			{/* --- TERMINAL STARTUP COMMAND MODAL --- */}
+			{startupCommandOpen && startupCommandData && (
+				<TerminalStartupCommandModal
+					theme={theme}
+					isOpen={true}
+					initialCommand={startupCommandData.initialCommand}
+					initialCwd={startupCommandData.initialCwd}
+					defaultCwd={startupCommandData.defaultCwd}
+					onSave={(command, cwd) =>
+						setTerminalTabStartupCommand(startupCommandData.tabId, command, cwd)
+					}
+					onClose={closeStartupCommandModal}
 				/>
 			)}
 		</>

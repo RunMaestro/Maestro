@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockCleanup = vi.fn();
-const mockCreateCueGitHubPoller = vi.fn(() => mockCleanup);
+const mockCreateCueGitHubPoller = vi.fn((_config: unknown) => mockCleanup);
 vi.mock('../../../../main/cue/cue-github-poller', () => ({
 	createCueGitHubPoller: (...args: unknown[]) =>
 		mockCreateCueGitHubPoller(...(args as Parameters<typeof mockCreateCueGitHubPoller>)),
@@ -217,5 +217,37 @@ describe('cue-github-poller-trigger-source', () => {
 		source.start();
 		expect(source.nextTriggerAt()).toBeNull();
 		source.stop();
+	});
+
+	it('pollNow() invokes the handle the underlying poller registers via onReady', () => {
+		const innerPollNow = vi.fn();
+		mockCreateCueGitHubPoller.mockImplementationOnce((config: unknown) => {
+			(config as { onReady?: (h: { pollNow: () => void }) => void }).onReady?.({
+				pollNow: innerPollNow,
+			});
+			return mockCleanup;
+		});
+
+		const source = createCueGitHubPollerTriggerSource({
+			session: makeSession(),
+			subscription: makeSub('github.pull_request'),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit: vi.fn(),
+		})!;
+
+		// Before start(): pollNow is a no-op (no underlying poller yet).
+		source.pollNow?.();
+		expect(innerPollNow).not.toHaveBeenCalled();
+
+		source.start();
+		source.pollNow?.();
+		expect(innerPollNow).toHaveBeenCalledOnce();
+
+		source.stop();
+		// After stop(), pollNow is dropped — calling it does not reach the inner.
+		source.pollNow?.();
+		expect(innerPollNow).toHaveBeenCalledOnce();
 	});
 });

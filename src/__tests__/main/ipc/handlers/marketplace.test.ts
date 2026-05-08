@@ -165,6 +165,9 @@ describe('marketplace IPC handlers', () => {
 		mockApp = {
 			getPath: vi.fn().mockReturnValue('/mock/userData'),
 			on: vi.fn(),
+			// Default to a version that satisfies all sample-manifest minMaestroVersion entries.
+			// Individual tests can override this via vi.mocked(mockApp.getVersion).mockReturnValue(...).
+			getVersion: vi.fn().mockReturnValue('999.0.0'),
 		} as unknown as App;
 
 		// Setup mock settings store for SSH remote lookup
@@ -745,6 +748,89 @@ describe('marketplace IPC handlers', () => {
 				.mock.calls.find((call) => (call[0] as string).includes('session-123.json'));
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(2);
+		});
+
+		it('should reject install when running version is below minMaestroVersion (defense-in-depth)', async () => {
+			// Manifest with one playbook gated on a future version.
+			const gatedManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-15',
+				playbooks: [
+					{
+						...sampleManifest.playbooks[0],
+						id: 'gated-playbook',
+						minMaestroVersion: '99.0.0',
+					},
+				],
+			};
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: gatedManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // Cache read
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // No local manifest
+
+			// Override running version to one below the minimum.
+			vi.mocked(mockApp.getVersion).mockReturnValue('0.16.0');
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'gated-playbook',
+				'gated-folder',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('99.0.0');
+			expect(result.error).toContain('0.16.0');
+			// No filesystem writes should have occurred for the blocked import.
+			expect(fs.mkdir).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('should allow install when running version satisfies minMaestroVersion', async () => {
+			const gatedManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-15',
+				playbooks: [
+					{
+						...sampleManifest.playbooks[0],
+						id: 'gated-playbook',
+						minMaestroVersion: '0.16.17-rc',
+					},
+				],
+			};
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: gatedManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Final release ≥ its own prerelease — should be allowed.
+			vi.mocked(mockApp.getVersion).mockReturnValue('0.16.17');
+
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Phase 1') })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Phase 2') });
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'gated-playbook',
+				'gated-folder',
+				'/autorun',
+				'session-123'
+			);
+
+			expect(result.playbook).toBeDefined();
+			expect(result.playbook.name).toBe('Test Playbook');
 		});
 
 		it('should return error for non-existent playbook', async () => {

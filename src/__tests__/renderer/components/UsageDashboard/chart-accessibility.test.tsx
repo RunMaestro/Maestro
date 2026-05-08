@@ -51,6 +51,7 @@ const mockStatsData: StatsAggregation = {
 	avgSessionDuration: 288000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 };
 
 describe('Chart Accessibility - AgentComparisonChart', () => {
@@ -309,7 +310,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 
 		// Card list updated: Interactive % / Local % were replaced with the
 		// streak-momentum row (Current Streak / Best Day / Active Days /
-		// Worktree %).
+		// Image Annotations).
 		const expectedLabels = [
 			/Agents/i,
 			/Open Tabs/i,
@@ -322,7 +323,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 			/Current Streak/i,
 			/Best Day/i,
 			/Active Days/i,
-			/Worktree %/i,
+			/Image Annotations/i,
 		];
 
 		metricCards.forEach((card, index) => {
@@ -404,6 +405,7 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 			avgSessionDuration: 0,
 			byAgentByDay: {},
 			bySessionByDay: {},
+			bySessionSource: {},
 		};
 
 		render(<AgentComparisonChart data={emptyData} theme={mockTheme} />);

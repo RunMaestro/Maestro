@@ -1,15 +1,17 @@
 /**
- * Tests for resolvePipelineWriteRoot / resolvePipelinesWriteRoots.
+ * Tests for resolvePipelineOwnerCwds / resolvePipelinesWriteRoots.
  *
- * These match handleSave's partitioning rules so that `lastWrittenRootsRef`
- * stays in sync with where YAMLs actually live. The cross-directory cases
- * are the regression test for #847 (deleted pipeline reappears because the
- * common-ancestor write root was never seeded into previousRoots).
+ * Per-agent-cwd model: a pipeline writes one yaml per participating agent's
+ * cwd. The historical "collapse multi-cwd pipelines onto a common ancestor"
+ * behavior was removed (it produced misplaced cue.yaml files at shared
+ * parents like ~/Projects). These tests pin the new semantics: each bound
+ * node contributes its own owning cwd to the result; cross-cwd pipelines
+ * resolve to the SET of cwds, not a single ancestor.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
-	resolvePipelineWriteRoot,
+	resolvePipelineOwnerCwds,
 	resolvePipelinesWriteRoots,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineRoots';
 import type {
@@ -105,9 +107,9 @@ function mapBy<T>(entries: Array<[string, T]>): ReadonlyMap<string, T> {
 	return new Map(entries);
 }
 
-describe('resolvePipelineWriteRoot', () => {
-	describe('single-root pipelines', () => {
-		it('returns the common root when all agents share one project root', () => {
+describe('resolvePipelineOwnerCwds', () => {
+	describe('single-cwd pipelines', () => {
+		it('returns one cwd when every agent shares the same project root', () => {
 			const pipeline = makePipeline([
 				{ sessionId: 's1', sessionName: 'alpha' },
 				{ sessionId: 's2', sessionName: 'beta' },
@@ -116,29 +118,31 @@ describe('resolvePipelineWriteRoot', () => {
 				['s1', { projectRoot: '/workspace/proj' }],
 				['s2', { projectRoot: '/workspace/proj' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBe('/workspace/proj');
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({ ok: true, cwds: new Set(['/workspace/proj']) });
 		});
 
 		it('falls back to sessionName when sessionId is not found', () => {
 			const pipeline = makePipeline([{ sessionId: 'missing', sessionName: 'alpha' }]);
 			const byName = mapBy<SessionRootInfo>([['alpha', { projectRoot: '/workspace/proj' }]]);
-			expect(resolvePipelineWriteRoot(pipeline, new Map(), byName)).toBe('/workspace/proj');
+			const result = resolvePipelineOwnerCwds(pipeline, new Map(), byName);
+			expect(result).toEqual({ ok: true, cwds: new Set(['/workspace/proj']) });
 		});
 
 		it('prefers sessionId over sessionName when both are present', () => {
 			const pipeline = makePipeline([{ sessionId: 's1', sessionName: 'alpha' }]);
 			const byId = mapBy<SessionRootInfo>([['s1', { projectRoot: '/via-id' }]]);
 			const byName = mapBy<SessionRootInfo>([['alpha', { projectRoot: '/via-name' }]]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, byName)).toBe('/via-id');
+			const result = resolvePipelineOwnerCwds(pipeline, byId, byName);
+			expect(result).toEqual({ ok: true, cwds: new Set(['/via-id']) });
 		});
 	});
 
-	describe('cross-directory pipelines (regression for #847)', () => {
-		it('collapses to common ancestor when agents span subdirectories', () => {
-			// The #847 scenario: pipeline's YAML lives at /project, not at
-			// /project/a or /project/Digest. Previously the load-time loop
-			// added the two sub-roots and missed /project — so a delete+save
-			// could not clear the stale YAML.
+	describe('cross-cwd pipelines', () => {
+		it('returns every distinct cwd when agents span subdirectories (no common-ancestor collapse)', () => {
+			// The historical behavior collapsed this to '/project'. The
+			// per-agent-cwd model writes ONE yaml per cwd instead, so the
+			// caller must see the full owner set.
 			const pipeline = makePipeline([
 				{ sessionId: 's1', sessionName: 'frontend' },
 				{ sessionId: 's2', sessionName: 'digest' },
@@ -147,15 +151,18 @@ describe('resolvePipelineWriteRoot', () => {
 				['s1', { projectRoot: '/project/frontend' }],
 				['s2', { projectRoot: '/project/Digest' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBe('/project');
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/project/frontend', '/project/Digest']),
+			});
 		});
 
-		it('returns null when agent roots span unrelated trees', () => {
-			// handleSave rejects "agents span unrelated project roots" — we must
-			// not seed a write-root we would never actually write to. Two paths
-			// whose only shared prefix is filesystem root `/` fail the
-			// isDescendantOrEqual check (since `/workspace/projA` does not start
-			// with `//`), so the helper returns null — matching handleSave.
+		it('returns every distinct cwd when agents are in unrelated trees', () => {
+			// The previous model rejected this as "spans unrelated project
+			// roots". Per-agent-cwd has no such restriction — each agent's
+			// cue.yaml is independent; cross-tree references resolve at
+			// runtime via agent_id lookups.
 			const pipeline = makePipeline([
 				{ sessionId: 's1', sessionName: 'alpha' },
 				{ sessionId: 's2', sessionName: 'beta' },
@@ -164,12 +171,16 @@ describe('resolvePipelineWriteRoot', () => {
 				['s1', { projectRoot: '/workspace/projA' }],
 				['s2', { projectRoot: '/other/projB' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/workspace/projA', '/other/projB']),
+			});
 		});
 	});
 
 	describe('unresolvable pipelines', () => {
-		it('returns null for an empty pipeline (no agents)', () => {
+		it("returns 'no-bindings' for an empty pipeline", () => {
 			const pipeline: CuePipeline = {
 				id: 'empty',
 				name: 'empty',
@@ -177,58 +188,59 @@ describe('resolvePipelineWriteRoot', () => {
 				nodes: [],
 				edges: [],
 			};
-			expect(resolvePipelineWriteRoot(pipeline, new Map(), new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, new Map(), new Map());
+			expect(result).toEqual({ ok: false, reason: 'no-bindings' });
 		});
 
-		it('returns null when no agent resolves to a session with a projectRoot', () => {
+		it("returns 'unresolved' when no agent resolves to a session with a projectRoot", () => {
 			const pipeline = makePipeline([{ sessionId: 'missing', sessionName: 'gone' }]);
-			expect(resolvePipelineWriteRoot(pipeline, new Map(), new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, new Map(), new Map());
+			expect(result).toEqual({ ok: false, reason: 'unresolved' });
 		});
 
-		it('returns null when any agent is unresolvable (missingRoot parity with handleSave)', () => {
-			// handleSave aborts the partition step for a pipeline with any
-			// unresolvable agent; we mirror that so we do not seed a root the
-			// save flow would never actually write to.
+		it("returns 'unresolved' when ANY agent is unresolvable (atomic save semantics)", () => {
+			// We surface this as a per-pipeline error rather than silently
+			// dropping the unresolvable agent's contribution — the user needs
+			// to either fix the dangling reference or explicitly remove the
+			// node.
 			const pipeline = makePipeline([
 				{ sessionId: 's1', sessionName: 'alpha' },
 				{ sessionId: 'missing', sessionName: 'gone' },
 			]);
 			const byId = mapBy<SessionRootInfo>([['s1', { projectRoot: '/workspace/proj' }]]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({ ok: false, reason: 'unresolved' });
 		});
 
-		it('returns null when projectRoot is undefined on the resolved session', () => {
+		it("returns 'unresolved' when projectRoot is undefined on the resolved session", () => {
 			const pipeline = makePipeline([{ sessionId: 's1', sessionName: 'alpha' }]);
 			const byId = mapBy<SessionRootInfo>([['s1', { projectRoot: undefined }]]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({ ok: false, reason: 'unresolved' });
 		});
 
 		it('treats empty-string sessionId/sessionName as unresolvable (defensive guard)', () => {
-			// A stray `''` key in the session maps must not accidentally resolve an
-			// agent whose identifiers are empty.
 			const pipeline = makePipeline([{ sessionId: '', sessionName: '' }]);
 			const byId = mapBy<SessionRootInfo>([['', { projectRoot: '/should-not-match' }]]);
 			const byName = mapBy<SessionRootInfo>([['', { projectRoot: '/also-should-not-match' }]]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, byName)).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, byId, byName);
+			expect(result).toEqual({ ok: false, reason: 'unresolved' });
 		});
 	});
 
-	describe('command-node-only pipelines (regression: command-only pipelines vanished on save)', () => {
-		// A pipeline with a trigger plus shell/CLI command nodes (no agent
-		// nodes) used to be silently dropped from handleSave because the
-		// partition step only looked at agent nodes. Commands inherit cwd +
-		// agent_id from their owning session, so they are first-class root
-		// contributors.
-		it("resolves the root from the command's owning session", () => {
+	describe('command-node-only pipelines', () => {
+		it("resolves the cwd from the command's owning session", () => {
 			const pipeline = makeCommandOnlyPipeline([
 				{ id: 'cmd-1', owningSessionId: 's-cyber', owningSessionName: 'Cyber Stocks' },
 			]);
 			const byId = mapBy<SessionRootInfo>([
 				['s-cyber', { projectRoot: '/Users/me/Projects/Cyber-Stocks' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBe(
-				'/Users/me/Projects/Cyber-Stocks'
-			);
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/Users/me/Projects/Cyber-Stocks']),
+			});
 		});
 
 		it('falls back to owningSessionName when owningSessionId is missing', () => {
@@ -238,12 +250,14 @@ describe('resolvePipelineWriteRoot', () => {
 			const byName = mapBy<SessionRootInfo>([
 				['Cyber Stocks', { projectRoot: '/Users/me/Projects/Cyber-Stocks' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, new Map(), byName)).toBe(
-				'/Users/me/Projects/Cyber-Stocks'
-			);
+			const result = resolvePipelineOwnerCwds(pipeline, new Map(), byName);
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/Users/me/Projects/Cyber-Stocks']),
+			});
 		});
 
-		it('collapses sibling commands under a common ancestor root', () => {
+		it('returns every distinct cwd for sibling commands across cwds (no common-ancestor collapse)', () => {
 			const pipeline = makeCommandOnlyPipeline([
 				{ id: 'cmd-1', owningSessionId: 's1', owningSessionName: 'A' },
 				{ id: 'cmd-2', owningSessionId: 's2', owningSessionName: 'B' },
@@ -252,29 +266,33 @@ describe('resolvePipelineWriteRoot', () => {
 				['s1', { projectRoot: '/project/A' }],
 				['s2', { projectRoot: '/project/B' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBe('/project');
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/project/A', '/project/B']),
+			});
 		});
 
-		it('returns null when the only command has no owning-session binding (treated as unbound)', () => {
-			// An in-flight command with no owning-session set yet is unbound, not
-			// missing — leave the pipeline unresolved so it does not seed a root.
+		it("returns 'no-bindings' when the only command has no owning-session binding", () => {
+			// An in-flight command with no owning-session set yet is unbound;
+			// no agent or command contributes a cwd.
 			const pipeline = makeCommandOnlyPipeline([
 				{ id: 'cmd-1', owningSessionId: '', owningSessionName: '' },
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, new Map(), new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, new Map(), new Map());
+			expect(result).toEqual({ ok: false, reason: 'no-bindings' });
 		});
 
-		it("returns null when the command's owning session has no projectRoot", () => {
-			// Binding present but unresolvable — mirror the agent-side missingRoot
-			// rule so we never seed a root the save flow would never write to.
+		it("returns 'unresolved' when the command's owning session has no projectRoot", () => {
 			const pipeline = makeCommandOnlyPipeline([
 				{ id: 'cmd-1', owningSessionId: 's-cyber', owningSessionName: 'Cyber Stocks' },
 			]);
 			const byId = mapBy<SessionRootInfo>([['s-cyber', { projectRoot: undefined }]]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBeNull();
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({ ok: false, reason: 'unresolved' });
 		});
 
-		it('mixes agent + command roots when both are present in the same pipeline', () => {
+		it('returns the union of agent + command cwds when both are present', () => {
 			const pipeline: CuePipeline = {
 				id: 'mixed',
 				name: 'mixed',
@@ -305,7 +323,11 @@ describe('resolvePipelineWriteRoot', () => {
 				['s-agent', { projectRoot: '/project/agent' }],
 				['s-cmd', { projectRoot: '/project/cmd' }],
 			]);
-			expect(resolvePipelineWriteRoot(pipeline, byId, new Map())).toBe('/project');
+			const result = resolvePipelineOwnerCwds(pipeline, byId, new Map());
+			expect(result).toEqual({
+				ok: true,
+				cwds: new Set(['/project/agent', '/project/cmd']),
+			});
 		});
 	});
 });
@@ -333,7 +355,7 @@ describe('resolvePipelinesWriteRoots', () => {
 		expect(roots).toEqual(new Set(['/projA']));
 	});
 
-	it('skips pipelines that do not resolve to a single write root', () => {
+	it('skips pipelines that fail to resolve', () => {
 		const resolvable = { ...makePipeline([{ sessionId: 's1', sessionName: 'alpha' }]), id: 'p1' };
 		const empty: CuePipeline = {
 			id: 'p2',
@@ -351,10 +373,11 @@ describe('resolvePipelinesWriteRoots', () => {
 		expect(roots).toEqual(new Set(['/projA']));
 	});
 
-	it('returns the common ancestor (not individual sub-roots) for cross-directory pipelines', () => {
-		// Direct regression test for #847: the set MUST include '/project'
-		// (where the YAML actually lives) and must NOT include the per-agent
-		// subdirectories.
+	it('returns every per-agent cwd (no common-ancestor collapse)', () => {
+		// The pre-architecture-change model returned the common ancestor
+		// (e.g. '/project') as the single write root. The per-agent-cwd
+		// model returns each owning agent's cwd; the common ancestor never
+		// appears because no yaml ever lives there.
 		const pipeline = makePipeline([
 			{ sessionId: 's1', sessionName: 'frontend' },
 			{ sessionId: 's2', sessionName: 'digest' },
@@ -364,8 +387,7 @@ describe('resolvePipelinesWriteRoots', () => {
 			['s2', { projectRoot: '/project/Digest' }],
 		]);
 		const roots = resolvePipelinesWriteRoots([pipeline], byId, new Map());
-		expect(roots).toEqual(new Set(['/project']));
-		expect(roots.has('/project/frontend')).toBe(false);
-		expect(roots.has('/project/Digest')).toBe(false);
+		expect(roots).toEqual(new Set(['/project/frontend', '/project/Digest']));
+		expect(roots.has('/project')).toBe(false);
 	});
 });

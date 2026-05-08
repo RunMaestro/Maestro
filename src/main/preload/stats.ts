@@ -13,12 +13,15 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ShortcutUsageDay,
 	StatsAggregation,
+	StatsTimeRange,
 } from '../../shared/stats-types';
 export type {
 	QueryEvent,
 	AutoRunSession,
 	AutoRunTask,
+	ShortcutUsageDay,
 	StatsAggregation,
 } from '../../shared/stats-types';
 
@@ -141,6 +144,25 @@ export function createStatsApi() {
 		// Get earliest stat timestamp (null if no entries)
 		getEarliestTimestamp: (): Promise<number | null> =>
 			ipcRenderer.invoke('stats:get-earliest-timestamp'),
+
+		// Record a keyboard shortcut firing. The main process buckets `firedAt`
+		// into a local-time day and increments that day's counter. Resolves to
+		// the YYYY-MM-DD bucket, or null when stats collection is disabled.
+		recordShortcutUsage: (firedAt: number): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-shortcut-usage', firedAt),
+
+		// Get per-day shortcut usage counts within a time range. Days with no
+		// activity are omitted; the renderer is responsible for zero-filling.
+		getShortcutUsageByDay: (range: StatsTimeRange): Promise<ShortcutUsageDay[]> =>
+			ipcRenderer.invoke('stats:get-shortcut-usage-by-day', range),
+
+		// Get the total number of shortcut firings in a time range
+		getShortcutUsageTotal: (range: StatsTimeRange): Promise<number> =>
+			ipcRenderer.invoke('stats:get-shortcut-usage-total', range),
+
+		// Record an image annotation save event
+		recordImageAnnotation: (createdAt: number): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
 		// Record session creation (for lifecycle tracking)
 		recordSessionCreated: (event: SessionCreatedEvent): Promise<string | null> =>

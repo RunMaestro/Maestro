@@ -89,7 +89,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath } = (e as CustomEvent).detail;
+		const { sessionId, filePath, switchToAgent } = (e as CustomEvent).detail as {
+			sessionId: string;
+			filePath: string;
+			switchToAgent?: boolean;
+		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
@@ -97,8 +101,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 		const sshRemoteId =
 			session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-		// Switch to the target session
-		setActiveSessionId(sessionId);
+		// Honor `--no-switch`: register the tab on the target agent but leave the
+		// active agent untouched so the CLI invocation doesn't hijack focus.
+		if (switchToAgent !== false) {
+			setActiveSessionId(sessionId);
+		}
 		try {
 			const [content, stat] = await Promise.all([
 				window.maestro.fs.readFile(filePath, sshRemoteId),

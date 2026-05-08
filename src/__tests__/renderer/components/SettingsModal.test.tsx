@@ -509,6 +509,34 @@ describe('SettingsModal', () => {
 
 			expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
 		});
+
+		it('should reopen on the last tab the user viewed (in-session)', async () => {
+			// Open, switch to Shortcuts, close.
+			const { unmount } = render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Shortcuts'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+
+			unmount();
+
+			// Reopen with no explicit initialTab — should land on Shortcuts, not General.
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
+		});
 	});
 
 	describe('keyboard tab navigation', () => {

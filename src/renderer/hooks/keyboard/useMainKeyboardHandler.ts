@@ -338,6 +338,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (ctx.handleEscapeInMain(e)) return;
 
 			// Helper to track shortcut usage for keyboard mastery gamification
+			// AND for the daily-usage time series shown on the Usage Dashboard.
+			// Mastery is short-circuited on second+ firings of the same shortcut
+			// (it's a unique-set), but the daily counter increments every time.
 			const trackShortcut = (shortcutId: string) => {
 				if (ctx.recordShortcutUsage) {
 					const result = ctx.recordShortcutUsage(shortcutId);
@@ -345,6 +348,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.onKeyboardMasteryLevelUp(result.newLevel);
 					}
 				}
+				// Fire-and-forget. A failed IPC must never block a shortcut from
+				// taking effect; the daily counter is best-effort telemetry.
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			};
 
 			// General shortcuts
@@ -445,7 +451,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			} else if (ctx.isShortcut(e, 'settings')) {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
-				ctx.setSettingsTab('general');
 				trackShortcut('settings');
 			} else if (ctx.isShortcut(e, 'agentSettings')) {
 				// Open agent settings for the current session
@@ -548,6 +553,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('sidebar');
 				setTimeout(() => ctx.sidebarContainerRef?.current?.focus(), 0);
 				trackShortcut('focusSidebar');
+			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
+				e.preventDefault();
+				ctx.mainPanelRef?.current?.focusActiveTab();
+				trackShortcut('focusActiveTab');
 			} else if (ctx.isShortcut(e, 'viewGitDiff') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.handleViewGitDiff();

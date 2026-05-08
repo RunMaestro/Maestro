@@ -33,7 +33,7 @@ import {
 	Flame,
 	Trophy,
 	CalendarCheck,
-	GitBranch,
+	PenLine,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -860,15 +860,6 @@ export const SummaryCards = memo(function SummaryCards({
 	const bestDay = useMemo(() => findBestDay(data.byDay), [data.byDay]);
 	const activeDays = useMemo(() => countActiveDays(data.byDay), [data.byDay]);
 
-	// Worktree adoption — fraction of queries originating from worktree-child
-	// agents. The aggregation already exposes `worktreeQueries` / `parentQueries`
-	// so we don't need to walk session lists here.
-	const worktreeShare = useMemo(() => {
-		const total = data.worktreeQueries + data.parentQueries;
-		if (total === 0) return null;
-		return Math.round((data.worktreeQueries / total) * 100);
-	}, [data.worktreeQueries, data.parentQueries]);
-
 	const queriesSparkline = useMemo(() => getLast7Days(data.byDay), [data.byDay]);
 	const durationSparkline = useMemo(() => getLast7DaysDuration(data.byDay), [data.byDay]);
 
@@ -959,9 +950,9 @@ export const SummaryCards = memo(function SummaryCards({
 			value: formatNumber(activeDays),
 		},
 		{
-			icon: <GitBranch className="w-4 h-4" />,
-			label: 'Worktree %',
-			value: worktreeShare == null ? '—' : `${worktreeShare}%`,
+			icon: <PenLine className="w-4 h-4" />,
+			label: 'Image Annotations',
+			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '—',
 		},
 	];
 

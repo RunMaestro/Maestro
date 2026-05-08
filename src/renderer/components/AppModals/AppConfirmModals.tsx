@@ -28,6 +28,8 @@ export interface AppConfirmModalsProps {
 	activeBatchSessionIds?: string[];
 	/** Active terminal tasks (e.g., "rc: npm test") for quit warning */
 	activeTerminalTasks?: string[];
+	/** True when the Feedback modal has an unsent draft */
+	hasFeedbackDraft?: boolean;
 }
 
 /**
@@ -53,6 +55,7 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 	onCancelQuit,
 	activeBatchSessionIds = [],
 	activeTerminalTasks = [],
+	hasFeedbackDraft = false,
 }: AppConfirmModalsProps) {
 	// Compute busy agents for QuitConfirmModal
 	const busyAgents = sessions.filter(
@@ -93,6 +96,7 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 					busyAgentCount={allActiveAgents.length}
 					busyAgentNames={allActiveNames}
 					activeTerminalTasks={activeTerminalTasks}
+					hasFeedbackDraft={hasFeedbackDraft}
 					onConfirmQuit={onConfirmQuit}
 					onCancel={onCancelQuit}
 				/>

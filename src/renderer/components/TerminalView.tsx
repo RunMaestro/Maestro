@@ -207,10 +207,20 @@ export const TerminalView = memo(
 							}
 						: undefined;
 
+				// When a startup command is configured, spawn the PTY in its configured cwd
+				// (if any) so the command runs in the right directory. Otherwise keep the
+				// existing fallback chain.
+				const spawnCwd =
+					(tab.startupCommand && tab.startupCommandCwd) ||
+					tab.cwd ||
+					session.cwd ||
+					session.projectRoot ||
+					'';
+
 				window.maestro.process
 					.spawnTerminalTab({
 						sessionId: terminalSessionId,
-						cwd: tab.cwd || session.cwd || session.projectRoot || '',
+						cwd: spawnCwd,
 						shell: defaultShell || undefined,
 						shellArgs,
 						shellEnvVars,
@@ -221,6 +231,16 @@ export const TerminalView = memo(
 					.then((result) => {
 						if (result.success) {
 							onTabPidChangeRef.current(tabId, result.pid);
+							// Run the user-configured startup command. The PTY buffers stdin,
+							// so the shell will execute it once initialization (rc files, etc.)
+							// finishes.
+							if (tab.startupCommand) {
+								window.maestro.process
+									.write(terminalSessionId, tab.startupCommand + '\n')
+									.catch(() => {
+										// Write failures are surfaced by the process exit handler
+									});
+							}
 						} else {
 							// Spawn failed — close the tab and notify via batched toast
 							setTimeout(() => closeTerminalTab(tabId), 0);
@@ -272,6 +292,25 @@ export const TerminalView = memo(
 			}
 			spawnPtyForTab(activeTab);
 		}, [activeTab?.id, spawnPtyForTab]);
+
+		// Eagerly spawn any non-active terminal tab that has a startupCommand
+		// configured. Without this, a tab with `npm run dev` would silently sit
+		// dormant after an app restart until the user clicked it — defeating the
+		// whole point of a persistent startup command. spawnPtyForTab's in-flight
+		// guard + the pid===0 check make this safe to re-evaluate on every render.
+		useEffect(() => {
+			const terminalTabs = session.terminalTabs || [];
+			for (const tab of terminalTabs) {
+				if (
+					tab.startupCommand &&
+					tab.pid === 0 &&
+					tab.state !== 'exited' &&
+					tab.id !== activeTab?.id
+				) {
+					spawnPtyForTab(tab);
+				}
+			}
+		}, [session.terminalTabs, activeTab?.id, spawnPtyForTab]);
 
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden

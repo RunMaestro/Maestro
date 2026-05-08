@@ -859,6 +859,21 @@ function MaestroConsoleInner() {
 		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
 	);
 
+	// Opens the startup-command modal for a terminal tab.
+	const handleRequestTerminalTabConfigureStartupCommand = useCallback((tabId: string) => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const tab = session.terminalTabs?.find((t) => t.id === tabId);
+		if (!tab) return;
+		const defaultCwd = session.cwd || session.projectRoot || '';
+		useModalStore.getState().openModal('terminalStartupCommand', {
+			tabId,
+			initialCommand: tab.startupCommand ?? '',
+			initialCwd: tab.startupCommandCwd ?? '',
+			defaultCwd,
+		});
+	}, []);
+
 	// --- GROUP CHAT HANDLERS (extracted from App.tsx Phase 2B) ---
 	const {
 		groupChatInputRef,
@@ -1987,6 +2002,7 @@ function MaestroConsoleInner() {
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
 		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,
 		handleQuickActionsMoveTabToFirst,
 		handleQuickActionsMoveTabToLast,
@@ -2389,6 +2405,7 @@ function MaestroConsoleInner() {
 		handleTerminalTabSelect: handleSelectTerminalTab,
 		handleTerminalTabClose: handleCloseTerminalTab,
 		handleTerminalTabRename: handleRequestTerminalTabRename,
+		handleTerminalTabConfigureStartupCommand: handleRequestTerminalTabConfigureStartupCommand,
 		handleFileTabEditModeChange,
 		handleFileTabEditContentChange,
 		handleFileTabScrollPositionChange,
@@ -2830,6 +2847,7 @@ function MaestroConsoleInner() {
 					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
 					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
 					onMoveTabToLast={handleQuickActionsMoveTabToLast}
+					onFocusActiveTab={handleQuickActionsFocusActiveTab}
 					onCopyTabContext={handleQuickActionsCopyTabContext}
 					onExportTabHtml={handleQuickActionsExportTabHtml}
 					onPublishTabGist={handleQuickActionsPublishTabGist}
@@ -3040,7 +3058,6 @@ function MaestroConsoleInner() {
 						onOpenWizard={openWizardModal}
 						onOpenSettings={() => {
 							setSettingsModalOpen(true);
-							setSettingsTab('general');
 						}}
 						onOpenShortcutsHelp={() => setShortcutsHelpOpen(true)}
 						onOpenAbout={() => setAboutModalOpen(true)}

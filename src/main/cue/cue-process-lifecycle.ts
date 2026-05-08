@@ -29,6 +29,13 @@ interface CueActiveProcess {
 	cwd: string;
 	toolType: string;
 	startTime: number;
+	/** Live ref to the accumulating stdout buffer — filled by the runProcess
+	 *  closure as chunks arrive. Exposed via `getActiveProcessOutput` so the
+	 *  renderer can poll for in-flight logs without a separate subscription
+	 *  channel. */
+	getStdout: () => string;
+	/** Live ref to the accumulating stderr buffer. */
+	getStderr: () => string;
 }
 
 /** Serializable process info for the Process Monitor */
@@ -251,6 +258,9 @@ export function runProcess(
 			return;
 		}
 
+		let stdout = '';
+		let stderr = '';
+
 		activeProcesses.set(runId, {
 			child,
 			command: spec.command,
@@ -258,10 +268,9 @@ export function runProcess(
 			cwd: spec.cwd,
 			toolType,
 			startTime: Date.now(),
+			getStdout: () => stdout,
+			getStderr: () => stderr,
 		});
-
-		let stdout = '';
-		let stderr = '';
 		let settled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -371,6 +380,18 @@ export function stopAllProcesses(): void {
  */
 export function getActiveProcessMap(): Map<string, CueActiveProcess> {
 	return activeProcesses;
+}
+
+/**
+ * Snapshot the in-flight stdout/stderr for a still-running Cue process.
+ * Returns null when the runId has no active process (already finished, never
+ * started, or running on a different engine instance). Buffers are returned
+ * raw — callers must trim/format for display.
+ */
+export function getActiveProcessOutput(runId: string): { stdout: string; stderr: string } | null {
+	const entry = activeProcesses.get(runId);
+	if (!entry) return null;
+	return { stdout: entry.getStdout(), stderr: entry.getStderr() };
 }
 
 /**

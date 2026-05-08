@@ -42,7 +42,6 @@ vi.mock('fs', () => {
 
 // Must import after mocks
 import {
-	findAncestorCueConfigRoot,
 	loadCueConfig,
 	loadCueConfigDetailed,
 	watchCueYaml,
@@ -2253,85 +2252,8 @@ subscriptions:
 		});
 	});
 
-	describe('findAncestorCueConfigRoot', () => {
-		it('returns null when no ancestor has a cue config', () => {
-			mockExistsSync.mockReturnValue(false);
-			const result = findAncestorCueConfigRoot('/projects/parent/child');
-			expect(result).toBeNull();
-		});
-
-		it('finds a parent directory with .maestro/cue.yaml', () => {
-			mockExistsSync.mockImplementation((p: string) => {
-				const s = String(p);
-				// Parent has .maestro/cue.yaml, child does not
-				return s === '/projects/parent/.maestro/cue.yaml';
-			});
-			const result = findAncestorCueConfigRoot('/projects/parent/child');
-			expect(result).toBe('/projects/parent');
-		});
-
-		it('does not return the input directory itself', () => {
-			// Even if the input dir has a cue.yaml, it should only look at ancestors
-			mockExistsSync.mockImplementation((p: string) => {
-				return String(p) === '/projects/parent/child/.maestro/cue.yaml';
-			});
-			const result = findAncestorCueConfigRoot('/projects/parent/child');
-			expect(result).toBeNull();
-		});
-
-		it('finds grandparent config when parent has none', () => {
-			mockExistsSync.mockImplementation((p: string) => {
-				return String(p) === '/projects/.maestro/cue.yaml';
-			});
-			const result = findAncestorCueConfigRoot('/projects/parent/child');
-			expect(result).toBe('/projects');
-		});
-
-		it('stops after depth limit even if ancestor exists further up', () => {
-			// Place cue.yaml 6 levels up — beyond the 5-level search depth
-			mockExistsSync.mockImplementation((p: string) => {
-				return String(p) === '/a/.maestro/cue.yaml';
-			});
-			const result = findAncestorCueConfigRoot('/a/b/c/d/e/f/g');
-			// /a is 6 levels up from /a/b/c/d/e/f/g — should not be found
-			expect(result).toBeNull();
-		});
-
-		it('finds ancestor with legacy maestro-cue.yaml', () => {
-			mockExistsSync.mockImplementation((p: string) => {
-				const s = String(p);
-				// No canonical, but legacy exists at parent
-				return s === '/projects/parent/maestro-cue.yaml';
-			});
-			const result = findAncestorCueConfigRoot('/projects/parent/child');
-			expect(result).toBe('/projects/parent');
-		});
-	});
-
-	describe('findAncestorCueConfigRoots', () => {
-		it('returns every ancestor with a cue.yaml in closest-first order', async () => {
-			mockExistsSync.mockImplementation((p: string) => {
-				const s = String(p);
-				return (
-					s === '/users/alice/projects/.maestro/cue.yaml' || s === '/users/alice/.maestro/cue.yaml'
-				);
-			});
-			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
-			const result = findAncestorCueConfigRoots('/users/alice/projects/sub-agent');
-			expect(result).toEqual(['/users/alice/projects', '/users/alice']);
-		});
-
-		it('returns empty array when no ancestor has a cue config', async () => {
-			mockExistsSync.mockReturnValue(false);
-			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
-			expect(findAncestorCueConfigRoots('/users/alice/projects/sub')).toEqual([]);
-		});
-
-		it('respects the depth limit', async () => {
-			mockExistsSync.mockImplementation((p: string) => String(p) === '/a/.maestro/cue.yaml');
-			const { findAncestorCueConfigRoots } = await import('../../../main/cue/cue-yaml-loader');
-			// /a is 6 levels up — outside the 5-level search depth
-			expect(findAncestorCueConfigRoots('/a/b/c/d/e/f/g')).toEqual([]);
-		});
-	});
+	// findAncestorCueConfigRoot{,s} were removed when Cue moved to the
+	// per-agent-cwd model. Each session reads only its own cue.yaml; there
+	// is no parent-directory walk anymore. The tests for the removed
+	// functions were deleted with them — see git log for the prior cases.
 });

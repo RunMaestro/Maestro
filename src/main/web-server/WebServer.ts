@@ -841,8 +841,8 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			openFileTab: async (sessionId: string, filePath: string) =>
-				this.callbackRegistry.openFileTab(sessionId, filePath),
+			openFileTab: async (sessionId: string, filePath: string, switchToAgent: boolean) =>
+				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string) =>
@@ -940,9 +940,34 @@ export class WebServer {
 				prompt?: string,
 				sourceAgentId?: string
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
+			// Cue pipeline-layout mutations operate directly on the
+			// main-process layout file via the mutation primitives — no
+			// renderer round-trip needed. The Pipeline Editor (when open)
+			// keeps its own in-memory state, so CLI edits made while the
+			// editor is open will be overwritten on the editor's next
+			// save. The CLI surface documents this; we don't gate here.
+			listCuePipelines: async () => {
+				const { listPipelinesFromDisk } = await import('../cue/pipeline-layout-mutations');
+				const result = listPipelinesFromDisk();
+				return { pipelines: result.pipelines as unknown[] };
+			},
+			getCuePipeline: async (identifier: string) => {
+				const { getPipelineFromDisk } = await import('../cue/pipeline-layout-mutations');
+				return getPipelineFromDisk(identifier);
+			},
+			setCuePipeline: async (identifier: string, pipeline: unknown, policy: 'add' | 'replace') => {
+				const { setPipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
+				return setPipelineOnDisk(pipeline, policy, identifier);
+			},
+			removeCuePipeline: async (identifier: string) => {
+				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
+				return removePipelineOnDisk(identifier);
+			},
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
+			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
+				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),
 			writeToTerminal: (sessionId: string, data: string) =>
 				this.writeToTerminalCallback?.(sessionId, data) ?? false,
 			resizeTerminal: (sessionId: string, cols: number, rows: number) =>

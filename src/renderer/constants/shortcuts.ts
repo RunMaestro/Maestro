@@ -114,6 +114,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Clear Terminal',
 		keys: ['Meta', 'Shift', 'k'],
 	},
+	focusActiveTab: {
+		id: 'focusActiveTab',
+		label: 'Focus Active Tab',
+		keys: ['Alt', 'Meta', 'f'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)

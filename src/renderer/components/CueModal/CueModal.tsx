@@ -32,6 +32,7 @@ import { useCueToggle } from '../../hooks/cue/useCueToggle';
 import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
+import { BackupTab } from './BackupTab';
 
 export interface CueModalProps {
 	theme: Theme;
@@ -224,7 +225,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Cmd/Ctrl+Shift+[/] cycles between tabs. Disabled while help is open
 	// so the help view's keyboard handlers stay in charge.
-	const tabsRef = useRef<readonly CueModalTab[]>(['dashboard', 'pipeline', 'activity']);
+	const tabsRef = useRef<readonly CueModalTab[]>(['dashboard', 'pipeline', 'activity', 'backup']);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
 			if (showHelpRef.current) return;
@@ -266,7 +267,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 					{/* Modal */}
 					<div
-						className="relative rounded-xl shadow-2xl flex flex-col"
+						className="relative rounded-xl shadow-2xl flex flex-col select-none"
 						style={{
 							width: '80vw',
 							maxWidth: 1400,
@@ -333,6 +334,10 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									setSearchQuery={setActivitySearchQuery}
 									searchInputRef={activitySearchInputRef}
 								/>
+							</div>
+						) : activeTab === 'backup' ? (
+							<div className="flex-1 min-h-0 flex flex-col">
+								<BackupTab theme={theme} />
 							</div>
 						) : (
 							<CuePipelineEditor

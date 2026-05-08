@@ -50,7 +50,10 @@ interface CopilotRawMessage {
 		result?: CopilotToolExecutionResult;
 		error?: string;
 		message?: string;
-		/** Per-model token metrics emitted in session.shutdown events */
+		/** Output tokens for this assistant turn (Copilot CLI ≥1.0.39 reports this on `assistant.message`).
+		 *  Copilot does not currently report input or cache tokens at the per-message level. */
+		outputTokens?: number;
+		/** Per-model token metrics emitted in session.shutdown events (legacy, Copilot CLI ≤1.0.5) */
 		modelMetrics?: Record<
 			string,
 			{
@@ -224,6 +227,16 @@ export class CopilotOutputParser implements AgentOutputParser {
 				};
 			});
 
+		// Per-turn output tokens reported by Copilot CLI ≥1.0.39. Copilot does not report
+		// input/cache tokens, so those stay 0 — partial picture, but better than nothing.
+		// StdoutHandler skips delta-normalization for copilot-cli, so each turn's value
+		// is summed into the running total in useBatchedSessionUpdates.
+		const outputTokens = msg.data?.outputTokens;
+		const usage =
+			typeof outputTokens === 'number' && outputTokens > 0
+				? { inputTokens: 0, outputTokens }
+				: undefined;
+
 		// Final answer: either the explicit phase (legacy) OR the structural
 		// pattern used by modern Copilot CLI (no phase field, non-empty
 		// content, no pending tool calls). Phase values like 'commentary'
@@ -236,6 +249,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 				type: 'result',
 				text: content,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+				usage,
 				raw: msg,
 			};
 		}
@@ -248,6 +262,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 				type: 'text',
 				text: '',
 				toolUseBlocks,
+				usage,
 				raw: msg,
 			};
 		}
@@ -255,6 +270,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		// Empty content, no tools — pure signal event, nothing to render.
 		return {
 			type: 'system',
+			usage,
 			raw: msg,
 		};
 	}
@@ -378,7 +394,12 @@ export class CopilotOutputParser implements AgentOutputParser {
 			cacheCreationTokens += metric.usage?.cacheWriteTokens || 0;
 		}
 
-		if (inputTokens === 0 && outputTokens === 0) {
+		if (
+			inputTokens === 0 &&
+			outputTokens === 0 &&
+			cacheReadTokens === 0 &&
+			cacheCreationTokens === 0
+		) {
 			return { type: 'system', raw: msg };
 		}
 

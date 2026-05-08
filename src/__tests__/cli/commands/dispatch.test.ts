@@ -1,12 +1,10 @@
 /**
  * @file dispatch.test.ts
- * @description Tests for the new `maestro-cli dispatch` command
+ * @description Tests for the `maestro-cli dispatch` command
  *
- * `dispatch` is the dedicated desktop-handoff verb introduced in PR1 of the
- * CLI surface refactor. It splits the desktop-handoff half of `send --live`
- * into a standalone command that returns addressable tab/session IDs so
- * external consumers (Maestro-Discord, Cue) can address the same tab on
- * follow-up calls.
+ * `dispatch` is the dedicated desktop-handoff verb. It returns addressable
+ * tab/session IDs so external consumers (Maestro-Discord, Cue) can address
+ * the same tab on follow-up calls.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -154,7 +152,7 @@ describe('dispatch command', () => {
 		});
 	});
 
-	describe('--session <tabId> flow', () => {
+	describe('--tab <tabId> flow', () => {
 		it('forwards the requested tabId in send_command so the desktop targets that tab', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -167,7 +165,7 @@ describe('dispatch command', () => {
 				return action(mockClient as never);
 			});
 
-			await dispatch('agent-abc', 'Follow up', { session: 'tab-xyz' });
+			await dispatch('agent-abc', 'Follow up', { tab: 'tab-xyz' });
 
 			expect(mockSendCommand).toHaveBeenCalledWith(
 				{
@@ -198,19 +196,19 @@ describe('dispatch command', () => {
 				return action(mockClient as never);
 			});
 
-			await dispatch('agent-abc', 'Follow up', { session: 'tab-xyz' });
+			await dispatch('agent-abc', 'Follow up', { tab: 'tab-xyz' });
 
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.tabId).toBe('tab-xyz');
 		});
 
-		it('rejects --session combined with --new-tab as INVALID_OPTIONS', async () => {
-			await dispatch('agent-abc', 'Hello', { newTab: true, session: 'tab-xyz' });
+		it('rejects --tab combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { newTab: true, tab: 'tab-xyz' });
 
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('INVALID_OPTIONS');
-			expect(output.error).toBe('--new-tab cannot be combined with --session');
+			expect(output.error).toBe('--new-tab cannot be combined with --tab');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
@@ -319,10 +317,9 @@ describe('dispatch command', () => {
 	});
 
 	describe('runDispatch (programmatic API)', () => {
-		// runDispatch is exported so `send --live` can delegate to it during
-		// the deprecation window without re-shelling. The legacy `send --live`
-		// integration is covered in send.test.ts; here we just confirm the
-		// programmatic shape returns rather than calling process.exit.
+		// runDispatch is exported as a structured-result variant of the CLI
+		// action so other code paths can invoke dispatch without spawning a
+		// shell or relying on process.exit.
 		it('returns a structured success result without exiting the process', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -347,7 +344,7 @@ describe('dispatch command', () => {
 		it('returns a structured failure result on validation errors without exiting', async () => {
 			const result = await runDispatch('agent-abc', 'Hello', {
 				newTab: true,
-				session: 'tab-xyz',
+				tab: 'tab-xyz',
 			});
 
 			expect(result.success).toBe(false);

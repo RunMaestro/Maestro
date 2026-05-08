@@ -28,6 +28,7 @@ import { usePipelineContextMenu } from '../../hooks/cue/usePipelineContextMenu';
 import { PipelineToolbar } from './PipelineToolbar';
 import { PipelineCanvas, type CanvasInteractionMode } from './PipelineCanvas';
 import { PipelineContextMenu } from './PipelineContextMenu';
+import type { TriggerNodeData } from '../../../shared/cue-pipeline-types';
 
 export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
 export type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
@@ -167,6 +168,8 @@ function CuePipelineEditorInner({
 		runningPipelineIds,
 		runningAgentsByPipeline,
 		runningSubscriptionsByPipeline,
+		optimisticTriggeredPipelineIds,
+		markPipelineTriggered,
 		persistLayout,
 		pendingSavedViewportRef,
 		pipelinesLoaded,
@@ -207,6 +210,37 @@ function CuePipelineEditorInner({
 		onPaneClick,
 		handleConfigureNode,
 	} = selectionHook;
+
+	// Wrap the manual-trigger handler so the click produces immediate UI feedback:
+	// mark the owning pipeline as optimistically triggered so the trigger
+	// spinner flips synchronously and every edge in the pipeline animates for
+	// a brief window — covers fast shell-only triggers that would otherwise
+	// complete before activeRuns polling caught the run. Success/failure toast
+	// comes from useCue.triggerSubscription downstream.
+	const handleTriggerPipeline = useCallback(
+		(subscriptionName: string) => {
+			let owningPipelineId: string | null = null;
+			for (const pipeline of pipelineState.pipelines) {
+				for (const node of pipeline.nodes) {
+					if (node.type !== 'trigger') continue;
+					const tData = node.data as TriggerNodeData;
+					// Trigger nodes carry the EXACT sub name they own (incl. -chain-N).
+					// Fall back to pipeline name match for legacy trigger nodes that
+					// were never saved (no `subscriptionName` stamped).
+					if (tData.subscriptionName === subscriptionName || pipeline.name === subscriptionName) {
+						owningPipelineId = pipeline.id;
+						break;
+					}
+				}
+				if (owningPipelineId) break;
+			}
+			if (owningPipelineId) {
+				markPipelineTriggered(owningPipelineId, subscriptionName);
+			}
+			onTriggerPipeline?.(subscriptionName);
+		},
+		[pipelineState.pipelines, markPipelineTriggered, onTriggerPipeline]
+	);
 
 	// The per-node "Configure" icon calls this directly via node data, bypassing
 	// onNodeClick. In All Pipelines view everything is read-only, so we refuse
@@ -250,24 +284,28 @@ function CuePipelineEditorInner({
 				pipelineState.selectedPipelineId,
 				handleConfigureNodeGuarded,
 				{
-					onTriggerPipeline,
+					onTriggerPipeline: handleTriggerPipeline,
 					isSaved: !isDirty,
 					runningPipelineIds,
 					runningSubscriptionsByPipeline,
+					runningAgentsByPipeline,
 				},
 				theme,
-				stableYOffsets
+				stableYOffsets,
+				interactionMode === 'hand'
 			),
 		[
 			pipelineState.pipelines,
 			pipelineState.selectedPipelineId,
 			handleConfigureNodeGuarded,
-			onTriggerPipeline,
+			handleTriggerPipeline,
 			isDirty,
 			runningPipelineIds,
 			runningSubscriptionsByPipeline,
+			runningAgentsByPipeline,
 			theme,
 			stableYOffsets,
+			interactionMode,
 		]
 	);
 
@@ -275,9 +313,32 @@ function CuePipelineEditorInner({
 	// applyNodeChanges updates this state (cheap setState, no useMemo recompute).
 	// On drag end, positions sync back to pipelineState.
 	const [displayNodes, setDisplayNodes] = useState<Node[]>(computedNodes);
+	// Tracks the `pipelineState.pipelines` reference that the resync last
+	// observed. Used to distinguish "pipelineState actually changed" (drag
+	// committed, node added/deleted, discard, mount) from "computedNodes
+	// recomputed because a non-positional dep changed" (activeRuns polling
+	// produced a fresh `runningPipelineIds` Set, theme change, etc.).
+	const lastSyncedPipelinesRef = useRef(pipelineState.pipelines);
 	useEffect(() => {
-		setDisplayNodes(computedNodes);
-	}, [computedNodes]);
+		setDisplayNodes((prev) => {
+			// If pipelineState.pipelines is unchanged since the last resync, this
+			// fire is poll-driven (or theme/selection/running-state-driven), NOT a
+			// real position update. Preserve ReactFlow's live positions on prev so
+			// a just-dragged node isn't snapped back when activeRuns polls a few
+			// seconds later. Tracking by reference rather than gating on isDirty
+			// because the dirty flag flips AFTER its own effect runs and isn't
+			// load-bearing for "did the source-of-truth positions change."
+			const pipelinesChanged = lastSyncedPipelinesRef.current !== pipelineState.pipelines;
+			lastSyncedPipelinesRef.current = pipelineState.pipelines;
+			if (pipelinesChanged) return computedNodes;
+			const prevById = new Map(prev.map((n) => [n.id, n]));
+			return computedNodes.map((cn) => {
+				const existing = prevById.get(cn.id);
+				if (!existing) return cn;
+				return { ...cn, position: existing.position };
+			});
+		});
+	}, [computedNodes, pipelineState.pipelines]);
 
 	const nodes = displayNodes;
 
@@ -288,12 +349,14 @@ function CuePipelineEditorInner({
 				pipelineState.selectedPipelineId,
 				selectedEdgeId,
 				theme,
-				runningAgentsByPipeline
+				runningAgentsByPipeline,
+				optimisticTriggeredPipelineIds
 			),
 		[
 			pipelineState.pipelines,
 			pipelineState.selectedPipelineId,
 			runningAgentsByPipeline,
+			optimisticTriggeredPipelineIds,
 			selectedEdgeId,
 			theme,
 		]
@@ -452,7 +515,7 @@ function CuePipelineEditorInner({
 				selectedEdgePipelineColor={selectedEdgePipelineColor}
 				onUpdateEdge={onUpdateEdge}
 				onDeleteEdge={onDeleteEdge}
-				onTriggerPipeline={onTriggerPipeline}
+				onTriggerPipeline={handleTriggerPipeline}
 				isDirty={isDirty}
 				runningPipelineIds={runningPipelineIds}
 				isLoading={graphLoading || (graphSessions.length > 0 && !pipelinesLoaded)}

@@ -63,7 +63,7 @@ vi.mock('lucide-react', () => {
 		// New SummaryCards momentum-row icons
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
-		GitBranch: createIcon('git-branch', '🌿'),
+		PenLine: createIcon('pen-line', '✏️'),
 	};
 });
 
@@ -184,6 +184,7 @@ beforeEach(() => {
 		avgSessionDuration: 180000,
 		byAgentByDay: {},
 		bySessionByDay: {},
+		bySessionSource: {},
 	});
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024); // 1 MB
 });
@@ -287,6 +288,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			avgSessionDuration: 240000,
 			byAgentByDay: {},
 			bySessionByDay: {},
+			bySessionSource: {},
 		};
 
 		it('applies card-enter class to metric cards', () => {
@@ -371,11 +373,10 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(sessionStatsSection).toHaveClass('dashboard-section-enter');
 				expect(sessionStatsSection).toHaveStyle({ animationDelay: '0ms' });
 
-				// Provider comparison is third (after agent-efficiency at 50ms)
-				// with 100ms delay
-				const agentSection = screen.getByTestId('section-agent-comparison');
-				expect(agentSection).toHaveClass('dashboard-section-enter');
-				expect(agentSection).toHaveStyle({ animationDelay: '100ms' });
+				// Agent efficiency is second with 50ms delay
+				const efficiencySection = screen.getByTestId('section-agent-efficiency');
+				expect(efficiencySection).toHaveClass('dashboard-section-enter');
+				expect(efficiencySection).toHaveStyle({ animationDelay: '50ms' });
 			});
 		});
 

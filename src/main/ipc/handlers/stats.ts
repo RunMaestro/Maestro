@@ -334,6 +334,58 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		})
 	);
 
+	// Record a keyboard shortcut firing. Buckets the event into the local-time
+	// day that contains `firedAt`. Idempotent at the call-site level only —
+	// every invocation increments the daily counter by 1.
+	ipcMain.handle(
+		'stats:record-shortcut-usage',
+		withIpcErrorLogging(handlerOpts('recordShortcutUsage'), async (firedAt: number) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				return null;
+			}
+
+			const db = getStatsDB();
+			const date = db.incrementShortcutUsage(firedAt);
+			broadcastStatsUpdate(getMainWindow);
+			return date;
+		})
+	);
+
+	// Get per-day shortcut usage counts within a time range
+	ipcMain.handle(
+		'stats:get-shortcut-usage-by-day',
+		withIpcErrorLogging(handlerOpts('getShortcutUsageByDay'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getShortcutUsageByDay(range);
+		})
+	);
+
+	// Get total shortcut firings within a time range (summary card)
+	ipcMain.handle(
+		'stats:get-shortcut-usage-total',
+		withIpcErrorLogging(handlerOpts('getShortcutUsageTotal'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getShortcutUsageTotal(range);
+		})
+	);
+
+	// Record an image annotation save event
+	ipcMain.handle(
+		'stats:record-image-annotation',
+		withIpcErrorLogging(handlerOpts('recordImageAnnotation'), async (createdAt: number) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping image annotation', LOG_CONTEXT);
+				return null;
+			}
+
+			const db = getStatsDB();
+			const id = db.insertImageAnnotation(createdAt);
+			logger.debug(`Recorded image annotation: ${id}`, LOG_CONTEXT);
+			broadcastStatsUpdate(getMainWindow);
+			return id;
+		})
+	);
+
 	// Get earliest timestamp across all stats tables
 	ipcMain.handle(
 		'stats:get-earliest-timestamp',

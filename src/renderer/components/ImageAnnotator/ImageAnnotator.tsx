@@ -90,6 +90,10 @@ function ImageAnnotatorContent({
 			if (!dataUrl) return;
 			onSave?.(dataUrl);
 			closeAnnotator();
+			// Best-effort stats recording — never block save on telemetry failure.
+			void window.maestro.stats.recordImageAnnotation(Date.now()).catch((err: unknown) => {
+				logger.warn('Failed to record image annotation stat', undefined, err);
+			});
 		} catch (err) {
 			logger.error('Failed to save annotated image:', undefined, err);
 			notifyToast({

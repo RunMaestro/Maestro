@@ -32,6 +32,8 @@ export interface MainPanelHandle {
 	openTerminalSearch: () => void;
 	/** Focus the browser address bar in the active browser tab */
 	focusBrowserAddressBar: () => void;
+	/** Scroll the active tab header into view and focus it */
+	focusActiveTab: () => void;
 	/** Reload the active browser tab (or stop loading if in progress) */
 	reloadBrowserTab: () => void;
 }
@@ -182,6 +184,8 @@ export interface MainPanelProps {
 	onTerminalTabSelect?: (tabId: string) => void;
 	onTerminalTabClose?: (tabId: string) => void;
 	onTerminalTabRename?: (tabId: string) => void;
+	/** Handler to open the startup-command modal for a terminal tab */
+	onTerminalTabConfigureStartupCommand?: (tabId: string) => void;
 	onOpenFileTab?: (filePath: string) => void;
 	/** Handler to update file tab editMode when toggled in FilePreview */
 	onFileTabEditModeChange?: (tabId: string, editMode: boolean) => void;

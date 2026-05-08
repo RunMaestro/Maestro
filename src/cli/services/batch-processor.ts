@@ -38,6 +38,29 @@ function getGitBranch(cwd: string): string | undefined {
 }
 
 /**
+ * Detect the `<!-- maestro:halt -->` early-exit marker in a document.
+ *
+ * Agents write this marker into the current Auto Run document to abort the
+ * entire playbook (skipping all remaining tasks in the current document and
+ * all subsequent documents). The optional reason after the colon is surfaced
+ * in the History panel and JSONL `halt` event.
+ *
+ * Accepts:
+ *   <!-- maestro:halt -->
+ *   <!-- maestro:halt: brief reason here -->
+ *
+ * Match is case-insensitive on the keyword to tolerate agent variations,
+ * but the literal token `maestro:halt` is required to keep false positives
+ * effectively zero.
+ */
+export function detectHaltMarker(content: string): { halted: boolean; reason?: string } {
+	const match = content.match(/<!--\s*maestro:halt\s*(?::\s*([^>]*?))?\s*-->/i);
+	if (!match) return { halted: false };
+	const reason = match[1]?.trim();
+	return { halted: true, reason: reason || undefined };
+}
+
+/**
  * Check if a directory is a git repository
  */
 function isGitRepo(cwd: string): boolean {
@@ -132,10 +155,15 @@ export async function* runPlaybook(
 			};
 		}
 
-		// Calculate initial total tasks
+		// Calculate initial total tasks and detect any pre-existing halt markers
+		// in the same pass. We refuse to start if a stale marker is found — the
+		// previous run halted intentionally and the user must resolve it before
+		// re-running. Folding both checks into one scan keeps the read count
+		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
+		let preExistingHalt: { document: string; reason?: string } | null = null;
 		for (const doc of playbook.documents) {
-			const { taskCount } = readDocAndCountTasks(folderPath, doc.filename);
+			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
 			if (debug) {
 				yield {
 					type: 'debug',
@@ -145,6 +173,12 @@ export async function* runPlaybook(
 				};
 			}
 			initialTotalTasks += taskCount;
+			if (!preExistingHalt) {
+				const halt = detectHaltMarker(content);
+				if (halt.halted) {
+					preExistingHalt = { document: doc.filename, reason: halt.reason };
+				}
+			}
 		}
 		if (debug) {
 			yield {
@@ -162,6 +196,19 @@ export async function* runPlaybook(
 				timestamp: Date.now(),
 				message: 'No unchecked tasks found in any documents',
 				code: 'NO_TASKS',
+			};
+			return;
+		}
+
+		if (preExistingHalt) {
+			unregisterCliActivity(session.id);
+			yield {
+				type: 'error',
+				timestamp: Date.now(),
+				message: `Document "${preExistingHalt.document}" contains an unresolved halt marker${
+					preExistingHalt.reason ? `: ${preExistingHalt.reason}` : ''
+				}. Remove the <!-- maestro:halt --> marker before re-running.`,
+				code: 'HALT_MARKER_PRESENT',
 			};
 			return;
 		}
@@ -456,12 +503,13 @@ export async function* runPlaybook(
 
 					const elapsedMs = Date.now() - taskStartTime;
 
-					// Re-read document to get new task count
-					const { taskCount: newRemainingTasks } = readDocAndCountTasks(
+					// Re-read document to get new task count and check for halt marker
+					const { taskCount: newRemainingTasks, content: postContent } = readDocAndCountTasks(
 						folderPath,
 						docEntry.filename
 					);
 					const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
+					const haltMarker = detectHaltMarker(postContent);
 
 					// Update counters
 					docTasksCompleted += tasksCompletedThisRun;
@@ -546,6 +594,43 @@ export async function* runPlaybook(
 								entryId: historyEntry.id,
 							};
 						}
+					}
+
+					// Halt marker detected — agent has signaled early exit. Stop the
+					// entire playbook now: no further tasks in this document, no
+					// further documents, no further loop iterations.
+					if (haltMarker.halted) {
+						const haltReason = haltMarker.reason || 'Halted by agent';
+
+						logger.autorun(`Auto Run halted by agent`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							reason: haltReason,
+							loopNumber: loopIteration + 1,
+						});
+
+						yield {
+							type: 'halt',
+							timestamp: Date.now(),
+							document: docEntry.filename,
+							taskIndex,
+							reason: haltReason,
+						};
+
+						createFinalLoopEntry(`Halted by agent: ${haltReason}`);
+						unregisterCliActivity(session.id);
+
+						yield {
+							type: 'complete',
+							timestamp: Date.now(),
+							success: false,
+							totalTasksCompleted: totalCompletedTasks,
+							totalElapsedMs: Date.now() - batchStartTime,
+							totalCost,
+							halted: true,
+							haltReason,
+						};
+						return;
 					}
 
 					remainingTasks = newRemainingTasks;

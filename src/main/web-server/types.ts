@@ -314,7 +314,11 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
-export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
+export type OpenFileTabCallback = (
+	sessionId: string,
+	filePath: string,
+	switchToAgent: boolean
+) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.

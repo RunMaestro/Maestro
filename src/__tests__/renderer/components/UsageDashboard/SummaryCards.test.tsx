@@ -50,6 +50,14 @@ const mockData: StatsAggregation = {
 	avgSessionDuration: 288000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
+	worktreeQueries: 0,
+	parentQueries: 150,
+	byWorktreeStatus: {
+		worktree: { count: 0, duration: 0 },
+		parent: { count: 150, duration: 7200000 },
+	},
+	imageAnnotations: 0,
 };
 
 // Empty data for edge case testing
@@ -68,6 +76,14 @@ const emptyData: StatsAggregation = {
 	avgSessionDuration: 0,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
+	worktreeQueries: 0,
+	parentQueries: 0,
+	byWorktreeStatus: {
+		worktree: { count: 0, duration: 0 },
+		parent: { count: 0, duration: 0 },
+	},
+	imageAnnotations: 0,
 };
 
 // Data with large numbers
@@ -89,6 +105,14 @@ const largeNumbersData: StatsAggregation = {
 	avgSessionDuration: 7200000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
+	worktreeQueries: 0,
+	parentQueries: 1500000,
+	byWorktreeStatus: {
+		worktree: { count: 0, duration: 0 },
+		parent: { count: 1500000, duration: 360000000 },
+	},
+	imageAnnotations: 0,
 };
 
 // Single agent data
@@ -109,6 +133,14 @@ const singleAgentData: StatsAggregation = {
 	avgSessionDuration: 360000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
+	worktreeQueries: 0,
+	parentQueries: 50,
+	byWorktreeStatus: {
+		worktree: { count: 0, duration: 0 },
+		parent: { count: 50, duration: 1800000 },
+	},
+	imageAnnotations: 0,
 };
 
 // Mock sessions with tabs for open tab count testing
@@ -196,9 +228,9 @@ describe('SummaryCards', () => {
 			expect(screen.getByText('Active Days')).toBeInTheDocument();
 		});
 
-		it('renders Worktree % metric', () => {
+		it('renders Image Annotations metric', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-			expect(screen.getByText('Worktree %')).toBeInTheDocument();
+			expect(screen.getByText('Image Annotations')).toBeInTheDocument();
 		});
 
 		it('renders Open Tabs metric with correct count', () => {

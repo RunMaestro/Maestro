@@ -70,6 +70,7 @@ import {
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCueHandlers,
+	registerCueBackupHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -884,6 +885,18 @@ app.whenReady().then(async () => {
 		if (isWebContentsAvailable(mainWindow)) {
 			mainWindow.webContents.send('app:systemResume');
 		}
+		// Replay missed time-based Cue triggers and kick GitHub pollers so a
+		// laptop that's been asleep doesn't sit on stale subscriptions until
+		// the next scheduled tick. Idempotent against multiple resume events
+		// from the same wake (lid + display + monitor).
+		if (cueEngine?.isEnabled()) {
+			try {
+				cueEngine.reconcileAfterWake();
+			} catch (err) {
+				logger.error(`Cue reconcileAfterWake failed: ${err}`, 'PowerMonitor');
+				void captureException(err, { operation: 'cue.reconcileAfterWake' });
+			}
+		}
 	});
 });
 
@@ -980,6 +993,11 @@ function setupIpcHandlers() {
 	// Cue - event-driven automation engine
 	registerCueHandlers({
 		getCueEngine: () => cueEngine,
+	});
+
+	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
+	registerCueBackupHandlers({
+		sessionsStore,
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts

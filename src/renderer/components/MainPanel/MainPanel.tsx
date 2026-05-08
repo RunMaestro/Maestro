@@ -18,7 +18,7 @@ import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
@@ -200,6 +200,7 @@ export const MainPanel = React.memo(
 			onTerminalTabSelect,
 			onTerminalTabClose,
 			onTerminalTabRename,
+			onTerminalTabConfigureStartupCommand,
 		} = props;
 
 		// Get the active tab for header display
@@ -370,6 +371,40 @@ export const MainPanel = React.memo(
 							input.select();
 						}
 					}
+				},
+				focusActiveTab: () => {
+					// Read fresh from the store: useImperativeHandle only rebuilds when
+					// deps change, so the captured `activeSession` prop is stale if the
+					// user switches tabs within the same session.
+					const session = selectActiveSession(useSessionStore.getState());
+					if (!session) return;
+					// Mirrors TabBar's targetTabId resolution so AI/terminal/file/browser
+					// tabs all map to the right header element.
+					const targetTabId =
+						session.inputMode === 'terminal'
+							? session.activeTerminalTabId || session.activeTabId
+							: session.activeFileTabId || session.activeBrowserTabId || session.activeTabId;
+					if (!targetTabId) return;
+					const container = document.querySelector(`[data-tour="tab-bar"]`) as HTMLElement | null;
+					const tabElement = container?.querySelector(
+						`[data-tab-id="${targetTabId}"]`
+					) as HTMLElement | null;
+					if (!container || !tabElement) return;
+					// Center the tab in the scrollable strip. We compute scrollLeft
+					// directly because scrollIntoView({ inline: 'center' }) ignores the
+					// sticky-left search/filter button and the sticky-right "+" button,
+					// which leaves the tab partly hidden behind them.
+					const STICKY_RIGHT_WIDTH = 48;
+					const stickyLeft = container.querySelector(':scope > .sticky') as HTMLElement | null;
+					const stickyLeftWidth = stickyLeft?.offsetWidth ?? 0;
+					const containerRect = container.getBoundingClientRect();
+					const tabRect = tabElement.getBoundingClientRect();
+					const tabLeftInContent = tabRect.left - containerRect.left + container.scrollLeft;
+					const visibleWidth = container.clientWidth - stickyLeftWidth - STICKY_RIGHT_WIDTH;
+					const target =
+						tabLeftInContent - stickyLeftWidth - Math.max(0, (visibleWidth - tabRect.width) / 2);
+					container.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+					tabElement.focus({ preventScroll: true });
 				},
 				reloadBrowserTab: () => {
 					if (activeSession?.activeBrowserTabId) {
@@ -757,6 +792,7 @@ export const MainPanel = React.memo(
 									onTerminalTabSelect={onTerminalTabSelect}
 									onTerminalTabClose={onTerminalTabClose}
 									onTerminalTabRename={onTerminalTabRename}
+									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
 									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
 									onPublishTerminalBufferGist={
 										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
@@ -770,6 +806,8 @@ export const MainPanel = React.memo(
 									}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
+									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
+									sshRemote={Boolean(filePreviewSshRemoteId)}
 								/>
 							)}
 

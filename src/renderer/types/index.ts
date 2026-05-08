@@ -513,6 +513,12 @@ export interface TerminalTab {
 	exitCode?: number; // Exit code when state === 'exited'
 	scrollTop?: number; // Saved scroll position (restored on tab re-focus)
 	searchQuery?: string; // Preserved search query for the xterm.js search addon
+	// Command to run automatically each time the PTY is spawned for this tab
+	// (e.g. on app restart). Empty/undefined disables the feature.
+	startupCommand?: string;
+	// Working directory for the startup command. When set, the PTY is spawned in
+	// this directory. Falls back to tab.cwd / session.cwd when unset.
+	startupCommandCwd?: string;
 }
 
 /**

@@ -44,6 +44,18 @@ export interface CueTriggerSource {
 	 * column.
 	 */
 	nextTriggerAt(): number | null;
+
+	/**
+	 * Optional: trigger an immediate evaluation/poll outside the source's normal
+	 * schedule. Called by `engine.reconcileAfterWake()` so GitHub pollers can
+	 * detect items that appeared while the laptop was asleep without waiting
+	 * for the next scheduled poll (which may be up to `poll_minutes` away).
+	 *
+	 * Sources that don't have a meaningful "poll now" semantics (heartbeat,
+	 * scheduled, file watchers, task scanners — these either tick on tight
+	 * intervals or are reconciled separately) omit this method.
+	 */
+	pollNow?(): void;
 }
 
 /**

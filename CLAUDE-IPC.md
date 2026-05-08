@@ -44,6 +44,7 @@ The `window.maestro` API exposes the following namespaces:
 - `cli` - CLI activity detection for playbook runs
 - `tempfile` - Temporary file management for batch processing
 - `cue` - Maestro Cue event-driven automation (see Cue API below)
+- `cueBackup` - Snapshot/restore of every workspace's `.maestro/cue.yaml` + `.maestro/prompts/` as a zip in `userData/cue-backups/` (Cue modal Backup tab)
 
 ## Analytics & Visualization
 
@@ -118,6 +119,26 @@ window.maestro.cue = {
 ```
 
 **Events:** `cue:activityUpdate` is pushed from main process on subscription triggers, run completions, config reloads, and config removals.
+
+## Cue Backup API
+
+Snapshot/restore of every workspace's `.maestro/cue.yaml` + `.maestro/prompts/` as a single zip in `userData/cue-backups/`. Used by the Cue modal's Backup tab. Restore is **additive only** — files in the live workspace that are not in the backup are left alone (deletion is too easy to regret).
+
+```typescript
+window.maestro.cueBackup = {
+	create: () => Promise<CueBackupSummary>,
+	list: () => Promise<CueBackupSummary[]>,
+	inspect: (filePath) => Promise<CueBackupManifest>,
+	readFile: (filePath, workspaceId, relativePath) => Promise<string | null>,
+	readLive: (cwd, relativePath) => Promise<string | null>,
+	restoreFile: (filePath, workspaceId, relativePath) => Promise<void>,
+	restoreAll: (filePath) => Promise<CueBackupRestoreResult>,
+	getDiffStatus: (filePath) => Promise<CueBackupDiffStatusMap>,
+	delete: (filePath) => Promise<void>,
+};
+```
+
+Every write path validates the backup zip lives inside `userData/cue-backups/` to prevent path traversal. See `src/main/cue/backup/cue-backup-manager.ts` for the implementation and `src/shared/cue-backup-types.ts` for the manifest/diff-status contracts.
 
 ## Power Management
 

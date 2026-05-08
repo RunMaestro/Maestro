@@ -267,16 +267,29 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 		() => ({ backgroundColor: theme.colors.bgMain }),
 		[theme.colors.bgMain]
 	);
+	// Bottom-left zoom/lock controls: shift right past the trigger drawer
+	// (220px wide) so they stay visible when the drawer is open. ReactFlow's
+	// default `left: 15px` is overridden via the `style` prop.
 	const controlsStyle = React.useMemo(
-		() => ({ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }),
-		[theme.colors.bgActivity, theme.colors.border]
+		() => ({
+			backgroundColor: theme.colors.bgActivity,
+			borderColor: theme.colors.border,
+			left: triggerDrawerOpen ? 235 : 15,
+			transition: 'left 200ms ease',
+		}),
+		[theme.colors.bgActivity, theme.colors.border, triggerDrawerOpen]
 	);
+	// Bottom-right minimap: shift left past the agent drawer (240px wide)
+	// so the minimap stays visible when the drawer is open. Overrides
+	// ReactFlow's default `right: 10px`.
 	const miniMapStyle = React.useMemo(
 		() => ({
 			backgroundColor: theme.colors.bgActivity,
 			border: `1px solid ${theme.colors.border}`,
+			right: agentDrawerOpen ? 250 : 10,
+			transition: 'right 200ms ease',
 		}),
-		[theme.colors.bgActivity, theme.colors.border]
+		[theme.colors.bgActivity, theme.colors.border, agentDrawerOpen]
 	);
 	const miniMapMaskColor = React.useMemo(() => `${theme.colors.bgMain}cc`, [theme.colors.bgMain]);
 	// Drag-preview line shown while connecting one handle to another. Without
@@ -411,19 +424,22 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Canvas interaction-mode toggle (hand pans, pointer box-selects). */}
+			{/* Canvas interaction-mode toggle (hand pans, pointer box-selects).
+			    Shifts right when the trigger drawer is open so it stays visible
+			    next to the drawer's edge. */}
 			<div
 				style={{
 					position: 'absolute',
 					top: 8,
-					left: 8,
-					zIndex: 10,
+					left: triggerDrawerOpen ? 228 : 8,
+					zIndex: 21,
 					display: 'flex',
 					gap: 2,
 					padding: 2,
 					backgroundColor: `${theme.colors.bgActivity}f5`,
 					border: `1px solid ${theme.colors.border}`,
 					borderRadius: 6,
+					transition: 'left 200ms ease',
 				}}
 			>
 				{(

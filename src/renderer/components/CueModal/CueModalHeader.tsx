@@ -7,11 +7,20 @@
  */
 
 import { memo } from 'react';
-import { X, Zap, HelpCircle, LayoutDashboard, GitFork, ArrowLeft, Activity } from 'lucide-react';
+import {
+	X,
+	Zap,
+	HelpCircle,
+	LayoutDashboard,
+	GitFork,
+	ArrowLeft,
+	Activity,
+	Archive,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 
-export type CueModalTab = 'dashboard' | 'pipeline' | 'activity';
+export type CueModalTab = 'dashboard' | 'pipeline' | 'activity' | 'backup';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -21,6 +30,7 @@ const TABS: ReadonlyArray<{
 	{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 	{ id: 'pipeline', label: 'Pipeline Editor', icon: GitFork },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
+	{ id: 'backup', label: 'Backup', icon: Archive },
 ];
 
 export interface CueModalHeaderProps {

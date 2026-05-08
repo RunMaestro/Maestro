@@ -11,6 +11,7 @@ import {
 	convertToReactFlowNodes,
 	convertToReactFlowEdges,
 	computePipelineYOffsets,
+	resolveNonOverlappingPipelineOffset,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
 import type {
 	CuePipeline,
@@ -564,6 +565,31 @@ describe('convertToReactFlowNodes', () => {
 		}
 	});
 
+	it('marks pipeline-group nodes non-draggable in hand (pan) mode', () => {
+		const p1 = makePipeline('p1', {
+			color: '#aabbcc',
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const p2 = makePipeline('p2', {
+			color: '#ddeeff',
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		const nodes = convertToReactFlowNodes(
+			[p1, p2],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true
+		);
+		const groups = nodes.filter((n) => n.type === 'pipeline-group');
+		expect(groups).toHaveLength(2);
+		for (const g of groups) {
+			expect(g.draggable).toBe(false);
+		}
+	});
+
 	it('skips pipeline-group nodes for empty pipelines', () => {
 		const p1 = makePipeline('p1', {
 			nodes: [makeTrigger('t1', 'time.heartbeat')],
@@ -1018,6 +1044,61 @@ describe('convertToReactFlowEdges — per-agent edge animation', () => {
 		const edges = convertToReactFlowEdges([pipeline], 'p1', undefined, undefined, running);
 		expect(edges).toEqual([]);
 	});
+
+	it('optimistic-trigger override: every edge in the pipeline animates regardless of target type', () => {
+		// Pipeline with a non-agent leg (trigger → command → agent). Without the
+		// optimistic flag the trigger→command edge cannot animate (target isn't
+		// an agent). With the flag, both legs animate so the user sees instant
+		// feedback after clicking Play, even for fast shell-only triggers.
+		const pipeline = makePipeline('p1', {
+			nodes: [
+				makeTrigger('t1', 'time.heartbeat'),
+				makeAgent('a', 'sess-a', 'A'), // re-using makeAgent for non-agent target stand-in is wrong
+			],
+			edges: [makeEdge('e1', 't1', 'a')],
+		});
+		// Baseline: no animation when neither agent is running and no optimistic flag.
+		const baseline = convertToReactFlowEdges([pipeline], 'p1', undefined, undefined, new Map());
+		expect((baseline[0].data as { isRunning: boolean }).isRunning).toBe(false);
+
+		// With optimistic set including this pipeline, the edge animates.
+		const optimistic = new Set(['p1']);
+		const animated = convertToReactFlowEdges(
+			[pipeline],
+			'p1',
+			undefined,
+			undefined,
+			new Map(),
+			optimistic
+		);
+		expect((animated[0].data as { isRunning: boolean }).isRunning).toBe(true);
+	});
+
+	it('optimistic-trigger override: only flagged pipelines animate (others remain static)', () => {
+		const pA = makePipeline('pA', {
+			nodes: [makeTrigger('tA', 'time.heartbeat'), makeAgent('a', 'sess-a', 'A')],
+			edges: [makeEdge('eA', 'tA', 'a')],
+		});
+		const pB = makePipeline('pB', {
+			nodes: [makeTrigger('tB', 'time.heartbeat'), makeAgent('b', 'sess-b', 'B')],
+			edges: [makeEdge('eB', 'tB', 'b')],
+		});
+		const optimistic = new Set(['pA']);
+		const edges = convertToReactFlowEdges(
+			[pA, pB],
+			null,
+			undefined,
+			undefined,
+			new Map(),
+			optimistic
+		);
+		expect((edges.find((e) => e.id === 'pA:eA')!.data as { isRunning: boolean }).isRunning).toBe(
+			true
+		);
+		expect((edges.find((e) => e.id === 'pB:eB')!.data as { isRunning: boolean }).isRunning).toBe(
+			false
+		);
+	});
 });
 
 describe('convertToReactFlowNodes triggerOptions', () => {
@@ -1071,6 +1152,36 @@ describe('convertToReactFlowNodes triggerOptions', () => {
 		// is supplied) so the Play button renders a stable initial state.
 		// Falsy matches the old `undefined` semantics for the Play button.
 		expect(triggerData.isRunning).toBe(false);
+	});
+
+	it('agent node carries isRunning when its sessionName is in runningAgentsByPipeline', () => {
+		// runningAgentsByPipeline drives the running-agent pulse animation.
+		// The agent node only pulses when its sessionName matches a name in
+		// the set keyed by its owning pipeline id — runs in OTHER pipelines
+		// must not light up an unrelated sibling that happens to share a name.
+		const pipeline = makePipeline('p1', {
+			nodes: [
+				makeTrigger('t1', 'time.heartbeat'),
+				makeAgent('a', 'sess-a', 'A'),
+				makeAgent('b', 'sess-b', 'B'),
+			],
+		});
+		const runningAgents = new Map<string, Set<string>>([['p1', new Set(['A'])]]);
+		const nodes = convertToReactFlowNodes([pipeline], 'p1', undefined, {
+			runningAgentsByPipeline: runningAgents,
+		});
+		const byId = Object.fromEntries(nodes.map((n) => [n.id, n.data as { isRunning?: boolean }]));
+		expect(byId['p1:a'].isRunning).toBe(true);
+		expect(byId['p1:b'].isRunning).toBe(false);
+	});
+
+	it('agent node isRunning defaults to false when runningAgentsByPipeline omitted', () => {
+		const pipeline = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat'), makeAgent('a', 'sess-a', 'A')],
+		});
+		const nodes = convertToReactFlowNodes([pipeline], 'p1');
+		const agent = nodes.find((n) => n.id === 'p1:a')!;
+		expect((agent.data as { isRunning?: boolean }).isRunning).toBe(false);
 	});
 });
 
@@ -1455,5 +1566,85 @@ describe('convertToReactFlowNodes fanInCount', () => {
 		const nodes = convertToReactFlowNodes([pipeline], 'p1');
 		const nodeD = nodes.find((n) => n.id === 'p1:d')!;
 		expect((nodeD.data as any).fanInCount).toBeUndefined();
+	});
+});
+
+// ─── resolveNonOverlappingPipelineOffset ─────────────────────────────────────
+
+describe('resolveNonOverlappingPipelineOffset', () => {
+	it('returns desired offset when there are no other pipelines', () => {
+		const moved = makePipeline('p1', { nodes: [makeTrigger('t1', 'time.heartbeat')] });
+		const result = resolveNonOverlappingPipelineOffset(moved, { x: 100, y: 50 }, []);
+		expect(result).toEqual({ x: 100, y: 50 });
+	});
+
+	it('returns desired offset when no overlap occurs', () => {
+		const moved = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const other = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		// Place "other" 2000px below — well clear of moved at desired (0, 0).
+		const result = resolveNonOverlappingPipelineOffset(moved, { x: 0, y: 0 }, [
+			{ pipeline: other, offset: { x: 0, y: 2000 } },
+		]);
+		expect(result).toEqual({ x: 0, y: 0 });
+	});
+
+	it('shifts the moved pipeline when its desired position overlaps another', () => {
+		const moved = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const other = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		// Both occupy (0..NODE_BG_WIDTH, 0..NODE_BG_HEIGHT) at offset (0,0) ⇒ full overlap.
+		const result = resolveNonOverlappingPipelineOffset(moved, { x: 0, y: 0 }, [
+			{ pipeline: other, offset: { x: 0, y: 0 } },
+		]);
+		// Some non-zero displacement must have been applied.
+		expect(Math.abs(result.x) + Math.abs(result.y)).toBeGreaterThan(0);
+
+		// Verify the resolved position has no overlap by re-running with the
+		// resolved offset as the desired one — should be a fixed point.
+		const fixedPoint = resolveNonOverlappingPipelineOffset(moved, result, [
+			{ pipeline: other, offset: { x: 0, y: 0 } },
+		]);
+		expect(fixedPoint).toEqual(result);
+	});
+
+	it('skips empty pipelines (no nodes ⇒ no bounding box)', () => {
+		const empty = makePipeline('p1', { nodes: [] });
+		const other = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		// An empty moved pipeline returns the desired offset unchanged.
+		const result = resolveNonOverlappingPipelineOffset(empty, { x: 50, y: 50 }, [
+			{ pipeline: other, offset: { x: 0, y: 0 } },
+		]);
+		expect(result).toEqual({ x: 50, y: 50 });
+	});
+
+	it('clears overlaps from multiple neighbors', () => {
+		const moved = makePipeline('p1', {
+			nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+		});
+		const a = makePipeline('p2', {
+			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+		});
+		const b = makePipeline('p3', {
+			nodes: [makeTrigger('t3', 'github.issue', {}, { x: 0, y: 0 })],
+		});
+		const result = resolveNonOverlappingPipelineOffset(moved, { x: 0, y: 0 }, [
+			{ pipeline: a, offset: { x: 0, y: 0 } },
+			{ pipeline: b, offset: { x: 500, y: 0 } },
+		]);
+		// After resolution, calling again with the resolved offset should be a fixed point.
+		const fixedPoint = resolveNonOverlappingPipelineOffset(moved, result, [
+			{ pipeline: a, offset: { x: 0, y: 0 } },
+			{ pipeline: b, offset: { x: 500, y: 0 } },
+		]);
+		expect(fixedPoint).toEqual(result);
 	});
 });

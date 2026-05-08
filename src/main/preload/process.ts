@@ -465,13 +465,15 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to remote open file tab from web interface
+		 * Subscribe to remote open file tab from web interface.
+		 * `switchToAgent` controls whether the UI switches to the target agent
+		 * (defaults to true if the sender omits it).
 		 */
 		onRemoteOpenFileTab: (
-			callback: (sessionId: string, filePath: string) => void
+			callback: (sessionId: string, filePath: string, switchToAgent: boolean) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, filePath: string) =>
-				callback(sessionId, filePath);
+			const handler = (_: unknown, sessionId: string, filePath: string, switchToAgent?: boolean) =>
+				callback(sessionId, filePath, switchToAgent !== false);
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
 		},

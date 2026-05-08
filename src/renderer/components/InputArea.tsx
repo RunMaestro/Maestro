@@ -536,7 +536,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			{session.inputMode === 'ai' && stagedImages.length > 0 && (
 				<div className="flex gap-2 mb-3 pb-2 overflow-x-auto overflow-y-visible scrollbar-thin">
 					{stagedImages.map((img, idx) => (
-						<div key={img} className="relative group shrink-0">
+						<div
+							key={img}
+							className="relative group shrink-0 flex items-center justify-center"
+							style={{ minWidth: '64px' }}
+						>
 							<button
 								type="button"
 								className="p-0 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"

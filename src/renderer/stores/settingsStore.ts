@@ -352,6 +352,10 @@ export interface SettingsStoreState {
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
 	automaticTabNamingEnabled: boolean;
+	newTabPlacement: 'end' | 'after-current';
+	newBrowserTabPlacement: 'end' | 'after-current';
+	newTerminalPlacement: 'end' | 'after-current';
+	openedFilePlacement: 'end' | 'after-current';
 	fileTabAutoRefreshEnabled: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
@@ -372,6 +376,9 @@ export interface SettingsStoreState {
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
 	autoRunInactivityTimeoutMin: number;
+	speckitEnabled: boolean;
+	openspecEnabled: boolean;
+	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
 	annotatorPenColor: string;
@@ -459,6 +466,10 @@ export interface SettingsStoreActions {
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	setNewTabPlacement: (value: 'end' | 'after-current') => void;
+	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
+	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
+	setOpenedFilePlacement: (value: 'end' | 'after-current') => void;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
@@ -479,6 +490,9 @@ export interface SettingsStoreActions {
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	setSpeckitEnabled: (value: boolean) => void;
+	setOpenspecEnabled: (value: boolean) => void;
+	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
 	setAnnotatorPenColor: (value: string) => void;
@@ -646,6 +660,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		automaticTabNamingEnabled: true,
+		newTabPlacement: 'end',
+		newBrowserTabPlacement: 'after-current',
+		newTerminalPlacement: 'after-current',
+		openedFilePlacement: 'after-current',
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
@@ -666,6 +684,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
 		autoRunInactivityTimeoutMin: 240,
+		speckitEnabled: true,
+		openspecEnabled: true,
+		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
 		annotatorPenColor: '#9146FF',
@@ -1146,6 +1167,26 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('automaticTabNamingEnabled', value);
 		},
 
+		setNewTabPlacement: (value) => {
+			set({ newTabPlacement: value });
+			window.maestro.settings.set('newTabPlacement', value);
+		},
+
+		setNewBrowserTabPlacement: (value) => {
+			set({ newBrowserTabPlacement: value });
+			window.maestro.settings.set('newBrowserTabPlacement', value);
+		},
+
+		setNewTerminalPlacement: (value) => {
+			set({ newTerminalPlacement: value });
+			window.maestro.settings.set('newTerminalPlacement', value);
+		},
+
+		setOpenedFilePlacement: (value) => {
+			set({ openedFilePlacement: value });
+			window.maestro.settings.set('openedFilePlacement', value);
+		},
+
 		setFileTabAutoRefreshEnabled: (value) => {
 			set({ fileTabAutoRefreshEnabled: value });
 			window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
@@ -1240,6 +1281,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDotfilesToggleHidden: (value) => {
 			set({ dotfilesToggleHidden: value });
 			window.maestro.settings.set('dotfilesToggleHidden', value);
+		},
+
+		setSpeckitEnabled: (value) => {
+			set({ speckitEnabled: value });
+			window.maestro.settings.set('speckitEnabled', value);
+		},
+
+		setOpenspecEnabled: (value) => {
+			set({ openspecEnabled: value });
+			window.maestro.settings.set('openspecEnabled', value);
+		},
+
+		setBmadEnabled: (value) => {
+			set({ bmadEnabled: value });
+			window.maestro.settings.set('bmadEnabled', value);
 		},
 
 		setAutoRunInactivityTimeoutMin: (value) => {
@@ -2279,6 +2335,34 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
 
+		if (allSettings['newTabPlacement'] !== undefined) {
+			const placement = allSettings['newTabPlacement'];
+			if (placement === 'end' || placement === 'after-current') {
+				patch.newTabPlacement = placement;
+			}
+		}
+
+		if (allSettings['newBrowserTabPlacement'] !== undefined) {
+			const placement = allSettings['newBrowserTabPlacement'];
+			if (placement === 'end' || placement === 'after-current') {
+				patch.newBrowserTabPlacement = placement;
+			}
+		}
+
+		if (allSettings['newTerminalPlacement'] !== undefined) {
+			const placement = allSettings['newTerminalPlacement'];
+			if (placement === 'end' || placement === 'after-current') {
+				patch.newTerminalPlacement = placement;
+			}
+		}
+
+		if (allSettings['openedFilePlacement'] !== undefined) {
+			const placement = allSettings['openedFilePlacement'];
+			if (placement === 'end' || placement === 'after-current') {
+				patch.openedFilePlacement = placement;
+			}
+		}
+
 		if (allSettings['fileTabAutoRefreshEnabled'] !== undefined)
 			patch.fileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'] as boolean;
 
@@ -2352,6 +2436,15 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
+
+		if (allSettings['speckitEnabled'] !== undefined)
+			patch.speckitEnabled = allSettings['speckitEnabled'] as boolean;
+
+		if (allSettings['openspecEnabled'] !== undefined)
+			patch.openspecEnabled = allSettings['openspecEnabled'] as boolean;
+
+		if (allSettings['bmadEnabled'] !== undefined)
+			patch.bmadEnabled = allSettings['bmadEnabled'] as boolean;
 
 		if (allSettings['lastSelectedPromptId'] !== undefined)
 			patch.lastSelectedPromptId = allSettings['lastSelectedPromptId'] as string | null;
@@ -2489,6 +2582,10 @@ export function getSettingsActions() {
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
+		setNewTabPlacement: state.setNewTabPlacement,
+		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,
+		setNewTerminalPlacement: state.setNewTerminalPlacement,
+		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
 		setEncoreFeatures: state.setEncoreFeatures,

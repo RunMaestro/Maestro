@@ -46,6 +46,13 @@ describe('CueModalHeader', () => {
 		expect(props.setActiveTab).toHaveBeenCalledWith('pipeline');
 	});
 
+	it('clicking Backup tab calls setActiveTab("backup")', () => {
+		const props = makeProps();
+		render(<CueModalHeader {...props} />);
+		fireEvent.click(screen.getByText('Backup'));
+		expect(props.setActiveTab).toHaveBeenCalledWith('backup');
+	});
+
 	it('master toggle click fires handleToggle', () => {
 		const props = makeProps();
 		render(<CueModalHeader {...props} />);
@@ -86,6 +93,7 @@ describe('CueModalHeader', () => {
 		render(<CueModalHeader {...props} />);
 		expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
 		expect(screen.queryByText('Pipeline Editor')).not.toBeInTheDocument();
+		expect(screen.queryByText('Backup')).not.toBeInTheDocument();
 		expect(screen.queryByText('Disabled')).not.toBeInTheDocument();
 		expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
 		expect(screen.getByTitle('Back to dashboard')).toBeInTheDocument();

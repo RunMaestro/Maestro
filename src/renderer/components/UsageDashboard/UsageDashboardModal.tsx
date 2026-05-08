@@ -21,6 +21,7 @@ import { AgentOverviewCards } from './AgentOverviewCards';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
+import { ProviderTrendsChart } from './ProviderTrendsChart';
 import { SourceDistributionChart } from './SourceDistributionChart';
 import { LocationDistributionChart } from './LocationDistributionChart';
 import { RadialActivityChart } from './RadialActivityChart';
@@ -38,6 +39,7 @@ import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
 import { CueStats } from './CueStats';
+import { KeyboardStats } from './KeyboardStats';
 import type {
 	Theme,
 	Session,
@@ -61,18 +63,14 @@ const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
 	'agent-comparison',
+	'provider-trends',
 	'source-distribution',
 	'location-distribution',
 	'radial-activity',
 	'activity-heatmap',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
-const AGENT_OVERVIEW_SECTIONS = [
-	'session-stats',
-	'agent-efficiency',
-	'agent-comparison',
-	'agent-usage',
-] as const;
+const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
 const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
 
@@ -89,7 +87,14 @@ const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 // StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
-type ViewMode = 'overview' | 'agents' | 'agent-overview' | 'activity' | 'autorun' | 'cue';
+type ViewMode =
+	| 'overview'
+	| 'agents'
+	| 'agent-overview'
+	| 'activity'
+	| 'autorun'
+	| 'cue'
+	| 'shortcuts';
 
 interface UsageDashboardModalProps {
 	isOpen: boolean;
@@ -147,6 +152,7 @@ const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
+	{ value: 'shortcuts', label: 'Shortcuts' },
 ];
 
 const EMPTY_SESSIONS: Session[] = [];
@@ -391,6 +397,8 @@ export function UsageDashboardModal({
 				return AUTORUN_SECTIONS;
 			case 'cue':
 				return [];
+			case 'shortcuts':
+				return [];
 			default:
 				return OVERVIEW_SECTIONS;
 		}
@@ -412,6 +420,7 @@ export function UsageDashboardModal({
 			'session-stats': 'Agent Statistics',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
+			'provider-trends': 'Provider Trends Over Time',
 			'agent-usage': 'Agent Usage Chart',
 			'source-distribution': 'Session Type Chart',
 			'location-distribution': 'Location Distribution Chart',
@@ -557,7 +566,7 @@ export function UsageDashboardModal({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Usage Dashboard"
-				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				onClick={(e) => e.stopPropagation()}
 				style={{
 					backgroundColor: theme.colors.bgActivity,
@@ -746,7 +755,11 @@ export function UsageDashboardModal({
 					{loading && !data ? (
 						<DashboardSkeleton
 							theme={theme}
-							viewMode={viewMode === 'cue' || viewMode === 'agent-overview' ? 'overview' : viewMode}
+							viewMode={
+								viewMode === 'cue' || viewMode === 'agent-overview' || viewMode === 'shortcuts'
+									? 'overview'
+									: viewMode
+							}
 							chartGridCols={layout.chartGridCols}
 							summaryCardsCols={layout.summaryCardsCols}
 							autoRunStatsCols={layout.autoRunStatsCols}
@@ -767,6 +780,20 @@ export function UsageDashboardModal({
 							>
 								Retry
 							</button>
+						</div>
+					) : viewMode === 'shortcuts' ? (
+						// The Shortcuts tab depends on its own data sources (settings store
+						// + shortcut_usage_daily) and renders fine without any AI queries,
+						// so it bypasses the AI-query empty-state gate.
+						<div
+							key={viewMode}
+							className="space-y-6 dashboard-content-enter"
+							data-testid="usage-dashboard-content"
+							role="tabpanel"
+							id={`tabpanel-${viewMode}`}
+							aria-labelledby={`tab-${viewMode}`}
+						>
+							<KeyboardStats timeRange={timeRange} theme={theme} />
 						</div>
 					) : !data ||
 					  (data.totalQueries === 0 && data.bySource.user === 0 && data.bySource.auto === 0) ? (
@@ -840,7 +867,7 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
-									{/* Agent Comparison Chart - Full width bar chart */}
+									{/* Provider Comparison Chart - Full width bar chart */}
 									<div
 										ref={setSectionRef('agent-comparison')}
 										tabIndex={0}
@@ -858,9 +885,39 @@ export function UsageDashboardModal({
 										}}
 										data-testid="section-agent-comparison"
 									>
-										<ChartErrorBoundary theme={theme} chartName="Agent Comparison">
+										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
 											<AgentComparisonChart
 												data={data}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Provider Trends Over Time — stacked bars per day so drift
+									    between providers (e.g. Claude Code → Codex) is visible. */}
+									<div
+										ref={setSectionRef('provider-trends')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('provider-trends')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'provider-trends')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											minHeight: '260px',
+											boxShadow:
+												focusedSection === 'provider-trends'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '125ms',
+										}}
+										data-testid="section-provider-trends"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Provider Trends">
+											<ProviderTrendsChart
+												data={data}
+												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}
@@ -1102,34 +1159,6 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Agent Efficiency">
 											<AgentEfficiencyChart
-												data={data}
-												theme={theme}
-												colorBlindMode={colorBlindMode}
-												sessions={sessions}
-											/>
-										</ChartErrorBoundary>
-									</div>
-
-									{/* Provider Comparison */}
-									<div
-										ref={setSectionRef('agent-comparison')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('agent-comparison')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'agent-comparison')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											minHeight: '180px',
-											boxShadow:
-												focusedSection === 'agent-comparison'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '100ms',
-										}}
-										data-testid="section-agent-comparison"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
-											<AgentComparisonChart
 												data={data}
 												theme={theme}
 												colorBlindMode={colorBlindMode}

@@ -147,6 +147,28 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 - `simulate.escape()` - dispatch an Escape event
 - `simulate.closeAll()` - clear the entire stack
 
+### Text Selection in Modals
+
+**Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ — buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns — must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
+
+```tsx
+// Click-driven modal: kill text selection at the root
+<div className="relative rounded-xl shadow-2xl flex flex-col select-none">...</div>
+```
+
+`select-none` cascades through descendants but Chromium preserves native selection behavior inside `<input>` and `<textarea>`, so search fields and form controls keep working without intervention.
+
+**Carve out content subtrees with `select-text`** when the modal contains regions where copying matters: prose detail views, code/YAML editors, log entry bodies, error messages, file paths, AI chat output. Apply `select-text` directly on the root of that subtree — it overrides the ancestor's `select-none`.
+
+```tsx
+// Detail view nested inside a select-none parent: opt back in
+<div className="rounded-lg border shadow-2xl flex flex-col select-text">...</div>
+```
+
+**Skip modals whose primary purpose is reading or editing text:** `CueYamlEditor`, `CueHelpModal`, the wizard chat shell's message bubbles, Director's Notes detail popup, the System Log Viewer (intentionally left selectable), confirmation dialogs with error text. If the user's main interaction is reading or copying, leave selection alone.
+
+**When adding a new modal,** decide first whether it's click-driven or content-driven. If click-driven, add `select-none` to the root in the same commit as the modal itself — retrofitting it later requires hunting down every nested detail view to add `select-text` overrides.
+
 ---
 
 ## Theme System
@@ -364,12 +386,12 @@ maestro-cli notify toast "Build" "Build succeeded on main"
 maestro-cli notify toast "Tests" "All green" --color green --timeout 10
 maestro-cli notify toast "Quota" "Approaching limit" --color orange --timeout 30
 
-# Sticky — user must click to dismiss. Cannot combine with --timeout/--duration.
+# Sticky — user must click to dismiss. Cannot combine with --timeout.
 maestro-cli notify toast "Action required" "Approve the PR before EOD" \
     --color red --dismissible
 ```
 
-`--dismissible` is the **only** way external scripts can leave a toast on screen indefinitely. `--timeout 0` and `--duration 0` are rejected — use `--dismissible` instead. Numeric durations are capped at **60 seconds** (toasts are corner-only and less obtrusive than Center Flash, so the cap is more generous than 5 s).
+`--dismissible` is the **only** way external scripts can leave a toast on screen indefinitely. `--timeout 0` is rejected — use `--dismissible` instead. Numeric durations are capped at **60 seconds** (toasts are corner-only and less obtrusive than Center Flash, so the cap is more generous than 5 s).
 
 ### Toast vs Center Flash: when each fits
 
@@ -441,9 +463,9 @@ Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each 
 - Slide-in/out animations
 - Close button — emphasized (color-tinted) when `dismissible: true`
 
-### Back-compat: legacy `type` API
+### Back-compat: legacy `type` API (in-app only)
 
-The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is still accepted for back-compat (both in-app via `notifyToast({ type })` and in the CLI via `--type`) but is **deprecated**. New code should use `color`. Mapping:
+The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyToast({ type })` for back-compat, but **deprecated** — new code should use `color`. The CLI flag `--type` was removed. Mapping:
 
 | Legacy type | Maps to color |
 | ----------- | ------------- |
@@ -520,12 +542,11 @@ maestro-cli notify flash "Build complete"
 maestro-cli notify flash "Tests passed" --color green
 maestro-cli notify flash "Production deploy starting" --color orange --detail "v1.42.0"
 
-# Control how long it stays. --timeout is in seconds (max 5); --duration is in ms (max 5000).
+# Control how long it stays. --timeout is in seconds (max 5).
 maestro-cli notify flash "CI failed on main" --color red --timeout 5
-maestro-cli notify flash "Quick blip" --duration 800
 ```
 
-External integrations should pass `--color` (one of the 5 canonical values) so the flash visibly matches their intent without depending on the user's theme. The `--variant` flag (`success`/`info`/`warning`/`error`) is accepted for backward compatibility but **deprecated** — prefer `--color`.
+External integrations should pass `--color` (one of the 5 canonical values) so the flash visibly matches their intent without depending on the user's theme.
 
 **Duration cap:** CLI-triggered flashes are capped at **5 seconds**. The cap is enforced both client-side (CLI rejects values above the limit before sending) and at the IPC boundary in the main process (rejects oversized payloads from any external client). The cap exists so external scripts can't stick a permanent overlay on the user. Internal in-app callers using `notifyCenterFlash()` directly are not capped.
 
@@ -572,9 +593,9 @@ The component implements one consistent treatment that adapts to color and theme
 - ❌ **Do not** add `flashNotification` / `successFlashNotification` state to a store. The legacy `setFlashNotification` and `setSuccessFlashNotification` setters in `uiStore` are compatibility shims that delegate to `notifyCenterFlash`; do not extend them — call `notifyCenterFlash` directly in new code.
 - ❌ **Do not** stack flashes (queue them). The system is intentionally exclusive; the latest flash wins.
 
-### Back-compat: legacy `variant` API
+### Back-compat: legacy `variant` API (in-app only)
 
-The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is still accepted for back-compat (both in-app via `notifyCenterFlash({ variant })` and in the CLI via `--variant`) but is **deprecated**. New code should use `color`. The mapping is fixed:
+The original API used `variant: 'success' | 'info' | 'warning' | 'error'`. It is still accepted **in-app** via `notifyCenterFlash({ variant })` for back-compat, but **deprecated** — new code should use `color`. The CLI flag `--variant` was removed. The mapping is fixed:
 
 | Legacy variant | Maps to color |
 | -------------- | ------------- |

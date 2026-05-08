@@ -384,7 +384,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 								return (
 									<div
 										key={day.date}
-										className="flex-1 min-w-[16px] max-w-[40px] rounded-t cursor-pointer transition-all duration-200"
+										className="flex-1 min-w-[16px] rounded-t cursor-pointer transition-all duration-200"
 										style={{
 											height: `${Math.max(height, 4)}%`,
 											backgroundColor: theme.colors.accent,
@@ -412,11 +412,11 @@ export const AutoRunStats = memo(function AutoRunStats({
 							})}
 						</div>
 
-						{/* X-axis labels — must mirror the bar grid (flex-1 + max-w-[40px] +
+						{/* X-axis labels — must mirror the bar grid (flex-1 +
 						    gap-1) so each label slot lines up with its bar. We previously
 						    used `flex justify-between` across the full container width,
 						    which floated the middle/last labels into the empty space on
-						    the right when bars hit their `max-w-[40px]` cap. */}
+						    the right. */}
 						<div
 							className="flex gap-1 mt-2 text-xs"
 							style={{ color: theme.colors.textDim }}
@@ -433,7 +433,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 								return (
 									<div
 										key={day.date}
-										className="flex-1 min-w-[16px] max-w-[40px]"
+										className="flex-1 min-w-[16px]"
 										style={{
 											textAlign,
 											overflow: 'visible',

@@ -5,9 +5,12 @@
  */
 
 export interface PeekLine {
-	type: 'text' | 'thinking' | 'tool' | 'result' | 'system';
+	type: 'text' | 'thinking' | 'tool' | 'tool_result' | 'result' | 'system';
 	content: string;
 }
+
+const TOOL_RESULT_PREVIEW_CHARS = 480;
+const TEXT_PREVIEW_CHARS = 1000;
 
 /**
  * Parse raw JSONL output from an agent process into structured peek lines.
@@ -73,7 +76,8 @@ function extractFromMessage(msg: Record<string, unknown>): PeekLine[] {
 
 	// Claude result message: { type: 'result', result: '...' }
 	if (msg.type === 'result' && typeof msg.result === 'string') {
-		lines.push({ type: 'result', content: msg.result });
+		const trimmed = msg.result.trim();
+		if (trimmed) lines.push({ type: 'result', content: truncateForDisplay(trimmed) });
 		return lines;
 	}
 
@@ -83,21 +87,41 @@ function extractFromMessage(msg: Record<string, unknown>): PeekLine[] {
 		const content = message.content;
 
 		if (typeof content === 'string') {
-			lines.push({ type: 'text', content });
+			const trimmed = content.trim();
+			if (trimmed) lines.push({ type: 'text', content: truncateForDisplay(trimmed) });
 		} else if (Array.isArray(content)) {
 			for (const block of content) {
 				if (!block || typeof block !== 'object') continue;
 				const b = block as Record<string, unknown>;
 
 				if (b.type === 'text' && typeof b.text === 'string') {
-					lines.push({ type: 'text', content: b.text });
+					const t = b.text.trim();
+					if (t) lines.push({ type: 'text', content: truncateForDisplay(t) });
 				} else if (b.type === 'thinking' && typeof b.thinking === 'string') {
-					lines.push({ type: 'thinking', content: b.thinking });
+					const t = b.thinking.trim();
+					if (t) lines.push({ type: 'thinking', content: truncateForDisplay(t) });
 				} else if (b.type === 'tool_use' && typeof b.name === 'string') {
 					const toolDesc = formatToolUse(b);
 					lines.push({ type: 'tool', content: toolDesc });
-				} else if (b.type === 'tool_result') {
-					// Skip tool results - they're internal plumbing
+				}
+			}
+		}
+		return lines;
+	}
+
+	// Claude user message with tool_result blocks (the SDK injects these
+	// after each tool call). Without these, the user sees a tool call with
+	// no idea what came back, which is unreadable for long-running agents.
+	if (msg.type === 'user' && msg.message && typeof msg.message === 'object') {
+		const message = msg.message as Record<string, unknown>;
+		const content = message.content;
+		if (Array.isArray(content)) {
+			for (const block of content) {
+				if (!block || typeof block !== 'object') continue;
+				const b = block as Record<string, unknown>;
+				if (b.type === 'tool_result') {
+					const preview = formatToolResultContent(b.content);
+					if (preview) lines.push({ type: 'tool_result', content: preview });
 				}
 			}
 		}
@@ -114,7 +138,8 @@ function extractFromMessage(msg: Record<string, unknown>): PeekLine[] {
 	if (msg.type === 'text' && msg.part && typeof msg.part === 'object') {
 		const part = msg.part as Record<string, unknown>;
 		if (typeof part.text === 'string') {
-			lines.push({ type: 'text', content: part.text });
+			const t = part.text.trim();
+			if (t) lines.push({ type: 'text', content: truncateForDisplay(t) });
 		}
 		return lines;
 	}
@@ -125,6 +150,42 @@ function extractFromMessage(msg: Record<string, unknown>): PeekLine[] {
 	}
 
 	return lines;
+}
+
+/**
+ * Format a tool_result content payload (string or array of content blocks)
+ * into a single-line preview. Strips embedded image base64 and collapses
+ * whitespace so the result fits on one row of the live-output table.
+ */
+function formatToolResultContent(content: unknown): string {
+	if (typeof content === 'string') {
+		return collapseAndTruncate(content, TOOL_RESULT_PREVIEW_CHARS);
+	}
+	if (Array.isArray(content)) {
+		const parts: string[] = [];
+		for (const part of content) {
+			if (!part || typeof part !== 'object') continue;
+			const p = part as Record<string, unknown>;
+			if (p.type === 'text' && typeof p.text === 'string') {
+				parts.push(p.text);
+			} else if (p.type === 'image') {
+				parts.push('[image]');
+			}
+		}
+		return collapseAndTruncate(parts.join(' '), TOOL_RESULT_PREVIEW_CHARS);
+	}
+	return '';
+}
+
+function collapseAndTruncate(s: string, max: number): string {
+	const cleaned = s.replace(/\s+/g, ' ').trim();
+	if (cleaned.length <= max) return cleaned;
+	return cleaned.slice(0, max) + '…';
+}
+
+function truncateForDisplay(s: string): string {
+	if (s.length <= TEXT_PREVIEW_CHARS) return s;
+	return s.slice(0, TEXT_PREVIEW_CHARS) + '…';
 }
 
 /**
@@ -147,8 +208,7 @@ function formatToolUse(block: Record<string, unknown>): string {
 		return `→ Edit ${input.file_path}`;
 	}
 	if (name === 'Bash' && input.command) {
-		const cmd = String(input.command);
-		return `→ $ ${cmd.length > 80 ? cmd.slice(0, 80) + '…' : cmd}`;
+		return `→ $ ${String(input.command)}`;
 	}
 	if (name === 'Grep' && input.pattern) {
 		return `→ Grep "${input.pattern}"`;
@@ -177,6 +237,7 @@ export function formatPeekLines(peekLines: PeekLine[]): string {
 	if (peekLines.length === 0) return '';
 
 	return peekLines
+		.filter((line) => line.type !== 'tool_result')
 		.map((line) => {
 			switch (line.type) {
 				case 'thinking':

@@ -9,6 +9,7 @@ import type Database from 'better-sqlite3';
 import type { StatsTimeRange, StatsAggregation } from '../../shared/stats-types';
 import { PERFORMANCE_THRESHOLDS } from '../../shared/performance-metrics';
 import { getTimeRangeStart, perfMetrics, LOG_CONTEXT } from './utils';
+import { countImageAnnotationsSince } from './image-annotations';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -346,6 +347,37 @@ function queryBySessionByDay(
 	return result;
 }
 
+function queryBySessionSource(
+	db: Database.Database,
+	startTime: number
+): Record<string, { user: number; auto: number }> {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT session_id, source, COUNT(*) as count
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY session_id, source
+    `
+		)
+		.all(startTime) as Array<{
+		session_id: string;
+		source: 'user' | 'auto';
+		count: number;
+	}>;
+
+	const result: Record<string, { user: number; auto: number }> = {};
+	for (const row of rows) {
+		if (!result[row.session_id]) {
+			result[row.session_id] = { user: 0, auto: 0 };
+		}
+		result[row.session_id][row.source] = row.count;
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:bySessionSource');
+	return result;
+}
+
 // ============================================================================
 // Orchestrator
 // ============================================================================
@@ -369,7 +401,9 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const byHour = queryByHour(db, startTime);
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
+	const bySessionSource = queryBySessionSource(db, startTime);
 	const worktreeStatus = queryByWorktreeStatus(db, startTime);
+	const imageAnnotations = countImageAnnotationsSince(db, startTime);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 		range,
@@ -397,8 +431,10 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		...sessionStats,
 		byAgentByDay,
 		bySessionByDay,
+		bySessionSource,
 		worktreeQueries: worktreeStatus.worktreeQueries,
 		parentQueries: worktreeStatus.parentQueries,
 		byWorktreeStatus: worktreeStatus.byWorktreeStatus,
+		imageAnnotations,
 	};
 }

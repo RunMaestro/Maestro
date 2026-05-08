@@ -1130,7 +1130,9 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('Settings'));
 
 			expect(mockModalActions.setSettingsModalOpen).toHaveBeenCalledWith(true);
-			expect(mockModalActions.setSettingsTab).toHaveBeenCalledWith('general');
+			// No setSettingsTab call: opening generically lets SettingsModal restore
+			// the last tab the user viewed in this app session.
+			expect(mockModalActions.setSettingsTab).not.toHaveBeenCalled();
 		});
 
 		it('opens log viewer from menu', () => {

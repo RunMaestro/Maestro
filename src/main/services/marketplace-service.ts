@@ -24,6 +24,7 @@ import type {
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
+import { isCompatible } from '../../shared/marketplace-compatibility';
 import { SshRemoteConfig } from '../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
@@ -471,6 +472,17 @@ export async function importMarketplacePlaybook(
 	const marketplacePlaybook = manifest.playbooks.find((p) => p.id === playbookId);
 	if (!marketplacePlaybook) {
 		throw new MarketplaceImportError(`Playbook not found: ${playbookId}`);
+	}
+
+	// Defense-in-depth: re-check compatibility at the service layer even
+	// though the UI disables install for incompatible tiles. Protects future
+	// bypass paths (CLI, deep link, programmatic install, mobile WS).
+	const runningVersion = app.getVersion();
+	if (!isCompatible(marketplacePlaybook, runningVersion)) {
+		throw new MarketplaceImportError(
+			`This playbook requires Maestro ${marketplacePlaybook.minMaestroVersion}+; ` +
+				`you have ${runningVersion}. Update Maestro and try again.`
+		);
 	}
 
 	const targetPath = isRemote

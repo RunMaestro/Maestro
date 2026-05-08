@@ -395,40 +395,15 @@ describe('CueStats', () => {
 			expect(screen.getByText('Tokens by Agent')).toBeInTheDocument();
 		});
 
-		it('renders the failure spotlight with rows for subscriptions that failed', async () => {
+		it('does not render the failure spotlight section', async () => {
 			render(<CueStats timeRange="week" theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('cue-stats-failure-spotlight')).toBeInTheDocument();
+				expect(screen.getByTestId('cue-stats')).toBeInTheDocument();
 			});
 
-			const spotlight = screen.getByTestId('cue-stats-failure-spotlight');
-			expect(within(spotlight).getByText('Needs attention')).toBeInTheDocument();
-			// Both fixture subscriptions had failures (1 and 2) so both should appear,
-			// with the worse one (2 failures) ranked first.
-			const rows = within(spotlight).getAllByTestId('cue-stats-failure-row');
-			expect(rows).toHaveLength(2);
-			expect(within(rows[0]).getByText('sub-interval')).toBeInTheDocument();
-			expect(within(rows[1]).getByText('sub-watch-files')).toBeInTheDocument();
-		});
-
-		it('renders the failure spotlight in its all-clean state when nothing failed', async () => {
-			mockGetAggregation.mockResolvedValue({
-				...populatedAggregation,
-				bySubscription: populatedAggregation.bySubscription.map((row) => ({
-					...row,
-					totals: { ...row.totals, failureCount: 0, successCount: row.totals.occurrences },
-				})),
-			});
-
-			render(<CueStats timeRange="week" theme={theme} />);
-
-			await waitFor(() => {
-				expect(screen.getByTestId('cue-stats-failure-spotlight')).toBeInTheDocument();
-			});
-
-			expect(screen.getByText('No failures')).toBeInTheDocument();
-			expect(screen.queryByTestId('cue-stats-failure-row')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('cue-stats-failure-spotlight')).not.toBeInTheDocument();
+			expect(screen.queryByText('Needs attention')).not.toBeInTheDocument();
 		});
 
 		it('renders the slowest-runs leaderboard sorted by duration', async () => {

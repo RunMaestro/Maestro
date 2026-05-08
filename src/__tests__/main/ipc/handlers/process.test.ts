@@ -196,6 +196,30 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
 }));
 
+// Mock platformDetection. Default mirrors the host so the existing
+// `appendSystemPrompt delivery` test still picks the right branch on
+// Windows CI; new tests override per-case with mockReturnValue(true).
+vi.mock('../../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => process.platform === 'win32'),
+	isMacOS: vi.fn(() => process.platform === 'darwin'),
+	isLinux: vi.fn(() => process.platform === 'linux'),
+}));
+
+// Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
+// without touching the real filesystem. Other tests in this file don't use
+// fs/promises, so the module-level mock is safe.
+vi.mock('fs/promises', () => ({
+	writeFile: vi.fn().mockResolvedValue(undefined),
+	unlink: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock sentry — captureException is asserted on by the new cleanup-error
+// tests; addBreadcrumb is a no-op stub so existing tests don't hit real Sentry.
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	addBreadcrumb: vi.fn(),
+}));
+
 describe('process IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockProcessManager: {
@@ -2484,6 +2508,134 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnCall.args).not.toContain('--append-system-prompt');
 			expect(spawnCall.prompt).toBe('Hello world');
+		});
+
+		describe('Windows temp prompt file (async fs/promises)', () => {
+			// PR-D 3.1: writeFileSync/unlinkSync replaced with fs/promises.
+			// These tests force isWindows() = true so they exercise the
+			// temp-file branch on every platform.
+
+			beforeEach(async () => {
+				const { isWindows } = await import('../../../../shared/platformDetection');
+				vi.mocked(isWindows).mockReturnValue(true);
+			});
+
+			afterEach(async () => {
+				const { isWindows } = await import('../../../../shared/platformDetection');
+				vi.mocked(isWindows).mockReset();
+				vi.mocked(isWindows).mockImplementation(() => process.platform === 'win32');
+				vi.useRealTimers();
+			});
+
+			const buildSpawnConfig = () => ({
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'Hello world',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+			});
+
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: true,
+				path: '/usr/local/bin/claude',
+				capabilities: {
+					supportsAppendSystemPrompt: true,
+					supportsStreamJsonInput: true,
+				},
+			};
+
+			it('writes temp file with prompt content via fs/promises', async () => {
+				const fsp = await import('fs/promises');
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, buildSpawnConfig());
+
+				expect(fsp.writeFile).toHaveBeenCalledTimes(1);
+				const [tempPath, content, encoding] = vi.mocked(fsp.writeFile).mock.calls[0];
+				expect(tempPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+				expect(content).toBe('You are Maestro system prompt content');
+				expect(encoding).toBe('utf-8');
+			});
+
+			it('schedules unlink after 30s timer', async () => {
+				vi.useFakeTimers();
+				const fsp = await import('fs/promises');
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, buildSpawnConfig());
+
+				// Unlink not called yet — timer hasn't fired
+				expect(fsp.unlink).not.toHaveBeenCalled();
+
+				await vi.advanceTimersByTimeAsync(30_001);
+
+				expect(fsp.unlink).toHaveBeenCalledTimes(1);
+				const [unlinkPath] = vi.mocked(fsp.unlink).mock.calls[0];
+				expect(unlinkPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+			});
+
+			it('silences ENOENT cleanup errors (file already gone)', async () => {
+				vi.useFakeTimers();
+				const fsp = await import('fs/promises');
+				const { captureException } = await import('../../../../main/utils/sentry');
+				const enoentErr: NodeJS.ErrnoException = Object.assign(new Error('ENOENT: no such file'), {
+					code: 'ENOENT',
+				});
+				vi.mocked(fsp.unlink).mockRejectedValueOnce(enoentErr);
+
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, buildSpawnConfig());
+
+				vi.mocked(captureException).mockClear();
+				await vi.advanceTimersByTimeAsync(30_001);
+				// Allow the rejected unlink promise to settle
+				await Promise.resolve();
+
+				expect(fsp.unlink).toHaveBeenCalledTimes(1);
+				expect(captureException).not.toHaveBeenCalled();
+			});
+
+			it('captures non-ENOENT cleanup errors via Sentry', async () => {
+				vi.useFakeTimers();
+				const fsp = await import('fs/promises');
+				const { captureException } = await import('../../../../main/utils/sentry');
+				const eaccesErr: NodeJS.ErrnoException = Object.assign(
+					new Error('EACCES: permission denied'),
+					{ code: 'EACCES' }
+				);
+				vi.mocked(fsp.unlink).mockRejectedValueOnce(eaccesErr);
+
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, buildSpawnConfig());
+
+				vi.mocked(captureException).mockClear();
+				await vi.advanceTimersByTimeAsync(30_001);
+				await Promise.resolve();
+
+				expect(captureException).toHaveBeenCalledTimes(1);
+				const [errArg, ctxArg] = vi.mocked(captureException).mock.calls[0];
+				expect(errArg).toBe(eaccesErr);
+				expect(ctxArg).toEqual(
+					expect.objectContaining({
+						context: 'systemPromptTempFile cleanup (safety)',
+						file: expect.stringMatching(/maestro-sysprompt-session-1-\d+\.txt/),
+					})
+				);
+			});
 		});
 	});
 });

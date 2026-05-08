@@ -75,6 +75,14 @@ export interface CueGitHubPollerConfig {
 	/** GitHub state filter: "open" (default), "closed", "merged" (PRs only), or "all" */
 	ghState?: string;
 	/**
+	 * Invoked once during setup with a handle whose `pollNow()` triggers an
+	 * immediate poll (in addition to the normal poll schedule). The caller
+	 * stores the handle so it can fire on system wake / user request without
+	 * re-spawning the poller. Calling `pollNow()` after the poller is stopped
+	 * is a no-op.
+	 */
+	onReady?: (handle: { pollNow: () => void }) => void;
+	/**
 	 * Optional gate: when this returns `false`, doPoll skips the HTTP fetch
 	 * to gh CLI. The 24h prune timer keeps running (cheap). Used by the
 	 * visibility-aware pause; see CLAUDE-PERFORMANCE.md§"Visibility-Aware
@@ -418,6 +426,20 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		},
 		24 * 60 * 60 * 1000
 	);
+
+	// Expose pollNow so the engine can request an immediate poll (e.g. on
+	// system wake) without waiting for the next scheduled tick. Errors are
+	// logged but not rethrown — pollNow is fire-and-forget by contract.
+	config.onReady?.({
+		pollNow: () => {
+			if (stopped) return;
+			void doPoll().catch((err) => {
+				const message = err instanceof Error ? err.message : String(err);
+				onLog('error', `[CUE] pollNow failed for "${triggerName}": ${message}`);
+				void captureException(err, { operation: 'cue:github:pollNow', triggerName });
+			});
+		},
+	});
 
 	// Cleanup function
 	return () => {

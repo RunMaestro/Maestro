@@ -54,6 +54,18 @@ import {
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
+import {
+	insertImageAnnotation,
+	clearImageAnnotationCache,
+	countImageAnnotations,
+} from './image-annotations';
+import {
+	incrementShortcutUsage,
+	getShortcutUsageByDay,
+	getShortcutUsageTotal,
+	clearShortcutUsageCache,
+} from './shortcut-usage';
+import type { ShortcutUsageDay } from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
 
 /**
@@ -152,6 +164,8 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearImageAnnotationCache();
+			clearShortcutUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -773,6 +787,34 @@ export class StatsDB {
 
 	getAggregatedStats(range: StatsTimeRange): StatsAggregation {
 		return getAggregatedStats(this.database, range);
+	}
+
+	// ============================================================================
+	// Image Annotations (delegated)
+	// ============================================================================
+
+	insertImageAnnotation(createdAt: number): string {
+		return insertImageAnnotation(this.database, createdAt);
+	}
+
+	countImageAnnotations(range: StatsTimeRange): number {
+		return countImageAnnotations(this.database, range);
+	}
+
+	// ============================================================================
+	// Shortcut Usage (delegated)
+	// ============================================================================
+
+	incrementShortcutUsage(firedAt: number): string {
+		return incrementShortcutUsage(this.database, firedAt);
+	}
+
+	getShortcutUsageByDay(range: StatsTimeRange): ShortcutUsageDay[] {
+		return getShortcutUsageByDay(this.database, range);
+	}
+
+	getShortcutUsageTotal(range: StatsTimeRange): number {
+		return getShortcutUsageTotal(this.database, range);
 	}
 
 	// ============================================================================

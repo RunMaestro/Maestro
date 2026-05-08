@@ -220,6 +220,7 @@ interface QuickActionsModalProps {
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;
+	onFocusActiveTab?: () => void;
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
@@ -323,6 +324,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
+		onFocusActiveTab,
 		onCopyTabContext,
 		onExportTabHtml,
 		onPublishTabGist,
@@ -408,9 +410,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	})();
 	const unifiedTabCount = activeSession?.unifiedTabOrder?.length ?? 0;
 
-	// Register layer on mount - escape behavior depends on current mode
+	// Register layer on mount - escape behavior depends on current mode.
+	// Only fall back to the main menu if the user actually came from there;
+	// when the modal was opened directly into move-to-group via a hotkey,
+	// escape should dismiss it entirely rather than reveal the cmd+k menu.
 	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', () => {
-		if (mode === 'move-to-group') {
+		if (mode === 'move-to-group' && initialMode === 'main') {
 			setMode('main');
 			// Note: Selection will be reset by the search/mode change useEffect
 		} else {
@@ -425,14 +430,24 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		return () => clearTimeout(timer);
 	}, []);
 
-	// Track scroll position to determine which items are visible
+	// Track scroll position to determine which items are visible.
+	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
+	// section headers that interleave with — but aren't part of — `filtered`),
+	// so a magic itemHeight constant drifts. Measure real button positions
+	// against the container's viewport instead.
 	const handleScroll = () => {
-		if (scrollContainerRef.current) {
-			const scrollTop = scrollContainerRef.current.scrollTop;
-			const itemHeight = 52; // Approximate height of each item (py-3 = 12px top + 12px bottom + content)
-			const visibleIndex = Math.floor(scrollTop / itemHeight);
-			setFirstVisibleIndex(visibleIndex);
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		const containerTop = container.getBoundingClientRect().top;
+		const buttons = container.querySelectorAll<HTMLButtonElement>(':scope > button');
+		let visibleIndex = Math.max(0, buttons.length - 1);
+		for (let i = 0; i < buttons.length; i++) {
+			if (buttons[i].getBoundingClientRect().bottom > containerTop) {
+				visibleIndex = i;
+				break;
+			}
 		}
+		setFirstVisibleIndex(visibleIndex);
 	};
 
 	const handleRenameSession = () => {
@@ -786,6 +801,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		// Focus the active tab header (helps locate it in a long tab strip)
+		...(hasActiveTab && onFocusActiveTab
+			? [
+					{
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						shortcut: shortcuts?.focusActiveTab,
+						subtext: 'Bring the current tab header into focus',
+						action: () => {
+							onFocusActiveTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		// Tab close operations
 		...(isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 0 && onCloseAllTabs
 			? [

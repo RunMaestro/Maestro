@@ -84,9 +84,17 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Spell check
 		spellCheck,
 		setSpellCheck,
-		// Tab naming
+		// Tab behavior
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		newTabPlacement,
+		setNewTabPlacement,
+		newBrowserTabPlacement,
+		setNewBrowserTabPlacement,
+		newTerminalPlacement,
+		setNewTerminalPlacement,
+		openedFilePlacement,
+		setOpenedFilePlacement,
 		// Browser settings
 		useSystemBrowser,
 		setUseSystemBrowser,
@@ -898,17 +906,122 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
-			{/* Automatic Tab Naming */}
-			<div data-setting-id="general-tab-naming">
-				<SettingCheckbox
-					icon={Tag}
-					sectionLabel="Automatic Tab Naming"
-					title="Automatically name tabs based on first message"
-					description="When you send your first message to a new tab, an AI will analyze it and generate a descriptive tab name. The naming request runs in parallel and leaves no history."
-					checked={automaticTabNamingEnabled}
-					onChange={setAutomaticTabNamingEnabled}
-					theme={theme}
-				/>
+			{/* Tab Behavior */}
+			<div data-setting-id="general-tab-behavior">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Tag className="w-3 h-3" />
+					Tab Behavior
+				</div>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					{/* Automatic Tab Naming */}
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setAutomaticTabNamingEnabled(!automaticTabNamingEnabled)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setAutomaticTabNamingEnabled(!automaticTabNamingEnabled);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Automatically name tabs based on first message
+							</div>
+							<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+								When you send your first message to a new tab, an AI will analyze it and generate a
+								descriptive tab name. The naming request runs in parallel and leaves no history.
+							</div>
+						</div>
+						<ToggleSwitch
+							checked={automaticTabNamingEnabled}
+							onChange={setAutomaticTabNamingEnabled}
+							theme={theme}
+							ariaLabel="Automatically name tabs based on first message"
+						/>
+					</div>
+
+					{/* New Tab Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New tab placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new AI tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newTabPlacement}
+							onChange={setNewTabPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* New Browser Tab Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New browser tab placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new browser tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newBrowserTabPlacement}
+							onChange={setNewBrowserTabPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* New Terminal Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							New terminal placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where new terminal tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={newTerminalPlacement}
+							onChange={setNewTerminalPlacement}
+							theme={theme}
+						/>
+					</div>
+
+					{/* Opened File Placement */}
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Opened file placement
+						</div>
+						<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+							Where opened file preview tabs appear in the tab bar.
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'end' as const, label: 'End of list' },
+								{ value: 'after-current' as const, label: 'After current tab' },
+							]}
+							value={openedFilePlacement}
+							onChange={setOpenedFilePlacement}
+							theme={theme}
+						/>
+					</div>
+				</div>
 			</div>
 
 			{/* Spell Check */}

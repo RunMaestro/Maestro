@@ -24,6 +24,7 @@ import {
 	stopProcess,
 	stopAllProcesses,
 	getActiveProcessMap,
+	getActiveProcessOutput,
 	getProcessList,
 } from './cue-process-lifecycle';
 import { getOutputParser } from '../parsers';
@@ -242,6 +243,16 @@ export function getActiveProcesses(): ReturnType<typeof getActiveProcessMap> {
  */
 export function getCueProcessList(): import('./cue-process-lifecycle').CueProcessInfo[] {
 	return getProcessList();
+}
+
+/**
+ * Snapshot the in-flight stdout/stderr buffers for a still-running Cue run.
+ * Returns null when the run is not currently active. Used by the dashboard's
+ * expand-active-run-row UI to surface live progress without spawning a
+ * dedicated stream channel.
+ */
+export function getCueRunLiveOutput(runId: string): { stdout: string; stderr: string } | null {
+	return getActiveProcessOutput(runId);
 }
 
 /**

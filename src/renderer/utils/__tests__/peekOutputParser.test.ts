@@ -91,7 +91,9 @@ describe('parsePeekOutput', () => {
 		expect(result).toEqual([]);
 	});
 
-	it('should skip tool_result blocks', () => {
+	it('should skip tool_result blocks inside assistant messages', () => {
+		// tool_result blocks belong on user messages, not assistant — anything
+		// in an assistant message that isn't text/thinking/tool_use is dropped.
 		const raw = JSON.stringify({
 			type: 'assistant',
 			message: {
@@ -100,6 +102,79 @@ describe('parsePeekOutput', () => {
 		});
 		const result = parsePeekOutput(raw);
 		expect(result).toEqual([]);
+	});
+
+	it('should extract tool_result content from user messages (string form)', () => {
+		const raw = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'tool_result', tool_use_id: 'abc', content: 'matched 3 files' }],
+			},
+		});
+		const result = parsePeekOutput(raw);
+		expect(result).toEqual([{ type: 'tool_result', content: 'matched 3 files' }]);
+	});
+
+	it('should extract tool_result content from user messages (block array form)', () => {
+		const raw = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'abc',
+						content: [{ type: 'text', text: 'line1\nline2' }],
+					},
+				],
+			},
+		});
+		const result = parsePeekOutput(raw);
+		expect(result).toEqual([{ type: 'tool_result', content: 'line1 line2' }]);
+	});
+
+	it('should replace image content in tool_results with placeholder', () => {
+		const raw = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						content: [
+							{ type: 'text', text: 'screenshot:' },
+							{ type: 'image', source: { type: 'base64', data: 'AAAA'.repeat(1000) } },
+						],
+					},
+				],
+			},
+		});
+		const result = parsePeekOutput(raw);
+		expect(result).toEqual([{ type: 'tool_result', content: 'screenshot: [image]' }]);
+	});
+
+	it('should truncate long tool_result content', () => {
+		const raw = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'tool_result', content: 'x'.repeat(5000) }],
+			},
+		});
+		const result = parsePeekOutput(raw);
+		expect(result).toHaveLength(1);
+		expect(result[0].type).toBe('tool_result');
+		expect(result[0].content.length).toBeLessThanOrEqual(481);
+		expect(result[0].content.endsWith('…')).toBe(true);
+	});
+
+	it('should skip empty thinking blocks', () => {
+		const raw = JSON.stringify({
+			type: 'assistant',
+			message: { content: [{ type: 'thinking', thinking: '   ' }] },
+		});
+		expect(parsePeekOutput(raw)).toEqual([]);
 	});
 
 	it('should handle multiple JSONL lines', () => {
@@ -174,6 +249,15 @@ describe('formatPeekLines', () => {
 		];
 		const result = formatPeekLines(lines);
 		expect(result).toBe('💭 Let me think...\n🔧 → Read /src/index.ts\nHere is the answer.');
+	});
+
+	it('should drop tool_result lines (kept internal to formatted view consumers)', () => {
+		const lines = [
+			{ type: 'tool' as const, content: '→ Grep "TODO"' },
+			{ type: 'tool_result' as const, content: 'Found 3 matches' },
+			{ type: 'text' as const, content: 'Done.' },
+		];
+		expect(formatPeekLines(lines)).toBe('🔧 → Grep "TODO"\nDone.');
 	});
 
 	it('should return empty string for empty input', () => {

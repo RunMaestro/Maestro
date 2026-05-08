@@ -215,6 +215,7 @@ export interface UseMainPanelPropsDeps {
 	handleTerminalTabSelect: (tabId: string) => void;
 	handleTerminalTabClose: (tabId: string) => void;
 	handleTerminalTabRename: (tabId: string) => void;
+	handleTerminalTabConfigureStartupCommand: (tabId: string) => void;
 	handleFileTabEditModeChange: (tabId: string, editMode: boolean) => void;
 	handleFileTabEditContentChange: (
 		tabId: string,
@@ -417,6 +418,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onTerminalTabSelect: deps.handleTerminalTabSelect,
 			onTerminalTabClose: deps.handleTerminalTabClose,
 			onTerminalTabRename: deps.handleTerminalTabRename,
+			onTerminalTabConfigureStartupCommand: deps.handleTerminalTabConfigureStartupCommand,
 			onFileTabEditModeChange: deps.handleFileTabEditModeChange,
 			onFileTabEditContentChange: deps.handleFileTabEditContentChange,
 			onFileTabScrollPositionChange: deps.handleFileTabScrollPositionChange,
@@ -646,6 +648,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleTerminalTabSelect,
 			deps.handleTerminalTabClose,
 			deps.handleTerminalTabRename,
+			deps.handleTerminalTabConfigureStartupCommand,
 			deps.handleFileTabEditModeChange,
 			deps.handleFileTabEditContentChange,
 			deps.handleFileTabScrollPositionChange,

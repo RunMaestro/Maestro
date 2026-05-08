@@ -6,12 +6,12 @@ import {
 	Bookmark,
 	AlertCircle,
 	Server,
-	Zap,
 	FolderTree,
 	ChevronRight,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
+import { CueIndicator } from './SessionList/CueIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { Session, Group, Theme } from '../types';
 
@@ -265,14 +265,6 @@ export const SessionItem = memo(function SessionItem({
 								{worktreeChildCount}
 							</span>
 						)}
-						{/* Bookmark icon (only in bookmark variant, always filled) */}
-						{variant === 'bookmark' && session.bookmarked && (
-							<Bookmark
-								className="w-3 h-3 shrink-0"
-								style={{ color: theme.colors.accent }}
-								fill={theme.colors.accent}
-							/>
-						)}
 						{/* Branch icon for worktree children */}
 						{variant === 'worktree' && (
 							<GitBranch className="w-3 h-3 shrink-0" style={{ color: theme.colors.accent }} />
@@ -293,15 +285,11 @@ export const SessionItem = memo(function SessionItem({
 						>
 							{session.name}
 						</span>
-						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running) */}
-						{cueSubscriptionCount != null && cueSubscriptionCount > 0 && (
-							<span
-								className={`shrink-0 flex items-center${cueActiveRun ? ' animate-pulse' : ''}`}
-								title={`Maestro Cue ${cueActiveRun ? 'running' : 'active'} (${cueSubscriptionCount} subscription${cueSubscriptionCount === 1 ? '' : 's'})`}
-							>
-								<Zap className="w-3 h-3" style={{ color: '#2dd4bf' }} fill="#2dd4bf" />
-							</span>
-						)}
+						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running). */}
+						<CueIndicator
+							subscriptionCount={cueSubscriptionCount ?? 0}
+							activeRun={!!cueActiveRun}
+						/>
 						{/* Worktree badge to visually mark worktree children */}
 						{variant === 'worktree' && showWorktreePill && <WorktreePill theme={theme} />}
 					</div>

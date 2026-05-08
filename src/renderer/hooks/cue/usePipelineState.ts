@@ -16,7 +16,7 @@
  * its tests) continue to compile without changes.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactFlowInstance, Viewport } from 'reactflow';
 import type {
 	CuePipelineState,
@@ -104,6 +104,20 @@ export interface UsePipelineStateReturn {
 	 * (not stripped) so per-trigger matching is exact.
 	 */
 	runningSubscriptionsByPipeline: Map<string, Set<string>>;
+	/**
+	 * Pipeline IDs that the user just manually triggered via the Play button.
+	 * Held for a brief TTL window (~`OPTIMISTIC_TRIGGER_HOLD_MS`) so the UI can
+	 * surface immediate "fired!" feedback (animate every edge in the pipeline,
+	 * keep the trigger spinner visible) before `activeRuns` polling catches up.
+	 * Sub-second runs would otherwise complete before the spinner ever flipped.
+	 *
+	 * Unioned into `runningPipelineIds` and (per-sub) into
+	 * `runningSubscriptionsByPipeline` so existing UI consumers light up
+	 * automatically — callers don't need a parallel branch.
+	 */
+	optimisticTriggeredPipelineIds: Set<string>;
+	/** Mark a pipeline as just-triggered to drive the optimistic-window UI. */
+	markPipelineTriggered: (pipelineId: string, subscriptionName: string) => void;
 	persistLayout: () => void;
 	/** Saved viewport awaiting application once ReactFlow has measured nodes. */
 	pendingSavedViewportRef: React.MutableRefObject<Viewport | null>;
@@ -253,10 +267,57 @@ export function usePipelineState({
 		setSelectedEdgeId,
 	]);
 
+	// ── Optimistic-trigger state ──────────────────────────────────────────
+	// Held for a short window after the user clicks the Play button so the UI
+	// can show immediate feedback (spinner + edge animation) before activeRuns
+	// polling catches up. Sub-second runs (e.g. shell command-only triggers)
+	// would otherwise complete before the spinner ever flipped, leaving the
+	// click feeling like nothing happened.
+	const OPTIMISTIC_TRIGGER_HOLD_MS = 2500;
+	const [optimisticVersion, setOptimisticVersion] = useState(0);
+	const optimisticPipelinesRef = useRef<Map<string, number>>(new Map());
+	const optimisticSubsRef = useRef<Map<string, Set<string>>>(new Map());
+
+	const markPipelineTriggered = useCallback((pipelineId: string, subscriptionName: string) => {
+		const expiresAt = Date.now() + OPTIMISTIC_TRIGGER_HOLD_MS;
+		optimisticPipelinesRef.current.set(pipelineId, expiresAt);
+		let subs = optimisticSubsRef.current.get(pipelineId);
+		if (!subs) {
+			subs = new Set<string>();
+			optimisticSubsRef.current.set(pipelineId, subs);
+		}
+		subs.add(subscriptionName);
+		setOptimisticVersion((v) => v + 1);
+
+		// Schedule cleanup. Re-render is gated on the version bump rather than
+		// per-tick polling so there's no idle timer churn.
+		setTimeout(() => {
+			const current = optimisticPipelinesRef.current.get(pipelineId);
+			if (current !== undefined && current <= Date.now()) {
+				optimisticPipelinesRef.current.delete(pipelineId);
+				const s = optimisticSubsRef.current.get(pipelineId);
+				if (s) {
+					s.delete(subscriptionName);
+					if (s.size === 0) optimisticSubsRef.current.delete(pipelineId);
+				}
+				setOptimisticVersion((v) => v + 1);
+			}
+		}, OPTIMISTIC_TRIGGER_HOLD_MS + 50);
+	}, []);
+
+	const optimisticTriggeredPipelineIds = useMemo(() => {
+		const ids = new Set<string>();
+		const now = Date.now();
+		for (const [id, expiresAt] of optimisticPipelinesRef.current) {
+			if (expiresAt > now) ids.add(id);
+		}
+		return ids;
+	}, [optimisticVersion]);
+
 	// Determine which pipelines have active runs. Used for pipeline-level UI
 	// affordances (trigger Play button "Running" state, badges).
 	const runningPipelineIds = useMemo(() => {
-		const ids = new Set<string>();
+		const ids = new Set<string>(optimisticTriggeredPipelineIds);
 		if (!activeRuns || activeRuns.length === 0) return ids;
 		for (const run of activeRuns) {
 			// Match subscription name to pipeline name (strip -chain-N, -fanin suffixes)
@@ -268,7 +329,7 @@ export function usePipelineState({
 			}
 		}
 		return ids;
-	}, [activeRuns, pipelineState.pipelines]);
+	}, [activeRuns, pipelineState.pipelines, optimisticTriggeredPipelineIds]);
 
 	// Per-pipeline set of running agent session names. Used by
 	// `convertToReactFlowEdges` to animate only the edges feeding into a
@@ -304,6 +365,15 @@ export function usePipelineState({
 	// own `subscriptionName` field (populated by yamlToPipeline on load).
 	const runningSubscriptionsByPipeline = useMemo(() => {
 		const map = new Map<string, Set<string>>();
+		// Seed with optimistic entries so the trigger spinner flips synchronously
+		// on click without waiting for activeRuns polling.
+		const now = Date.now();
+		for (const [pipelineId, expiresAt] of optimisticPipelinesRef.current) {
+			if (expiresAt <= now) continue;
+			const subs = optimisticSubsRef.current.get(pipelineId);
+			if (!subs || subs.size === 0) continue;
+			map.set(pipelineId, new Set(subs));
+		}
 		if (!activeRuns || activeRuns.length === 0) return map;
 		for (const run of activeRuns) {
 			const baseName = run.subscriptionName.replace(/-chain-\d+$/, '').replace(/-fanin$/, '');
@@ -318,7 +388,7 @@ export function usePipelineState({
 			}
 		}
 		return map;
-	}, [activeRuns, pipelineState.pipelines]);
+	}, [activeRuns, pipelineState.pipelines, optimisticVersion]);
 
 	return {
 		pipelineState,
@@ -336,6 +406,8 @@ export function usePipelineState({
 		runningPipelineIds,
 		runningAgentsByPipeline,
 		runningSubscriptionsByPipeline,
+		optimisticTriggeredPipelineIds,
+		markPipelineTriggered,
 		persistLayout,
 		pendingSavedViewportRef,
 		pipelinesLoaded,

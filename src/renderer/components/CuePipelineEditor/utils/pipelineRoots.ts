@@ -1,15 +1,16 @@
 /**
- * Resolve which .maestro/cue.yaml a pipeline belongs to.
+ * Resolve which `.maestro/cue.yaml` files a pipeline writes to.
  *
- * Every pipeline must live in exactly one project root's cue.yaml — that
- * invariant is enforced by handleSave (see usePipelinePersistence) and is
- * what keeps deleted pipelines from reappearing via mirrored YAMLs.
+ * Per-agent-cwd model: each agent's own cwd holds the subscriptions IT owns.
+ * A cross-agent pipeline writes to N yaml files (one per participating
+ * agent's project root). Cross-agent chain references are stitched at
+ * runtime via `agent_id` lookups in `source_session_ids` / `fan_out_ids`.
  *
- * `lastWrittenRootsRef` (see usePipelineLayout) needs to know those
- * per-pipeline write roots so the save loop can clear the right YAML when
- * the user deletes a pipeline. This helper is the single source of truth for
- * that mapping and MUST stay in sync with handleSave's happy-path
- * partitioning.
+ * `lastWrittenRootsRef` (see usePipelineLayout) needs to know every cwd a
+ * pipeline contributes to so the next save can clear orphaned yamls when a
+ * pipeline is deleted. The set returned by `resolvePipelineOwnerCwds` is the
+ * single source of truth for that bookkeeping and MUST stay in sync with
+ * handleSave's happy-path partitioning.
  */
 
 import type {
@@ -19,7 +20,6 @@ import type {
 	CuePipelineSessionInfo as SessionInfo,
 	PipelineNode,
 } from '../../../../shared/cue-pipeline-types';
-import { computeCommonAncestorPath, isDescendantOrEqual } from '../../../../shared/cue-path-utils';
 
 /** Subset of SessionInfo this module relies on. */
 type SessionRootInfo = Pick<SessionInfo, 'projectRoot'>;
@@ -72,30 +72,36 @@ export function resolveNodeWriteRoot(
 }
 
 /**
- * Resolve the single project root that a pipeline's YAML would be written to.
+ * Resolve every project root a pipeline contributes subscriptions to under
+ * the per-agent-cwd model. Each bound node (agent or command-with-owning-
+ * session) lives at exactly one cwd; the pipeline writes one subscription
+ * record into each unique cwd's `cue.yaml`.
  *
- * Rules — matching handleSave's happy-path partitioning:
+ * Returns:
+ *   - `{ ok: true, cwds }` — every bound node resolved; `cwds` is the set
+ *     of distinct project roots the pipeline writes to (one entry for a
+ *     single-cwd pipeline, multiple entries for a cross-agent pipeline).
+ *   - `{ ok: false, reason: 'no-bindings' }` — pipeline has no agent or
+ *     command nodes (validatePipelines flags this elsewhere).
+ *   - `{ ok: false, reason: 'unresolved' }` — at least one bound node has
+ *     a session reference that doesn't resolve to a known projectRoot
+ *     (deleted agent, missing cwd). handleSave treats this as a hard
+ *     validation error rather than dropping the unresolvable subs silently.
  *
- * - All session-bound nodes (agents + commands) resolve to the same root →
- *   that root.
- * - Bound nodes span multiple roots that share a common ancestor (every
- *   bound-node root is a descendant of it) → the common ancestor. Enables
- *   cross-directory pipeline support.
- * - Any bound node unresolvable, no bound nodes at all, or roots spanning
- *   unrelated trees → `null`. handleSave would reject such a pipeline as a
- *   validation error, so no YAML is written for it and we must not seed a
- *   root for it.
- *
- * Bindings are resolved by id first (stable across renames), then by name as
- * a fallback for pipelines loaded from older YAML that referenced sessions
- * purely by name.
+ * Bindings are resolved by id first (stable across renames), then by name
+ * as a fallback for pipelines loaded from older YAML that referenced
+ * sessions purely by name.
  */
-export function resolvePipelineWriteRoot(
+export type PipelineOwnerCwdsResult =
+	| { ok: true; cwds: Set<string> }
+	| { ok: false; reason: 'no-bindings' | 'unresolved' };
+
+export function resolvePipelineOwnerCwds(
 	pipeline: Pick<CuePipeline, 'nodes'>,
 	sessionsById: ReadonlyMap<string, SessionRootInfo>,
 	sessionsByName: ReadonlyMap<string, SessionRootInfo>
-): string | null {
-	const roots = new Set<string>();
+): PipelineOwnerCwdsResult {
+	const cwds = new Set<string>();
 	let missingRoot = false;
 	let sawBinding = false;
 	for (const node of pipeline.nodes) {
@@ -103,36 +109,27 @@ export function resolvePipelineWriteRoot(
 		if (!hasBinding) continue;
 		sawBinding = true;
 		if (root) {
-			roots.add(root);
+			cwds.add(root);
 		} else {
 			missingRoot = true;
 		}
 	}
-	if (!sawBinding) return null;
-
-	if (roots.size === 0) return null;
-
-	// Partial resolution (some agents missing) mirrors handleSave's behavior:
-	// the pipeline would be rejected for missingRoot, so we don't seed a root.
-	if (missingRoot) return null;
-
-	if (roots.size === 1) return [...roots][0];
-
-	// Multi-root: collapse to common ancestor only when every agent root is
-	// actually a descendant of it — otherwise handleSave rejects the pipeline
-	// for spanning unrelated project trees.
-	// (computeCommonAncestorPath only returns null for empty input; with
-	// roots.size >= 2 here the real unrelated-trees guard is `allDescendants`.)
-	const commonRoot = computeCommonAncestorPath([...roots]);
-	if (commonRoot === null) return null;
-	const allDescendants = [...roots].every((r) => isDescendantOrEqual(r, commonRoot));
-	return allDescendants ? commonRoot : null;
+	if (!sawBinding) return { ok: false, reason: 'no-bindings' };
+	// Any unresolvable binding fails the whole pipeline rather than silently
+	// dropping that agent's contribution. The save UI surfaces the failure
+	// per-pipeline so the user can fix the dangling reference.
+	if (missingRoot || cwds.size === 0) return { ok: false, reason: 'unresolved' };
+	return { ok: true, cwds };
 }
 
 /**
- * Resolve write roots for every pipeline in a list, returning the set of
- * distinct roots. Skips pipelines that don't resolve to a single write root
- * (see `resolvePipelineWriteRoot`).
+ * Aggregate every owner cwd across a list of pipelines into a single Set.
+ * Used for `lastWrittenRootsRef` bookkeeping (which yamls might need
+ * clearing on the next save) and to seed the descendant-refresh sweep.
+ *
+ * Pipelines that fail to resolve (missing bindings, unresolved sessions)
+ * contribute nothing — handleSave surfaces those as validation errors via
+ * `resolvePipelineOwnerCwds` directly.
  */
 export function resolvePipelinesWriteRoots(
 	pipelines: ReadonlyArray<Pick<CuePipeline, 'nodes'>>,
@@ -141,8 +138,9 @@ export function resolvePipelinesWriteRoots(
 ): Set<string> {
 	const roots = new Set<string>();
 	for (const pipeline of pipelines) {
-		const root = resolvePipelineWriteRoot(pipeline, sessionsById, sessionsByName);
-		if (root) roots.add(root);
+		const result = resolvePipelineOwnerCwds(pipeline, sessionsById, sessionsByName);
+		if (!result.ok) continue;
+		for (const cwd of result.cwds) roots.add(cwd);
 	}
 	return roots;
 }

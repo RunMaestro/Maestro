@@ -247,6 +247,7 @@ export interface AppModalsProps {
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;
+	onFocusActiveTab?: () => void;
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
@@ -438,6 +439,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		confirmModalOpen,
 		quitConfirmModalOpen,
 		activeTerminalTasks,
+		hasFeedbackDraft,
 		newInstanceModalOpen,
 		editAgentModalOpen,
 		renameSessionModalOpen,
@@ -470,8 +472,16 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			confirmModalOpen: s.modals.get('confirm')?.open ?? false,
 			quitConfirmModalOpen: s.modals.get('quitConfirm')?.open ?? false,
 			activeTerminalTasks: (
-				s.modals.get('quitConfirm')?.data as { activeTerminalTasks?: string[] } | undefined
+				s.modals.get('quitConfirm')?.data as
+					| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+					| undefined
 			)?.activeTerminalTasks,
+			hasFeedbackDraft:
+				(
+					s.modals.get('quitConfirm')?.data as
+						| { activeTerminalTasks?: string[]; hasFeedbackDraft?: boolean }
+						| undefined
+				)?.hasFeedbackDraft ?? false,
 			newInstanceModalOpen: s.modals.get('newInstance')?.open ?? false,
 			editAgentModalOpen: s.modals.get('editAgent')?.open ?? false,
 			renameSessionModalOpen: s.modals.get('renameInstance')?.open ?? false,
@@ -649,6 +659,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
+		onFocusActiveTab,
 		onCopyTabContext,
 		onExportTabHtml,
 		onPublishTabGist,
@@ -819,6 +830,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCancelQuit={onCancelQuit}
 				activeBatchSessionIds={activeBatchSessionIds}
 				activeTerminalTasks={activeTerminalTasks ?? []}
+				hasFeedbackDraft={hasFeedbackDraft}
 			/>
 
 			{/* Session Management Modals */}
@@ -982,6 +994,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseCurrentTab={onCloseCurrentTab}
 				onMoveTabToFirst={onMoveTabToFirst}
 				onMoveTabToLast={onMoveTabToLast}
+				onFocusActiveTab={onFocusActiveTab}
 				onCopyTabContext={onCopyTabContext}
 				onExportTabHtml={onExportTabHtml}
 				onPublishTabGist={onPublishTabGist}

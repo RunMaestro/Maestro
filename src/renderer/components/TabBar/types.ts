@@ -82,6 +82,8 @@ export interface TabBarProps {
 	onPublishTerminalBufferGist?: (tabId: string) => void;
 	/** Handler to send a terminal tab's buffer to another agent */
 	onSendTerminalBufferToAgent?: (tabId: string) => void;
+	/** Handler to open the startup-command modal for a terminal tab */
+	onTerminalTabConfigureStartupCommand?: (tabId: string) => void;
 	/** Handler to copy the rendered text of a browser tab to the clipboard */
 	onCopyBrowserContent?: (tabId: string) => void;
 	/** Handler to send the rendered text of a browser tab to another agent */
@@ -90,4 +92,7 @@ export interface TabBarProps {
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
+
+	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
+	sshRemote?: boolean;
 }

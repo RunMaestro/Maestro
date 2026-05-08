@@ -150,7 +150,7 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Input Send Behavior')).toBeInTheDocument();
 			expect(screen.getByText('Default History Toggle')).toBeInTheDocument();
 			expect(screen.getByText('Default Thinking Mode')).toBeInTheDocument();
-			expect(screen.getByText('Automatic Tab Naming')).toBeInTheDocument();
+			expect(screen.getByText('Tab Behavior')).toBeInTheDocument();
 			expect(screen.getByText('Power')).toBeInTheDocument();
 			expect(screen.getByText('Rendering Options')).toBeInTheDocument();
 			expect(screen.getByText('Updates')).toBeInTheDocument();

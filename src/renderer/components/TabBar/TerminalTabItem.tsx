@@ -9,6 +9,7 @@ import {
 	Clipboard,
 	ArrowRightCircle,
 	Share2,
+	Play,
 } from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
@@ -49,6 +50,8 @@ export interface TerminalTabItemProps {
 	onPublishBufferGist?: (tabId: string) => void;
 	/** Send the terminal buffer to another agent. */
 	onSendBufferToAgent?: (tabId: string) => void;
+	/** Open the startup-command configuration modal for this tab. */
+	onConfigureStartupCommand?: (tabId: string) => void;
 	totalTabs?: number;
 	tabIndex?: number;
 	shortcutHint?: number | null;
@@ -84,6 +87,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	onCopyBuffer,
 	onPublishBufferGist,
 	onSendBufferToAgent,
+	onConfigureStartupCommand,
 	totalTabs,
 	tabIndex,
 	shortcutHint,
@@ -232,6 +236,14 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		},
 		[onSendBufferToAgent, tab.id, setOverlayOpen]
 	);
+	const handleConfigureStartupCommandClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onConfigureStartupCommand?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onConfigureStartupCommand, tab.id, setOverlayOpen]
+	);
 
 	// Determine icon state color
 	const iconColor = useMemo(() => {
@@ -289,7 +301,10 @@ export const TerminalTabItem = memo(function TerminalTabItem({
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}
 			style={tabStyle}
-			title={tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType}
+			title={
+				(tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType) +
+				(tab.startupCommand ? `\nStartup: ${tab.startupCommand}` : '')
+			}
 			onClick={handleTabSelect}
 			onFocus={handleMouseEnter}
 			onBlur={() => {
@@ -326,6 +341,16 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 
 			{/* Terminal icon with state color */}
 			<Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: iconColor }} />
+
+			{/* Startup command marker — signals the tab will auto-run a command on
+				 next PTY spawn. Subtle accent-colored Play icon next to the terminal icon. */}
+			{tab.startupCommand && (
+				<Play
+					className="w-3 h-3 shrink-0"
+					style={{ color: theme.colors.accent, opacity: 0.85 }}
+					aria-label={`Startup command: ${tab.startupCommand}`}
+				/>
+			)}
 
 			{/* Tab display name */}
 			<span
@@ -399,6 +424,23 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Rename
+									</button>
+								)}
+
+								{/* Startup Command */}
+								{onConfigureStartupCommand && (
+									<button
+										onClick={handleConfigureStartupCommandClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+										title={
+											tab.startupCommand
+												? `Current: ${tab.startupCommand}`
+												: 'Configure a command to run when this terminal starts'
+										}
+									>
+										<Play className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Startup Command…
 									</button>
 								)}
 

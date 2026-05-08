@@ -56,6 +56,11 @@ export function createCueApi() {
 		// Get currently active Cue runs
 		getActiveRuns: (): Promise<CueRunResult[]> => ipcRenderer.invoke('cue:getActiveRuns'),
 
+		// Snapshot the in-flight stdout/stderr for an active Cue run (live logs).
+		// Returns null when the runId isn't currently active.
+		getRunLiveOutput: (runId: string): Promise<{ stdout: string; stderr: string } | null> =>
+			ipcRenderer.invoke('cue:getRunLiveOutput', { runId }),
+
 		// Get activity log (recent completed/failed runs)
 		getActivityLog: (limit?: number): Promise<CueRunResult[]> =>
 			ipcRenderer.invoke('cue:getActivityLog', { limit }),
