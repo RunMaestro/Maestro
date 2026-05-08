@@ -53,6 +53,15 @@ export function BranchSwitcherDropdown({
 				if (cancelled) return;
 				setBranches(b);
 			})
+			.catch((err) => {
+				if (cancelled) return;
+				notifyToast({
+					color: 'red',
+					title: 'Failed to load branches',
+					message: err instanceof Error ? err.message : String(err),
+					dismissible: true,
+				});
+			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);
 			});
