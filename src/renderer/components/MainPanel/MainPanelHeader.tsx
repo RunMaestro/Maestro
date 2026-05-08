@@ -42,6 +42,7 @@ import {
 } from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { captureException } from '../../utils/sentry';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -140,7 +141,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// Double click → open branch switcher dropdown.
 	const handleBranchChipClick = () => {
 		if (!activeSession.isGitRepo) return;
-		refreshGitStatus();
+		void refreshGitStatus().catch((error) => {
+			captureException(error, {
+				extra: { source: 'MainPanelHeader.handleBranchChipClick' },
+			});
+		});
 		gitTooltip.close();
 		if (branchClickTimerRef.current) clearTimeout(branchClickTimerRef.current);
 		branchClickTimerRef.current = setTimeout(() => {
@@ -334,7 +339,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								anchorEl={branchChipContainerRef.current}
 								onClose={() => setBranchSwitcherOpen(false)}
 								onSwitched={() => {
-									refreshGitStatus();
+									void refreshGitStatus().catch((error) => {
+										captureException(error, {
+											extra: {
+												source: 'MainPanelHeader.BranchSwitcherDropdown.onSwitched',
+											},
+										});
+									});
 								}}
 							/>
 						)}
