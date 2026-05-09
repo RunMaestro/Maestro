@@ -2198,6 +2198,11 @@ interface MaestroAPI {
 				timestamp: string;
 				from: string;
 				content: string;
+				autoRunRefs?: Array<{
+					participantName: string;
+					relativePath: string;
+					triggerCommand: string;
+				}>;
 			}>
 		>;
 		saveImage: (id: string, imageData: string, filename: string) => Promise<string>;

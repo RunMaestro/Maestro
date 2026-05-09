@@ -14,7 +14,7 @@ import {
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
-import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
+import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2, Play } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { stripMarkdown } from '../utils/textProcessing';
@@ -444,6 +444,30 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 										// view is readable as plain text.
 										<div className="text-sm whitespace-pre-wrap">
 											{isUser ? msg.content : stripMarkdown(msg.content)}
+										</div>
+									)}
+
+									{!isUser && msg.autoRunRefs && msg.autoRunRefs.length > 0 && (
+										<div
+											className="mt-3 flex flex-wrap gap-2"
+											style={{ color: theme.colors.textDim }}
+										>
+											{msg.autoRunRefs.map((ref) => (
+												<button
+													key={`${ref.participantName}:${ref.relativePath}`}
+													onClick={() => copyToClipboard(ref.triggerCommand)}
+													className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border hover:opacity-80 transition-opacity"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgSidebar,
+														color: theme.colors.accent,
+													}}
+													title={`Copy ${ref.triggerCommand}`}
+												>
+													<Play className="w-3 h-3" />
+													<span>{ref.relativePath}</span>
+												</button>
+											))}
 										</div>
 									)}
 

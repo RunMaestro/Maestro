@@ -9,6 +9,7 @@
  */
 
 import * as os from 'os';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
 	GroupChatParticipant,
@@ -21,8 +22,10 @@ import {
 import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
-	mentionMatches,
+	type GroupChatAutoRunRef,
+	extractStructuredAutoRunPaths,
 	normalizeMentionName,
+	mentionMatches,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -46,6 +49,7 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback } from './group-chat-config';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { readDirRemote } from '../utils/remote-fs';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -194,6 +198,239 @@ export function clearModeratorResponseTimeout(groupChatId: string): void {
 		clearTimeout(handle);
 		moderatorTimeouts.delete(groupChatId);
 	}
+}
+
+function normalizeAutoRunTargetFilename(targetFilename: string): string {
+	return targetFilename
+		.trim()
+		.replace(/\\/g, '/')
+		.replace(/^\.\/+/, '')
+		.replace(/^\/+/, '')
+		.replace(/\.md$/i, '');
+}
+
+function toSystemPath(value: string): string {
+	return value.replace(/[\\/]+/g, path.sep);
+}
+
+function isAbsoluteTarget(value: string): boolean {
+	return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function isWithinParent(parentPath: string, candidatePath: string): boolean {
+	const relative = path.relative(parentPath, candidatePath);
+	return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function relativizeToAutoRunFolder(targetPath: string, autoRunFolderPath: string): string | null {
+	const autoRunFolderAbsolute = path.resolve(autoRunFolderPath);
+	const candidateAbsolute = path.resolve(targetPath);
+	if (!isWithinParent(autoRunFolderAbsolute, candidateAbsolute)) {
+		return null;
+	}
+
+	return normalizeAutoRunTargetFilename(path.relative(autoRunFolderAbsolute, candidateAbsolute));
+}
+
+function buildCandidateAutoRunTargets(
+	targetFilename: string,
+	options: {
+		cwd?: string;
+		autoRunFolderPath?: string;
+	}
+): string[] {
+	const rawTarget = targetFilename.trim();
+	const candidates = new Set<string>();
+	const directCandidate = normalizeAutoRunTargetFilename(rawTarget);
+	if (directCandidate) {
+		candidates.add(directCandidate);
+	}
+
+	if (!options.autoRunFolderPath) {
+		return Array.from(candidates);
+	}
+
+	const normalizedTargetPath = toSystemPath(rawTarget.replace(/\\/g, '/').replace(/^\.\/+/, ''));
+	if (isAbsoluteTarget(rawTarget)) {
+		const relativeTarget = relativizeToAutoRunFolder(
+			normalizedTargetPath,
+			options.autoRunFolderPath
+		);
+		if (relativeTarget) {
+			candidates.add(relativeTarget);
+		}
+		return Array.from(candidates);
+	}
+
+	if (options.cwd) {
+		const resolvedFromCwd = path.resolve(options.cwd, normalizedTargetPath);
+		const relativeTarget = relativizeToAutoRunFolder(resolvedFromCwd, options.autoRunFolderPath);
+		if (relativeTarget) {
+			candidates.add(relativeTarget);
+		}
+	}
+
+	return Array.from(candidates);
+}
+
+function resolveAutoRunTargetFromFiles(
+	allFiles: string[],
+	targetFilename: string,
+	options: {
+		cwd?: string;
+		autoRunFolderPath?: string;
+	}
+): string | null {
+	const candidateTargets = buildCandidateAutoRunTargets(targetFilename, options);
+	for (const candidate of candidateTargets) {
+		const exactMatch = allFiles.find((file) => file === candidate);
+		if (exactMatch) {
+			return exactMatch;
+		}
+	}
+
+	const basenameMatches = allFiles.filter((file) =>
+		candidateTargets.some((candidate) => file.split('/').pop() === candidate.split('/').pop())
+	);
+	return basenameMatches.length === 1 ? basenameMatches[0] : null;
+}
+
+async function listLocalAutoRunDocs(
+	folderPath: string,
+	relativePath: string = ''
+): Promise<string[]> {
+	const entries = await fs.readdir(folderPath, { withFileTypes: true });
+	const files: string[] = [];
+
+	for (const entry of entries) {
+		if (entry.name.startsWith('.')) continue;
+		const entryPath = path.join(folderPath, entry.name);
+		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+		if (entry.isDirectory()) {
+			files.push(...(await listLocalAutoRunDocs(entryPath, entryRelativePath)));
+			continue;
+		}
+
+		if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+			files.push(entryRelativePath.slice(0, -3));
+		}
+	}
+
+	return files.sort();
+}
+
+async function listRemoteAutoRunDocs(
+	folderPath: string,
+	sshRemoteConfig: import('../../shared/types').SshRemoteConfig,
+	relativePath: string = ''
+): Promise<string[]> {
+	const result = await readDirRemote(folderPath, sshRemoteConfig);
+	if (!result.success || !result.data) {
+		return [];
+	}
+
+	const files: string[] = [];
+	for (const entry of result.data) {
+		if (entry.name.startsWith('.')) continue;
+		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+		if (entry.isDirectory) {
+			files.push(
+				...(await listRemoteAutoRunDocs(
+					`${folderPath}/${entry.name}`,
+					sshRemoteConfig,
+					entryRelativePath
+				))
+			);
+			continue;
+		}
+
+		if (entry.name.toLowerCase().endsWith('.md')) {
+			files.push(entryRelativePath.slice(0, -3));
+		}
+	}
+
+	return files.sort();
+}
+
+async function listSessionAutoRunDocs(session: SessionInfo): Promise<string[]> {
+	if (!session.autoRunFolderPath) {
+		return [];
+	}
+
+	if (sshStore && session.sshRemoteConfig?.enabled && session.sshRemoteConfig.remoteId) {
+		const sshRemoteConfig = sshStore
+			.getSshRemotes()
+			.find((remote) => remote.id === session.sshRemoteConfig?.remoteId && remote.enabled);
+		if (sshRemoteConfig) {
+			return listRemoteAutoRunDocs(session.autoRunFolderPath, sshRemoteConfig);
+		}
+	}
+
+	return listLocalAutoRunDocs(session.autoRunFolderPath);
+}
+
+async function resolveParticipantAutoRunRefs(
+	participantName: string,
+	message: string
+): Promise<GroupChatAutoRunRef[]> {
+	const hintedPaths = extractStructuredAutoRunPaths(message, participantName);
+	if (hintedPaths.length === 0) {
+		return [];
+	}
+
+	const session = (getSessionsCallback?.() || []).find(
+		(s) => mentionMatches(s.name, participantName) || s.name === participantName
+	);
+	if (!session?.autoRunFolderPath) {
+		return [];
+	}
+
+	const allFiles = await listSessionAutoRunDocs(session);
+	if (allFiles.length === 0) {
+		return [];
+	}
+
+	let latestRef: GroupChatAutoRunRef | null = null;
+	for (const hintedPath of hintedPaths) {
+		const resolvedPath = resolveAutoRunTargetFromFiles(allFiles, hintedPath, {
+			cwd: session.cwd,
+			autoRunFolderPath: session.autoRunFolderPath,
+		});
+		if (!resolvedPath) continue;
+		latestRef = {
+			participantName,
+			relativePath: resolvedPath,
+			triggerCommand: `!autorun @${normalizeMentionName(participantName)}:${resolvedPath}`,
+		};
+	}
+
+	return latestRef ? [latestRef] : [];
+}
+
+function stripStructuredAutoRunLines(message: string): string {
+	const stripped = message
+		.split('\n')
+		.filter((line) => !line.trim().match(/^AUTO_RUN_(PATH|TRIGGER):/i))
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n');
+
+	return stripped.trimEnd();
+}
+
+function appendCanonicalAutoRunRefs(message: string, autoRunRefs: GroupChatAutoRunRef[]): string {
+	if (autoRunRefs.length === 0) {
+		return message;
+	}
+
+	const refLines = autoRunRefs.flatMap((ref) => [
+		`AUTO_RUN_PATH: ${ref.relativePath}`,
+		`AUTO_RUN_TRIGGER: ${ref.triggerCommand}`,
+	]);
+
+	const messageWithoutRawRefs = stripStructuredAutoRunLines(message);
+	return `${messageWithoutRawRefs}\n\n## Maestro Auto Run Refs\n${refLines.join('\n')}`;
 }
 
 function getParticipantTimeoutKey(groupChatId: string, participantName: string): string {
@@ -1444,15 +1681,20 @@ export async function routeAgentResponse(
 		`[GroupChat:Debug] Participant verified: ${participantName} (agent: ${participant.agentId})`
 	);
 
+	const autoRunRefs = await resolveParticipantAutoRunRefs(participantName, message);
+	const enrichedMessage =
+		autoRunRefs.length > 0 ? appendCanonicalAutoRunRefs(message, autoRunRefs) : message;
+
 	// Log the message as coming from the participant
-	await appendToLog(chat.logPath, participantName, message);
+	await appendToLog(chat.logPath, participantName, enrichedMessage);
 	logger.debug(`[GroupChat:Debug] Message appended to log`);
 
 	// Emit message event to renderer so it shows immediately
 	const agentMessage: GroupChatMessage = {
 		timestamp: new Date().toISOString(),
 		from: participantName,
-		content: message,
+		content: enrichedMessage,
+		...(autoRunRefs.length > 0 ? { autoRunRefs } : {}),
 	};
 	groupChatEmitters.emitMessage?.(groupChatId, agentMessage);
 
@@ -1496,7 +1738,7 @@ export async function routeAgentResponse(
 			participantName,
 			participantColor: participant.color || '#808080', // Default gray if no color assigned
 			type: 'response',
-			fullResponse: message,
+			fullResponse: enrichedMessage,
 		});
 
 		// Emit history entry event to renderer
