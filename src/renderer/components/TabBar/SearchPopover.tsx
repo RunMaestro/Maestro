@@ -12,6 +12,8 @@ interface SearchPopoverProps {
 	tabSwitcherKeys: string[];
 	/** Shortcut keys for message search (Cmd+F) */
 	searchOutputKeys: string[];
+	/** Number of open tabs in the current session, shown as a pill next to "Search Tabs" */
+	openTabCount?: number;
 }
 
 /**
@@ -24,6 +26,7 @@ export const SearchPopover = memo(function SearchPopover({
 	onSearchMessages,
 	tabSwitcherKeys,
 	searchOutputKeys,
+	openTabCount,
 }: SearchPopoverProps) {
 	const [popoverOpen, setPopoverOpen] = useState(false);
 	const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
@@ -104,6 +107,19 @@ export const SearchPopover = memo(function SearchPopover({
 						>
 							<Search className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							Search Tabs
+							{typeof openTabCount === 'number' && (
+								<span
+									className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+										border: `1px solid ${theme.colors.accent}40`,
+									}}
+									aria-label={`${openTabCount} open tabs`}
+								>
+									{openTabCount}
+								</span>
+							)}
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(tabSwitcherKeys)}
 							</span>

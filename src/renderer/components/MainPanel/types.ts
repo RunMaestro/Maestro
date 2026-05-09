@@ -32,6 +32,8 @@ export interface MainPanelHandle {
 	openTerminalSearch: () => void;
 	/** Focus the browser address bar in the active browser tab */
 	focusBrowserAddressBar: () => void;
+	/** Scroll the active tab header into view and focus it */
+	focusActiveTab: () => void;
 	/** Reload the active browser tab (or stop loading if in progress) */
 	reloadBrowserTab: () => void;
 }

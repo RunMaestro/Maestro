@@ -71,6 +71,7 @@ const populatedAggregation: StatsAggregation = {
 	avgSessionDuration: 600_000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 };
 
 const mockStats = {

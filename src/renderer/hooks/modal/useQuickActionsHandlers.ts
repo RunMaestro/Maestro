@@ -72,6 +72,8 @@ export interface UseQuickActionsHandlersReturn {
 	handleQuickActionsAutoRunResetTasks: () => void;
 	/** Clear the active terminal xterm buffer */
 	handleQuickActionsClearActiveTerminal: () => void;
+	/** Scroll the active tab header into view and focus it */
+	handleQuickActionsFocusActiveTab: () => void;
 	/** Close the current tab */
 	handleQuickActionsCloseCurrentTab: () => void;
 	/** Move current tab to first position */
@@ -255,6 +257,10 @@ export function useQuickActionsHandlers(
 		mainPanelRef.current?.clearActiveTerminal();
 	}, []);
 
+	const handleQuickActionsFocusActiveTab = useCallback(() => {
+		mainPanelRef.current?.focusActiveTab();
+	}, []);
+
 	const handleQuickActionsCloseCurrentTab = useCallback(() => {
 		handleCloseCurrentTab();
 	}, [handleCloseCurrentTab]);
@@ -308,6 +314,7 @@ export function useQuickActionsHandlers(
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
 		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,
 		handleQuickActionsMoveTabToFirst,
 		handleQuickActionsMoveTabToLast,

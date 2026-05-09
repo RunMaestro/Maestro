@@ -101,6 +101,8 @@ export interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
+	bySessionSource: Record<string, { user: number; auto: number }>;
 	/** Count of queries originating from worktree (child) agents */
 	worktreeQueries: number;
 	/** Count of queries originating from parent (non-worktree) agents */

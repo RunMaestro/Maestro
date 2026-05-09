@@ -313,9 +313,32 @@ function CuePipelineEditorInner({
 	// applyNodeChanges updates this state (cheap setState, no useMemo recompute).
 	// On drag end, positions sync back to pipelineState.
 	const [displayNodes, setDisplayNodes] = useState<Node[]>(computedNodes);
+	// Tracks the `pipelineState.pipelines` reference that the resync last
+	// observed. Used to distinguish "pipelineState actually changed" (drag
+	// committed, node added/deleted, discard, mount) from "computedNodes
+	// recomputed because a non-positional dep changed" (activeRuns polling
+	// produced a fresh `runningPipelineIds` Set, theme change, etc.).
+	const lastSyncedPipelinesRef = useRef(pipelineState.pipelines);
 	useEffect(() => {
-		setDisplayNodes(computedNodes);
-	}, [computedNodes]);
+		setDisplayNodes((prev) => {
+			// If pipelineState.pipelines is unchanged since the last resync, this
+			// fire is poll-driven (or theme/selection/running-state-driven), NOT a
+			// real position update. Preserve ReactFlow's live positions on prev so
+			// a just-dragged node isn't snapped back when activeRuns polls a few
+			// seconds later. Tracking by reference rather than gating on isDirty
+			// because the dirty flag flips AFTER its own effect runs and isn't
+			// load-bearing for "did the source-of-truth positions change."
+			const pipelinesChanged = lastSyncedPipelinesRef.current !== pipelineState.pipelines;
+			lastSyncedPipelinesRef.current = pipelineState.pipelines;
+			if (pipelinesChanged) return computedNodes;
+			const prevById = new Map(prev.map((n) => [n.id, n]));
+			return computedNodes.map((cn) => {
+				const existing = prevById.get(cn.id);
+				if (!existing) return cn;
+				return { ...cn, position: existing.position };
+			});
+		});
+	}, [computedNodes, pipelineState.pipelines]);
 
 	const nodes = displayNodes;
 

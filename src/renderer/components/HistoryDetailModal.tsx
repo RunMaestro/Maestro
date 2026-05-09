@@ -185,7 +185,7 @@ export function HistoryDetailModal({
 
 			{/* Modal */}
 			<div
-				className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-lg border shadow-2xl flex flex-col"
+				className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

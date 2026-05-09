@@ -131,26 +131,30 @@ The `FanInHealthEntry` projection (`cue-fan-in-tracker.ts:46`) lets the dashboar
 
 ## Sleep/wake reconciliation
 
-System sleep / app suspension can leave the engine paused mid-day. Handled in three layers:
+System sleep / app suspension can leave the engine paused mid-day. Handled in four layers:
 
 - **`cue-heartbeat.ts:79`** — writes `cue_heartbeat.last_seen` every 30s. Three consecutive failures emit `'heartbeatFailure'` for metrics; SQLite-busy errors below threshold are suppressed.
-- **`cue-recovery-service.ts:detectSleepAndReconcile`** — at engine start, computes `Date.now() - last_seen`. If gap > `SLEEP_THRESHOLD_MS` (120s), calls `reconcileMissedTimeEvents`.
-- **`cue-reconciler.ts:34`** — for each enabled `time.heartbeat` subscription with `interval_minutes`, fires **one** catch-up event with `{ reconciled: true, missedCount, sleepDurationMs }` in payload. **Only `time.heartbeat` is reconciled** — file changes during sleep are lost (the watcher re-init catches new state naturally), and `agent.completed` is durable through fan-in state.
+- **`cue-recovery-service.ts:detectSleepAndReconcile`** — at engine start AND on `powerMonitor.on('resume')`, computes `Date.now() - last_seen`. If gap > `SLEEP_THRESHOLD_MS` (120s), calls `reconcileMissedTimeEvents`.
+- **`cue-reconciler.ts`** — fires **one** catch-up event per enabled subscription whose missed cadence fell inside the gap:
+  - `time.heartbeat`: `{ reconciled: true, missedCount, sleepDurationMs }` based on `Math.floor(gap / interval)`.
+  - `time.scheduled`: `{ reconciled: true, missedCount, mostRecentSlotMs, matched_time, matched_day, sleepDurationMs }` for the **most recent** missed slot only — long sleeps don't queue one run per slot.
+  - `file.changed` / `agent.completed` / `task.pending` are NOT reconciled (FSEvents survives sleep, fan-in state is durable, task scanner re-scans on next tick).
+- **`cue-engine.ts:reconcileAfterWake`** — the resume-time entry point. Stops the heartbeat (so its 30s tick can't clobber `last_seen` mid-reconcile), runs `detectSleepAndReconcile`, then calls `pollNow()` on every trigger source that exposes it (currently the GitHub poller — fires an immediate `gh pr/issue list` so PRs/issues that appeared during sleep surface within seconds instead of waiting up to `poll_minutes`). Re-starts the heartbeat in a `finally` block. Idempotent against multiple resume events from the same wake.
 
 ## Trigger source contract
 
 Every source implements the interface in `triggers/cue-trigger-source.ts`. They share a registry (`cue-trigger-source-registry.ts`) and a filter helper (`cue-trigger-filter.ts`). Quick reference:
 
-| Event                 | Source file                            | Cadence             | First-run seeds?       | Reconciled on wake?    |
-| --------------------- | -------------------------------------- | ------------------- | ---------------------- | ---------------------- |
-| `app.startup`         | (runtime service, not a source)        | once per boot       | n/a                    | no                     |
-| `time.heartbeat`      | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                    | **yes** (one catch-up) |
-| `time.scheduled`      | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                    | no                     |
-| `file.changed`        | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                     | no                     |
-| `agent.completed`     | `cue-completion-service.ts` (reactive) | on completion       | n/a                    | n/a                    |
-| `github.pull_request` | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                | no                     |
-| `github.issue`        | same                                   | same                | **yes**                | no                     |
-| `task.pending`        | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash) | no                     |
+| Event                 | Source file                            | Cadence             | First-run seeds?       | Reconciled on wake?                             |
+| --------------------- | -------------------------------------- | ------------------- | ---------------------- | ----------------------------------------------- |
+| `app.startup`         | (runtime service, not a source)        | once per boot       | n/a                    | no                                              |
+| `time.heartbeat`      | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                    | **yes** (one catch-up, `missedCount`)           |
+| `time.scheduled`      | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                    | **yes** (one catch-up, most recent slot)        |
+| `file.changed`        | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                     | no                                              |
+| `agent.completed`     | `cue-completion-service.ts` (reactive) | on completion       | n/a                    | n/a                                             |
+| `github.pull_request` | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `github.issue`        | same                                   | same                | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `task.pending`        | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash) | no                                              |
 
 "Seeds on first run" means the source records existing items as already-seen on its first poll so users don't get a flood when adding a new subscription.
 

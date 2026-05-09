@@ -1925,36 +1925,6 @@ export const TerminalOutput = memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<div className="flex items-center gap-2">
-							<button
-								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
-								className="flex items-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch"
-								style={{
-									borderColor: outputSearchRegex
-										? theme.colors.accent
-										: regexError
-											? theme.colors.error
-											: theme.colors.border,
-									backgroundColor: outputSearchRegex
-										? theme.colors.accent + '20'
-										: theme.colors.bgSidebar,
-									color: outputSearchRegex ? theme.colors.accent : theme.colors.textDim,
-								}}
-								title={outputSearchRegex ? 'Switch to plain-text search' : 'Switch to regex search'}
-							>
-								{/* Pill marker: bg/fg inverted vs. the surrounding button */}
-								<span
-									className="px-1.5 py-0.5 rounded font-mono leading-none"
-									style={{
-										backgroundColor: outputSearchRegex ? theme.colors.accent : theme.colors.textDim,
-										color: outputSearchRegex
-											? theme.colors.accentForeground
-											: theme.colors.bgSidebar,
-									}}
-								>
-									{outputSearchRegex ? '.*' : 'Aa'}
-								</span>
-								<span>{outputSearchRegex ? 'Regex' : 'Plain Text'}</span>
-							</button>
 							<input
 								type="text"
 								value={outputSearchQuery}
@@ -1985,6 +1955,28 @@ export const TerminalOutput = memo(
 								spellCheck={outputSearchRegex ? false : undefined}
 								autoFocus
 							/>
+							<button
+								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
+								className="flex items-center justify-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch min-w-[7rem]"
+								style={{
+									borderColor: regexError ? theme.colors.error : theme.colors.accent,
+									backgroundColor: theme.colors.accent + '20',
+									color: theme.colors.accent,
+								}}
+								title={outputSearchRegex ? 'Switch to plain-text search' : 'Switch to regex search'}
+							>
+								{/* Pill marker: bg/fg inverted vs. the surrounding button */}
+								<span
+									className="px-1.5 py-0.5 rounded font-mono leading-none"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+								>
+									{outputSearchRegex ? '.*' : 'Aa'}
+								</span>
+								<span>{outputSearchRegex ? 'Regex' : 'Plain Text'}</span>
+							</button>
 							{outputSearchQuery.trim() && (
 								<>
 									<span

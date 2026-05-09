@@ -20,6 +20,7 @@ import type { Theme } from '../../../renderer/types';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
+	MessageSquare: () => <svg data-testid="message-square-icon" />,
 }));
 
 // Create a test theme
@@ -313,6 +314,58 @@ describe('QuitConfirmModal', () => {
 			);
 
 			expect(screen.getByText('+2 more')).toBeInTheDocument();
+		});
+	});
+
+	describe('feedback draft', () => {
+		it('shows feedback draft section when hasFeedbackDraft is true', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={0}
+					busyAgentNames={[]}
+					hasFeedbackDraft={true}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Unsent Feedback')).toBeInTheDocument();
+			expect(screen.getByText('Draft will be discarded')).toBeInTheDocument();
+			expect(screen.getByText(/unsent feedback in the Feedback window/)).toBeInTheDocument();
+			expect(screen.getByText(/Quitting now will discard your draft/)).toBeInTheDocument();
+		});
+
+		it('does not show feedback section when hasFeedbackDraft is false', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					hasFeedbackDraft={false}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.queryByText('Unsent Feedback')).not.toBeInTheDocument();
+		});
+
+		it('combines feedback draft with busy agents in description', () => {
+			renderWithLayerStack(
+				<QuitConfirmModal
+					theme={testTheme}
+					busyAgentCount={1}
+					busyAgentNames={['Agent A']}
+					hasFeedbackDraft={true}
+					onConfirmQuit={vi.fn()}
+					onCancel={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText(/discard your feedback draft/)).toBeInTheDocument();
+			expect(screen.getByText('Active Agents')).toBeInTheDocument();
+			expect(screen.getByText('Unsent Feedback')).toBeInTheDocument();
 		});
 	});
 

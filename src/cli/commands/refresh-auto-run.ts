@@ -1,13 +1,13 @@
 // Refresh auto-run command - refresh Auto Run documents in the Maestro desktop app
 
-import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
+import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 
 interface RefreshAutoRunOptions {
-	session?: string;
+	agent?: string;
 }
 
 export async function refreshAutoRun(options: RefreshAutoRunOptions): Promise<void> {
-	const sessionId = resolveSessionId(options);
+	const sessionId = resolveTargetSessionId(options.agent);
 
 	try {
 		const result = await withMaestroClient(async (client) => {

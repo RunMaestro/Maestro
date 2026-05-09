@@ -94,6 +94,7 @@ describe('stats IPC handlers', () => {
 				avgSessionDuration: 0,
 				byAgentByDay: {},
 				bySessionByDay: {},
+				bySessionSource: {},
 			}),
 			exportToCsv: vi.fn().mockReturnValue('id,sessionId,...'),
 			clearOldData: vi.fn().mockReturnValue({ success: true, deletedCount: 0 }),

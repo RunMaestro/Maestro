@@ -3,7 +3,7 @@
 
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
-import { readSessions } from './storage';
+import { readSessions, resolveAgentId } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -183,6 +183,34 @@ export function resolveSessionId(options: { session?: string }): string {
 	}
 
 	return sessions[0].id;
+}
+
+/**
+ * Resolve a target agent (sessionId) from an optional `--agent` value, or fall
+ * back to the first available agent. Centralizes the duplicated try/catch +
+ * resolveSessionId pattern that several desktop-handoff verbs share.
+ *
+ * Only the known `resolveAgentId` errors (ambiguous / not-found) get the
+ * friendly stderr + exit(1) treatment. Anything else (e.g. corrupted store
+ * read in `readSessions`) re-throws so it surfaces as a stack trace — per the
+ * codebase's "let exceptions bubble up" rule for unexpected failures.
+ */
+export function resolveTargetSessionId(agent?: string): string {
+	if (agent) {
+		try {
+			return resolveAgentId(agent);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const isExpected =
+				message.startsWith('Ambiguous agent ID') || message.startsWith('Agent not found:');
+			if (!isExpected) {
+				throw error;
+			}
+			console.error(`Error: ${message}`);
+			process.exit(1);
+		}
+	}
+	return resolveSessionId({});
 }
 
 /**

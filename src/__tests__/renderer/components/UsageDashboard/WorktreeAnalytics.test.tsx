@@ -47,6 +47,7 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 	avgSessionDuration: 0,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 	...overrides,
 });
 

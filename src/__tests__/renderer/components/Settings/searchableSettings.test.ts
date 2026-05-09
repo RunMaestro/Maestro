@@ -95,7 +95,7 @@ describe('searchableSettings', () => {
 
 		it('should match multiple terms (AND logic)', () => {
 			const results = searchSettings('tab naming');
-			expect(results.some((s) => s.id === 'general-tab-naming')).toBe(true);
+			expect(results.some((s) => s.id === 'general-tab-behavior')).toBe(true);
 			// Should not match things that only have one of the terms
 			for (const r of results) {
 				const all =

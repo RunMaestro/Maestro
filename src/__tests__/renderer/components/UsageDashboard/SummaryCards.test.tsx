@@ -50,6 +50,7 @@ const mockData: StatsAggregation = {
 	avgSessionDuration: 288000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 150,
 	byWorktreeStatus: {
@@ -75,6 +76,7 @@ const emptyData: StatsAggregation = {
 	avgSessionDuration: 0,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 0,
 	byWorktreeStatus: {
@@ -103,6 +105,7 @@ const largeNumbersData: StatsAggregation = {
 	avgSessionDuration: 7200000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 1500000,
 	byWorktreeStatus: {
@@ -130,6 +133,7 @@ const singleAgentData: StatsAggregation = {
 	avgSessionDuration: 360000,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 50,
 	byWorktreeStatus: {

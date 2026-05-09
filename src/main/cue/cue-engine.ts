@@ -652,6 +652,55 @@ export class CueEngine {
 		return this.enabled;
 	}
 
+	/**
+	 * Re-run sleep detection and trigger immediate GitHub polls. Called by the
+	 * Electron main process on `powerMonitor.on('resume')` so a laptop that's
+	 * been asleep — long enough for time-based or PR/issue triggers to be
+	 * missed — catches up within seconds of the lid opening.
+	 *
+	 * Sequence:
+	 *  1. Stop the heartbeat writer so its 30s tick can't clobber `last_seen`
+	 *     before the recovery service computes the gap.
+	 *  2. `recoveryService.detectSleepAndReconcile()` — fires one catch-up event
+	 *     per `time.heartbeat` and `time.scheduled` subscription whose missed
+	 *     interval / scheduled slot fell inside the gap.
+	 *  3. Iterate trigger sources and call `pollNow()` on any that expose it
+	 *     (currently `github.pull_request` / `github.issue`). The GitHub poller
+	 *     dedupes against its SQLite "seen" set, so this is safe even if the
+	 *     normal poll tick fires moments later.
+	 *  4. Re-start the heartbeat writer.
+	 *
+	 * Idempotent: a second call within seconds sees `last_seen ≈ now` (because
+	 * step 4 wrote a fresh heartbeat), so the recovery service's threshold
+	 * check short-circuits without firing duplicate catch-ups. Multiple resume
+	 * events from the same wake (lid + display + monitor) are absorbed.
+	 *
+	 * No-op when the engine is disabled.
+	 */
+	reconcileAfterWake(): void {
+		if (!this.enabled) return;
+
+		this.heartbeat.stop();
+		try {
+			this.recoveryService.detectSleepAndReconcile();
+
+			for (const state of this.registry.snapshot().values()) {
+				for (const source of state.triggerSources) {
+					if (typeof source.pollNow !== 'function') continue;
+					try {
+						source.pollNow();
+					} catch (err) {
+						const message = err instanceof Error ? err.message : String(err);
+						this.meteredOnLog('warn', `[CUE] pollNow() threw on resume: ${message}`);
+						void captureException(err, { operation: 'cue.reconcileAfterWake.pollNow' });
+					}
+				}
+			}
+		} finally {
+			this.heartbeat.start();
+		}
+	}
+
 	/** Returns queue depth per session (for the Cue Modal) */
 	getQueueStatus(): Map<string, number> {
 		return this.runManager.getQueueStatus();

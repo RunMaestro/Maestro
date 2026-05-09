@@ -2643,6 +2643,7 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			bySessionSource: Record<string, { user: number; auto: number }>;
 			worktreeQueries: number;
 			parentQueries: number;
 			byWorktreeStatus: {

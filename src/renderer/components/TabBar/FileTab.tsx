@@ -62,6 +62,8 @@ export interface FileTabProps {
 	colorBlindMode?: boolean;
 	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
 	shortcutHint?: number | null;
+	/** True when the owning agent is running on an SSH remote — hides local-only OS actions */
+	sshRemote?: boolean;
 }
 
 /**
@@ -98,6 +100,7 @@ export const FileTab = memo(function FileTab({
 	tabIndex,
 	colorBlindMode,
 	shortcutHint,
+	sshRemote,
 }: FileTabProps) {
 	const [showCopied, setShowCopied] = useState<'path' | 'name' | null>(null);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -469,15 +472,17 @@ export const FileTab = memo(function FileTab({
 									Open in Default App
 								</button>
 
-								{/* Reveal in Finder / Explorer */}
-								<button
-									onClick={handleRevealInFinder}
-									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textMain }}
-								>
-									<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-									{getRevealLabel(window.maestro.platform)}
-								</button>
+								{/* Reveal in Finder / Explorer — local-only, hidden over SSH */}
+								{!sshRemote && (
+									<button
+										onClick={handleRevealInFinder}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										{getRevealLabel(window.maestro.platform)}
+									</button>
+								)}
 
 								{/* Tab Move Actions Section - divider and move options */}
 								{(onMoveToFirst || onMoveToLast) && (

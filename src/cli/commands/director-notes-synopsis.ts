@@ -93,7 +93,9 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 		}
 
 		const result = await withMaestroClient(async (client) => {
-			// Synopsis generation can take minutes — use a 5 minute timeout
+			// Synopsis generation can take many minutes for large lookbacks. Wait
+			// generously so the inner groomContext timeout (5 min default) wins
+			// rather than racing the CLI's outer wait.
 			return client.sendCommand<SynopsisResult>(
 				{
 					type: 'generate_director_notes_synopsis',
@@ -101,7 +103,7 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 					provider,
 				},
 				'generate_director_notes_synopsis_result',
-				300_000
+				15 * 60 * 1000
 			);
 		});
 

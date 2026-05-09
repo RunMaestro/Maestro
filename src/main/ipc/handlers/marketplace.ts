@@ -25,6 +25,7 @@ import type {
 	MarketplacePlaybook,
 } from '../../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../../shared/marketplace-types';
+import { isCompatible } from '../../../shared/marketplace-compatibility';
 import { SshRemoteConfig } from '../../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../../utils/remote-fs';
 import type { MaestroSettings } from './persistence';
@@ -820,6 +821,17 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				const marketplacePlaybook = manifest.playbooks.find((p) => p.id === playbookId);
 				if (!marketplacePlaybook) {
 					throw new MarketplaceImportError(`Playbook not found: ${playbookId}`);
+				}
+
+				// Defense-in-depth: re-check compatibility at the IPC layer even though
+				// the UI disables install for incompatible tiles. Protects future bypass
+				// paths (CLI, deep link, programmatic install).
+				const runningVersion = app.getVersion();
+				if (!isCompatible(marketplacePlaybook, runningVersion)) {
+					throw new MarketplaceImportError(
+						`This playbook requires Maestro ${marketplacePlaybook.minMaestroVersion}+; ` +
+							`you have ${runningVersion}. Update Maestro and try again.`
+					);
 				}
 
 				// Create target folder path (use POSIX paths for remote, native for local)

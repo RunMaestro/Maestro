@@ -92,4 +92,7 @@ export interface TabBarProps {
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
+
+	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
+	sshRemote?: boolean;
 }

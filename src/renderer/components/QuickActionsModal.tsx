@@ -220,6 +220,7 @@ interface QuickActionsModalProps {
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;
+	onFocusActiveTab?: () => void;
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
@@ -323,6 +324,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
+		onFocusActiveTab,
 		onCopyTabContext,
 		onExportTabHtml,
 		onPublishTabGist,
@@ -799,6 +801,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		// Focus the active tab header (helps locate it in a long tab strip)
+		...(hasActiveTab && onFocusActiveTab
+			? [
+					{
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						shortcut: shortcuts?.focusActiveTab,
+						subtext: 'Bring the current tab header into focus',
+						action: () => {
+							onFocusActiveTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		// Tab close operations
 		...(isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 0 && onCloseAllTabs
 			? [

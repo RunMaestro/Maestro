@@ -999,9 +999,23 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						Maestro Cue automatically detects when your computer sleeps and catches up on missed
-						time-based triggers when it wakes. File watchers re-initialize automatically.
+						When your computer wakes from sleep, Maestro Cue replays missed triggers so a closed
+						laptop doesn't mean missed work:
 					</p>
+					<ul className="list-disc pl-5 space-y-1">
+						<li>
+							<code>time.heartbeat</code> — fires once with the count of missed intervals.
+						</li>
+						<li>
+							<code>time.scheduled</code> — fires once for the most recent missed slot, even if
+							several were skipped during a long sleep.
+						</li>
+						<li>
+							<code>github.pull_request</code> / <code>github.issue</code> — polled immediately on
+							wake so new items are detected within seconds instead of waiting for the next
+							scheduled poll.
+						</li>
+					</ul>
 					<p>
 						Catch-up events are marked with a{' '}
 						<span

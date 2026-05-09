@@ -324,6 +324,34 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'editor',
 	},
+	newTabPlacement: {
+		description:
+			'Where new AI tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'end',
+		category: 'editor',
+	},
+	newBrowserTabPlacement: {
+		description:
+			'Where new browser tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
+		category: 'editor',
+	},
+	newTerminalPlacement: {
+		description:
+			'Where new terminal tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
+		category: 'editor',
+	},
+	openedFilePlacement: {
+		description:
+			'Where opened file preview tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
+		type: 'string',
+		default: 'after-current',
+		category: 'editor',
+	},
 	shortcuts: {
 		description: 'Custom keyboard shortcut bindings. Object mapping shortcut IDs to key combos.',
 		type: 'object',
@@ -592,6 +620,29 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'number',
 		default: 240,
 		category: 'advanced',
+	},
+
+	// --- Built-in AI Command Bundles ---
+	speckitEnabled: {
+		description:
+			'Show bundled Spec Kit slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+	openspecEnabled: {
+		description:
+			'Show bundled OpenSpec slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+	bmadEnabled: {
+		description:
+			'Show bundled BMAD slash commands in the AI command autocomplete. Disable to remove them from the slash command picker.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
 	},
 
 	// --- Stats & Tracking ---

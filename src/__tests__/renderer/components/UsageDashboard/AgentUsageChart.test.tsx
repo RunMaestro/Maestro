@@ -61,6 +61,7 @@ const baseEmptyData: StatsAggregation = {
 	avgSessionDuration: 0,
 	byAgentByDay: {},
 	bySessionByDay: {},
+	bySessionSource: {},
 };
 
 function dataForSessions(

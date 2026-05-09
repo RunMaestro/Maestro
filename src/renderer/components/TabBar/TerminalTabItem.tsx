@@ -301,7 +301,10 @@ export const TerminalTabItem = memo(function TerminalTabItem({
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}
 			style={tabStyle}
-			title={tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType}
+			title={
+				(tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType) +
+				(tab.startupCommand ? `\nStartup: ${tab.startupCommand}` : '')
+			}
 			onClick={handleTabSelect}
 			onFocus={handleMouseEnter}
 			onBlur={() => {
@@ -338,6 +341,16 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 
 			{/* Terminal icon with state color */}
 			<Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: iconColor }} />
+
+			{/* Startup command marker — signals the tab will auto-run a command on
+				 next PTY spawn. Subtle accent-colored Play icon next to the terminal icon. */}
+			{tab.startupCommand && (
+				<Play
+					className="w-3 h-3 shrink-0"
+					style={{ color: theme.colors.accent, opacity: 0.85 }}
+					aria-label={`Startup command: ${tab.startupCommand}`}
+				/>
+			)}
 
 			{/* Tab display name */}
 			<span

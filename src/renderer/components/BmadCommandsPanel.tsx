@@ -17,6 +17,8 @@ import { openUrl } from '../utils/openUrl';
 
 interface BmadCommandsPanelProps {
 	theme: Theme;
+	enabled: boolean;
+	onEnabledChange: (value: boolean) => void;
 }
 
 interface EditingCommand {
@@ -24,7 +26,7 @@ interface EditingCommand {
 	prompt: string;
 }
 
-export function BmadCommandsPanel({ theme }: BmadCommandsPanelProps) {
+export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadCommandsPanelProps) {
 	const [commands, setCommands] = useState<BmadCommand[]>([]);
 	const [metadata, setMetadata] = useState<BmadMetadata | null>(null);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
@@ -153,11 +155,36 @@ export function BmadCommandsPanel({ theme }: BmadCommandsPanelProps) {
 		}
 	};
 
+	const enabledToggle = (
+		<button
+			onClick={() => onEnabledChange(!enabled)}
+			className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+			style={{
+				backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+			}}
+			role="switch"
+			aria-checked={enabled}
+			aria-label="Show BMAD commands in slash command autocomplete"
+			title={
+				enabled ? 'Hide from slash command autocomplete' : 'Show in slash command autocomplete'
+			}
+		>
+			<span
+				className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+					enabled ? 'translate-x-5' : 'translate-x-0.5'
+				}`}
+			/>
+		</button>
+	);
+
 	if (isLoading) {
 		return (
 			<div className="space-y-4">
 				<div>
-					<label className="block text-xs font-bold opacity-70 uppercase mb-1">BMAD Commands</label>
+					<div className="flex items-start justify-between gap-3 mb-1">
+						<label className="text-xs font-bold opacity-70 uppercase">BMAD Commands</label>
+						{enabledToggle}
+					</div>
 					<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 						Loading BMAD commands...
 					</p>
@@ -169,7 +196,10 @@ export function BmadCommandsPanel({ theme }: BmadCommandsPanelProps) {
 	return (
 		<div className="space-y-4">
 			<div>
-				<label className="block text-xs font-bold opacity-70 uppercase mb-1">BMAD Commands</label>
+				<div className="flex items-start justify-between gap-3 mb-1">
+					<label className="text-xs font-bold opacity-70 uppercase">BMAD Commands</label>
+					{enabledToggle}
+				</div>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Bundled commands from{' '}
 					<button
@@ -186,7 +216,12 @@ export function BmadCommandsPanel({ theme }: BmadCommandsPanelProps) {
 						bmad-code-org/BMAD-METHOD
 						<ExternalLink className="w-2.5 h-2.5" />
 					</button>{' '}
-					for methodology-guided planning, delivery, and review workflows.
+					for methodology-guided planning, delivery, and review workflows.{' '}
+					{!enabled && (
+						<span style={{ color: theme.colors.warning }}>
+							Hidden from slash command autocomplete.
+						</span>
+					)}
 				</p>
 			</div>
 

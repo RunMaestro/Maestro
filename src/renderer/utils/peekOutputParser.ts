@@ -9,7 +9,7 @@ export interface PeekLine {
 	content: string;
 }
 
-const TOOL_RESULT_PREVIEW_CHARS = 240;
+const TOOL_RESULT_PREVIEW_CHARS = 480;
 const TEXT_PREVIEW_CHARS = 1000;
 
 /**
@@ -208,8 +208,7 @@ function formatToolUse(block: Record<string, unknown>): string {
 		return `→ Edit ${input.file_path}`;
 	}
 	if (name === 'Bash' && input.command) {
-		const cmd = String(input.command);
-		return `→ $ ${cmd.length > 80 ? cmd.slice(0, 80) + '…' : cmd}`;
+		return `→ $ ${String(input.command)}`;
 	}
 	if (name === 'Grep' && input.pattern) {
 		return `→ Grep "${input.pattern}"`;

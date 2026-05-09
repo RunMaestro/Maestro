@@ -72,6 +72,9 @@ export function useAppInitialization(): AppInitializationReturn {
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
 	const idleNotificationCommand = useSettingsStore((s) => s.idleNotificationCommand);
+	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
+	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
+	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -243,7 +246,15 @@ export function useAppInitialization(): AppInitializationReturn {
 	}, [settingsLoaded, leaderboardAuthToken]);
 
 	// --- SpecKit commands loading ---
+	// Wait for settings so we know whether the user has disabled this bundle.
+	// When disabled, skip the IPC fetch and clear any previously loaded commands
+	// so they disappear from slash-command autocomplete immediately.
 	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!speckitEnabled) {
+			setSpeckitCommands([]);
+			return;
+		}
 		(async () => {
 			try {
 				const commands = await getSpeckitCommands();
@@ -252,10 +263,15 @@ export function useAppInitialization(): AppInitializationReturn {
 				logger.error('[SpecKit] Failed to load commands:', undefined, error);
 			}
 		})();
-	}, []);
+	}, [settingsLoaded, speckitEnabled]);
 
 	// --- OpenSpec commands loading ---
 	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!openspecEnabled) {
+			setOpenspecCommands([]);
+			return;
+		}
 		(async () => {
 			try {
 				const commands = await getOpenSpecCommands();
@@ -264,10 +280,15 @@ export function useAppInitialization(): AppInitializationReturn {
 				logger.error('[OpenSpec] Failed to load commands:', undefined, error);
 			}
 		})();
-	}, []);
+	}, [settingsLoaded, openspecEnabled]);
 
 	// --- BMAD commands loading ---
 	useEffect(() => {
+		if (!settingsLoaded) return;
+		if (!bmadEnabled) {
+			setBmadCommands([]);
+			return;
+		}
 		(async () => {
 			try {
 				const commands = await getBmadCommands();
@@ -280,7 +301,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				});
 			}
 		})();
-	}, []);
+	}, [settingsLoaded, bmadEnabled]);
 
 	// --- SSH remote configs loading ---
 	// Non-critical: SSH may not be configured. Failures are logged but not
