@@ -198,6 +198,41 @@ subscriptions:
 
 **Visual-node identity (`target_node_key`, `fan_out_node_keys`):** When you save from the Pipeline Editor, you may see UUID-valued `target_node_key` / `fan_out_node_keys` fields on subscriptions. These are renderer-only — the Cue engine ignores them. They let the editor distinguish "two visual nodes that happen to point at the same agent" (different keys → two nodes on the canvas) from "one shared node with multiple inputs" (same key → explicit fan-in onto a single node). If you hand-edit YAML and want two separate visual instances of the same agent for the same trigger, give each sub a different `target_node_key`; if you want them to merge into one fan-in target, give them the same key. Leave the keys alone when round-tripping through the editor — clearing them silently re-merges your visual nodes by `agent_id` on the next reload.
 
+#### Agent-authored Trigger -> Command -> Agent YAML checklist
+
+If an AI agent writes `cue.yaml` directly (without using the visual editor), include all of the following so Maestro reconstructs the graph correctly:
+
+1. Initial trigger subscription uses `action: command` with a valid `command` object.
+2. The downstream `agent.completed` subscription includes `source_sub` pointing to that command subscription name.
+3. Keep `pipeline_name` consistent across all subs in the pipeline.
+4. Keep per-node identity fields (`target_node_key`, `fan_out_node_keys`) stable once created.
+
+Example:
+
+```yaml
+subscriptions:
+  - name: Build Pipeline-cmd-1
+    pipeline_name: Build Pipeline
+    event: time.scheduled
+    schedule_times: ['09:00']
+    action: command
+    command:
+      mode: shell
+      shell: npm run build
+    agent_id: AGENT_UUID_A
+    target_node_key: node-cmd-1
+
+  - name: Build Pipeline-chain-1
+    pipeline_name: Build Pipeline
+    event: agent.completed
+    source_session: Agent A
+    source_session_ids: [AGENT_UUID_A]
+    source_sub: Build Pipeline-cmd-1
+    prompt: "{{CUE_SOURCE_OUTPUT}}\n\nSummarize build output and next steps."
+    agent_id: AGENT_UUID_A
+    target_node_key: node-agent-1
+```
+
 ### Labels
 
 The `label` field provides a human-readable name displayed in the Cue dashboard and pipeline editor. When subscriptions are grouped into a pipeline, the label distinguishes each line within the pipeline.

@@ -862,6 +862,21 @@ export function subscriptionsToPipelines(
 						const bySubRef = subRef ? subNameToNode.get(subRef) : undefined;
 						if (bySubRef) {
 							sourceNode = bySubRef;
+						} else if (typeof subRef === 'string' && subRef.length > 0) {
+							const errorNodeId = `error-source-sub-${sub.name}-${i}`;
+							sourceNode = createErrorNode(
+								errorNodeId,
+								{
+									reason: 'missing-source',
+									subscriptionName: sub.name,
+									message: `Upstream subscription "${subRef}" could not be resolved.`,
+								},
+								{
+									x: LAYOUT.firstAgentX + (targetCol - 2) * LAYOUT.stepSpacing,
+									y: LAYOUT.baseY + (existingRows + i) * LAYOUT.verticalSpacing,
+								}
+							);
+							nodeMap.set(errorNodeId, sourceNode);
 						} else if (position.kind === 'resolved' && position.sessionName) {
 							sourceNode =
 								sessionToNode.get(position.sessionName) ??
@@ -938,6 +953,22 @@ export function subscriptionsToPipelines(
 					const bySubRef = subRef ? subNameToNode.get(subRef) : undefined;
 					if (bySubRef) {
 						resolvedSources.push(bySubRef);
+					} else if (typeof subRef === 'string' && subRef.length > 0) {
+						const errorNodeId = `error-source-sub-${sub.name}-${i}`;
+						const errorNode = createErrorNode(
+							errorNodeId,
+							{
+								reason: 'missing-source',
+								subscriptionName: sub.name,
+								message: `Upstream subscription "${subRef}" could not be resolved.`,
+							},
+							{
+								x: LAYOUT.firstAgentX + (targetCol - 2) * LAYOUT.stepSpacing,
+								y: LAYOUT.baseY + (existingRows + i) * LAYOUT.verticalSpacing,
+							}
+						);
+						nodeMap.set(errorNodeId, errorNode);
+						resolvedSources.push(errorNode);
 					} else if (position.kind === 'resolved' && position.sessionName) {
 						const sourceNode =
 							sessionToNode.get(position.sessionName) ??

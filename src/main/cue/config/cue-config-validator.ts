@@ -357,6 +357,28 @@ function validateEventSpecificFields(
 				errors.push(`${prefix}: "source_sub" must be a string or array of strings when provided`);
 			}
 		}
+		// Command-chain links must carry explicit upstream subscription identity.
+		// Without source_sub, YAML->graph reconstruction has to guess by session
+		// name and can collapse Command->Agent into Agent->Agent when both share
+		// an owning session.
+		if (sub.action === 'command' && sub.source_sub === undefined) {
+			errors.push(
+				`${prefix}: "source_sub" is required for agent.completed subscriptions when action is "command"`
+			);
+		}
+		// For fan-in chains, source_sub should align positionally with
+		// source_session so each upstream source maps to its exact upstream sub.
+		const sourceSessionIsArray = Array.isArray(sub.source_session);
+		const sourceSubIsArray = Array.isArray(sub.source_sub);
+		if (sourceSessionIsArray && sourceSubIsArray) {
+			if (sub.source_session.length !== sub.source_sub.length) {
+				errors.push(
+					`${prefix}: "source_sub" length (${sub.source_sub.length}) must match "source_session" length (${sub.source_session.length})`
+				);
+			}
+		} else if (sourceSessionIsArray && typeof sub.source_sub === 'string') {
+			errors.push(`${prefix}: "source_sub" must be an array when "source_session" is an array`);
+		}
 	} else if (event === 'task.pending') {
 		if (!sub.watch || typeof sub.watch !== 'string') {
 			errors.push(
