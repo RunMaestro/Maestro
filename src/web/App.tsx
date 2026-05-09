@@ -217,7 +217,7 @@ function LoadingFallback() {
  * Main App component - renders the remote control interface
  */
 export function App() {
-	const [offline, setOffline] = useState(isOffline());
+	const [offline, setOffline] = useState(() => isOffline());
 	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(null);
 	const [desktopBionifyReadingMode, setDesktopBionifyReadingMode] = useState(false);
 	const config = useMemo(() => getMaestroConfig(), []);

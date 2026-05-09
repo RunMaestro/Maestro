@@ -136,8 +136,15 @@ interface GenericProcessManager {
 		readOnlyMode?: boolean;
 		prompt?: string;
 		customEnvVars?: Record<string, string>;
+		/** Global shell env vars from Settings → Shell Configuration (merged by envBuilder). */
+		shellEnvVars?: Record<string, string>;
 		contextWindow?: number;
+		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
+		shell?: string;
+		runInShell?: boolean;
+		sendPromptViaStdin?: boolean;
+		sendPromptViaStdinRaw?: boolean;
 	}): { pid: number; success: boolean };
 	write(sessionId: string, data: string): boolean;
 	kill(sessionId: string): boolean;

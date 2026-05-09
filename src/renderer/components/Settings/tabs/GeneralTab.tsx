@@ -30,6 +30,7 @@ import {
 	Timer,
 	User,
 	ArrowDownToLine,
+	SpellCheck,
 	HelpCircle,
 	ExternalLink,
 	Keyboard,
@@ -78,6 +79,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultShowThinking,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+		// Spell check
+		spellCheck,
+		setSpellCheck,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -757,6 +761,17 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				description="Automatically scroll to the bottom when new AI output arrives. When disabled, a floating button appears for new messages."
 				checked={autoScrollAiMode}
 				onChange={setAutoScrollAiMode}
+				theme={theme}
+			/>
+
+			{/* Spell Check */}
+			<SettingCheckbox
+				icon={SpellCheck}
+				sectionLabel="Spell Check"
+				title="Enable spell checking"
+				description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+				checked={spellCheck}
+				onChange={setSpellCheck}
 				theme={theme}
 			/>
 

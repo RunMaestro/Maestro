@@ -493,15 +493,27 @@ export class HistoryManager {
 			fs.mkdirSync(this.historyDir, { recursive: true });
 		}
 
-		this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
-			if (filename?.endsWith('.json')) {
-				const sessionId = filename.replace('.json', '');
-				logger.debug(`History file changed: ${filename}`, LOG_CONTEXT);
-				onExternalChange(sessionId);
-			}
-		});
+		try {
+			this.watcher = fs.watch(this.historyDir, (_eventType, filename) => {
+				if (filename?.endsWith('.json')) {
+					const sessionId = filename.replace('.json', '');
+					logger.debug(`History file changed: ${filename}`, LOG_CONTEXT);
+					onExternalChange(sessionId);
+				}
+			});
 
-		logger.info('Started watching history directory', LOG_CONTEXT);
+			// Prevent runtime errors (e.g. Windows UNKNOWN, disk unmount) from
+			// becoming unhandled rejections. Swallow to logger; caller stays alive.
+			this.watcher.on('error', (error) => {
+				logger.warn(`History watcher error: ${error.message}`, LOG_CONTEXT);
+			});
+
+			logger.info('Started watching history directory', LOG_CONTEXT);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			logger.warn(`Failed to start history watcher: ${message}`, LOG_CONTEXT);
+			this.watcher = null;
+		}
 	}
 
 	/**

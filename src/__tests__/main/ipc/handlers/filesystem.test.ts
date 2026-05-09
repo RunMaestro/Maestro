@@ -308,6 +308,20 @@ describe('filesystem handlers', () => {
 
 			expect(result).toMatch(/^data:image\/svg\+xml;base64,/);
 		});
+
+		it('should return null when path resolves to a directory (EISDIR)', async () => {
+			// Caller may pass a path that turned out to be a folder. Returning
+			// null instead of throwing keeps the IPC promise from rejecting and
+			// surfacing as an unhandled rejection. Fixes MAESTRO-JP.
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('EISDIR'), { code: 'EISDIR' })
+			);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/test/some-folder');
+
+			expect(result).toBeNull();
+		});
 	});
 
 	describe('fs:stat', () => {
