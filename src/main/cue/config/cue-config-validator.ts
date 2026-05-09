@@ -368,16 +368,20 @@ function validateEventSpecificFields(
 		}
 		// For fan-in chains, source_sub should align positionally with
 		// source_session so each upstream source maps to its exact upstream sub.
-		const sourceSessionIsArray = Array.isArray(sub.source_session);
-		const sourceSubIsArray = Array.isArray(sub.source_sub);
-		if (sourceSessionIsArray && sourceSubIsArray) {
-			if (sub.source_session.length !== sub.source_sub.length) {
+		const sourceSession = sub.source_session;
+		const sourceSub = sub.source_sub;
+		const sourceSessionIsArray = Array.isArray(sourceSession);
+		const sourceSubIsArray = Array.isArray(sourceSub);
+		if (Array.isArray(sourceSession) && Array.isArray(sourceSub)) {
+			if (sourceSession.length !== sourceSub.length) {
 				errors.push(
-					`${prefix}: "source_sub" length (${sub.source_sub.length}) must match "source_session" length (${sub.source_session.length})`
+					`${prefix}: "source_sub" length (${sourceSub.length}) must match "source_session" length (${sourceSession.length})`
 				);
 			}
-		} else if (sourceSessionIsArray && typeof sub.source_sub === 'string') {
+		} else if (sourceSessionIsArray && typeof sourceSub === 'string') {
 			errors.push(`${prefix}: "source_sub" must be an array when "source_session" is an array`);
+		} else if (!sourceSessionIsArray && sourceSubIsArray) {
+			errors.push(`${prefix}: "source_sub" must be a string when "source_session" is a string`);
 		}
 	} else if (event === 'task.pending') {
 		if (!sub.watch || typeof sub.watch !== 'string') {

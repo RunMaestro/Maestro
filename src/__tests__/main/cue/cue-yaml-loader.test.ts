@@ -795,6 +795,28 @@ subscriptions:
 			);
 		});
 
+		it('rejects source_sub array when source_session is a string', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in-invalid-shape',
+						event: 'agent.completed',
+						source_session: 'A',
+						source_sub: ['chain-a', 'chain-b'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
 		it('accepts prompt_file as alternative to prompt', () => {
 			const result = validateCueConfig({
 				subscriptions: [

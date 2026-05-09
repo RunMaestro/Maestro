@@ -532,6 +532,7 @@ export function subscriptionsToPipelines(
 			if (aIdx !== bIdx) return aIdx - bIdx;
 			return a.name.localeCompare(b.name);
 		});
+		const knownSubNames = new Set(sorted.map((s) => s.name));
 
 		let triggerCount = 0;
 		let columnIndex = 0;
@@ -862,7 +863,11 @@ export function subscriptionsToPipelines(
 						const bySubRef = subRef ? subNameToNode.get(subRef) : undefined;
 						if (bySubRef) {
 							sourceNode = bySubRef;
-						} else if (typeof subRef === 'string' && subRef.length > 0) {
+						} else if (
+							typeof subRef === 'string' &&
+							subRef.length > 0 &&
+							!knownSubNames.has(subRef)
+						) {
 							const errorNodeId = `error-source-sub-${sub.name}-${i}`;
 							sourceNode = createErrorNode(
 								errorNodeId,
@@ -953,7 +958,11 @@ export function subscriptionsToPipelines(
 					const bySubRef = subRef ? subNameToNode.get(subRef) : undefined;
 					if (bySubRef) {
 						resolvedSources.push(bySubRef);
-					} else if (typeof subRef === 'string' && subRef.length > 0) {
+					} else if (
+						typeof subRef === 'string' &&
+						subRef.length > 0 &&
+						!knownSubNames.has(subRef)
+					) {
 						const errorNodeId = `error-source-sub-${sub.name}-${i}`;
 						const errorNode = createErrorNode(
 							errorNodeId,
