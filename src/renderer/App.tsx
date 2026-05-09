@@ -2002,6 +2002,7 @@ function MaestroConsoleInner() {
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
 		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,
 		handleQuickActionsMoveTabToFirst,
 		handleQuickActionsMoveTabToLast,
@@ -2846,6 +2847,7 @@ function MaestroConsoleInner() {
 					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
 					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
 					onMoveTabToLast={handleQuickActionsMoveTabToLast}
+					onFocusActiveTab={handleQuickActionsFocusActiveTab}
 					onCopyTabContext={handleQuickActionsCopyTabContext}
 					onExportTabHtml={handleQuickActionsExportTabHtml}
 					onPublishTabGist={handleQuickActionsPublishTabGist}

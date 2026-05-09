@@ -1,7 +1,6 @@
 // Dispatch command — hand off a prompt to the Maestro desktop app and return
-// addressable tab/session IDs. Splits the desktop-handoff half of `send --live`
-// into a standalone verb so callers (Maestro-Discord, Cue) can address the same
-// tab on follow-up calls without owning a persistent channel.
+// addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
+// the same tab on follow-up calls without owning a persistent channel.
 
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
@@ -10,7 +9,7 @@ import { getSettingDefault } from '../../shared/settingsMetadata';
 export interface DispatchOptions {
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
-	session?: string;
+	tab?: string;
 	force?: boolean;
 }
 
@@ -31,18 +30,18 @@ function emitErrorJson(error: string, code: string): void {
 
 /**
  * Run the dispatch flow. Exported separately from the CLI action so
- * `send --live` can delegate here during the deprecation window without
- * duplicating logic or re-shelling out.
+ * programmatic callers (e.g., Maestro-Discord, Cue) and tests can invoke
+ * dispatch logic without re-shelling out.
  */
 export async function runDispatch(
 	agentIdArg: string,
 	message: string,
 	options: DispatchOptions
 ): Promise<DispatchResponse> {
-	if (options.newTab && options.session) {
+	if (options.newTab && options.tab) {
 		return {
 			success: false,
-			error: '--new-tab cannot be combined with --session',
+			error: '--new-tab cannot be combined with --tab',
 			code: 'INVALID_OPTIONS',
 		};
 	}
@@ -91,7 +90,7 @@ export async function runDispatch(
 					'new_ai_tab_with_prompt_result'
 				);
 				// `--new-tab`'s sole purpose is to surface a fresh tab id for
-				// chaining (`dispatch --session <tabId>`). If the desktop acked
+				// chaining (`dispatch --tab <tabId>`). If the desktop acked
 				// without one (older build / race), fail loudly with a dedicated
 				// code so consumers (Maestro-Discord, Cue) can distinguish this
 				// from a generic command failure instead of silently returning
@@ -107,18 +106,18 @@ export async function runDispatch(
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
-					...(options.session ? { tabId: options.session } : {}),
+					...(options.tab ? { tabId: options.tab } : {}),
 					...(options.force ? { force: true } : {}),
 				},
 				'command_result'
 			);
 			return result.tabId;
 		});
-		// `--session <tabId>` is the authoritative target; the desktop handler
+		// `--tab <tabId>` is the authoritative target; the desktop handler
 		// echoes it back when we pass one. If the desktop omitted it (older
 		// build / no active tab known), fall back to the value the caller
 		// supplied so callers can still chain dispatches deterministically.
-		const resolvedTabId = tabId ?? options.session ?? null;
+		const resolvedTabId = tabId ?? options.tab ?? null;
 		return {
 			success: true,
 			agentId,

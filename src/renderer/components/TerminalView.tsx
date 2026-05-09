@@ -293,6 +293,25 @@ export const TerminalView = memo(
 			spawnPtyForTab(activeTab);
 		}, [activeTab?.id, spawnPtyForTab]);
 
+		// Eagerly spawn any non-active terminal tab that has a startupCommand
+		// configured. Without this, a tab with `npm run dev` would silently sit
+		// dormant after an app restart until the user clicked it — defeating the
+		// whole point of a persistent startup command. spawnPtyForTab's in-flight
+		// guard + the pid===0 check make this safe to re-evaluate on every render.
+		useEffect(() => {
+			const terminalTabs = session.terminalTabs || [];
+			for (const tab of terminalTabs) {
+				if (
+					tab.startupCommand &&
+					tab.pid === 0 &&
+					tab.state !== 'exited' &&
+					tab.id !== activeTab?.id
+				) {
+					spawnPtyForTab(tab);
+				}
+			}
+		}, [session.terminalTabs, activeTab?.id, spawnPtyForTab]);
+
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden
 		// rather than unmounting, so xterm.js's ResizeObserver never fires — the WebGL/canvas

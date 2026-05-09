@@ -133,6 +133,12 @@ describe('tabHelpers', () => {
 	});
 
 	describe('createTab', () => {
+		// These tests assert insert-after-active placement; the setting defaults
+		// to 'end', so opt into 'after-current' for the duration of this block.
+		beforeEach(() => {
+			useSettingsStore.setState({ newTabPlacement: 'after-current' });
+		});
+
 		it('creates a new tab with default options', () => {
 			const session = createMockSession({ aiTabs: [] });
 

@@ -171,6 +171,27 @@ Click the **Stop** button at any time. The runner will:
 - Preserve all completed work
 - Allow you to resume later by clicking Run again
 
+## Halt Marker (Agent Early Exit)
+
+Sometimes the agent itself discovers that the rest of the playbook cannot meaningfully proceed — a missing dependency, a broken precondition, an ambiguous spec it cannot resolve, or a destructive change it refuses to make. In that case the agent can abort the entire run by writing a halt marker into the current document:
+
+```html
+<!-- maestro:halt: brief reason here -->
+```
+
+When the engine re-reads the document after the task and finds this marker, it stops dispatch immediately:
+
+- No further tasks in the current document
+- No further documents in the playbook
+- The reason text is recorded in the History panel
+- A `halt` event is emitted to the JSONL stream, followed by a `complete` event with `success: false` and the same reason
+
+The bare form `<!-- maestro:halt -->` works without a reason, but agents are instructed to always include one. The agent should leave the unfinishable task **unchecked** so you can see exactly where execution stopped.
+
+This is distinct from clicking **Stop** (a manual user action) or a single task simply failing (which by default does **not** halt the playbook — Auto Run is designed to run independent tasks, so one failure doesn't invalidate the rest).
+
+A stale halt marker left in a document will block re-runs with an error — Auto Run refuses to start so previously-halted work isn't silently replayed. Remove the marker before launching the playbook again.
+
 ## Parallel Auto Runs
 
 Auto Run can execute in parallel across different agents without conflicts — each agent works in its own project directory, so there's no risk of clobbering each other's work.

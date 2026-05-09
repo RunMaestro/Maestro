@@ -26,6 +26,7 @@ export function createCueGitHubPollerTriggerSource(
 	}
 
 	let cleanup: (() => void) | null = null;
+	let pollNowFn: (() => void) | null = null;
 
 	return {
 		start() {
@@ -47,6 +48,9 @@ export function createCueGitHubPollerTriggerSource(
 					ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
 					ctx.emit(event);
 				},
+				onReady: (handle) => {
+					pollNowFn = handle.pollNow;
+				},
 			});
 		},
 
@@ -55,12 +59,17 @@ export function createCueGitHubPollerTriggerSource(
 				cleanup();
 				cleanup = null;
 			}
+			pollNowFn = null;
 		},
 
 		nextTriggerAt() {
 			// GitHub pollers fire whenever a matching PR/issue appears upstream —
 			// no predictable next-fire time.
 			return null;
+		},
+
+		pollNow() {
+			pollNowFn?.();
 		},
 	};
 }

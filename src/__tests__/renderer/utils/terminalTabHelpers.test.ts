@@ -34,6 +34,7 @@ import {
 } from '../../../renderer/utils/terminalTabHelpers';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock generateId for predictable test IDs
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -128,6 +129,12 @@ describe('getTerminalSessionId / parseTerminalSessionId', () => {
 });
 
 describe('addTerminalTab', () => {
+	// Several tests here assert insert-after-active placement; the setting defaults
+	// to 'end', so opt into 'after-current' for the duration of this block.
+	beforeEach(() => {
+		useSettingsStore.setState({ newTabPlacement: 'after-current' });
+	});
+
 	it('appends the tab to terminalTabs', () => {
 		const session = createMockSession();
 		const tab = createMockTerminalTab({ id: 'new-tab' });

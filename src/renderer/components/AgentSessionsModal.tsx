@@ -172,9 +172,12 @@ export function AgentSessionsModal({
 				setStarredSessions(starredFromOrigins);
 
 				// Use generic agentSessions API for session listing
-				const result = await window.maestro.agentSessions.listPaginated(agentId, projectPath, {
-					limit: 100,
-				});
+				const result = await window.maestro.agentSessions.listPaginated(
+					agentId,
+					projectPath,
+					{ limit: 100 },
+					activeSession.sshRemoteId
+				);
 				console.log(
 					'AgentSessionsModal: Got sessions:',
 					result.sessions.length,
@@ -193,7 +196,7 @@ export function AgentSessionsModal({
 		};
 
 		loadSessions();
-	}, [activeSession?.projectRoot, activeSession?.toolType]);
+	}, [activeSession?.projectRoot, activeSession?.toolType, activeSession?.sshRemoteId]);
 
 	// Load more sessions when scrolling near bottom
 	const loadMoreSessions = useCallback(async () => {
@@ -215,7 +218,8 @@ export function AgentSessionsModal({
 				{
 					cursor: nextCursorRef.current,
 					limit: 100,
-				}
+				},
+				activeSession.sshRemoteId
 			);
 
 			// Append new sessions, avoiding duplicates
@@ -231,7 +235,13 @@ export function AgentSessionsModal({
 		} finally {
 			setIsLoadingMoreSessions(false);
 		}
-	}, [activeSession?.projectRoot, activeSession?.toolType, hasMoreSessions, isLoadingMoreSessions]);
+	}, [
+		activeSession?.projectRoot,
+		activeSession?.toolType,
+		activeSession?.sshRemoteId,
+		hasMoreSessions,
+		isLoadingMoreSessions,
+	]);
 
 	// Handle scroll for sessions list pagination - load more at 70% scroll
 	const handleSessionsScroll = useCallback(() => {
@@ -294,16 +304,17 @@ export function AgentSessionsModal({
 	// Load messages when viewing a session
 	const loadMessages = useCallback(
 		async (session: AgentSession, offset: number = 0) => {
-			if (!activeSession?.cwd) return;
+			if (!activeSession?.projectRoot) return;
 
 			const agentId = activeSession.toolType || 'claude-code';
 			setMessagesLoading(true);
 			try {
 				const result = await window.maestro.agentSessions.read(
 					agentId,
-					activeSession.cwd,
+					activeSession.projectRoot,
 					session.sessionId,
-					{ offset, limit: 20 }
+					{ offset, limit: 20 },
+					activeSession.sshRemoteId
 				);
 
 				if (offset === 0) {
@@ -323,7 +334,7 @@ export function AgentSessionsModal({
 				setMessagesLoading(false);
 			}
 		},
-		[activeSession?.cwd, activeSession?.toolType]
+		[activeSession?.projectRoot, activeSession?.toolType, activeSession?.sshRemoteId]
 	);
 
 	// Handle viewing a session

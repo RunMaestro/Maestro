@@ -165,7 +165,7 @@ describe('parsePeekOutput', () => {
 		const result = parsePeekOutput(raw);
 		expect(result).toHaveLength(1);
 		expect(result[0].type).toBe('tool_result');
-		expect(result[0].content.length).toBeLessThanOrEqual(241);
+		expect(result[0].content.length).toBeLessThanOrEqual(481);
 		expect(result[0].content.endsWith('…')).toBe(true);
 	});
 

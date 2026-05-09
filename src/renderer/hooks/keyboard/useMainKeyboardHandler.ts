@@ -553,6 +553,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('sidebar');
 				setTimeout(() => ctx.sidebarContainerRef?.current?.focus(), 0);
 				trackShortcut('focusSidebar');
+			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
+				e.preventDefault();
+				ctx.mainPanelRef?.current?.focusActiveTab();
+				trackShortcut('focusActiveTab');
 			} else if (ctx.isShortcut(e, 'viewGitDiff') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.handleViewGitDiff();

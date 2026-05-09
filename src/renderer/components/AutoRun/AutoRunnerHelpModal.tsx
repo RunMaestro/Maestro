@@ -17,6 +17,7 @@ import {
 	Terminal,
 	ArrowDownToLine,
 	Globe,
+	StopCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -523,6 +524,40 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							is left incomplete.
 						</p>
 						<p>Completed tasks remain checked. Resume anytime by clicking Run again.</p>
+					</div>
+				</section>
+
+				{/* Halt Marker */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<StopCircle className="w-5 h-5" style={{ color: theme.colors.error }} />
+						<h3 className="font-bold">Halt Marker (Agent Early Exit)</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							An executing agent can abort an entire playbook mid-flight by writing a halt marker
+							into the current document. Useful for blockers an agent uncovers while working —
+							missing dependencies, broken preconditions, ambiguous specs, or destructive changes it
+							refuses to make.
+						</p>
+						<div
+							className="font-mono text-xs p-2 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							{'<!-- maestro:halt: brief reason here -->'}
+						</div>
+						<p>
+							When the engine sees this marker after a task, it stops immediately — no further tasks
+							in the current document, no further documents in the playbook. The reason is recorded
+							in the History panel and surfaced as a <code>halt</code> event in the JSONL stream.
+						</p>
+						<p>
+							A stale halt marker left in a document will block re-runs until removed — Auto Run
+							refuses to start so previously-halted work isn't silently replayed.
+						</p>
 					</div>
 				</section>
 

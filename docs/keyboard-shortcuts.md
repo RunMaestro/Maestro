@@ -90,6 +90,7 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | New File Tab              | `Opt+N`                 | `Alt+N`                   |
 | New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
 | Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
+| Focus Active Tab          | `Opt+Cmd+F`             | `Alt+Ctrl+F`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |

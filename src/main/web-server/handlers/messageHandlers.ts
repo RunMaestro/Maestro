@@ -298,6 +298,16 @@ export interface MessageHandlerCallbacks {
 		prompt?: string,
 		sourceAgentId?: string
 	) => Promise<boolean>;
+	listCuePipelines: () => Promise<{ pipelines: unknown[] }>;
+	getCuePipeline: (identifier: string) => Promise<unknown | null>;
+	setCuePipeline: (
+		identifier: string,
+		pipeline: unknown,
+		policy: 'add' | 'replace'
+	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+	removeCuePipeline: (
+		identifier: string
+	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
@@ -626,6 +636,22 @@ export class WebSocketMessageHandler {
 
 			case 'trigger_cue_subscription':
 				this.handleTriggerCueSubscription(client, message);
+				break;
+
+			case 'cue_pipeline_list':
+				this.handleCuePipelineList(client, message);
+				break;
+
+			case 'cue_pipeline_get':
+				this.handleCuePipelineGet(client, message);
+				break;
+
+			case 'cue_pipeline_set':
+				this.handleCuePipelineSet(client, message);
+				break;
+
+			case 'cue_pipeline_remove':
+				this.handleCuePipelineRemove(client, message);
 				break;
 
 			case 'get_usage_dashboard':
@@ -3508,6 +3534,142 @@ export class WebSocketMessageHandler {
 				const err = error instanceof Error ? error : new Error(String(error));
 				logger.error(`Failed to trigger Cue subscription: ${err.message}`, 'WebSocket');
 				this.sendError(client, `Failed to trigger Cue subscription: ${err.message}`);
+			});
+	}
+
+	/**
+	 * Handle cue_pipeline_list — return all named pipeline entries from
+	 * the on-disk cue-pipeline-layout.json. Pipelines are returned as
+	 * opaque JSON objects so the CLI doesn't need to share the editor's
+	 * full type tree to round-trip them.
+	 */
+	private handleCuePipelineList(client: WebClient, message: WebClientMessage): void {
+		if (!this.callbacks.listCuePipelines) {
+			this.sendError(client, 'Cue pipeline list not available');
+			return;
+		}
+		this.callbacks
+			.listCuePipelines()
+			.then(({ pipelines }) => {
+				this.send(client, {
+					type: 'cue_pipeline_list_result',
+					pipelines,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error(`Failed to list Cue pipelines: ${err.message}`, 'WebSocket');
+				this.sendError(client, `Failed to list Cue pipelines: ${err.message}`);
+			});
+	}
+
+	/**
+	 * Handle cue_pipeline_get — fetch a single pipeline entry by name or
+	 * id. Missing entries respond with `pipeline: null` rather than an
+	 * error so scripts can treat "not found" as a normal value.
+	 */
+	private handleCuePipelineGet(client: WebClient, message: WebClientMessage): void {
+		const identifier = message.identifier;
+		if (typeof identifier !== 'string' || identifier.length === 0) {
+			this.sendError(client, 'Missing identifier (pipeline name or id)');
+			return;
+		}
+		if (!this.callbacks.getCuePipeline) {
+			this.sendError(client, 'Cue pipeline get not available');
+			return;
+		}
+
+		this.callbacks
+			.getCuePipeline(identifier)
+			.then((pipeline) => {
+				this.send(client, {
+					type: 'cue_pipeline_get_result',
+					pipeline,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error(`Failed to get Cue pipeline: ${err.message}`, 'WebSocket');
+				this.sendError(client, `Failed to get Cue pipeline: ${err.message}`);
+			});
+	}
+
+	/**
+	 * Handle cue_pipeline_set — add or replace a pipeline entry. The
+	 * callback returns a structured result so the CLI can map error codes
+	 * (already_exists / not_found / invalid_input / …) to non-zero exit
+	 * codes without parsing free-form messages.
+	 */
+	private handleCuePipelineSet(client: WebClient, message: WebClientMessage): void {
+		const identifier = message.identifier;
+		const pipeline = message.pipeline;
+		const policyRaw = message.policy;
+		if (typeof identifier !== 'string' || identifier.length === 0) {
+			this.sendError(client, 'Missing identifier (pipeline name or id)');
+			return;
+		}
+		if (policyRaw !== 'add' && policyRaw !== 'replace') {
+			this.sendError(client, 'Invalid policy: must be "add" or "replace"');
+			return;
+		}
+		if (pipeline === undefined || pipeline === null) {
+			this.sendError(client, 'Missing pipeline payload');
+			return;
+		}
+		if (!this.callbacks.setCuePipeline) {
+			this.sendError(client, 'Cue pipeline set not available');
+			return;
+		}
+
+		this.callbacks
+			.setCuePipeline(identifier, pipeline, policyRaw)
+			.then((result) => {
+				this.send(client, {
+					type: 'cue_pipeline_set_result',
+					result,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error(`Failed to set Cue pipeline: ${err.message}`, 'WebSocket');
+				this.sendError(client, `Failed to set Cue pipeline: ${err.message}`);
+			});
+	}
+
+	/**
+	 * Handle cue_pipeline_remove — delete a pipeline entry by name or id.
+	 */
+	private handleCuePipelineRemove(client: WebClient, message: WebClientMessage): void {
+		const identifier = message.identifier;
+		if (typeof identifier !== 'string' || identifier.length === 0) {
+			this.sendError(client, 'Missing identifier (pipeline name or id)');
+			return;
+		}
+		if (!this.callbacks.removeCuePipeline) {
+			this.sendError(client, 'Cue pipeline remove not available');
+			return;
+		}
+
+		this.callbacks
+			.removeCuePipeline(identifier)
+			.then((result) => {
+				this.send(client, {
+					type: 'cue_pipeline_remove_result',
+					result,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error(`Failed to remove Cue pipeline: ${err.message}`, 'WebSocket');
+				this.sendError(client, `Failed to remove Cue pipeline: ${err.message}`);
 			});
 	}
 

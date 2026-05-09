@@ -21,6 +21,7 @@ import { AgentOverviewCards } from './AgentOverviewCards';
 import { AgentDetailModal } from './AgentDetailModal';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
+import { ProviderTrendsChart } from './ProviderTrendsChart';
 import { SourceDistributionChart } from './SourceDistributionChart';
 import { LocationDistributionChart } from './LocationDistributionChart';
 import { RadialActivityChart } from './RadialActivityChart';
@@ -62,6 +63,7 @@ const OVERVIEW_SECTIONS = [
 	'year-in-pixels',
 	'summary-cards',
 	'agent-comparison',
+	'provider-trends',
 	'source-distribution',
 	'location-distribution',
 	'radial-activity',
@@ -418,6 +420,7 @@ export function UsageDashboardModal({
 			'session-stats': 'Agent Statistics',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
+			'provider-trends': 'Provider Trends Over Time',
 			'agent-usage': 'Agent Usage Chart',
 			'source-distribution': 'Session Type Chart',
 			'location-distribution': 'Location Distribution Chart',
@@ -563,7 +566,7 @@ export function UsageDashboardModal({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Usage Dashboard"
-				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				onClick={(e) => e.stopPropagation()}
 				style={{
 					backgroundColor: theme.colors.bgActivity,
@@ -885,6 +888,36 @@ export function UsageDashboardModal({
 										<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
 											<AgentComparisonChart
 												data={data}
+												theme={theme}
+												colorBlindMode={colorBlindMode}
+												sessions={sessions}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Provider Trends Over Time — stacked bars per day so drift
+									    between providers (e.g. Claude Code → Codex) is visible. */}
+									<div
+										ref={setSectionRef('provider-trends')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('provider-trends')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'provider-trends')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											minHeight: '260px',
+											boxShadow:
+												focusedSection === 'provider-trends'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '125ms',
+										}}
+										data-testid="section-provider-trends"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Provider Trends">
+											<ProviderTrendsChart
+												data={data}
+												timeRange={timeRange}
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 												sessions={sessions}

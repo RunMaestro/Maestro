@@ -3,8 +3,8 @@
  * @description Tests for the open-file CLI command
  *
  * Tests the open-file command functionality including:
- * - Opening a valid file with explicit session
- * - Opening a valid file with default session resolution
+ * - Opening a valid file with explicit agent
+ * - Opening a valid file with default agent resolution
  * - Error handling for non-existent files
  * - Error handling when Maestro app is not running
  */
@@ -52,7 +52,7 @@ describe('open-file command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
-	it('should open a valid file with explicit session', async () => {
+	it('should open a valid file with explicit agent', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		let captured: { sessionId?: string; switchToAgent?: boolean } = {};
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
@@ -65,7 +65,7 @@ describe('open-file command', () => {
 			return action(mockClient as never);
 		});
 
-		await openFile('/home/user/project/file.ts', { session: 'session-123' });
+		await openFile('/home/user/project/file.ts', { agent: 'session-123' });
 
 		expect(captured.sessionId).toBe('session-123');
 		expect(captured.switchToAgent).toBe(true);
@@ -89,7 +89,7 @@ describe('open-file command', () => {
 			return action(mockClient as never);
 		});
 
-		await openFile('relative/file.ts', { session: 'session-123' });
+		await openFile('relative/file.ts', { agent: 'session-123' });
 
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Opened file.ts in Maestro'));
 	});
@@ -97,7 +97,7 @@ describe('open-file command', () => {
 	it('should error when file does not exist', async () => {
 		vi.mocked(existsSync).mockReturnValue(false);
 
-		await openFile('/home/user/project/nonexistent.ts', { session: 'session-123' });
+		await openFile('/home/user/project/nonexistent.ts', { agent: 'session-123' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('File not found'));
 		expect(processExitSpy).toHaveBeenCalledWith(1);
@@ -107,7 +107,7 @@ describe('open-file command', () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
-		await openFile('/home/user/project/file.ts', { session: 'session-123' });
+		await openFile('/home/user/project/file.ts', { agent: 'session-123' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
 			expect.stringContaining('Maestro desktop app is not running')
@@ -128,7 +128,7 @@ describe('open-file command', () => {
 			return action(mockClient as never);
 		});
 
-		await openFile('/home/user/project/file.ts', { session: 'session-123' });
+		await openFile('/home/user/project/file.ts', { agent: 'session-123' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Session not found'));
 		expect(processExitSpy).toHaveBeenCalledWith(1);

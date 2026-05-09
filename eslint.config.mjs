@@ -21,6 +21,7 @@ export default tseslint.config(
 			'src/web/utils/serviceWorker.ts', // Service worker has special globals
 			'src/web/public/**', // Service worker and static assets
 			'src/renderer/public/**', // Static browser scripts (splash, devtools)
+			'.cue-migration-backup-*/**', // Git-ignored migration backup snapshots
 		],
 	},
 

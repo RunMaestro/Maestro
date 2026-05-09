@@ -78,16 +78,15 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                                                                                                                                                         |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                            |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                              |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                                                                                       |
-| `-l, --live`         | **Deprecated — use `dispatch` instead.** Route the message through the Maestro desktop so it appears in the agent's tab                                                                             |
-| `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                      |
-| `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Requires `allowConcurrentSend=true`; otherwise exits with code `FORCE_NOT_ALLOWED` |
+| Flag                 | Description                                                   |
+| -------------------- | ------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`, `INVALID_OPTIONS`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`.
+For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
+
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
 Supported agent types: `claude-code`, `codex`.
 
@@ -101,11 +100,11 @@ maestro-cli send <agent-id> -s <session-id> -- "--re-run"
 maestro-cli dispatch <agent-id> -- "--force the rewrite"
 ```
 
-Everything after `--` is treated as positional, so any flags you need (`-s`, `-r`, `-t`, `--new-tab`, `-f`) must come before the separator.
+Everything after `--` is treated as positional, so any flags you need must come before the separator. For `send` that's `-s`, `-r`, `-t` (`-t` is the boolean focus flag here); for `dispatch` it's `-t`/`--tab`, `--new-tab`, `-f`.
 
 ### Dispatching to a Desktop Tab
 
-`dispatch` hands a prompt to an agent in the running Maestro desktop app and returns the tab/session id, so callers can address the same tab on follow-up calls without holding a persistent channel. It replaces `send --live` for orchestration use cases (Cue pipelines, external bots, multi-step automations).
+`dispatch` hands a prompt to an agent in the running Maestro desktop app and returns the tab/session id, so callers can address the same tab on follow-up calls without holding a persistent channel. Use this for orchestration use cases (Cue pipelines, external bots, multi-step automations).
 
 ```bash
 # Dispatch to the active tab of an agent
@@ -115,7 +114,7 @@ maestro-cli dispatch <agent-id> "review the PR description"
 maestro-cli dispatch <agent-id> "start a new review pass" --new-tab
 
 # Continue a previous dispatch by targeting its tab
-maestro-cli dispatch <agent-id> "and now run the tests" -s <tab-id>
+maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
 
 # Force a write to a busy tab (requires allowConcurrentSend=true)
 maestro-cli dispatch <agent-id> "interrupt with this" -f
@@ -132,11 +131,11 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag                 | Description                                                                                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`          | Create a fresh AI tab in the target agent. Mutually exclusive with `-s` and `-f` (a new tab is never busy, so `--force` has nothing to bypass) |
-| `-s, --session <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                 |
-| `-f, --force`        | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`         |
+| Flag             | Description                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--new-tab`      | Create a fresh AI tab in the target agent. Mutually exclusive with `-t` and `-f` (a new tab is never busy, so `--force` has nothing to bypass) |
+| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                 |
+| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`         |
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
@@ -667,11 +666,16 @@ Commands for interacting with the running Maestro desktop app. These are especia
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app:
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent — the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
 
 ```bash
-maestro-cli open-file <file-path> [--session <id>]
+maestro-cli open-file <file-path> [-a <id>] [--no-switch]
 ```
+
+| Flag               | Description                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent) |
+| `--no-switch`      | Don't switch the Maestro UI to the target agent/tab                |
 
 #### Open a Browser Tab
 
@@ -719,7 +723,7 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 Refresh the file tree sidebar after creating multiple files or making significant filesystem changes:
 
 ```bash
-maestro-cli refresh-files [--session <id>]
+maestro-cli refresh-files [--agent <id>]
 ```
 
 #### Refresh Auto Run Documents
@@ -727,7 +731,7 @@ maestro-cli refresh-files [--session <id>]
 Refresh the Auto Run document list after creating or modifying auto-run documents:
 
 ```bash
-maestro-cli refresh-auto-run [--session <id>]
+maestro-cli refresh-auto-run [--agent <id>]
 ```
 
 #### Notifications
@@ -762,7 +766,7 @@ maestro-cli notify toast "Tests" "All green" --color green --timeout 10
 maestro-cli notify toast "Quota" "Approaching limit" --color orange --timeout 30
 maestro-cli notify toast "Tests failing" "12 failures in auth.test.ts" --color red
 
-# Sticky — user must click to dismiss. Cannot combine with --timeout/--duration.
+# Sticky — user must click to dismiss. Cannot combine with --timeout.
 maestro-cli notify toast "Action required" "Approve the PR before EOD" \
     --color red --dismissible
 
@@ -788,20 +792,18 @@ maestro-cli notify toast "PR opened" "Auto Run completed" \
     --action-url https://github.com/org/repo/pull/42 --action-label "View PR"
 ```
 
-| Flag                    | Description                                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `-c, --color`           | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                   |
-| `-t, --type`            | **[deprecated]** `success \| info \| warning \| error` — prefer `--color`                        |
-| `--timeout <sec>`       | Auto-dismiss after N seconds (range: `(0, 60]`; wins over `--duration`)                          |
-| `-d, --duration`        | Same as `--timeout` (legacy alias; range: `(0, 60]`)                                             |
-| `--dismissible`         | Sticky toast — no auto-dismiss, click to close. Mutually exclusive with `--timeout`/`--duration` |
-| `-a, --agent <id>`      | Associate with an agent so clicking the toast jumps to it                                        |
-| `--tab <id>`            | AI tab ID within the agent — clicking jumps to that tab. Requires `--agent`                      |
-| `--open-file <path>`    | On click, switch to the agent and open the file in File Preview. Requires `--agent`              |
-| `--open-url <url>`      | On click, open the URL in the system browser. Mutually exclusive with `--open-file`              |
-| `--action-url <url>`    | Inline link rendered beneath the message body (separate from the body click — opens in browser)  |
-| `--action-label <text>` | Label for `--action-url` (defaults to the URL itself); requires `--action-url`                   |
-| `--json`                | JSON output for scripting                                                                        |
+| Flag                    | Description                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `-c, --color`           | `green \| yellow \| orange \| red \| theme` (default: `theme`)                                  |
+| `-t, --timeout <sec>`   | Auto-dismiss after N seconds (range: `(0, 60]`; omitted = app default)                          |
+| `--dismissible`         | Sticky toast — no auto-dismiss, click to close. Mutually exclusive with `--timeout`             |
+| `-a, --agent <id>`      | Associate with an agent so clicking the toast jumps to it                                       |
+| `--tab <id>`            | AI tab ID within the agent — clicking jumps to that tab. Requires `--agent`                     |
+| `--open-file <path>`    | On click, switch to the agent and open the file in File Preview. Requires `--agent`             |
+| `--open-url <url>`      | On click, open the URL in the system browser. Mutually exclusive with `--open-file`             |
+| `--action-url <url>`    | Inline link rendered beneath the message body (separate from the body click — opens in browser) |
+| `--action-label <text>` | Label for `--action-url` (defaults to the URL itself); requires `--action-url`                  |
+| `--json`                | JSON output for scripting                                                                       |
 
 The body-click hierarchy is: `--open-file` / `--open-url` (mutually exclusive) > `--agent` (+ optional `--tab`). `--action-url` is independent — it renders a separate inline link button and does not affect the body click.
 
@@ -820,14 +822,12 @@ maestro-cli notify flash "CI failed on main" --color red --timeout 5
 maestro-cli notify flash "Cache cleared" --detail "1.2 GB freed" --timeout 3
 ```
 
-| Flag             | Description                                                               |
-| ---------------- | ------------------------------------------------------------------------- |
-| `-c, --color`    | `green \| yellow \| orange \| red \| theme` (default: `theme`)            |
-| `-v, --variant`  | **[deprecated]** `success \| info \| warning \| error` — prefer `--color` |
-| `-D, --detail`   | Optional mono-font second line shown beneath the message                  |
-| `-t, --timeout`  | Auto-dismiss after N seconds (range: `(0, 5]`; wins over `--duration`)    |
-| `-d, --duration` | Auto-dismiss after N **milliseconds** (range: `(0, 5000]`; legacy)        |
-| `--json`         | JSON output for scripting                                                 |
+| Flag            | Description                                                    |
+| --------------- | -------------------------------------------------------------- |
+| `-c, --color`   | `green \| yellow \| orange \| red \| theme` (default: `theme`) |
+| `-D, --detail`  | Optional mono-font second line shown beneath the message       |
+| `-t, --timeout` | Auto-dismiss after N seconds (range: `(0, 5]`; default 1.5)    |
+| `--json`        | JSON output for scripting                                      |
 
 ##### Caps and dismissibility
 
@@ -879,7 +879,6 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch \
 | Flag                          | Description                                                                                     |
 | ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | `-a, --agent <id>`            | Target agent to run the documents (partial ID supported)                                        |
-| `-s, --session <id>`          | Deprecated — use `--agent` instead                                                              |
 | `-p, --prompt <text>`         | Custom prompt/instructions for the agent                                                        |
 | `--loop`                      | Enable looping (re-run documents after completion)                                              |
 | `--max-loops <n>`             | Maximum number of loop iterations (implies `--loop`)                                            |

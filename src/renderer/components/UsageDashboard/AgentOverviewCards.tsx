@@ -78,6 +78,19 @@ function getSessionQueryCount(
 }
 
 /**
+ * Auto-sourced query share for a session, as a 0–100 integer. `null` means
+ * the session has no recorded queries — sort and display fall back to a dim
+ * em-dash rather than a misleading 0%.
+ */
+function getSessionAutoPercent(session: Session, data: StatsAggregation): number | null {
+	const split = data.bySessionSource?.[session.id];
+	if (!split) return null;
+	const total = split.user + split.auto;
+	if (total <= 0) return null;
+	return Math.round((split.auto / total) * 100);
+}
+
+/**
  * Resolve whether a session card should be highlighted by the current
  * drill-down filter. The filter key originates from a few different surfaces:
  *
@@ -135,12 +148,13 @@ const AgentCard = memo(function AgentCard({
 	const isClickable = Boolean(onShowDetails);
 	const [isHovered, setIsHovered] = useState(false);
 
-	const { queryCount, sparklineData } = useMemo(() => {
+	const { queryCount, sparklineData, autoPercent } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
 		const sparkline = buildSessionSparkline(sessionByDay);
 		return {
 			queryCount: getSessionQueryCount(session, data, visibleSessions),
 			sparklineData: sparkline,
+			autoPercent: getSessionAutoPercent(session, data),
 		};
 	}, [data, session, visibleSessions]);
 
@@ -173,9 +187,10 @@ const AgentCard = memo(function AgentCard({
 			}
 		: undefined;
 
+	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
 	const baseAriaLabel = `${session.name}, ${session.state}, ${queryCount} ${
 		queryCount === 1 ? 'query' : 'queries'
-	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}`;
+	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}`;
 	const ariaLabel = isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel;
 
 	return (
@@ -273,6 +288,28 @@ const AgentCard = memo(function AgentCard({
 							{tabCount}
 						</span>
 					</div>
+					<div className="flex flex-col min-w-0">
+						<span
+							className="text-[9px] uppercase tracking-wide"
+							style={{ color: theme.colors.textDim }}
+						>
+							Auto %
+						</span>
+						<span
+							className="text-base font-semibold"
+							style={{
+								color: autoPercent === null ? theme.colors.textDim : theme.colors.textMain,
+							}}
+							data-testid="agent-card-auto-pct"
+							title={
+								autoPercent === null
+									? 'No recorded queries'
+									: `${autoPercent}% of queries from Auto Run / Cue`
+							}
+						>
+							{autoPercent === null ? '—' : `${autoPercent}%`}
+						</span>
+					</div>
 				</div>
 				<div className="flex-shrink-0 opacity-80 pointer-events-none">
 					<Sparkline data={sparklineData} color={sparklineColor} width={70} height={22} />
@@ -300,12 +337,13 @@ interface AgentOverviewCardsProps {
 	onShowAgentDetails?: (session: Session) => void;
 }
 
-type SortMode = 'name' | 'queries' | 'tabs';
+type SortMode = 'name' | 'queries' | 'tabs' | 'auto';
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
 	{ value: 'name', label: 'Name' },
 	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
+	{ value: 'auto', label: 'Auto %' },
 ];
 
 export const AgentOverviewCards = memo(function AgentOverviewCards({
@@ -343,8 +381,20 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 				);
 		}
 
-		// 'tabs'
-		return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		if (sortMode === 'tabs') {
+			return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		}
+
+		// 'auto' — descending by auto %, sessions with no recorded queries
+		// sink to the bottom so the leaderboard isn't polluted by null cards.
+		return alphabetical.slice().sort((a, b) => {
+			const aPct = getSessionAutoPercent(a, data);
+			const bPct = getSessionAutoPercent(b, data);
+			if (aPct === null && bPct === null) return 0;
+			if (aPct === null) return 1;
+			if (bPct === null) return -1;
+			return bPct - aPct;
+		});
 	}, [sessions, data, sortMode]);
 
 	if (activeSessions.length === 0) return null;

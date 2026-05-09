@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command, Option } from 'commander';
+import { Command } from 'commander';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -22,6 +22,14 @@ import { status } from './commands/status';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
+import {
+	cuePipelineAdd,
+	cuePipelineExport,
+	cuePipelineGet,
+	cuePipelineList,
+	cuePipelineRemove,
+	cuePipelineReplace,
+} from './commands/cue-pipeline';
 import { createAgent } from './commands/create-agent';
 import { removeAgent } from './commands/remove-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
@@ -135,34 +143,13 @@ clean
 	.action(cleanPlaybooks);
 
 // Send command - run an agent locally and return its response synchronously.
-// `--live`, `--new-tab`, and `--force` are retained as hidden aliases for
-// `dispatch` during the deprecation window; new callers should use
-// `maestro-cli dispatch` instead. Hiding them from `--help` keeps new users
-// off the deprecated path while still parsing the flags from existing scripts.
+// For desktop-handoff workflows, use `maestro-cli dispatch` instead.
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
-	.addOption(
-		new Option(
-			'-l, --live',
-			'Send message through Maestro desktop (deprecated: use `dispatch`)'
-		).hideHelp()
-	)
-	.addOption(
-		new Option(
-			'--new-tab',
-			'Create a new AI tab instead of writing to the active one (deprecated: use `dispatch --new-tab`)'
-		).hideHelp()
-	)
-	.addOption(
-		new Option(
-			'-f, --force',
-			'Bypass the busy-state guard when writing to the active tab (deprecated: use `dispatch --force`)'
-		).hideHelp()
-	)
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -175,7 +162,7 @@ program
 	)
 	.option('--new-tab', 'Create a fresh AI tab and dispatch the prompt into it')
 	.option(
-		'-s, --session <id>',
+		'-t, --tab <id>',
 		'Target an existing tab by its tab id (mutually exclusive with --new-tab)'
 	)
 	.option(
@@ -213,10 +200,7 @@ session
 program
 	.command('open-file <file-path>')
 	.description('Open a file as a preview tab in the Maestro desktop app')
-	.option(
-		'-s, --session <id>',
-		"Target agent (defaults to auto-detect by file path's owning agent)"
-	)
+	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option('--no-switch', "Don't switch the Maestro UI to the target agent/tab")
 	.action(openFile);
 
@@ -241,21 +225,20 @@ program
 program
 	.command('refresh-files')
 	.description('Refresh the file tree in the Maestro desktop app')
-	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
 	.action(refreshFiles);
 
 // Refresh auto-run command - refresh Auto Run documents in the Maestro desktop app
 program
 	.command('refresh-auto-run')
 	.description('Refresh Auto Run documents in the Maestro desktop app')
-	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
 	.action(refreshAutoRun);
 
 // Auto-run command - configure and optionally launch an auto-run session
 program
 	.command('auto-run <docs...>')
 	.description('Configure and optionally launch an auto-run with documents')
-	.option('-s, --session <id>', '[deprecated: use --agent] Target agent by ID')
 	.option('-a, --agent <id>', 'Target agent by ID (use "maestro-cli list agents" to find IDs)')
 	.option('-p, --prompt <text>', 'Custom prompt for the auto-run')
 	.option('--loop', 'Enable looping')
@@ -295,6 +278,54 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Cue pipeline subcommands — manage entries in cue-pipeline-layout.json.
+// Designed for batch scaffolding (e.g. PowerShell scripts that bootstrap
+// a fleet of project agents with a templated pipeline). All mutations go
+// through the daemon so they don't race with the desktop app's own writes.
+const cuePipeline = cue
+	.command('pipeline')
+	.description('Manage Cue pipeline layout entries (cue-pipeline-layout.json)');
+
+cuePipeline
+	.command('list')
+	.description('List all pipelines in the layout file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cuePipelineList);
+
+cuePipeline
+	.command('get <name>')
+	.description('Print one pipeline entry as JSON to stdout')
+	.option('--json', 'Output as JSON (default; flag kept for parity)')
+	.action(cuePipelineGet);
+
+cuePipeline
+	.command('export <name>')
+	.description('Alias for `get`: print one pipeline entry as JSON to stdout')
+	.option('--json', 'Output as JSON (default; flag kept for parity)')
+	.action(cuePipelineExport);
+
+cuePipeline
+	.command('add <name>')
+	.description('Add a new pipeline entry from a JSON file')
+	.requiredOption('--from <file>', 'JSON file with one pipeline entry (matches `get` output)')
+	.option('--force', 'Replace any existing pipeline with the same name/id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cuePipelineAdd);
+
+cuePipeline
+	.command('replace <name>')
+	.description('Replace an existing pipeline entry from a JSON file')
+	.requiredOption('--from <file>', 'JSON file with one pipeline entry (matches `get` output)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cuePipelineReplace);
+
+cuePipeline
+	.command('remove <name>')
+	.description('Remove a pipeline entry by name or id')
+	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cuePipelineRemove);
 
 // Director's Notes commands
 const directorNotes = program
@@ -415,21 +446,21 @@ settings
 	.description(
 		'Get the value of a setting (supports dot-notation, e.g., encoreFeatures.directorNotes)'
 	)
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description, type, and default')
 	.action(settingsGet);
 
 settings
 	.command('set <key> <value>')
 	.description('Set a setting value (auto-detects type: bool, number, JSON, string)')
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.option('--raw <json>', 'Pass an explicit JSON value (bypasses auto type coercion)')
 	.action(settingsSet);
 
 settings
 	.command('reset <key>')
 	.description('Reset a setting to its default value')
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsReset);
 
 // Agent-specific config subcommands
@@ -445,21 +476,21 @@ agent
 agent
 	.command('get <agent-id> <key>')
 	.description('Get a single agent config value')
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.option('-v, --verbose', 'Show full details including description')
 	.action(settingsAgentGet);
 
 agent
 	.command('set <agent-id> <key> <value>')
 	.description('Set an agent config value (auto-detects type)')
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.option('--raw <json>', 'Pass an explicit JSON value (bypasses auto type coercion)')
 	.action(settingsAgentSet);
 
 agent
 	.command('reset <agent-id> <key>')
 	.description('Remove an agent config key')
-	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsAgentReset);
 
 // Prompts command — read Maestro's bundled or user-customized system prompts.
@@ -502,18 +533,13 @@ notify
 	.command('toast <title> <message>')
 	.description('Show a toast notification (queued, click X or icon to dismiss)')
 	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
-	.option('-t, --type <type>', '[deprecated] success | info | warning | error — prefer --color')
 	.option(
-		'--timeout <seconds>',
-		'Auto-dismiss after N seconds (range: (0, 60]; wins over --duration)'
-	)
-	.option(
-		'-d, --duration <seconds>',
+		'-t, --timeout <seconds>',
 		'Auto-dismiss after N seconds (range: (0, 60]; omitted = app default)'
 	)
 	.option(
 		'--dismissible',
-		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout/--duration'
+		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
 	.option(
@@ -540,16 +566,8 @@ notify
 	.command('flash <message>')
 	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
 	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
-	.option(
-		'-v, --variant <variant>',
-		'[deprecated] success | info | warning | error — prefer --color'
-	)
 	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
-	.option(
-		'-t, --timeout <seconds>',
-		'Auto-dismiss after N seconds (range: (0, 5]; default 1.5; wins over --duration)'
-	)
-	.option('-d, --duration <ms>', 'Auto-dismiss after N ms (range: (0, 5000]; default 1500)')
+	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
 

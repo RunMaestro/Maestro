@@ -261,6 +261,9 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 									d={sectorPath(slice.index, slice.count)}
 									fill={accent}
 									opacity={opacity}
+									stroke={theme.colors.bgActivity}
+									strokeWidth={1.5}
+									strokeLinejoin="round"
 									onMouseEnter={(e) => handleMouseEnter(slice.index, e)}
 									onMouseMove={handleMouseMove}
 									onMouseLeave={handleMouseLeave}

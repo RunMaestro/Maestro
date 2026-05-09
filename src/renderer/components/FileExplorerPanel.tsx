@@ -1701,15 +1701,17 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								<span>Copy Path</span>
 							</button>
 
-							{/* Reveal in Finder / Explorer option */}
-							<button
-								onClick={handleOpenInExplorer}
-								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textMain }}
-							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								<span>{getRevealLabel(window.maestro.platform)}</span>
-							</button>
+							{/* Reveal in Finder / Explorer option — local-only, hidden over SSH */}
+							{!sshRemoteId && (
+								<button
+									onClick={handleOpenInExplorer}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									<span>{getRevealLabel(window.maestro.platform)}</span>
+								</button>
+							)}
 
 							{/* Divider before destructive actions */}
 							<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

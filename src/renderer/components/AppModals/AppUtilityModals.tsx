@@ -135,6 +135,7 @@ export interface AppUtilityModalsProps {
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;
+	onFocusActiveTab?: () => void;
 	onCopyTabContext?: (tabId: string) => void;
 	onExportTabHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
@@ -357,6 +358,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onCloseCurrentTab,
 	onMoveTabToFirst,
 	onMoveTabToLast,
+	onFocusActiveTab,
 	onCopyTabContext,
 	onExportTabHtml,
 	onPublishTabGist,
@@ -533,6 +535,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onCloseCurrentTab={onCloseCurrentTab}
 					onMoveTabToFirst={onMoveTabToFirst}
 					onMoveTabToLast={onMoveTabToLast}
+					onFocusActiveTab={onFocusActiveTab}
 					onCopyTabContext={onCopyTabContext}
 					onExportTabHtml={onExportTabHtml}
 					onPublishTabGist={onPublishTabGist}

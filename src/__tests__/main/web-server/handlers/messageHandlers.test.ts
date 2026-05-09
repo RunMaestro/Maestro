@@ -124,6 +124,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),
 		triggerCueSubscription: vi.fn().mockResolvedValue(true),
+		listCuePipelines: vi.fn().mockResolvedValue({ pipelines: [] }),
+		getCuePipeline: vi.fn().mockResolvedValue(null),
+		setCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
+		removeCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
 		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
@@ -1590,6 +1594,125 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined, undefined);
 			});
+		});
+	});
+
+	describe('Cue Pipeline Mutations (Web/CLI → Desktop)', () => {
+		it('cue_pipeline_list returns the daemon-supplied list verbatim', async () => {
+			const pipelines = [
+				{ id: 'pipeline-Foo', name: 'Foo', color: '#06b6d4', nodes: [], edges: [] },
+			];
+			(callbacks.listCuePipelines as ReturnType<typeof vi.fn>).mockResolvedValue({ pipelines });
+
+			handler.handleMessage(client, { type: 'cue_pipeline_list', requestId: 'req-1' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.listCuePipelines).toHaveBeenCalledTimes(1);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_pipeline_list_result');
+			expect(response.pipelines).toEqual(pipelines);
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('cue_pipeline_get rejects empty identifier', () => {
+			handler.handleMessage(client, { type: 'cue_pipeline_get' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing identifier');
+		});
+
+		it('cue_pipeline_get returns the daemon-supplied pipeline (or null)', async () => {
+			const pipeline = { id: 'pipeline-Foo', name: 'Foo', color: '#06b6d4', nodes: [], edges: [] };
+			(callbacks.getCuePipeline as ReturnType<typeof vi.fn>).mockResolvedValue(pipeline);
+
+			handler.handleMessage(client, { type: 'cue_pipeline_get', identifier: 'Foo' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.getCuePipeline).toHaveBeenCalledWith('Foo');
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_pipeline_get_result');
+			expect(response.pipeline).toEqual(pipeline);
+		});
+
+		it('cue_pipeline_set forwards identifier, payload, and policy', async () => {
+			const payload = { id: 'pipeline-Foo', name: 'Foo', color: '#06b6d4', nodes: [], edges: [] };
+			handler.handleMessage(client, {
+				type: 'cue_pipeline_set',
+				identifier: 'Foo',
+				pipeline: payload,
+				policy: 'add',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.setCuePipeline).toHaveBeenCalledWith('Foo', payload, 'add');
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_pipeline_set_result');
+			expect(response.result).toEqual({ ok: true });
+		});
+
+		it('cue_pipeline_set rejects invalid policy', () => {
+			handler.handleMessage(client, {
+				type: 'cue_pipeline_set',
+				identifier: 'Foo',
+				pipeline: {},
+				policy: 'destroy',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Invalid policy');
+		});
+
+		it('cue_pipeline_set rejects missing payload', () => {
+			handler.handleMessage(client, {
+				type: 'cue_pipeline_set',
+				identifier: 'Foo',
+				policy: 'add',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing pipeline payload');
+		});
+
+		it('cue_pipeline_set surfaces structured failure results unchanged', async () => {
+			(callbacks.setCuePipeline as ReturnType<typeof vi.fn>).mockResolvedValue({
+				ok: false,
+				code: 'already_exists',
+				message: 'pipeline "Foo" already exists',
+			});
+			handler.handleMessage(client, {
+				type: 'cue_pipeline_set',
+				identifier: 'Foo',
+				pipeline: { id: 'pipeline-Foo', name: 'Foo', color: '#06b6d4', nodes: [], edges: [] },
+				policy: 'add',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.setCuePipeline).toHaveBeenCalled();
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_pipeline_set_result');
+			expect(response.result.ok).toBe(false);
+			expect(response.result.code).toBe('already_exists');
+		});
+
+		it('cue_pipeline_remove forwards identifier and surfaces result', async () => {
+			handler.handleMessage(client, {
+				type: 'cue_pipeline_remove',
+				identifier: 'Foo',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.removeCuePipeline).toHaveBeenCalledWith('Foo');
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response.type).toBe('cue_pipeline_remove_result');
+			expect(response.result).toEqual({ ok: true });
 		});
 	});
 

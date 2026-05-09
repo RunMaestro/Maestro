@@ -25,6 +25,9 @@ const mockSettingsState: Record<string, unknown> = {
 	osNotificationsEnabled: false,
 	idleNotificationEnabled: false,
 	idleNotificationCommand: '',
+	speckitEnabled: true,
+	openspecEnabled: true,
+	bmadEnabled: true,
 	autoRunStats: {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -189,6 +192,9 @@ function resetStores() {
 	mockSettingsState.osNotificationsEnabled = false;
 	mockSettingsState.idleNotificationEnabled = false;
 	mockSettingsState.idleNotificationCommand = '';
+	mockSettingsState.speckitEnabled = true;
+	mockSettingsState.openspecEnabled = true;
+	mockSettingsState.bmadEnabled = true;
 	mockSettingsState.autoRunStats = {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -696,6 +702,7 @@ describe('useAppInitialization', () => {
 	// --- SpecKit commands ---
 	describe('SpecKit commands loading', () => {
 		it('should load SpecKit commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -703,6 +710,7 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle SpecKit loading error gracefully', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { getSpeckitCommands } = await import('../../../renderer/services/speckit');
 			(getSpeckitCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('load failed')
@@ -718,6 +726,7 @@ describe('useAppInitialization', () => {
 	// --- OpenSpec commands ---
 	describe('OpenSpec commands loading', () => {
 		it('should load OpenSpec commands on mount', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { result } = renderHook(() => useAppInitialization());
 			await act(flushPromises);
 
@@ -725,6 +734,7 @@ describe('useAppInitialization', () => {
 		});
 
 		it('should handle OpenSpec loading error gracefully', async () => {
+			mockSettingsState.settingsLoaded = true;
 			const { getOpenSpecCommands } = await import('../../../renderer/services/openspec');
 			(getOpenSpecCommands as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('load failed')

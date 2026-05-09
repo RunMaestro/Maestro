@@ -487,7 +487,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 			{/* Legend */}
 			{agentData.length > 0 && (
 				<div
-					className="flex flex-wrap gap-3 mt-4 pt-3 border-t"
+					className="flex flex-wrap items-center gap-3 mt-4 pt-3 border-t"
 					style={{ borderColor: theme.colors.border }}
 					role="list"
 					aria-label="Chart legend"
@@ -516,8 +516,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 					)}
 					{hasWorktreeBars && (
 						<div
-							className="flex items-center gap-3 w-full mt-1 pt-2 border-t"
-							style={{ borderColor: `${theme.colors.border}60` }}
+							className="ml-auto flex items-center gap-3"
 							role="listitem"
 							aria-label="Worktree differentiation legend"
 						>

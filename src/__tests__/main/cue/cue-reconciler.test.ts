@@ -391,32 +391,216 @@ describe('reconcileMissedTimeEvents', () => {
 		expect(dispatched).toHaveLength(0);
 	});
 
-	it('does not reconcile time.scheduled subscriptions (by design)', () => {
-		// time.scheduled triggers re-check on their 60s interval after wake,
-		// so reconciliation is intentionally not needed for them.
-		const sessions = new Map<string, ReconcileSessionInfo>();
-		sessions.set('session-1', {
-			config: createConfig([
-				{
-					name: 'daily-standup',
-					event: 'time.scheduled',
-					enabled: true,
-					prompt: 'run standup',
-					schedule_times: ['09:00'],
-					schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
-				},
-			]),
-			sessionName: 'Test',
+	describe('time.scheduled reconciliation', () => {
+		// Build a (sleepStartMs, wakeTimeMs) pair that brackets a single 09:00
+		// local-time slot, regardless of when the test runs. We anchor "wake" at
+		// 10:00 today and "sleep start" at 08:00 today so 09:00 today is the
+		// only candidate.
+		function bracketTodayAt9am(): { sleepStartMs: number; wakeTimeMs: number } {
+			const wake = new Date();
+			wake.setHours(10, 0, 0, 0);
+			const sleepStart = new Date(wake);
+			sleepStart.setHours(8, 0, 0, 0);
+			return { sleepStartMs: sleepStart.getTime(), wakeTimeMs: wake.getTime() };
+		}
+
+		it('fires one catch-up for a single missed scheduled slot', () => {
+			const { sleepStartMs, wakeTimeMs } = bracketTodayAt9am();
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'daily-standup',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'run standup',
+						schedule_times: ['09:00'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			const config = makeConfig({ sleepStartMs, wakeTimeMs, sessions });
+			reconcileMissedTimeEvents(config);
+
+			expect(dispatched).toHaveLength(1);
+			expect(dispatched[0].event.type).toBe('time.scheduled');
+			expect(dispatched[0].event.triggerName).toBe('daily-standup');
+			expect(dispatched[0].event.payload).toMatchObject({
+				reconciled: true,
+				missedCount: 1,
+				matched_time: '09:00',
+			});
 		});
 
-		const config = makeConfig({
-			sleepStartMs: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
-			wakeTimeMs: Date.now(),
-			sessions,
+		it('fires one catch-up for the MOST RECENT slot when multiple are missed', () => {
+			// Sleep across a full week with a daily 09:00 schedule — should fire
+			// once for the most recent 09:00, not once per day.
+			const wake = new Date();
+			wake.setHours(10, 0, 0, 0);
+			const sleepStart = new Date(wake);
+			sleepStart.setDate(sleepStart.getDate() - 5);
+			sleepStart.setHours(8, 0, 0, 0);
+
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'daily-09',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'daily',
+						schedule_times: ['09:00'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			const config = makeConfig({
+				sleepStartMs: sleepStart.getTime(),
+				wakeTimeMs: wake.getTime(),
+				sessions,
+			});
+			reconcileMissedTimeEvents(config);
+
+			expect(dispatched).toHaveLength(1);
+			expect(dispatched[0].event.payload.missedCount).toBe(6); // 6 daily 09:00 slots in 5d gap
+			const mostRecentMs = dispatched[0].event.payload.mostRecentSlotMs as number;
+			// Most-recent slot should be today's 09:00.
+			const todayAt9 = new Date(wake);
+			todayAt9.setHours(9, 0, 0, 0);
+			expect(mostRecentMs).toBe(todayAt9.getTime());
 		});
 
-		reconcileMissedTimeEvents(config);
+		it('respects schedule_days filter', () => {
+			// Schedule only fires on Wednesday. Pick a Tuesday 10:00 wake with
+			// Tuesday 08:00 sleep start so the candidate Tue 09:00 should be
+			// filtered out.
+			const wake = new Date();
+			// Walk to next Tuesday so the test is deterministic regardless of
+			// the day it runs.
+			while (wake.getDay() !== 2) wake.setDate(wake.getDate() + 1);
+			wake.setHours(10, 0, 0, 0);
+			const sleepStart = new Date(wake);
+			sleepStart.setHours(8, 0, 0, 0);
 
-		expect(dispatched).toHaveLength(0);
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'wed-only',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'wed only',
+						schedule_times: ['09:00'],
+						schedule_days: ['wed'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			const config = makeConfig({
+				sleepStartMs: sleepStart.getTime(),
+				wakeTimeMs: wake.getTime(),
+				sessions,
+			});
+			reconcileMissedTimeEvents(config);
+
+			expect(dispatched).toHaveLength(0);
+		});
+
+		it('does not double-fire when wake lands exactly on a slot boundary', () => {
+			// If wakeTimeMs == slot timestamp, the live trigger source will fire
+			// it on its next 60s tick — the reconciler must not also fire.
+			const wake = new Date();
+			wake.setHours(9, 0, 0, 0); // wake AT 09:00 exactly
+			const sleepStart = new Date(wake);
+			sleepStart.setHours(7, 0, 0, 0);
+
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'at-9',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'at 9',
+						schedule_times: ['09:00'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			const config = makeConfig({
+				sleepStartMs: sleepStart.getTime(),
+				wakeTimeMs: wake.getTime(),
+				sessions,
+			});
+			reconcileMissedTimeEvents(config);
+
+			expect(dispatched).toHaveLength(0);
+		});
+
+		it('skips disabled time.scheduled subscriptions', () => {
+			const { sleepStartMs, wakeTimeMs } = bracketTodayAt9am();
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'off',
+						event: 'time.scheduled',
+						enabled: false,
+						prompt: 'off',
+						schedule_times: ['09:00'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			reconcileMissedTimeEvents(makeConfig({ sleepStartMs, wakeTimeMs, sessions }));
+			expect(dispatched).toHaveLength(0);
+		});
+
+		it('skips when schedule_times is empty', () => {
+			const { sleepStartMs, wakeTimeMs } = bracketTodayAt9am();
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'empty',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'empty',
+						schedule_times: [],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			reconcileMissedTimeEvents(makeConfig({ sleepStartMs, wakeTimeMs, sessions }));
+			expect(dispatched).toHaveLength(0);
+		});
+
+		it('ignores invalid HH:MM strings in schedule_times', () => {
+			const { sleepStartMs, wakeTimeMs } = bracketTodayAt9am();
+			const sessions = new Map<string, ReconcileSessionInfo>();
+			sessions.set('session-1', {
+				config: createConfig([
+					{
+						name: 'bad-time',
+						event: 'time.scheduled',
+						enabled: true,
+						prompt: 'bad',
+						schedule_times: ['25:99', 'abc', '09:00'],
+					},
+				]),
+				sessionName: 'Test',
+			});
+
+			reconcileMissedTimeEvents(makeConfig({ sleepStartMs, wakeTimeMs, sessions }));
+			// Only 09:00 is a valid candidate inside the bracket → exactly one fire.
+			expect(dispatched).toHaveLength(1);
+			expect(dispatched[0].event.payload.matched_time).toBe('09:00');
+		});
 	});
 });

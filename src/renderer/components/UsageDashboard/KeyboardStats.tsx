@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../../constants/keyboardMastery';
 import { formatNumber } from '../../../shared/formatters';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { MetricCard } from './SummaryCards';
 
@@ -206,7 +207,7 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 
 	return (
 		<div className="relative">
-			<div className="flex items-end gap-px" style={{ height: chartHeight }}>
+			<div className="flex items-stretch gap-px" style={{ height: chartHeight }}>
 				{series.map((entry, index) => {
 					const heightPct = maxCount > 0 ? (entry.count / maxCount) * 100 : 0;
 					const isHovered = hoveredIndex === index;
@@ -216,7 +217,7 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 						<div
 							key={entry.date}
 							className="relative flex-1 flex flex-col justify-end cursor-default"
-							style={{ minWidth: 0 }}
+							style={{ minWidth: 0, height: '100%' }}
 							onMouseEnter={() => setHoveredIndex(index)}
 							onMouseLeave={() => setHoveredIndex(null)}
 						>
@@ -484,11 +485,11 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 					</div>
 				) : (
 					<ul
-						className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-sm"
+						className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 text-sm"
 						style={{ color: theme.colors.textDim }}
 					>
 						{unusedShortcuts.map((s) => (
-							<li key={s.id} className="flex items-center gap-2">
+							<li key={s.id} className="flex items-center gap-2 min-w-0">
 								<span
 									className="w-1 h-1 rounded-full flex-shrink-0"
 									style={{ backgroundColor: theme.colors.textDim }}
@@ -496,6 +497,18 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 								<span className="truncate" title={s.label}>
 									{s.label}
 								</span>
+								{s.keys.length > 0 && (
+									<kbd
+										className="px-1.5 py-0.5 rounded border font-mono text-[10px] font-bold flex-shrink-0 ml-auto"
+										style={{
+											backgroundColor: theme.colors.bgActivity,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										{formatShortcutKeys(s.keys)}
+									</kbd>
+								)}
 							</li>
 						))}
 					</ul>

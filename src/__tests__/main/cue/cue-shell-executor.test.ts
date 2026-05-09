@@ -15,8 +15,15 @@ import type { SessionInfo } from '../../../shared/types';
 import type { TemplateContext } from '../../../shared/templateVariables';
 
 const mockCaptureException = vi.fn();
+const mockCaptureMessage = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
+	captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+}));
+
+const mockGetShellPath = vi.fn(async () => '/login/shell/bin:/usr/bin:/bin');
+vi.mock('../../../main/runtime/getShellPath', () => ({
+	getShellPath: () => mockGetShellPath(),
 }));
 
 // Keep the ssh-spawn-wrapper inert in this suite; the tests exercise the local
@@ -146,8 +153,28 @@ describe('cue-shell-executor', () => {
 		expect(opts.shell).toBe(true);
 		expect(opts.cwd).toBe('/projects/test');
 		const env = opts.env as Record<string, string>;
-		expect(env.PATH).toBe(process.env.PATH);
+		// Local mode replaces PATH with the login-shell PATH so user-installed
+		// binaries (msgvault, pnpm, etc.) resolve under macOS GUI launches.
+		expect(env.PATH).toBe('/login/shell/bin:/usr/bin:/bin');
 		expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+
+		mockChild.emit('close', 0);
+		await promise;
+	});
+
+	it('falls back to default PATH when getShellPath fails', async () => {
+		mockGetShellPath.mockRejectedValueOnce(new Error('shell probe timed out'));
+		const config = createConfig();
+		const promise = executeCueShell(config as any);
+		await vi.advanceTimersByTimeAsync(0);
+
+		const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+		const env = opts.env as Record<string, string>;
+		expect(env.PATH).toBe(process.env.PATH);
+		expect(mockCaptureMessage).toHaveBeenCalledWith(
+			expect.stringContaining('cue:shell falling back to default PATH'),
+			'warning'
+		);
 
 		mockChild.emit('close', 0);
 		await promise;

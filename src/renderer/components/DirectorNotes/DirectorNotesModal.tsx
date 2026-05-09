@@ -176,7 +176,7 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					width: '80vw',
 					maxWidth: 1400,

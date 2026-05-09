@@ -14,10 +14,11 @@ import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cu
 import type { AgentSshRemoteConfig, SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
-import { captureException } from '../utils/sentry';
+import { captureException, captureMessage } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { getShellPath } from '../runtime/getShellPath';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -179,6 +180,25 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		} catch (err) {
 			captureException(err, { operation: 'cue:shell:sshWrap', runId });
 			return failedResult(`SSH wrap error: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	// macOS GUI apps inherit a minimal launchd PATH (no `~/.local/bin`,
+	// `/opt/homebrew/bin`, etc.), so shell commands that rely on user-installed
+	// binaries fail with "command not found". Source the user's login-shell PATH
+	// to match terminal behavior. SSH mode is unaffected — the remote shell
+	// resolves PATH on its own host.
+	if (useLocalShell) {
+		try {
+			const shellPath = await getShellPath();
+			if (shellPath) {
+				spawnEnv.PATH = shellPath;
+			}
+		} catch (err) {
+			captureMessage(
+				`cue:shell falling back to default PATH: ${err instanceof Error ? err.message : String(err)}`,
+				'warning'
+			);
 		}
 	}
 

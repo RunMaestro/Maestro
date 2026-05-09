@@ -305,6 +305,16 @@ export interface UseSettingsReturn {
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 
+	// Where new tabs are inserted in the tab bar (per content type)
+	newTabPlacement: 'end' | 'after-current';
+	setNewTabPlacement: (value: 'end' | 'after-current') => void;
+	newBrowserTabPlacement: 'end' | 'after-current';
+	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
+	newTerminalPlacement: 'end' | 'after-current';
+	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
+	openedFilePlacement: 'end' | 'after-current';
+	setOpenedFilePlacement: (value: 'end' | 'after-current') => void;
+
 	// File tab auto-refresh settings
 	fileTabAutoRefreshEnabled: boolean;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
@@ -372,6 +382,14 @@ export interface UseSettingsReturn {
 	setAutoRunDisabled: (value: boolean) => void;
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+
+	// Built-in AI command bundle visibility
+	speckitEnabled: boolean;
+	setSpeckitEnabled: (value: boolean) => void;
+	openspecEnabled: boolean;
+	setOpenspecEnabled: (value: boolean) => void;
+	bmadEnabled: boolean;
+	setBmadEnabled: (value: boolean) => void;
 
 	// Hide ".files" (dotfiles) toggle in file explorer toolbar
 	dotfilesToggleHidden: boolean;

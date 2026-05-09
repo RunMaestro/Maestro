@@ -290,6 +290,10 @@ src/
 
 ## Critical Implementation Guidelines
 
+### Click-Driven Modals: Disable Text Selection
+
+If a modal's primary purpose is _clicking_ (buttons, tabs, list rows, cards, graph nodes, filter chips, toggles), put `select-none` on its root container. Native browser drag-to-select highlighting fires accidentally during normal interactions and looks broken. Inputs and textareas keep working — Chromium preserves form-control selection regardless of ancestor `user-select: none`. For any nested subtree that's content-driven (detail views, code editors, log entry bodies, file paths, AI output, error messages), apply `select-text` on its root to opt back in. Skip the rule entirely on modals whose main purpose is reading or editing text (`CueYamlEditor`, `CueHelpModal`, wizard chat shell, System Log Viewer, confirmation dialogs). Decide click- vs content-driven when adding a new modal — retrofitting later means hunting down every nested view that needs `select-text`. Full rationale in [UI-PATTERNS.md → Text Selection in Modals](docs/agent-guides/UI-PATTERNS.md#text-selection-in-modals).
+
 ### Error Handling & Sentry
 
 Maestro uses Sentry for error tracking. Field data from production crashes is invaluable for improving code quality.

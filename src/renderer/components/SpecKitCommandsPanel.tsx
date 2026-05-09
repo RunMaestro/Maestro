@@ -18,6 +18,8 @@ import { logger } from '../utils/logger';
 
 interface SpecKitCommandsPanelProps {
 	theme: Theme;
+	enabled: boolean;
+	onEnabledChange: (value: boolean) => void;
 }
 
 interface EditingCommand {
@@ -25,7 +27,11 @@ interface EditingCommand {
 	prompt: string;
 }
 
-export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
+export function SpecKitCommandsPanel({
+	theme,
+	enabled,
+	onEnabledChange,
+}: SpecKitCommandsPanelProps) {
 	const [commands, setCommands] = useState<SpecKitCommand[]>([]);
 	const [metadata, setMetadata] = useState<SpecKitMetadata | null>(null);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
@@ -163,10 +169,28 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 		return (
 			<div className="space-y-4">
 				<div>
-					<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
-						<Wand2 className="w-3 h-3" />
-						Spec Kit Commands
-					</label>
+					<div className="flex items-start justify-between gap-3 mb-1">
+						<label className="text-xs font-bold opacity-70 uppercase flex items-center gap-2">
+							<Wand2 className="w-3 h-3" />
+							Spec Kit Commands
+						</label>
+						<button
+							onClick={() => onEnabledChange(!enabled)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+							style={{
+								backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={enabled}
+							aria-label="Show Spec Kit commands in slash command autocomplete"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									enabled ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
 					<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 						Loading spec-kit commands...
 					</p>
@@ -178,10 +202,33 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 	return (
 		<div className="space-y-4">
 			<div>
-				<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
-					<Wand2 className="w-3 h-3" />
-					Spec Kit Commands
-				</label>
+				<div className="flex items-start justify-between gap-3 mb-1">
+					<label className="text-xs font-bold opacity-70 uppercase flex items-center gap-2">
+						<Wand2 className="w-3 h-3" />
+						Spec Kit Commands
+					</label>
+					<button
+						onClick={() => onEnabledChange(!enabled)}
+						className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+						style={{
+							backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+						}}
+						role="switch"
+						aria-checked={enabled}
+						aria-label="Show Spec Kit commands in slash command autocomplete"
+						title={
+							enabled
+								? 'Hide from slash command autocomplete'
+								: 'Show in slash command autocomplete'
+						}
+					>
+						<span
+							className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+								enabled ? 'translate-x-5' : 'translate-x-0.5'
+							}`}
+						/>
+					</button>
+				</div>
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Bundled commands from{' '}
 					<button
@@ -198,7 +245,12 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 						github/spec-kit
 						<ExternalLink className="w-2.5 h-2.5" />
 					</button>{' '}
-					for structured specification workflows.
+					for structured specification workflows.{' '}
+					{!enabled && (
+						<span style={{ color: theme.colors.warning }}>
+							Hidden from slash command autocomplete.
+						</span>
+					)}
 				</p>
 			</div>
 

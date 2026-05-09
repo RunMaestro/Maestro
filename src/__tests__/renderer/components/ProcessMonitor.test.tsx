@@ -1500,9 +1500,18 @@ describe('ProcessMonitor', () => {
 
 			expect(screen.getByText('Kill Process?')).toBeInTheDocument();
 
-			// Press Escape
-			const confirmDialog = screen.getByText('Kill Process?').closest('div[tabindex="-1"]')!;
-			fireEvent.keyDown(confirmDialog, { key: 'Escape' });
+			// Escape is owned by the layer stack: KillConfirmDialog registers a
+			// CONFIRM-priority layer (1000) that wins over PROCESS_MONITOR (550).
+			// In the test the layer stack is mocked, so we drive Esc by finding
+			// the kill dialog's registered onEscape and invoking it directly —
+			// mirrors how a real Esc keypress reaches the topmost layer.
+			const killLayer = mockRegisterLayer.mock.calls
+				.map((call) => call[0] as { ariaLabel?: string; onEscape?: () => void })
+				.find((layer) => layer.ariaLabel === 'Kill Process');
+			expect(killLayer?.onEscape).toBeTypeOf('function');
+			act(() => {
+				killLayer?.onEscape?.();
+			});
 
 			await waitFor(() => {
 				expect(screen.queryByText('Kill Process?')).not.toBeInTheDocument();

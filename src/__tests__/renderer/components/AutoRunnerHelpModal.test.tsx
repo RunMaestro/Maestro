@@ -204,6 +204,12 @@ describe('AutoRunnerHelpModal', () => {
 			expect(screen.getByText(/to gracefully stop/)).toBeInTheDocument();
 		});
 
+		it('should render Halt Marker section', () => {
+			expect(screen.getByText('Halt Marker (Agent Early Exit)')).toBeInTheDocument();
+			expect(screen.getByText('<!-- maestro:halt: brief reason here -->')).toBeInTheDocument();
+			expect(screen.getByText(/A stale halt marker left in a document/)).toBeInTheDocument();
+		});
+
 		it('should render Keyboard Shortcuts section', () => {
 			expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument();
 		});
