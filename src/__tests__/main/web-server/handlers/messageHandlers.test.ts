@@ -2284,6 +2284,31 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.requestId).toBe('req-3');
 		});
 
+		// Coderabbit feedback: defensive validation must reject any traversal
+		// segment / backslash in playbookPath at the entry point, not just
+		// absolute / tilde / Windows-drive prefixes — downstream resolvers
+		// have other guards but shouldn't be relied on in isolation.
+		it.each([
+			['../../etc/passwd', 'parent traversal'],
+			['./foo', 'leading dot segment'],
+			['foo/./bar', 'embedded dot segment'],
+			['foo/../bar', 'embedded parent traversal'],
+			['foo\\bar', 'embedded backslash'],
+		])('rejects marketplace_get_document playbookPath with %s (%s)', (playbookPath) => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath,
+				filename: 'README',
+				requestId: 'req-traversal',
+			});
+
+			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Local filesystem paths are not allowed');
+		});
+
 		it('rejects marketplace_get_document for absolute playbookPath via typed result', () => {
 			handler.handleMessage(client, {
 				type: 'marketplace_get_document',

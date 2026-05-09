@@ -4119,29 +4119,52 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.send(client, {
-					type: 'marketplace_get_manifest_result',
-					success: false,
-					error: `Failed to load marketplace: ${error.message}`,
-					requestId: message.requestId,
-				});
+				this.reportMarketplaceHandlerError(
+					client,
+					error,
+					'marketplace_get_manifest_result',
+					'marketplace_get_manifest',
+					message,
+					'Failed to load marketplace'
+				);
 			});
 	}
 
 	/**
 	 * Reject a `playbookPath` that points at the local filesystem (absolute
-	 * path or `~`-prefixed). Web clients can browse the official + local
-	 * catalog by id, but they must never be able to coerce the server into
-	 * reading arbitrary files via the marketplace fetch helpers.
+	 * path or `~`-prefixed) or contains traversal segments / backslashes.
+	 * Web clients can browse the official + local catalog by id, but they
+	 * must never be able to coerce the server into reading arbitrary files
+	 * via the marketplace fetch helpers. Defense-in-depth: downstream
+	 * resolvers also validate, but rejecting at the entry point keeps
+	 * future code changes from re-opening the bypass.
 	 */
 	private isUntrustedLocalPath(playbookPath: string): boolean {
-		return (
+		if (
 			playbookPath.startsWith('/') ||
 			playbookPath.startsWith('\\') ||
 			playbookPath.startsWith('~/') ||
 			playbookPath.startsWith('~\\') ||
 			/^[a-zA-Z]:[\\/]/.test(playbookPath)
-		);
+		) {
+			return true;
+		}
+		// Reject any backslash anywhere — official/local manifest paths use
+		// forward slashes, so a backslash is either a Windows-style absolute
+		// fragment or a deliberate normalization-bypass attempt.
+		if (playbookPath.includes('\\')) {
+			return true;
+		}
+		// Reject `.` / `..` segments. `path.resolve()` collapses these later
+		// but checking up front prevents a relative-traversal payload from
+		// reaching downstream code at all.
+		const segments = playbookPath.split('/');
+		for (const segment of segments) {
+			if (segment === '.' || segment === '..') {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -4167,6 +4190,38 @@ export class WebSocketMessageHandler {
 			requestId: message.requestId,
 			...extra,
 		});
+	}
+
+	/**
+	 * Report an unexpected marketplace-handler exception to Sentry, then
+	 * send a typed failure to the client. Mirrors `reportHandlerError` but
+	 * preserves the `marketplace_*_result` typing the mobile client waits
+	 * on. Without the Sentry capture step, transient production faults in
+	 * the marketplace flow stay invisible because the client only sees the
+	 * typed failure.
+	 */
+	private reportMarketplaceHandlerError(
+		client: WebClient,
+		error: unknown,
+		type:
+			| 'marketplace_get_manifest_result'
+			| 'marketplace_get_document_result'
+			| 'marketplace_get_readme_result'
+			| 'marketplace_import_playbook_result',
+		handler: string,
+		message: WebClientMessage,
+		userMessagePrefix: string,
+		extra?: Record<string, unknown>
+	): void {
+		const err = error instanceof Error ? error : new Error(String(error));
+		captureException(err, { extra: { area: 'web-server', handler, ...extra } });
+		this.sendMarketplaceFailure(
+			client,
+			type,
+			`${userMessagePrefix}: ${err.message}`,
+			message,
+			extra
+		);
 	}
 
 	/**
@@ -4243,11 +4298,14 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.sendMarketplaceFailure(
+				this.reportMarketplaceHandlerError(
 					client,
+					error,
 					'marketplace_get_document_result',
-					`Failed to fetch document: ${error.message}`,
-					message
+					'marketplace_get_document',
+					message,
+					'Failed to fetch document',
+					{ playbookPath, filename }
 				);
 			});
 	}
@@ -4306,11 +4364,14 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.sendMarketplaceFailure(
+				this.reportMarketplaceHandlerError(
 					client,
+					error,
 					'marketplace_get_readme_result',
-					`Failed to fetch README: ${error.message}`,
-					message
+					'marketplace_get_readme',
+					message,
+					'Failed to fetch README',
+					{ playbookPath }
 				);
 			});
 	}
@@ -4403,12 +4464,14 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
-				this.sendMarketplaceFailure(
+				this.reportMarketplaceHandlerError(
 					client,
+					error,
 					'marketplace_import_playbook_result',
-					`Import failed: ${error.message}`,
+					'marketplace_import_playbook',
 					message,
-					{ sessionId }
+					'Import failed',
+					{ sessionId, playbookId, targetFolderName: trimmedFolder }
 				);
 			});
 	}

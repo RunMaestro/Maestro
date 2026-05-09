@@ -1138,6 +1138,102 @@ describe('marketplace IPC handlers', () => {
 			]);
 		});
 
+		// Coderabbit feedback: the per-doc loop is intentionally tolerant so
+		// one bad file doesn't block the rest, but the previous code still
+		// persisted a playbook with `documents: []` and reported success when
+		// every doc failed — closing the marketplace sheet and leaving the
+		// user with an unusable imported entry. The service must now throw
+		// a MarketplaceImportError so the import flow surfaces the failure.
+		it('should fail the import when all documents fail to fetch', async () => {
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // local manifest
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Both documents fail to fetch
+			mockFetch
+				.mockRejectedValueOnce(new Error('Network error'))
+				.mockRejectedValueOnce(new Error('Network error'));
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'AllFailed',
+				'/autorun',
+				'session-123'
+			);
+
+			// Without the guard, the handler would have returned success with
+			// an empty `documents: []` playbook. With the guard, the service
+			// throws MarketplaceImportError and the IPC handler converts it
+			// into a typed failure result.
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/Failed to import any documents/);
+
+			// Critically, no playbook should have been persisted to the
+			// session's playbooks file.
+			expect(fs.writeFile).not.toHaveBeenCalledWith(
+				expect.stringMatching(/playbooks.*\.json$/),
+				expect.any(String),
+				'utf-8'
+			);
+		});
+
+		// Coderabbit feedback: the browse path falls back to a stale cache when
+		// fetchManifest() fails so the UI keeps working, but the import path
+		// previously left officialManifest null on the same failure — meaning a
+		// playbook that was just visible to the user could disappear at import
+		// time. Both paths must share the stale-cache fallback.
+		it('should fall back to expired cache when network fetch fails during import', async () => {
+			const cacheAge = 1000 * 60 * 60 * 7; // 7 hours, past the 6h TTL
+			const expiredCache: MarketplaceCache = {
+				fetchedAt: Date.now() - cacheAge,
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(expiredCache)) // cache (stale)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Manifest fetch fails; document fetches succeed (would happen if
+			// only the manifest endpoint is degraded).
+			mockFetch
+				.mockRejectedValueOnce(new Error('Network error')) // manifest fetch
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 1'),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					text: () => Promise.resolve('# Phase 2'),
+				});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'StaleCacheImport',
+				'/autorun',
+				'session-123'
+			);
+
+			// Import should succeed because the stale cache was used to look up
+			// the playbook by id. Without the fallback, this would throw
+			// "Playbook not found".
+			expect(result.playbook).toBeDefined();
+			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+		});
+
 		describe('SSH remote import', () => {
 			it('should use remote-fs for SSH imports with POSIX paths', async () => {
 				const validCache: MarketplaceCache = {

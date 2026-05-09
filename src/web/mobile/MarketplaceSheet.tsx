@@ -146,6 +146,10 @@ export function MarketplaceSheet({
 				}
 			} catch (err) {
 				if (cancelled) return;
+				// Web bundle has no Sentry, so log the underlying exception to
+				// devtools — without this the catch only surfaces the typed
+				// "Failed to load …" message and the original cause is lost.
+				console.error('[MarketplaceSheet] marketplace_get_manifest failed', err);
 				setManifestError(err instanceof Error ? err.message : 'Failed to load marketplace data');
 			}
 			if (!cancelled) setIsLoadingManifest(false);
@@ -181,15 +185,13 @@ export function MarketplaceSheet({
 		return filtered;
 	}, [playbooks, selectedCategory, searchQuery]);
 
-	const handleSelectPlaybook = useCallback(
+	// Fetch the README for `playbook` and update preview state. Extracted so
+	// both `handleSelectPlaybook` (initial load) and `handleSelectDocument(null)`
+	// (back-from-doc) share the same fetch path — without this, returning from
+	// a doc preview can leave the sheet stuck on the previous error / "No
+	// README available" placeholder when the initial README fetch failed.
+	const loadReadmeFor = useCallback(
 		async (playbook: MarketplacePlaybook) => {
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-			setSelectedPlaybook(playbook);
-			setSelectedDocFilename(null);
-			setDocumentContent(null);
-			setTargetFolderName(defaultFolderNameFor(playbook));
-			setImportError(null);
-			setPreviewError(null);
 			setIsLoadingDocument(true);
 			const requestId = ++previewRequestIdRef.current;
 			try {
@@ -205,6 +207,7 @@ export function MarketplaceSheet({
 				}
 			} catch (err) {
 				if (previewRequestIdRef.current !== requestId) return;
+				console.error('[MarketplaceSheet] marketplace_get_readme failed', err);
 				setReadmeContent(null);
 				setPreviewError(err instanceof Error ? err.message : 'Failed to load README');
 			}
@@ -213,17 +216,35 @@ export function MarketplaceSheet({
 		[sendRequest]
 	);
 
+	const handleSelectPlaybook = useCallback(
+		async (playbook: MarketplacePlaybook) => {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			setSelectedPlaybook(playbook);
+			setSelectedDocFilename(null);
+			setDocumentContent(null);
+			setTargetFolderName(defaultFolderNameFor(playbook));
+			setImportError(null);
+			setPreviewError(null);
+			await loadReadmeFor(playbook);
+		},
+		[loadReadmeFor]
+	);
+
 	const handleSelectDocument = useCallback(
 		async (filename: string | null) => {
 			if (!selectedPlaybook) return;
 			if (filename === null) {
-				// Cancel any in-flight document fetch and immediately surface
-				// the README — bumping the request id ensures a slow document
-				// response can't overwrite this state later.
+				// Returning to the README view from a doc preview. Cancel any
+				// in-flight document fetch (bump the request id), clear stale
+				// preview error state, and re-load the README — the user may
+				// have arrived here after the initial README fetch failed or
+				// after a doc fetch errored, and the sheet would otherwise stay
+				// stuck on that error / "No README available" placeholder.
 				++previewRequestIdRef.current;
 				setSelectedDocFilename(null);
 				setDocumentContent(null);
-				setIsLoadingDocument(false);
+				setPreviewError(null);
+				await loadReadmeFor(selectedPlaybook);
 				return;
 			}
 			setSelectedDocFilename(filename);
@@ -244,6 +265,7 @@ export function MarketplaceSheet({
 				}
 			} catch (err) {
 				if (previewRequestIdRef.current !== requestId) return;
+				console.error('[MarketplaceSheet] marketplace_get_document failed', err);
 				setDocumentContent(null);
 				setPreviewError(err instanceof Error ? err.message : 'Failed to load document');
 			}
@@ -276,6 +298,7 @@ export function MarketplaceSheet({
 				setImportError(result?.error || 'Import failed');
 			}
 		} catch (err) {
+			console.error('[MarketplaceSheet] marketplace_import_playbook failed', err);
 			triggerHaptic(HAPTIC_PATTERNS.error);
 			setImportError(err instanceof Error ? err.message : 'Import failed');
 		}

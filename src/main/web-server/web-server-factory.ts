@@ -9,6 +9,7 @@ import { WebServer } from './WebServer';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
@@ -2596,6 +2597,14 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				};
 			} catch (err) {
 				const errorMsg = err instanceof Error ? err.message : String(err);
+				captureException(err instanceof Error ? err : new Error(errorMsg), {
+					extra: {
+						operation: 'webServerFactory:importMarketplacePlaybook',
+						sessionId,
+						playbookId,
+						targetFolderName,
+					},
+				});
 				logger.error(`Marketplace import failed for ${playbookId}: ${errorMsg}`, 'WebServer');
 				return { success: false, error: errorMsg };
 			}

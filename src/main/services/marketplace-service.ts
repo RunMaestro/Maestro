@@ -459,11 +459,25 @@ export async function importMarketplacePlaybook(
 			await writeCache(app, officialManifest);
 		} catch (error) {
 			void captureException(error);
-			logger.warn(
-				'Failed to fetch official manifest during import, continuing with local only',
-				LOG_CONTEXT,
-				{ error }
-			);
+			// Fall back to stale cache if present so a transient fetch failure
+			// during import doesn't drop official playbooks the UI is still
+			// showing from the same stale cache via getMarketplaceManifest().
+			// Otherwise the user sees a visible playbook that import then
+			// claims doesn't exist.
+			if (cache) {
+				officialManifest = cache.manifest;
+				logger.warn(
+					'Failed to fetch official manifest during import; falling back to stale cache',
+					LOG_CONTEXT,
+					{ error }
+				);
+			} else {
+				logger.warn(
+					'Failed to fetch official manifest during import, continuing with local only',
+					LOG_CONTEXT,
+					{ error }
+				);
+			}
 		}
 	}
 	const localManifest = await readLocalManifest(app);
@@ -520,6 +534,17 @@ export async function importMarketplacePlaybook(
 			void captureException(error);
 			logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
 		}
+	}
+
+	// Refuse to persist a playbook whose documents all failed to write —
+	// the per-doc loop is intentionally tolerant so one bad file doesn't
+	// block the rest, but if every doc failed we'd otherwise create a
+	// playbook with `documents: []`, return success, close the marketplace
+	// sheet, and leave the user with an unusable imported entry.
+	if (marketplacePlaybook.documents.length > 0 && importedDocs.length === 0) {
+		throw new MarketplaceImportError(
+			`Failed to import any documents for playbook: ${marketplacePlaybook.title}`
+		);
 	}
 
 	// Build effective asset list (local: union manifest + discovered files)
