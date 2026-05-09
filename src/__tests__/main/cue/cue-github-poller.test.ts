@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mock references (vi.hoisted runs before vi.mock hoisting)
 const {
 	mockExecFile,
+	mockIsCueDbReady,
 	mockIsGitHubItemSeen,
 	mockMarkGitHubItemSeen,
 	mockHasAnyGitHubSeen,
@@ -27,6 +28,7 @@ const {
 	mockCaptureException,
 } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
+	mockIsCueDbReady: vi.fn<() => boolean>().mockReturnValue(true),
 	mockIsGitHubItemSeen: vi.fn<(subId: string, key: string) => boolean>().mockReturnValue(false),
 	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string) => void>(),
 	mockHasAnyGitHubSeen: vi.fn<(subId: string) => boolean>().mockReturnValue(true),
@@ -61,6 +63,7 @@ vi.mock('../../../main/utils/cliDetection', () => ({
 
 // Mock cue-db functions
 vi.mock('../../../main/cue/cue-db', () => ({
+	isCueDbReady: () => mockIsCueDbReady(),
 	isGitHubItemSeen: (subId: string, key: string) => mockIsGitHubItemSeen(subId, key),
 	markGitHubItemSeen: (subId: string, key: string) => mockMarkGitHubItemSeen(subId, key),
 	hasAnyGitHubSeen: (subId: string) => mockHasAnyGitHubSeen(subId),
@@ -204,8 +207,30 @@ describe('cue-github-poller', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		uuidCounter = 0;
+		mockIsCueDbReady.mockReturnValue(true);
 		mockIsGitHubItemSeen.mockReturnValue(false);
 		mockHasAnyGitHubSeen.mockReturnValue(true); // not first run by default
+	});
+
+	it('skips polling while Cue DB is not ready', async () => {
+		mockIsCueDbReady.mockReturnValue(false);
+		const config = makeConfig();
+		setupExecFile({
+			'--version': '2.0.0',
+			'pr list': JSON.stringify(samplePRs),
+		});
+
+		const cleanup = createCueGitHubPoller(config);
+		await vi.advanceTimersByTimeAsync(2000);
+
+		expect(config.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('Cue database not ready')
+		);
+		expect(mockExecFile).not.toHaveBeenCalled();
+		expect(config.onEvent).not.toHaveBeenCalled();
+
+		cleanup();
 	});
 
 	afterEach(() => {

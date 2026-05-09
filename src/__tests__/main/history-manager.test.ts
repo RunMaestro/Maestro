@@ -476,6 +476,50 @@ describe('HistoryManager', () => {
 			expect(result[0].id).toBe('e1');
 		});
 
+		it('should parse session files with a leading UTF-8 BOM', async () => {
+			const entries = [createMockEntry({ id: 'bom-entry' })];
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(`\uFEFF${createHistoryFileData('session-1', entries)}`);
+
+			const result = await manager.getEntries('session-1');
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('bom-entry');
+		});
+
+		it('should recover and rewrite the first valid object from concatenated JSON', async () => {
+			const entries = [createMockEntry({ id: 'recovered-entry' })];
+			const firstDocument = createHistoryFileData('session-1', entries);
+			const secondDocument = createHistoryFileData('session-1', [createMockEntry({ id: 'stale' })]);
+			const filePath = path.join(
+				'/mock/userData',
+				'history',
+				`${sanitizeSessionId('session-1')}.json`
+			);
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
+			mockReadFileSync.mockReturnValue(`${firstDocument}${secondDocument}`);
+
+			const result = await manager.getEntries('session-1');
+
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('recovered-entry');
+			expect(mockWriteFileSync).toHaveBeenCalledWith(
+				filePath,
+				JSON.stringify(JSON.parse(firstDocument), null, 2),
+				'utf-8'
+			);
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Recovered concatenated history JSON'),
+				expect.any(String)
+			);
+		});
+
 		it('should return empty array if session file does not exist', async () => {
 			mockExistsSync.mockReturnValue(false);
 			const result = await manager.getEntries('nonexistent');

@@ -24,6 +24,7 @@ import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-probe
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
+import { parseJsonWithBom } from '../../shared/jsonUtils';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -348,13 +349,19 @@ export class AgentDetector {
 						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 						const cachePath = path.join(codexHome, 'models_cache.json');
 						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = JSON.parse(cacheContent);
+						const cache = parseJsonWithBom<{
+							models?: Array<{ slug?: string; visibility?: string }>;
+						}>(cacheContent);
 						if (Array.isArray(cache.models)) {
 							const models = cache.models
 								.filter(
-									(m: { slug?: string; visibility?: string }) => m.slug && m.visibility !== 'hide'
+									(m: {
+										slug?: string;
+										visibility?: string;
+									}): m is { slug: string; visibility?: string } =>
+										typeof m.slug === 'string' && m.visibility !== 'hide'
 								)
-								.map((m: { slug: string }) => m.slug);
+								.map((m) => m.slug);
 							logger.info(
 								`Discovered ${models.length} models for ${agentId} from models_cache.json`,
 								LOG_CONTEXT,
@@ -520,33 +527,46 @@ export class AgentDetector {
 				case 'codex': {
 					if (optionKey === 'reasoningEffort') {
 						// Codex: read reasoning levels from ~/.codex/models_cache.json
-						const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-						const cachePath = path.join(codexHome, 'models_cache.json');
-						const cacheContent = fs.readFileSync(cachePath, 'utf8');
-						const cache = JSON.parse(cacheContent);
-						if (Array.isArray(cache.models)) {
-							// Collect union of all reasoning levels across visible models
-							const levelSet = new Set<string>();
-							for (const model of cache.models) {
-								if (model.visibility === 'hide') continue;
-								for (const rl of model.supported_reasoning_levels || []) {
-									if (rl.effort) levelSet.add(rl.effort);
+						try {
+							const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+							const cachePath = path.join(codexHome, 'models_cache.json');
+							const cacheContent = fs.readFileSync(cachePath, 'utf8');
+							const cache = parseJsonWithBom<{
+								models?: Array<{
+									visibility?: string;
+									supported_reasoning_levels?: Array<{ effort?: string }>;
+								}>;
+							}>(cacheContent);
+							if (Array.isArray(cache.models)) {
+								// Collect union of all reasoning levels across visible models
+								const levelSet = new Set<string>();
+								for (const model of cache.models) {
+									if (model.visibility === 'hide') continue;
+									for (const rl of model.supported_reasoning_levels || []) {
+										if (rl.effort) levelSet.add(rl.effort);
+									}
 								}
+								const levels = Array.from(levelSet);
+								// Sort by severity: minimal < low < medium < high < xhigh
+								const order = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+								levels.sort(
+									(a, b) =>
+										(order.indexOf(a) === -1 ? 99 : order.indexOf(a)) -
+										(order.indexOf(b) === -1 ? 99 : order.indexOf(b))
+								);
+								logger.info(
+									`Discovered ${levels.length} reasoning levels for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ levels }
+								);
+								return ['', ...levels]; // Empty string = use default
 							}
-							const levels = Array.from(levelSet);
-							// Sort by severity: minimal < low < medium < high < xhigh
-							const order = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-							levels.sort(
-								(a, b) =>
-									(order.indexOf(a) === -1 ? 99 : order.indexOf(a)) -
-									(order.indexOf(b) === -1 ? 99 : order.indexOf(b))
+						} catch {
+							// Fresh Codex installs may not have populated the cache yet.
+							logger.debug(
+								'Could not read Codex models_cache.json for config option discovery',
+								LOG_CONTEXT
 							);
-							logger.info(
-								`Discovered ${levels.length} reasoning levels for ${agentId} from models_cache.json`,
-								LOG_CONTEXT,
-								{ levels }
-							);
-							return ['', ...levels]; // Empty string = use default
 						}
 					}
 					break;

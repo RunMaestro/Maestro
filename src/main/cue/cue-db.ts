@@ -484,6 +484,7 @@ export function pruneCueEvents(olderThanMs: number): void {
  * Check if a GitHub item has been seen for a given subscription.
  */
 export function isGitHubItemSeen(subscriptionId: string, itemKey: string): boolean {
+	if (!db) return true;
 	const row = getDb()
 		.prepare(`SELECT 1 FROM cue_github_seen WHERE subscription_id = ? AND item_key = ?`)
 		.get(subscriptionId, itemKey);
@@ -494,6 +495,13 @@ export function isGitHubItemSeen(subscriptionId: string, itemKey: string): boole
  * Mark a GitHub item as seen for a given subscription.
  */
 export function markGitHubItemSeen(subscriptionId: string, itemKey: string): void {
+	if (!db) {
+		log(
+			'warn',
+			`Dropping markGitHubItemSeen (subscriptionId=${subscriptionId}, itemKey=${itemKey}): Cue DB not initialized`
+		);
+		return;
+	}
 	getDb()
 		.prepare(
 			`INSERT OR IGNORE INTO cue_github_seen (subscription_id, item_key, seen_at) VALUES (?, ?, ?)`
@@ -506,6 +514,7 @@ export function markGitHubItemSeen(subscriptionId: string, itemKey: string): voi
  * Used for first-run seeding detection.
  */
 export function hasAnyGitHubSeen(subscriptionId: string): boolean {
+	if (!db) return true;
 	const row = getDb()
 		.prepare(`SELECT 1 FROM cue_github_seen WHERE subscription_id = ? LIMIT 1`)
 		.get(subscriptionId);
@@ -516,6 +525,7 @@ export function hasAnyGitHubSeen(subscriptionId: string): boolean {
  * Delete GitHub seen records older than the specified age in milliseconds.
  */
 export function pruneGitHubSeen(olderThanMs: number): void {
+	if (!db) return;
 	const cutoff = Date.now() - olderThanMs;
 	const result = getDb().prepare(`DELETE FROM cue_github_seen WHERE seen_at < ?`).run(cutoff);
 	if (result.changes > 0) {

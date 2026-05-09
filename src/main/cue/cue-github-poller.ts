@@ -7,7 +7,13 @@
 
 import { execFile as cpExecFile } from 'child_process';
 import { createCueEvent, type CueEvent } from './cue-types';
-import { isGitHubItemSeen, markGitHubItemSeen, hasAnyGitHubSeen, pruneGitHubSeen } from './cue-db';
+import {
+	isCueDbReady,
+	isGitHubItemSeen,
+	markGitHubItemSeen,
+	hasAnyGitHubSeen,
+	pruneGitHubSeen,
+} from './cue-db';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
@@ -310,6 +316,10 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		// scheduleNextPoll loop keeps running so we resume cleanly when the
 		// app becomes visible again.
 		if (!isActive()) return;
+		if (!isCueDbReady()) {
+			onLog('warn', `[CUE] Cue database not ready — skipping GitHub poll for "${triggerName}"`);
+			return;
+		}
 
 		try {
 			if (!(await resolveGh())) return;
@@ -422,6 +432,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	// Periodic prune every 24 hours (30-day retention)
 	pruneInterval = setInterval(
 		() => {
+			if (!isCueDbReady()) return;
 			pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
 		},
 		24 * 60 * 60 * 1000
