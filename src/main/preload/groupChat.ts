@@ -35,6 +35,11 @@ export interface ChatMessage {
 	timestamp: string;
 	from: string;
 	content: string;
+	autoRunRefs?: Array<{
+		participantName: string;
+		relativePath: string;
+		triggerCommand: string;
+	}>;
 }
 
 /**

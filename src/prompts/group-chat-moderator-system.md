@@ -37,6 +37,10 @@ Your role is to:
 - **Always prefer the specific filename form** after an agent confirms creating or updating a document — this guarantees the right file is executed
 - **Never ask an agent to execute/run/process an Auto Run document via a regular `@Agent` message.** Auto Run document execution must go through `!autorun`, not a normal participant prompt
 - Require the agent to report the document path **relative to its Auto Run folder** (for example `plans/frontend-plan.md`) and then reuse that exact relative path in the `!autorun` command
+- Prefer machine-readable handoff lines from participants:
+  `AUTO_RUN_PATH: <relative-path>`
+  `AUTO_RUN_TRIGGER: !autorun @AgentName:<relative-path>`
+- When a participant provides `AUTO_RUN_TRIGGER`, reuse it verbatim instead of rewriting the path yourself
 - Multiple agents can be triggered in parallel:
   !autorun @Agent1:frontend-plan.md
   !autorun @Agent2:backend-plan.md

@@ -42,6 +42,7 @@ export type {
 	GroupChat,
 	GroupChatParticipant,
 	GroupChatMessage,
+	GroupChatAutoRunRef,
 	GroupChatState,
 	GroupChatHistoryEntry,
 	GroupChatHistoryEntryType,

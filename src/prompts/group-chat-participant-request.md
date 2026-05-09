@@ -29,7 +29,10 @@ The shared folder contains chat logs and can be used for collaborative file exch
 If the moderator asks you to execute, run, or process an Auto Run document or Playbook, do **not** execute that document directly in this reply. Instead:
 
 - report the exact document path relative to your Auto Run folder
-- state that the moderator should trigger it via `!autorun @{{PARTICIPANT_NAME}}:<relative-path>.md`
+- include a machine-readable line exactly like `AUTO_RUN_PATH: <relative-path>`
+- include a machine-readable line exactly like `AUTO_RUN_TRIGGER: !autorun @{{PARTICIPANT_NAME}}:<relative-path>`
 - only execute the document when Maestro starts the native Auto Run flow
+
+When you create or update an Auto Run document for the moderator, always include both machine-readable lines above. Do not include a `.md` suffix unless it is actually part of the relative path inside the Auto Run folder.
 
 Please respond to this request.{{READ_ONLY_INSTRUCTION}}

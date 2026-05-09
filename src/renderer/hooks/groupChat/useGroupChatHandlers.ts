@@ -21,6 +21,7 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import { extractCanonicalAutoRunRefs } from '../../../shared/group-chat-types';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -118,6 +119,19 @@ function resetGroupChatUI(): void {
 	setGroupChatState('idle');
 	setParticipantStates(new Map());
 	setGroupChatError(null);
+}
+
+function hydrateAutoRunRefs<T extends { from: string; content: string; autoRunRefs?: any[] }>(
+	message: T
+): T {
+	if (message.autoRunRefs && message.autoRunRefs.length > 0) {
+		return message;
+	}
+	if (message.from === 'user' || message.from === 'moderator' || message.from === 'system') {
+		return message;
+	}
+	const autoRunRefs = extractCanonicalAutoRunRefs(message.content, message.from);
+	return autoRunRefs.length > 0 ? { ...message, autoRunRefs } : message;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +300,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 		const unsubMessage = window.maestro.groupChat.onMessage((id, message) => {
 			if (id === activeGroupChatId) {
-				setGroupChatMessages((prev) => [...prev, message]);
+				setGroupChatMessages((prev) => [...prev, hydrateAutoRunRefs(message)]);
 			}
 		});
 
@@ -382,7 +396,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		if (chat) {
 			setActiveGroupChatId(id);
 			const messages = await window.maestro.groupChat.getMessages(id);
-			setGroupChatMessages(messages);
+			setGroupChatMessages(messages.map(hydrateAutoRunRefs));
 
 			// Restore the state for this specific chat from the per-chat state map
 			setGroupChatState(groupChatStates.get(id) ?? 'idle');

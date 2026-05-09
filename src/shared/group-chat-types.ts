@@ -113,6 +113,62 @@ export interface GroupChatMessage {
 	from: string;
 	content: string;
 	readOnly?: boolean;
+	autoRunRefs?: GroupChatAutoRunRef[];
+}
+
+/**
+ * Canonical Auto Run reference attached to a participant message.
+ * relativePath is always relative to the participant's configured Auto Run folder.
+ */
+export interface GroupChatAutoRunRef {
+	participantName: string;
+	relativePath: string;
+	triggerCommand: string;
+}
+
+/**
+ * Extract structured Auto Run paths from a participant response.
+ * Supports both:
+ * - AUTO_RUN_PATH: plans/doc-name
+ * - AUTO_RUN_TRIGGER: !autorun @agent:plans/doc-name
+ */
+export function extractStructuredAutoRunPaths(content: string, participantName?: string): string[] {
+	const paths = new Set<string>();
+
+	for (const line of content.split('\n')) {
+		const trimmed = line.trim();
+		const pathMatch = trimmed.match(/^AUTO_RUN_PATH:\s*(.+)$/i);
+		if (pathMatch?.[1]) {
+			paths.add(pathMatch[1].trim());
+		}
+
+		const triggerMatch = trimmed.match(/^AUTO_RUN_TRIGGER:\s*!autorun\s+@([^:\s]+):(.+)$/i);
+		if (triggerMatch?.[1] && triggerMatch?.[2]) {
+			if (!participantName || mentionMatches(triggerMatch[1].trim(), participantName)) {
+				paths.add(triggerMatch[2].trim());
+			}
+		}
+	}
+
+	return Array.from(paths);
+}
+
+/**
+ * Extract canonical Auto Run refs from message content after Maestro enrichment.
+ * These are derived from structured AUTO_RUN_PATH / AUTO_RUN_TRIGGER lines.
+ */
+export function extractCanonicalAutoRunRefs(
+	content: string,
+	participantName: string
+): GroupChatAutoRunRef[] {
+	const maestroSectionMatch = content.match(/(?:^|\n)## Maestro Auto Run Refs\n([\s\S]*)$/);
+	const sourceContent = maestroSectionMatch?.[1] || content;
+
+	return extractStructuredAutoRunPaths(sourceContent, participantName).map((relativePath) => ({
+		participantName,
+		relativePath,
+		triggerCommand: `!autorun @${normalizeMentionName(participantName)}:${relativePath}`,
+	}));
 }
 
 /**
