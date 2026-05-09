@@ -38,15 +38,56 @@ describe('useAutoRun (mobile/web)', () => {
 			});
 
 			expect(sendRequest).toHaveBeenCalledTimes(1);
-			expect(sendRequest).toHaveBeenCalledWith('configure_auto_run', {
-				sessionId: 's-1',
-				documents: [{ filename: 'doc.md' }],
-				prompt: 'p',
-				loopEnabled: undefined,
-				maxLoops: undefined,
-				launch: true,
-			});
+			expect(sendRequest).toHaveBeenCalledWith(
+				'configure_auto_run',
+				{
+					sessionId: 's-1',
+					documents: [{ filename: 'doc.md' }],
+					prompt: 'p',
+					loopEnabled: undefined,
+					maxLoops: undefined,
+					launch: true,
+				},
+				10_000
+			);
 			expect(response).toEqual({ success: true, error: undefined });
+		});
+
+		it('uses an extended timeout when worktree dispatch is enabled', async () => {
+			const worktree: LaunchWorktreeConfig = {
+				enabled: true,
+				path: '/repo/worktrees/auto-run-main-0503',
+				branchName: 'auto-run-main-0503',
+				createPROnCompletion: false,
+				prTargetBranch: 'main',
+			};
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await act(async () => {
+				await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+					worktree,
+				});
+			});
+
+			expect(sendRequest.mock.calls[0][2]).toBe(60_000);
+		});
+
+		it('uses the default timeout when worktree dispatch is disabled', async () => {
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+			await act(async () => {
+				await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+					worktree: {
+						enabled: false,
+						path: '/x',
+						branchName: 'b',
+						createPROnCompletion: false,
+						prTargetBranch: 'main',
+					},
+				});
+			});
+
+			expect(sendRequest.mock.calls[0][2]).toBe(10_000);
 		});
 
 		it('forwards worktree config when enabled', async () => {

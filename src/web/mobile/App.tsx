@@ -246,9 +246,17 @@ function MobileHeader({
 	// Get active tab for per-tab data (agentSessionId, usageStats)
 	const activeTab = getActiveTabFromSession(activeSession);
 
-	// Session status and usage - prefer tab-level data
-	const sessionState = activeTab?.state || activeSession?.state || 'idle';
-	const isThinking = sessionState === 'busy';
+	// Session status and usage - prefer tab-level data, except for `connecting`
+	// (the optimistic state set during an Auto Run launch lives on the session
+	// rather than the tab; without this precedence the header would still show
+	// the tab's stale `idle` while the launching agent is spawning).
+	const sessionState =
+		activeSession?.state === 'connecting'
+			? 'connecting'
+			: activeTab?.state || activeSession?.state || 'idle';
+	// Animate the header dot for both `busy` and `connecting` so the launching
+	// agent's pulsing-orange indicator actually pulses.
+	const isThinking = sessionState === 'busy' || sessionState === 'connecting';
 
 	// Responsive: detect wider screens for showing more icons
 	const [isWide, setIsWide] = useState(() => window.innerWidth > 768);
@@ -1601,19 +1609,23 @@ export default function MobileApp() {
 			if (!activeSessionId) return;
 			const sessionId = activeSessionId;
 
-			// Capture the pre-launch state so we can revert if the launch fails.
-			// `connecting` (pulsing orange) gives the launching agent immediate
-			// visual feedback while the worktree spawn / initial dispatch occurs;
-			// the server's `session_state_change` broadcasts overwrite this once
-			// the agent actually transitions to busy.
-			let previousState: string | undefined;
-			setSessions((prev) => {
-				const target = prev.find((s) => s.id === sessionId);
-				if (!target) return prev;
-				previousState = target.state;
-				if (target.state === 'connecting') return prev;
-				return prev.map((s) => (s.id === sessionId ? { ...s, state: 'connecting' } : s));
-			});
+			// Read the pre-launch state from the current sessions snapshot before
+			// scheduling the optimistic update. Don't do this inside the
+			// `setSessions` updater — React 18 Concurrent Mode is allowed to call
+			// updater functions multiple times for speculative/interrupted renders,
+			// so a side effect there is non-deterministic.
+			const previousState = sessions.find((s) => s.id === sessionId)?.state;
+
+			// Optimistically flip the launching session to `connecting` (pulsing
+			// orange) so the user gets immediate visual feedback while the
+			// worktree spawn / initial dispatch occurs; the server's
+			// `session_state_change` broadcasts overwrite this once the agent
+			// actually transitions to busy.
+			if (previousState !== 'connecting') {
+				setSessions((prev) =>
+					prev.map((s) => (s.id === sessionId ? { ...s, state: 'connecting' } : s))
+				);
+			}
 
 			setShowAutoRunSetup(false);
 			triggerHaptic(HAPTIC_PATTERNS.success);
@@ -1633,7 +1645,7 @@ export default function MobileApp() {
 				);
 			}
 		},
-		[activeSessionId, launchAutoRun, setSessions]
+		[activeSessionId, launchAutoRun, sessions, setSessions]
 	);
 
 	// Connect on mount - use empty dependency array to only connect once

@@ -8,6 +8,20 @@
 
 import { useState, useCallback } from 'react';
 import type { UseWebSocketReturn, AutoRunState } from './useWebSocket';
+import { webLogger } from '../utils/logger';
+
+/**
+ * Default `sendRequest` timeout for `configure_auto_run` (matches the platform
+ * default of 10s for ordinary launches).
+ */
+const LAUNCH_TIMEOUT_MS = 10_000;
+/**
+ * Worktree launches block on `git worktree add` and an upstream
+ * `getBranches` round-trip on the server before the result is returned, which
+ * can be slow on large repos or over SSH. Use a longer ceiling so legitimately
+ * successful launches don't surface as `Request timed out`.
+ */
+const LAUNCH_WORKTREE_TIMEOUT_MS = 60_000;
 
 /**
  * Auto Run document metadata (mirrors server-side AutoRunDocument).
@@ -222,6 +236,8 @@ export function useAutoRun(
 
 	const launchAutoRun = useCallback(
 		async (sessionId: string, config: LaunchConfig): Promise<LaunchAutoRunResult> => {
+			const useWorktreeTimeout = Boolean(config.worktree && config.worktree.enabled);
+			const timeoutMs = useWorktreeTimeout ? LAUNCH_WORKTREE_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
 			try {
 				const response = await sendRequest<{ success?: boolean; error?: string }>(
 					'configure_auto_run',
@@ -233,13 +249,18 @@ export function useAutoRun(
 						maxLoops: config.maxLoops,
 						launch: true,
 						...(config.worktree && config.worktree.enabled ? { worktree: config.worktree } : {}),
-					}
+					},
+					timeoutMs
 				);
 				return {
 					success: response.success ?? false,
 					error: response.error,
 				};
 			} catch (error) {
+				// Web bundle has no Sentry — surface unexpected launch failures via
+				// the web logger so they show up in the browser console / log
+				// transports rather than being silently converted to {success:false}.
+				webLogger.error('configure_auto_run failed', 'AutoRun', error);
 				return {
 					success: false,
 					error: error instanceof Error ? error.message : 'Unknown error',
