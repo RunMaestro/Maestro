@@ -470,7 +470,11 @@ export const TerminalView = memo(
 								theme={theme}
 								fontFamily={fontFamily}
 								fontSize={fontSize}
-								isActive={isActive}
+								// Treat the tab as inactive when the whole TerminalView is hidden
+								// (a different session is active) so XTerminal disposes its WebGL
+								// renderer and frees the GPU context. Re-init happens automatically
+								// when isVisible flips back to true.
+								isActive={isActive && isVisible !== false}
 							/>
 						</div>
 					);

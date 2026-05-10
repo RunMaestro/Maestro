@@ -41,6 +41,7 @@ export const SYMPHONY_CATEGORIES: Record<string, { label: string; emoji: string 
 	documentation: { label: 'Documentation', emoji: '📚' },
 	web: { label: 'Web', emoji: '🌐' },
 	mobile: { label: 'Mobile', emoji: '📱' },
+	desktop: { label: 'Desktop', emoji: '🖥️' },
 	data: { label: 'Data', emoji: '📊' },
 	productivity: { label: 'Productivity', emoji: '⚡' },
 	security: { label: 'Security', emoji: '🔒' },

@@ -1,19 +1,27 @@
 /**
  * GitHub Copilot CLI Output Parser
  *
- * Parses structured output from `copilot --output-format json`.
+ * Parses structured output from `copilot --output-format json`. The live stdout
+ * stream may concatenate multiple JSON objects in a single chunk without newline
+ * separators. Common events:
+ *   session.tools_updated, user.message, assistant.turn_start/turn_end,
+ *   assistant.message, assistant.reasoning_delta, assistant.reasoning,
+ *   tool.execution_start, tool.execution_complete, result, session.shutdown.
  *
- * Verified locally against Copilot CLI 1.0.5 output. The CLI emits JSON
- * events, and the live stdout stream may concatenate multiple objects in a
- * single chunk without newline separators. The events include:
- * - session.tools_updated
- * - user.message
- * - assistant.turn_start / assistant.turn_end
- * - assistant.message
- * - assistant.reasoning_delta
- * - assistant.reasoning
- * - tool.execution_start / tool.execution_complete
- * - result
+ * ── Token reporting (verified locally against three CLI versions) ────────────
+ *   ≤1.0.5  emits a final `session.shutdown` event whose `data.modelMetrics`
+ *           map carries per-model { inputTokens, outputTokens, cacheReadTokens,
+ *           cacheWriteTokens }. Handled by parseSessionShutdown.
+ *   1.0.39  drops `session.shutdown` entirely. Each `assistant.message` event
+ *           carries `data.outputTokens` for that turn. No input/cache info.
+ *           Handled by parseAssistantMessage.
+ *   1.0.43  same shape as 1.0.39. `result.usage` carries premiumRequests /
+ *           durations only, no token counts.
+ *
+ * Both shapes are handled defensively so a single build of the parser supports
+ * any of these versions without configuration. Per-turn `outputTokens` are
+ * emitted as deltas; StdoutHandler skips delta-normalization for copilot-cli
+ * (see StdoutHandler.ts:459) so they sum into the running total.
  */
 
 import type { ToolType, AgentError } from '../../shared/types';
@@ -375,7 +383,9 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
-	/** Parse session.shutdown events, extracting aggregate token usage from modelMetrics. */
+	/** Parse session.shutdown events, extracting aggregate token usage from modelMetrics.
+	 *  Only emitted by Copilot CLI ≤1.0.5; modern versions report tokens on
+	 *  assistant.message instead (see parseAssistantMessage). */
 	private parseSessionShutdown(msg: CopilotRawMessage): ParsedEvent {
 		const modelMetrics = msg.data?.modelMetrics;
 		if (!modelMetrics) {

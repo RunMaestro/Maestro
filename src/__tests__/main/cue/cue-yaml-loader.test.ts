@@ -757,6 +757,66 @@ subscriptions:
 			);
 		});
 
+		it('requires source_sub for agent.completed command subscriptions', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'cmd-chain',
+						event: 'agent.completed',
+						source_session: 'Builder',
+						action: 'command',
+						command: { mode: 'shell', shell: 'echo ok' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('source_sub')])
+			);
+		});
+
+		it('rejects source_sub/source_session array length mismatch', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in',
+						event: 'agent.completed',
+						source_session: ['A', 'B'],
+						source_sub: ['fan-in-chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining('source_sub" length (1) must match "source_session" length (2)'),
+				])
+			);
+		});
+
+		it('rejects source_sub array when source_session is a string', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in-invalid-shape',
+						event: 'agent.completed',
+						source_session: 'A',
+						source_sub: ['chain-a', 'chain-b'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
 		it('accepts prompt_file as alternative to prompt', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -1244,6 +1304,7 @@ subscriptions:
 							name: 'forward',
 							event: 'agent.completed',
 							source_session: 'researcher',
+							source_sub: 'researcher-step',
 							action: 'command',
 							command: {
 								mode: 'cli',

@@ -231,10 +231,18 @@ export interface TabStoreActions {
 	renameTerminalTab: (tabId: string, name: string) => void;
 
 	/**
-	 * Configure the startup command (and optional cwd override) for a terminal tab.
+	 * Configure the startup command (and optional cwd override) for a terminal tab
+	 * in a specific session. Pinned to sessionId rather than the active session so
+	 * the save lands correctly even if the user switches agents while the modal
+	 * is open.
 	 * Empty `command` clears the configuration.
 	 */
-	setTerminalTabStartupCommand: (tabId: string, command: string, cwd: string) => void;
+	setTerminalTabStartupCommand: (
+		sessionId: string,
+		tabId: string,
+		command: string,
+		cwd: string
+	) => void;
 
 	// === File tab content operations ===
 
@@ -554,12 +562,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateActiveSession(updatedSession);
 	},
 
-	setTerminalTabStartupCommand: (tabId, command, cwd) => {
-		const session = getActiveSession();
-		if (!session) return;
-		const updatedSession = setTerminalTabStartupCommandHelper(session, tabId, command, cwd);
-		if (updatedSession === session) return;
-		updateActiveSession(updatedSession);
+	setTerminalTabStartupCommand: (sessionId, tabId, command, cwd) => {
+		useSessionStore.getState().setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const updated = setTerminalTabStartupCommandHelper(s, tabId, command, cwd);
+				return updated;
+			})
+		);
 	},
 
 	// File tab content operations

@@ -574,7 +574,17 @@ function RepositoryDetailView({
 					<div className="flex items-center gap-2">
 						<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-							Maestro Symphony: {repo.name}
+							Maestro Symphony:{' '}
+							<button
+								type="button"
+								className="hover:underline inline-flex items-center gap-1"
+								style={{ color: theme.colors.accent }}
+								onClick={() => handleOpenExternal(repo.url)}
+								title="View repository on GitHub"
+							>
+								{repo.name}
+								<ExternalLink className="w-3.5 h-3.5" />
+							</button>
 						</h2>
 					</div>
 				</div>

@@ -424,6 +424,36 @@ describe('CopilotOutputParser', () => {
 		expect(zero && parser.extractUsage(zero)).toBeNull();
 	});
 
+	it('reports per-turn outputTokens on every assistant.message in a multi-turn run', () => {
+		// Verified against Copilot CLI 1.0.39 and 1.0.43: a tool-using response
+		// emits multiple assistant.message events, each with its own outputTokens.
+		// StdoutHandler doesn't delta-normalize copilot-cli, so the renderer sums
+		// these into the running total. The parser's job is to surface every value.
+		const parser = new CopilotOutputParser();
+
+		const toolTurn = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: '',
+				toolRequests: [{ toolCallId: 'call_1', name: 'bash', arguments: { command: 'ls' } }],
+				outputTokens: 178,
+			},
+		});
+		const finalTurn = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: { content: 'Done.', toolRequests: [], outputTokens: 35 },
+		});
+
+		expect(toolTurn && parser.extractUsage(toolTurn)).toEqual({
+			inputTokens: 0,
+			outputTokens: 178,
+		});
+		expect(finalTurn && parser.extractUsage(finalTurn)).toEqual({
+			inputTokens: 0,
+			outputTokens: 35,
+		});
+	});
+
 	it('extracts modelMetrics usage from session.shutdown events (legacy ≤1.0.5)', () => {
 		const parser = new CopilotOutputParser();
 

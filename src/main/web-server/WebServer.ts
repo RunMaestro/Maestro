@@ -103,6 +103,8 @@ import type {
 	RenameSessionCallback,
 	GetGitStatusCallback,
 	GetGitDiffCallback,
+	GetGitBranchesForSessionCallback,
+	ListWorktreesForSessionCallback,
 	GroupData,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
@@ -576,6 +578,14 @@ export class WebServer {
 		this.callbackRegistry.setGetGitDiffCallback(callback);
 	}
 
+	setGetGitBranchesForSessionCallback(callback: GetGitBranchesForSessionCallback): void {
+		this.callbackRegistry.setGetGitBranchesForSessionCallback(callback);
+	}
+
+	setListWorktreesForSessionCallback(callback: ListWorktreesForSessionCallback): void {
+		this.callbackRegistry.setListWorktreesForSessionCallback(callback);
+	}
+
 	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {
 		this.callbackRegistry.setGetGroupChatsCallback(callback);
 	}
@@ -914,6 +924,10 @@ export class WebServer {
 			getGitStatus: async (sessionId: string) => this.callbackRegistry.getGitStatus(sessionId),
 			getGitDiff: async (sessionId: string, filePath?: string) =>
 				this.callbackRegistry.getGitDiff(sessionId, filePath),
+			getGitBranchesForSession: async (sessionId: string) =>
+				this.callbackRegistry.getGitBranchesForSession(sessionId),
+			listWorktreesForSession: async (sessionId: string) =>
+				this.callbackRegistry.listWorktreesForSession(sessionId),
 			getGroupChats: async () => this.callbackRegistry.getGroupChats(),
 			startGroupChat: async (topic: string, participantIds: string[]) =>
 				this.callbackRegistry.startGroupChat(topic, participantIds),

@@ -64,8 +64,12 @@ import type {
 	GroupData,
 	GetGitStatusCallback,
 	GetGitDiffCallback,
+	GetGitBranchesForSessionCallback,
+	ListWorktreesForSessionCallback,
 	GitStatusResult,
 	GitDiffResult,
+	GitBranchesResult,
+	ListWorktreesResult,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
 	GetGroupChatStateCallback,
@@ -161,6 +165,8 @@ export interface WebServerCallbacks {
 	renameSession: RenameSessionCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
+	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
+	listWorktreesForSession: ListWorktreesForSessionCallback | null;
 	getGroupChats: GetGroupChatsCallback | null;
 	startGroupChat: StartGroupChatCallback | null;
 	getGroupChatState: GetGroupChatStateCallback | null;
@@ -239,6 +245,8 @@ export class CallbackRegistry {
 		renameSession: null,
 		getGitStatus: null,
 		getGitDiff: null,
+		getGitBranchesForSession: null,
+		listWorktreesForSession: null,
 		getGroupChats: null,
 		startGroupChat: null,
 		getGroupChatState: null,
@@ -576,6 +584,16 @@ export class CallbackRegistry {
 	async getGitDiff(sessionId: string, filePath?: string): Promise<GitDiffResult> {
 		if (!this.callbacks.getGitDiff) return { diff: '', files: [] };
 		return this.callbacks.getGitDiff(sessionId, filePath);
+	}
+
+	async getGitBranchesForSession(sessionId: string): Promise<GitBranchesResult> {
+		if (!this.callbacks.getGitBranchesForSession) return { branches: [] };
+		return this.callbacks.getGitBranchesForSession(sessionId);
+	}
+
+	async listWorktreesForSession(sessionId: string): Promise<ListWorktreesResult> {
+		if (!this.callbacks.listWorktreesForSession) return { worktrees: [] };
+		return this.callbacks.listWorktreesForSession(sessionId);
 	}
 
 	async getGroupChats(): Promise<GroupChatState[]> {
@@ -944,6 +962,14 @@ export class CallbackRegistry {
 
 	setGetGitDiffCallback(callback: GetGitDiffCallback): void {
 		this.callbacks.getGitDiff = callback;
+	}
+
+	setGetGitBranchesForSessionCallback(callback: GetGitBranchesForSessionCallback): void {
+		this.callbacks.getGitBranchesForSession = callback;
+	}
+
+	setListWorktreesForSessionCallback(callback: ListWorktreesForSessionCallback): void {
+		this.callbacks.listWorktreesForSession = callback;
 	}
 
 	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {

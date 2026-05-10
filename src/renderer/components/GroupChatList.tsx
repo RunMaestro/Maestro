@@ -4,7 +4,7 @@
  * Appears below the Ungrouped Agents section in the left sidebar.
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import {
 	MessageSquare,
@@ -162,7 +162,7 @@ interface GroupChatListProps {
 	showUnreadAgentsOnly?: boolean;
 }
 
-export function GroupChatList({
+function GroupChatListInner({
 	theme,
 	groupChats,
 	activeGroupChatId,
@@ -473,3 +473,5 @@ export function GroupChatList({
 		</div>
 	);
 }
+
+export const GroupChatList = memo(GroupChatListInner);

@@ -346,13 +346,21 @@ export function useFilePreviewSearch({
 		accentColor,
 	]);
 
-	// Handle search in edit mode - count matches and update state
+	// Handle search in edit mode - count matches, paint highlights, and update state
 	// Note: We separate counting from selection to avoid stealing focus while typing
 	useEffect(() => {
+		const clearEditHighlights = () => {
+			if ('highlights' in CSS) {
+				(CSS as any).highlights.delete('search-results');
+				(CSS as any).highlights.delete('search-current');
+			}
+		};
+
 		if (!isEditableText || !markdownEditMode || !searchQuery.trim() || !textareaRef.current) {
 			if (isEditableText && markdownEditMode) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(-1);
+				clearEditHighlights();
 			}
 			return;
 		}
@@ -371,6 +379,7 @@ export function useFilePreviewSearch({
 		setTotalMatches(matches.length);
 		if (matches.length === 0) {
 			setCurrentMatchIndex(-1);
+			clearEditHighlights();
 			return;
 		}
 
@@ -379,6 +388,66 @@ export function useFilePreviewSearch({
 		if (validIndex !== currentMatchIndex) {
 			setCurrentMatchIndex(validIndex);
 			return;
+		}
+
+		// Paint highlights on the syntax-highlighted overlay. The textarea has
+		// color:transparent so its native selection is invisible — instead we
+		// apply the CSS Custom Highlight API on the overlay's text nodes, which
+		// show through the transparent textarea sitting on top.
+		if ('highlights' in CSS && textareaRef.current.parentElement) {
+			const container = textareaRef.current.parentElement;
+			const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+				acceptNode: (node) =>
+					(node as Text).parentElement?.tagName === 'TEXTAREA'
+						? NodeFilter.FILTER_REJECT
+						: NodeFilter.FILTER_ACCEPT,
+			});
+			const textNodes: { node: Text; start: number; end: number }[] = [];
+			let pos = 0;
+			let textNode: Node | null;
+			while ((textNode = walker.nextNode())) {
+				const text = (textNode as Text).textContent || '';
+				textNodes.push({ node: textNode as Text, start: pos, end: pos + text.length });
+				pos += text.length;
+			}
+
+			const findContainingNode = (offset: number, isRangeStart: boolean) => {
+				for (const tn of textNodes) {
+					if (isRangeStart) {
+						if (offset >= tn.start && offset < tn.end) return tn;
+					} else if (offset > tn.start && offset <= tn.end) {
+						return tn;
+					}
+				}
+				if (textNodes.length > 0 && offset === textNodes[textNodes.length - 1].end) {
+					return textNodes[textNodes.length - 1];
+				}
+				return null;
+			};
+
+			const allRanges: Range[] = [];
+			for (const m of matches) {
+				const startTn = findContainingNode(m.start, true);
+				const endTn = findContainingNode(m.end, false);
+				if (!startTn || !endTn) continue;
+				try {
+					const range = document.createRange();
+					range.setStart(startTn.node, m.start - startTn.start);
+					range.setEnd(endTn.node, m.end - endTn.start);
+					allRanges.push(range);
+				} catch {
+					// Range creation can fail if offsets fall outside the text node
+					// (e.g. overlay text out of sync mid-render). Skip this match.
+				}
+			}
+
+			if (allRanges.length > 0) {
+				(CSS as any).highlights.set('search-results', new (window as any).Highlight(...allRanges));
+				const currentRange = allRanges[validIndex] ?? allRanges[0];
+				(CSS as any).highlights.set('search-current', new (window as any).Highlight(currentRange));
+			} else {
+				clearEditHighlights();
+			}
 		}
 
 		// Only scroll and select when navigating between matches (Enter/Shift+Enter)
@@ -411,6 +480,10 @@ export function useFilePreviewSearch({
 				searchInputRef.current?.focus();
 			}
 		}
+
+		return () => {
+			clearEditHighlights();
+		};
 	}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent]);
 
 	// Navigate to next search match

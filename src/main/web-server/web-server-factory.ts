@@ -14,6 +14,9 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group, SshRemoteConfig } from '../../shared/types';
+import { execGit } from '../utils/remote-git';
+import { getSshRemoteById } from '../stores';
+import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { WebPlaybook } from './types';
 import { getDefaultShell } from '../stores/defaults';
@@ -180,6 +183,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					// Worktree subagent support
 					parentSessionId: s.parentSessionId || null,
 					worktreeBranch: s.worktreeBranch || null,
+					isGitRepo: s.isGitRepo ?? false,
+					worktreeBasePath: s.worktreeConfig?.basePath || null,
 					// Auto Run folder — exposes the session's configured `.maestro/`
 					// playbook folder to web clients so the folder picker can show
 					// the current selection.
@@ -1578,6 +1583,131 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolve({ diff: '', files: [] });
 				}, 10000);
 			});
+		});
+
+		// Resolve a session's effective git execution context (local cwd + optional
+		// SSH remote). Used by both Run-in-Worktree callbacks below. When SSH is
+		// enabled but the configured remote can't be resolved we fail loudly —
+		// silently falling back to local git would return wrong branch/worktree
+		// data for an SSH-backed session and leak the run to the wrong machine.
+		const resolveSessionGitContext = (
+			session: StoredSession
+		): { sshRemote: ReturnType<typeof getSshRemoteById>; remoteCwd: string | undefined } => {
+			if (!session.sessionSshRemoteConfig?.enabled) {
+				return { sshRemote: undefined, remoteCwd: undefined };
+			}
+			const sshRemoteId = session.sessionSshRemoteConfig.remoteId;
+			if (!sshRemoteId) {
+				throw new Error(`SSH remote is enabled but remoteId is missing for session ${session.id}`);
+			}
+			const sshRemote = getSshRemoteById(sshRemoteId);
+			if (!sshRemote) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			return { sshRemote, remoteCwd: session.cwd };
+		};
+
+		// Set up callback for web server to enumerate branches for the Run-in-Worktree
+		// base-branch picker on mobile. Executes git directly in the main process
+		// (no renderer round-trip needed because cwd + SSH config live in sessionsStore).
+		// Unexpected exec/SSH failures are rethrown so callers (and Sentry) see the
+		// real error instead of a silently empty branch list.
+		server.setGetGitBranchesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
+
+			const [branchesResult, currentBranchResult] = await Promise.all([
+				execGit(['branch', '-a', '--format=%(refname:short)'], session.cwd, sshRemote, remoteCwd),
+				execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
+			]);
+
+			// `execGit` returns `exitCode: number | string`. A string exit code (e.g.
+			// 'ENOENT', 'EPERM') means git never even ran — that's a real failure we
+			// want surfaced to Sentry, not a fake "empty repo" result. A numeric
+			// non-zero exit code is a legitimate "not a git repo" / "no branches"
+			// signal and maps to empty results.
+			if (typeof branchesResult.exitCode !== 'number') {
+				throw new Error(
+					branchesResult.stderr || `git branch failed: ${String(branchesResult.exitCode)}`
+				);
+			}
+			if (typeof currentBranchResult.exitCode !== 'number') {
+				throw new Error(
+					currentBranchResult.stderr ||
+						`git rev-parse failed: ${String(currentBranchResult.exitCode)}`
+				);
+			}
+
+			const branches = branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
+			const currentBranch =
+				currentBranchResult.exitCode === 0
+					? currentBranchResult.stdout.trim() || undefined
+					: undefined;
+
+			return { branches, currentBranch };
+		});
+
+		// List existing worktrees for a session — used by mobile Run-in-Worktree
+		// to offer "use existing" alongside "create new". Same error-propagation
+		// contract as getGitBranchesForSession above.
+		server.setListWorktreesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
+
+			const result = await execGit(
+				['worktree', 'list', '--porcelain'],
+				session.cwd,
+				sshRemote,
+				remoteCwd
+			);
+			// String exitCode = git never ran (ENOENT/EPERM/etc.) — surface to Sentry.
+			if (typeof result.exitCode !== 'number') {
+				throw new Error(result.stderr || `git worktree list failed: ${String(result.exitCode)}`);
+			}
+			if (result.exitCode !== 0) {
+				// Numeric non-zero: not a git repo or worktrees unsupported — empty
+				// list is the right answer here.
+				return { worktrees: [] };
+			}
+
+			const worktrees: Array<{ path: string; branch: string | null; isBare: boolean }> = [];
+			let current: { path?: string; branch?: string | null; isBare?: boolean } = {};
+			for (const line of result.stdout.split('\n')) {
+				if (line.startsWith('worktree ')) {
+					current.path = line.substring(9);
+				} else if (line.startsWith('branch ')) {
+					current.branch = line.substring(7).replace('refs/heads/', '');
+				} else if (line === 'bare') {
+					current.isBare = true;
+				} else if (line === 'detached') {
+					current.branch = null;
+				} else if (line === '' && current.path) {
+					worktrees.push({
+						path: current.path,
+						branch: current.branch ?? null,
+						isBare: current.isBare || false,
+					});
+					current = {};
+				}
+			}
+			if (current.path) {
+				worktrees.push({
+					path: current.path,
+					branch: current.branch ?? null,
+					isBare: current.isBare || false,
+				});
+			}
+			return { worktrees };
 		});
 
 		// Set up callback for web server to stop Auto Run

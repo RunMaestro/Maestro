@@ -239,9 +239,17 @@ export const AppSessionModals = memo(function AppSessionModals({
 					initialCommand={startupCommandData.initialCommand}
 					initialCwd={startupCommandData.initialCwd}
 					defaultCwd={startupCommandData.defaultCwd}
-					onSave={(command, cwd) =>
-						setTerminalTabStartupCommand(startupCommandData.tabId, command, cwd)
-					}
+					onSave={(command, cwd) => {
+						setTerminalTabStartupCommand(
+							startupCommandData.sessionId,
+							startupCommandData.tabId,
+							command,
+							cwd
+						);
+						// Force immediate persistence so a quick quit after Save
+						// doesn't lose the configuration to the 2s debounce.
+						onAfterRename?.();
+					}}
 					onClose={closeStartupCommandModal}
 				/>
 			)}
