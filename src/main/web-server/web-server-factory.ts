@@ -2670,16 +2670,42 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// src/main/ipc/handlers/marketplace.ts.
 		// =====================================================================
 
-		/** Resolve a session's effective SSH remote config (if any). */
-		const resolveSessionSshConfig = (sessionId: string): SshRemoteConfig | undefined => {
-			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
-			const session = sessions.find((s) => s.id === sessionId);
-			if (!session) return undefined;
-			const remoteId: string | undefined =
-				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
-			if (!remoteId) return undefined;
+		/**
+		 * Resolve a session's effective SSH remote config.
+		 *
+		 * Returns `undefined` only when the session has no SSH configured at
+		 * all. When SSH IS configured but the remote can't be resolved (the
+		 * remoteId is missing, points at no entry in `sshRemotes`, or the
+		 * matching entry is disabled), this throws so callers fail loudly
+		 * instead of silently downgrading to a local import — mirrors the
+		 * desktop IPC marketplace handler and the SSH-spawn pattern in
+		 * CLAUDE.md.
+		 *
+		 * `sessionSshRemoteConfig.enabled` is the source of truth for the
+		 * newer config shape; the legacy top-level `sshRemoteId` field
+		 * implies enabled when present.
+		 */
+		const resolveSessionSshConfig = (session: StoredSession): SshRemoteConfig | undefined => {
+			const newConfig = session.sessionSshRemoteConfig;
+			const newConfigEnabled = newConfig?.enabled === true;
+			const legacyId: string | undefined = session.sshRemoteId;
+
+			if (!newConfigEnabled && !legacyId) {
+				return undefined;
+			}
+
+			const remoteId: string | null | undefined =
+				legacyId ?? (newConfigEnabled ? newConfig?.remoteId : undefined);
+			if (!remoteId) {
+				throw new Error('SSH remote not found or disabled');
+			}
+
 			const sshRemotes = settingsStore.get<SshRemoteConfig[]>('sshRemotes', []);
-			return sshRemotes.find((r) => r.id === remoteId && r.enabled);
+			const found = sshRemotes.find((r) => r.id === remoteId && r.enabled);
+			if (!found) {
+				throw new Error('SSH remote not found or disabled');
+			}
+			return found;
 		};
 
 		server.setGetMarketplaceManifestCallback(async (options) => {
@@ -2710,6 +2736,20 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					error: 'Session has no Auto Run folder configured',
 				};
 			}
+			// Resolve SSH up front so an unresolvable remote on an SSH-enabled
+			// session returns a typed failure instead of silently importing
+			// locally. Errors here aren't exceptional bugs — they're user
+			// misconfiguration — so we don't route them through the
+			// captureException catch below.
+			let sshConfig: SshRemoteConfig | undefined;
+			try {
+				sshConfig = resolveSessionSshConfig(session);
+			} catch (err) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : 'SSH remote not found or disabled',
+				};
+			}
 			try {
 				const result = await importMarketplacePlaybook({
 					app: electronApp,
@@ -2717,7 +2757,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					targetFolderName,
 					autoRunFolderPath,
 					sessionId,
-					sshConfig: resolveSessionSshConfig(sessionId),
+					sshConfig,
 				});
 				return {
 					success: true,
