@@ -502,6 +502,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						// directory and built the session.
 						batchConfig.worktreeTarget = spawnConfig.worktreeTarget;
 					} catch (err) {
+						captureException(err, {
+							extra: {
+								event: 'maestro:configureAutoRun',
+								sessionId,
+								parentSessionId: parentForSpawn.id,
+								worktree: config.worktree,
+								responseChannel,
+							},
+						});
 						logger.error('[Remote] Failed to spawn worktree agent:', undefined, err);
 						notifyToast({
 							type: 'error',

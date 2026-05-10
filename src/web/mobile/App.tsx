@@ -1630,19 +1630,31 @@ export default function MobileApp() {
 			setShowAutoRunSetup(false);
 			triggerHaptic(HAPTIC_PATTERNS.success);
 
-			const result = await launchAutoRun(sessionId, config);
-
-			if (!result.success) {
+			const revertOptimisticState = () => {
 				const fallback = previousState ?? 'idle';
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === sessionId && s.state === 'connecting' ? { ...s, state: fallback } : s
 					)
 				);
-				webLogger.warn(
-					`Auto Run launch failed for session ${sessionId}: ${result.error ?? 'unknown error'}`,
-					'Mobile'
-				);
+			};
+
+			try {
+				const result = await launchAutoRun(sessionId, config);
+				if (!result.success) {
+					revertOptimisticState();
+					webLogger.warn(
+						`Auto Run launch failed for session ${sessionId}: ${result.error ?? 'unknown error'}`,
+						'Mobile'
+					);
+				}
+			} catch (error) {
+				// Unexpected throw (non-transport error) — revert the optimistic
+				// indicator and re-throw so the rejection surfaces to global
+				// handlers (browser unhandled-rejection / Sentry if/when the web
+				// bundle ever wires it up) instead of being silently swallowed.
+				revertOptimisticState();
+				throw error;
 			}
 		},
 		[activeSessionId, launchAutoRun, sessions, setSessions]

@@ -61,9 +61,11 @@ export async function spawnWorktreeAgentAndDispatch(
 			});
 			return null;
 		}
+		// Strip the last path segment using a separator-agnostic regex so the
+		// fallback works for both POSIX (`/`) and Windows (`\`) paths.
 		const basePath =
 			parentSession.worktreeConfig?.basePath ||
-			parentSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
+			parentSession.cwd.replace(/[\\/][^\\/]+$/, '') + '/worktrees';
 		worktreePath = basePath + '/' + branchName;
 
 		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
@@ -107,7 +109,9 @@ export async function spawnWorktreeAgentAndDispatch(
 	} else {
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;
-		branchName = worktreePath.split('/').pop() || 'worktree';
+		// Split on either separator so Windows paths (e.g. `C:\repo\worktrees\foo`)
+		// don't collapse into a single segment.
+		branchName = worktreePath.split(/[\\/]/).pop() || 'worktree';
 	}
 
 	// If a session for this worktree path already exists (e.g., the resolved

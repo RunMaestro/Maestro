@@ -142,7 +142,7 @@ describe('useAutoRun (mobile/web)', () => {
 			expect(response).toEqual({ success: false, error: 'Bad request' });
 		});
 
-		it('returns success=false when sendRequest rejects (timeout / disconnect)', async () => {
+		it('returns success=false when sendRequest rejects with a known transport error', async () => {
 			sendRequest.mockRejectedValueOnce(new Error('Request timed out'));
 			const { result } = renderHook(() => useAutoRun(sendRequest, send));
 
@@ -154,6 +154,30 @@ describe('useAutoRun (mobile/web)', () => {
 			});
 
 			expect(response).toEqual({ success: false, error: 'Request timed out' });
+		});
+
+		it('also handles WebSocket-not-connected as a known transport failure', async () => {
+			sendRequest.mockRejectedValueOnce(new Error('WebSocket not connected'));
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			let response: { success: boolean; error?: string } | undefined;
+			await act(async () => {
+				response = await result.current.launchAutoRun('s-1', {
+					documents: [{ filename: 'doc.md' }],
+				});
+			});
+
+			expect(response).toEqual({ success: false, error: 'WebSocket not connected' });
+		});
+
+		it('re-throws unexpected errors so they bubble to global handlers / Sentry', async () => {
+			const unexpected = new Error('Some non-transport bug');
+			sendRequest.mockRejectedValueOnce(unexpected);
+			const { result } = renderHook(() => useAutoRun(sendRequest, send));
+
+			await expect(
+				result.current.launchAutoRun('s-1', { documents: [{ filename: 'doc.md' }] })
+			).rejects.toBe(unexpected);
 		});
 
 		it('treats a missing success field as failure', async () => {

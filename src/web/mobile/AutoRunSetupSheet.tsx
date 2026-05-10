@@ -329,11 +329,13 @@ export function AutoRunSetupSheet({
 
 	const handleLaunch = useCallback(() => {
 		if (selectedFiles.size === 0) return;
-		// Block launch when the worktree section is enabled but invalid (e.g.
-		// branch name cleared, branch fetch failed). Without this guard the
-		// run would silently fall through to a regular Auto Run on the main
-		// checkout, which is not what the user asked for.
-		if (worktreeState.status === 'enabled-invalid') return;
+		// Block launch when the worktree section is enabled but not yet ready
+		// (branches still loading, branch name cleared, branch fetch failed).
+		// Without this guard the run would silently fall through to a regular
+		// Auto Run on the main checkout, which is not what the user asked for.
+		if (worktreeState.status === 'enabled-invalid' || worktreeState.status === 'enabled-loading') {
+			return;
+		}
 		triggerHaptic(HAPTIC_PATTERNS.success);
 		const config: LaunchConfig = {
 			documents: Array.from(selectedFiles).map((filename) => ({ filename })),
@@ -1368,6 +1370,23 @@ export function AutoRunSetupSheet({
 					</div>
 				</div>
 
+				{/* Worktree validation warning — rendered above the action row so
+					it shows as a full-width banner instead of squeezing the
+					Cancel/Launch buttons sideways on narrow screens. */}
+				{worktreeState.status === 'enabled-invalid' && (
+					<div
+						style={{
+							fontSize: '12px',
+							color: colors.warning,
+							padding: '8px 16px 0',
+							textAlign: 'center',
+							flexShrink: 0,
+						}}
+					>
+						Run-in-Worktree: {worktreeState.reason}
+					</div>
+				)}
+
 				{/* Footer — Cancel + Launch (mirrors desktop's Cancel/Save/Go).
 					Save lives in the Playbook section above; this footer is just
 					the dismiss + go pair. */}
@@ -1379,18 +1398,6 @@ export function AutoRunSetupSheet({
 						flexShrink: 0,
 					}}
 				>
-					{worktreeState.status === 'enabled-invalid' && (
-						<div
-							style={{
-								fontSize: '12px',
-								color: colors.warning,
-								marginBottom: '8px',
-								textAlign: 'center',
-							}}
-						>
-							Run-in-Worktree: {worktreeState.reason}
-						</div>
-					)}
 					<button
 						type="button"
 						onClick={handleClose}
@@ -1412,36 +1419,37 @@ export function AutoRunSetupSheet({
 					>
 						Cancel
 					</button>
-					<button
-						onClick={handleLaunch}
-						disabled={selectedFiles.size === 0 || worktreeState.status === 'enabled-invalid'}
-						style={{
-							flex: 2,
-							padding: '14px 20px',
-							borderRadius: '12px',
-							backgroundColor:
-								selectedFiles.size === 0 || worktreeState.status === 'enabled-invalid'
-									? `${colors.accent}40`
-									: colors.accent,
-							border: 'none',
-							color: 'white',
-							fontSize: '16px',
-							fontWeight: 600,
-							cursor:
-								selectedFiles.size === 0 || worktreeState.status === 'enabled-invalid'
-									? 'not-allowed'
-									: 'pointer',
-							opacity:
-								selectedFiles.size === 0 || worktreeState.status === 'enabled-invalid' ? 0.5 : 1,
-							touchAction: 'manipulation',
-							WebkitTapHighlightColor: 'transparent',
-							minHeight: '50px',
-							transition: 'all 0.15s ease',
-						}}
-						aria-label="Launch Auto Run"
-					>
-						Launch Auto Run
-					</button>
+					{(() => {
+						const launchBlocked =
+							selectedFiles.size === 0 ||
+							worktreeState.status === 'enabled-invalid' ||
+							worktreeState.status === 'enabled-loading';
+						return (
+							<button
+								onClick={handleLaunch}
+								disabled={launchBlocked}
+								style={{
+									flex: 2,
+									padding: '14px 20px',
+									borderRadius: '12px',
+									backgroundColor: launchBlocked ? `${colors.accent}40` : colors.accent,
+									border: 'none',
+									color: 'white',
+									fontSize: '16px',
+									fontWeight: 600,
+									cursor: launchBlocked ? 'not-allowed' : 'pointer',
+									opacity: launchBlocked ? 0.5 : 1,
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									minHeight: '50px',
+									transition: 'all 0.15s ease',
+								}}
+								aria-label="Launch Auto Run"
+							>
+								Launch Auto Run
+							</button>
+						);
+					})()}
 				</div>
 			</div>
 
