@@ -46,6 +46,7 @@ vi.mock('lucide-react', () => ({
 	Keyboard: () => <span data-testid="icon-keyboard" />,
 	Radio: () => <span data-testid="icon-radio" />,
 	Copy: () => <span data-testid="icon-copy" />,
+	Hash: () => <span data-testid="icon-hash" />,
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
 	PanelLeftOpen: () => <span data-testid="icon-panel-left-open" />,

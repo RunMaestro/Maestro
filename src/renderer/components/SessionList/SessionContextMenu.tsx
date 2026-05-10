@@ -3,6 +3,7 @@ import {
 	ChevronRight,
 	Settings,
 	Copy,
+	Hash,
 	Bookmark,
 	FolderInput,
 	FolderPlus,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -186,6 +188,20 @@ export function SessionContextMenu({
 			>
 				<Copy className="w-3.5 h-3.5" />
 				Duplicate...
+			</button>
+
+			<button
+				type="button"
+				onClick={() => {
+					void navigator.clipboard.writeText(session.id);
+					flashCopiedToClipboard(session.id, 'Agent ID Copied');
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Hash className="w-3.5 h-3.5" />
+				Copy Agent ID
 			</button>
 
 			{!session.parentSessionId && (
