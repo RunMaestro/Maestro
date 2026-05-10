@@ -17,6 +17,7 @@ import {
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -192,8 +193,13 @@ export function SessionContextMenu({
 
 			<button
 				type="button"
-				onClick={() => {
-					void navigator.clipboard.writeText(session.id);
+				onClick={async () => {
+					try {
+						await navigator.clipboard.writeText(session.id);
+					} catch (err) {
+						captureException(err, { extra: { sessionId: session.id, action: 'copy-agent-id' } });
+						throw err;
+					}
 					flashCopiedToClipboard(session.id, 'Agent ID Copied');
 					onDismiss();
 				}}
