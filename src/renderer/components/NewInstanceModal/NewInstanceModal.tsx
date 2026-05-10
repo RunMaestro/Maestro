@@ -414,6 +414,10 @@ export function NewInstanceModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
+		// Inherit the source session's group when duplicating so the copy lands
+		// alongside the original (issue #827).
+		const inheritedGroupId = sourceSession?.groupId;
+
 		onCreate(
 			selectedAgent,
 			expandedWorkingDir,
@@ -427,7 +431,8 @@ export function NewInstanceModal({
 			agentCustomContextWindow,
 			agentCustomProviderPath,
 			sessionSshRemoteConfig,
-			agentCustomEffort
+			agentCustomEffort,
+			inheritedGroupId
 		);
 		onClose();
 
@@ -461,6 +466,7 @@ export function NewInstanceModal({
 		expandTilde,
 		handleWorkingDirChange,
 		existingSessions,
+		sourceSession?.groupId,
 	]);
 
 	// Check if form is valid for submission
@@ -526,6 +532,9 @@ export function NewInstanceModal({
 	}, [agents]);
 
 	// Effects - load agents and optionally pre-fill from source session
+	// Dependency uses sourceSession?.id (not the full object) so unrelated
+	// `sessions` store updates don't re-fire pre-fill and clobber what the
+	// user has typed (issue #827).
 	useEffect(() => {
 		if (isOpen) {
 			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
@@ -540,7 +549,7 @@ export function NewInstanceModal({
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
 		}
-	}, [isOpen, sourceSession]);
+	}, [isOpen, sourceSession?.id]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails

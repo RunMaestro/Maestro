@@ -41,7 +41,8 @@ export interface AppSessionModalsProps {
 			remoteId: string | null;
 			workingDirOverride?: string;
 		},
-		customEffort?: string
+		customEffort?: string,
+		groupId?: string
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
