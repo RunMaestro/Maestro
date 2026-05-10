@@ -145,6 +145,8 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from './stores/sessionStore';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { sidebarSessionEquality } from './stores/sessionEquality';
 import { useActiveSession } from './hooks/session/useActiveSession';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
@@ -467,6 +469,18 @@ function MaestroConsoleInner() {
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---
 	// Reactive values — each selector triggers re-render only when its specific value changes
 	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Sidebar-stable view of `sessions` for the sort/navigation pipeline.
+	// `sidebarSessionEquality` ignores log/usage/cycle counters, so the array
+	// reference only flips when something the left bar actually displays
+	// changes. Plumbed into `useSortedSessions` so `sortedSessions` (and the
+	// SessionList tree) stops re-rendering on every 200ms streaming flush.
+	// `sessions` (full array) is still used for persistence, fork, and any
+	// consumer that needs the streaming-heavy fields.
+	const sessionsForSidebar = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		sidebarSessionEquality
+	);
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
@@ -1649,7 +1663,9 @@ function MaestroConsoleInner() {
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions, navSessions, bookmarkNavSize, navIndexMap } =
 		useSortedSessions({
-			sessions,
+			// Use the sidebar-stable projection so log streaming doesn't recompute
+			// the sort/navigation tree every 200ms.
+			sessions: sessionsForSidebar,
 			groups,
 			bookmarksCollapsed,
 			showUnreadAgentsOnly,
