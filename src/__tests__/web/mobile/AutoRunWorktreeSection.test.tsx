@@ -181,12 +181,14 @@ describe('AutoRunWorktreeSection', () => {
 		expect(screen.getByText(/Branch name is required/i)).toBeInTheDocument();
 	});
 
-	it('emits enabled-invalid when createPR is on but baseBranch is empty', async () => {
+	it('stays in enabled-loading while branches load and never emits valid with empty prTargetBranch', async () => {
 		const onChange = vi.fn();
 		// Slow loadBranches: pending so baseBranch stays '' while the user toggles
-		// createPR and types a branch name. Without the guard this race emits
+		// createPR and types a branch name. Without the guard this race emitted
 		// enabled-valid with prTargetBranch: '' and the desktop's PR creation
-		// step receives a blank target. (Greptile P1 on PR #946.)
+		// step received a blank target. (Greptile P1 on PR #946.) The fix routes
+		// the loading window through `enabled-loading`, which the parent treats
+		// as "block launch, suppress the invalid-config banner".
 		let resolveBranches: (value: { branches: string[]; currentBranch?: string }) => void;
 		const slowLoadBranches = vi.fn(
 			() =>
@@ -219,8 +221,7 @@ describe('AutoRunWorktreeSection', () => {
 
 		await waitFor(() => {
 			const last = onChange.mock.calls.at(-1)?.[0];
-			expect(last?.status).toBe('enabled-invalid');
-			expect(last?.reason).toMatch(/Base branch is required/i);
+			expect(last?.status).toBe('enabled-loading');
 		});
 
 		// Sanity: nothing was emitted with an empty prTargetBranch and createPR=true.
@@ -231,6 +232,14 @@ describe('AutoRunWorktreeSection', () => {
 				call?.config?.prTargetBranch === ''
 		);
 		expect(validWithEmptyTarget).toBeUndefined();
+
+		// And no `enabled-invalid` banner fires during the loading window — that
+		// would surface "Branch name is required" / "Base branch is required"
+		// warnings the user can't act on yet.
+		const invalidDuringLoading = onChange.mock.calls.find(
+			([call]) => call?.status === 'enabled-invalid'
+		);
+		expect(invalidDuringLoading).toBeUndefined();
 
 		// Resolve branches so the test's pending promise doesn't leak. Wrap in
 		// act() because the resolution triggers state setters in the component

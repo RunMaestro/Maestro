@@ -20,10 +20,13 @@ import type { LaunchWorktreeConfig, WorktreeSummary } from '../hooks/useAutoRun'
  * Discriminated state emitted by `AutoRunWorktreeSection.onChange` so the
  * parent sheet can distinguish "user left this off" from "user enabled it but
  * the form is invalid" — only the former should silently fall back to a normal
- * Auto Run launch.
+ * Auto Run launch. `enabled-loading` is the brief window between toggle-on and
+ * `loadBranches()` resolving; the parent should disable launch but suppress
+ * "branch name required" warnings during this period.
  */
 export type AutoRunWorktreeState =
 	| { status: 'disabled' }
+	| { status: 'enabled-loading' }
 	| { status: 'enabled-valid'; config: LaunchWorktreeConfig }
 	| { status: 'enabled-invalid'; reason: string };
 
@@ -155,8 +158,19 @@ export function AutoRunWorktreeSection({
 			onChange({ status: 'disabled' });
 			return;
 		}
+		// While branches are still loading — including the brief gap between
+		// toggle-on and `setBranchLoadStatus('loading')` actually committing —
+		// `newBranchName` is empty and `baseBranch` is unset. Don't fire
+		// spurious "Branch name is required" / "Base branch is required"
+		// warnings during that window. The successful-load handler populates
+		// `branches` and the failure handler flips to `error`, so an empty
+		// `branches` array with no error means we haven't completed a load yet.
 		if (branchLoadStatus === 'error') {
 			onChange({ status: 'enabled-invalid', reason: 'Could not load branches' });
+			return;
+		}
+		if (branches.length === 0) {
+			onChange({ status: 'enabled-loading' });
 			return;
 		}
 		const branchClean = newBranchName.trim();
@@ -190,6 +204,7 @@ export function AutoRunWorktreeSection({
 		enabled,
 		isConfigured,
 		branchLoadStatus,
+		branches,
 		worktreePathPreview,
 		newBranchName,
 		baseBranch,

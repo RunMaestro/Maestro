@@ -8,7 +8,6 @@
 
 import { useState, useCallback } from 'react';
 import type { UseWebSocketReturn, AutoRunState } from './useWebSocket';
-import { webLogger } from '../utils/logger';
 
 /**
  * Default `sendRequest` timeout for `configure_auto_run` (matches the platform
@@ -22,6 +21,19 @@ const LAUNCH_TIMEOUT_MS = 10_000;
  * successful launches don't surface as `Request timed out`.
  */
 const LAUNCH_WORKTREE_TIMEOUT_MS = 60_000;
+
+/**
+ * Known transport-level rejections from `useWebSocket.sendRequest`. These are
+ * expected/recoverable (the user can retry once the connection is back), so
+ * `launchAutoRun` resolves with `{ success: false, error }` for them and lets
+ * the caller revert the optimistic UI. Anything else is treated as unexpected
+ * and re-thrown so unhandled-rejection handlers (and Sentry, if/when wired up
+ * for the web bundle) can capture it instead of having it silently swallowed.
+ */
+const KNOWN_TRANSPORT_ERRORS: ReadonlySet<string> = new Set([
+	'Request timed out',
+	'WebSocket not connected',
+]);
 
 /**
  * Auto Run document metadata (mirrors server-side AutoRunDocument).
@@ -238,8 +250,9 @@ export function useAutoRun(
 		async (sessionId: string, config: LaunchConfig): Promise<LaunchAutoRunResult> => {
 			const useWorktreeTimeout = Boolean(config.worktree && config.worktree.enabled);
 			const timeoutMs = useWorktreeTimeout ? LAUNCH_WORKTREE_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
+			let response: { success?: boolean; error?: string };
 			try {
-				const response = await sendRequest<{ success?: boolean; error?: string }>(
+				response = await sendRequest<{ success?: boolean; error?: string }>(
 					'configure_auto_run',
 					{
 						sessionId,
@@ -252,20 +265,24 @@ export function useAutoRun(
 					},
 					timeoutMs
 				);
-				return {
-					success: response.success ?? false,
-					error: response.error,
-				};
 			} catch (error) {
-				// Web bundle has no Sentry — surface unexpected launch failures via
-				// the web logger so they show up in the browser console / log
-				// transports rather than being silently converted to {success:false}.
-				webLogger.error('configure_auto_run failed', 'AutoRun', error);
-				return {
-					success: false,
-					error: error instanceof Error ? error.message : 'Unknown error',
-				};
+				// Handle known transport failures gracefully so the caller can
+				// revert the optimistic indicator without a thrown exception.
+				const message = error instanceof Error ? error.message : String(error);
+				if (KNOWN_TRANSPORT_ERRORS.has(message)) {
+					return { success: false, error: message };
+				}
+				// Anything else is unexpected — re-throw so it bubbles to the
+				// caller's catch (which still reverts the optimistic UI) and to
+				// any global unhandled-rejection / Sentry handler. Per
+				// `CLAUDE.md` → Error Handling & Sentry, only known/recoverable
+				// errors should be swallowed.
+				throw error;
 			}
+			return {
+				success: response.success ?? false,
+				error: response.error,
+			};
 		},
 		[sendRequest]
 	);
