@@ -358,6 +358,14 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getGraphData();
 	},
+	setCueSubscriptionEnabled: (subscriptionId, enabled) => {
+		if (!cueEngine) return false;
+		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
+	},
+	getCueActivityLog: () => {
+		if (!cueEngine) return [];
+		return cueEngine.getActivityLog();
+	},
 });
 
 // createWindow is now handled by windowManager (Phase 4 refactoring)

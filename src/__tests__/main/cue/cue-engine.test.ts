@@ -76,6 +76,23 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `uuid-${Math.random().toString(36).slice(2, 8)}`),
 }));
 
+// Mock the cue-config-repository so `setSubscriptionEnabled`'s YAML
+// read/write path can be exercised without touching the real filesystem.
+const mockReadCueConfigFile =
+	vi.fn<(projectRoot: string) => { filePath: string; raw: string } | null>();
+const mockWriteCueConfigFile = vi.fn<(projectRoot: string, content: string) => string>();
+vi.mock('../../../main/cue/config/cue-config-repository', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../main/cue/config/cue-config-repository')
+	>('../../../main/cue/config/cue-config-repository');
+	return {
+		...actual,
+		readCueConfigFile: (projectRoot: string) => mockReadCueConfigFile(projectRoot),
+		writeCueConfigFile: (projectRoot: string, content: string) =>
+			mockWriteCueConfigFile(projectRoot, content),
+	};
+});
+
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
 // `calculateNextScheduledTime` moved to triggers/cue-schedule-utils as part of
 // the Phase 4 trigger source isolation. cue-subscription-setup.ts is gone.
@@ -955,6 +972,109 @@ describe('CueEngine', () => {
 			expect(limited).toHaveLength(1);
 
 			engine.stop();
+		});
+	});
+
+	describe('setSubscriptionEnabled', () => {
+		// Flips the `enabled` flag on a single subscription in the owning
+		// session's cue.yaml and refreshes the session. Backs the web-server
+		// `setToggleCueSubscriptionCallback` (and the web UI's per-row toggle).
+		beforeEach(() => {
+			mockReadCueConfigFile.mockReset();
+			mockWriteCueConfigFile.mockReset();
+		});
+
+		it('rejects malformed subscription ids without touching the filesystem', () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(engine.setSubscriptionEnabled('no-separator', false)).toBe(false);
+			expect(engine.setSubscriptionEnabled('::missing-session', false)).toBe(false);
+			expect(engine.setSubscriptionEnabled('missing-name::', false)).toBe(false);
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the sessionId does not resolve to a live session', () => {
+			const deps = createMockDeps({
+				getSessions: vi.fn(() => [createMockSession({ id: 'session-1' })]),
+			});
+			const engine = new CueEngine(deps);
+			expect(engine.setSubscriptionEnabled('unknown-session::Digest Script', false)).toBe(false);
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when no cue.yaml exists for the session', () => {
+			mockReadCueConfigFile.mockReturnValue(null);
+			const engine = new CueEngine(createMockDeps());
+			expect(engine.setSubscriptionEnabled('session-1::Digest Script', false)).toBe(false);
+			expect(mockReadCueConfigFile).toHaveBeenCalledWith('/projects/test');
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the named subscription is absent from the YAML', () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Other Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+				].join('\n'),
+			});
+			const engine = new CueEngine(createMockDeps());
+			expect(engine.setSubscriptionEnabled('session-1::Digest Script', false)).toBe(false);
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('flips the enabled flag, serialises back, and refreshes the session', () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Digest Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+				].join('\n'),
+			});
+			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			mockLoadCueConfig.mockReturnValue(
+				createMockConfig({
+					subscriptions: [
+						{
+							name: 'Digest Script',
+							event: 'time.scheduled',
+							enabled: false,
+							prompt: '',
+							schedule_times: ['07:00'],
+						},
+					],
+				})
+			);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+			mockReadCueConfigFile.mockClear();
+			mockWriteCueConfigFile.mockClear();
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Digest Script',
+					'    event: time.scheduled',
+					'    enabled: true',
+					'    prompt: ""',
+					'    schedule_times: ["07:00"]',
+				].join('\n'),
+			});
+
+			expect(engine.setSubscriptionEnabled('session-1::Digest Script', false)).toBe(true);
+
+			expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
+			const written = mockWriteCueConfigFile.mock.calls[0][1] as string;
+			expect(written).toMatch(/enabled:\s*false/);
+			expect(written).toMatch(/name:\s*Digest Script/);
 		});
 	});
 

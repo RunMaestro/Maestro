@@ -1256,4 +1256,141 @@ describe('web-server/web-server-factory', () => {
 			);
 		});
 	});
+
+	describe('Cue toggle callback', () => {
+		// Regression: previously this callback forwarded the request to the
+		// renderer via `remote:toggleCueSubscription` and waited 10 s for a
+		// response, but no renderer handler existed. Every web-UI toggle
+		// silently no-op'd. Now it must call the injected dep directly.
+		it('delegates straight to setCueSubscriptionEnabled without any IPC bounce', async () => {
+			const setCueSubscriptionEnabled = vi.fn().mockReturnValue(true);
+			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionEnabled });
+			const server = createWebServer() as any;
+
+			expect(server.setToggleCueSubscriptionCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
+
+			const ok = await callback('agent-1::Digest Script', false);
+			expect(setCueSubscriptionEnabled).toHaveBeenCalledWith('agent-1::Digest Script', false);
+			expect(ok).toBe(true);
+		});
+
+		it('propagates a false return when the engine cannot find the subscription', async () => {
+			const setCueSubscriptionEnabled = vi.fn().mockReturnValue(false);
+			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionEnabled });
+			const server = createWebServer() as any;
+			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
+
+			const ok = await callback('agent-1::Missing', true);
+			expect(ok).toBe(false);
+		});
+
+		it('returns false and warns when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionEnabled: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
+
+			const ok = await callback('agent-1::Digest Script', false);
+			expect(ok).toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('setCueSubscriptionEnabled dependency not available'),
+				'WebServer'
+			);
+		});
+	});
+
+	describe('Cue activity callback', () => {
+		// Same dead-bridge fix as the subscriptions callback: previously this
+		// forwarded `remote:getCueActivity` to the renderer with no listener,
+		// so the web UI activity tab always rendered empty after a 30 s stall.
+		const sampleRun = {
+			runId: 'run-1',
+			sessionId: 'agent-1',
+			sessionName: 'Obsidian Digest',
+			subscriptionName: 'Digest Script',
+			event: { type: 'time.scheduled' } as any,
+			status: 'completed' as const,
+			stdout: 'all good',
+			stderr: '',
+			exitCode: 0,
+			durationMs: 1234,
+			startedAt: '2026-05-11T07:00:00.000Z',
+			endedAt: '2026-05-11T07:00:01.234Z',
+		};
+
+		it('maps engine CueRunResult[] into CueActivityEntry[] without IPC', async () => {
+			const getCueActivityLog = vi.fn().mockReturnValue([sampleRun]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueActivityLog });
+			const server = createWebServer() as any;
+
+			expect(server.setGetCueActivityCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setGetCueActivityCallback.mock.calls[0][0];
+
+			const entries = await callback();
+			expect(getCueActivityLog).toHaveBeenCalledTimes(1);
+			expect(entries).toHaveLength(1);
+			expect(entries[0]).toMatchObject({
+				id: 'run-1',
+				subscriptionId: 'agent-1::Digest Script',
+				subscriptionName: 'Digest Script',
+				eventType: 'time.scheduled',
+				sessionId: 'agent-1',
+				status: 'completed',
+				duration: 1234,
+				result: 'all good',
+			});
+			expect(entries[0].timestamp).toBe(Date.parse('2026-05-11T07:00:00.000Z'));
+		});
+
+		it('filters by sessionId before applying limit', async () => {
+			const getCueActivityLog = vi.fn().mockReturnValue([
+				{ ...sampleRun, runId: 'run-a', sessionId: 'agent-1' },
+				{ ...sampleRun, runId: 'run-b', sessionId: 'agent-2' },
+				{ ...sampleRun, runId: 'run-c', sessionId: 'agent-1' },
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueActivityLog });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueActivityCallback.mock.calls[0][0];
+
+			const filtered = await callback('agent-1', 1);
+			expect(filtered).toHaveLength(1);
+			expect(filtered[0].id).toBe('run-a');
+		});
+
+		it('collapses timeout / stopped engine statuses into the web "failed" enum', async () => {
+			const getCueActivityLog = vi.fn().mockReturnValue([
+				{ ...sampleRun, runId: 'r1', status: 'timeout', stderr: 'took too long' },
+				{ ...sampleRun, runId: 'r2', status: 'stopped', stderr: 'user kill' },
+				{ ...sampleRun, runId: 'r3', status: 'failed', stderr: 'oops' },
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueActivityLog });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueActivityCallback.mock.calls[0][0];
+
+			const entries = await callback();
+			expect(entries.map((e: any) => e.status)).toEqual(['failed', 'failed', 'failed']);
+			// stderr should surface as `result` for non-completed runs so the
+			// dashboard can show why it failed without re-fetching stdout.
+			expect(entries[0].result).toBe('took too long');
+		});
+
+		it('returns [] and warns when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueActivityLog: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueActivityCallback.mock.calls[0][0];
+
+			const entries = await callback();
+			expect(entries).toEqual([]);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('getCueActivityLog dependency not available'),
+				'WebServer'
+			);
+		});
+	});
 });

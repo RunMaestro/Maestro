@@ -18,8 +18,8 @@ import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook, CueSubscriptionInfo } from './types';
-import type { CueGraphSession } from '../../shared/cue/contracts';
+import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
@@ -102,6 +102,16 @@ export interface WebServerFactoryDependencies {
 	 *  to the renderer (which never registered a listener, so every CLI
 	 *  `cue list` call timed out). */
 	getCueGraphData?: () => CueGraphSession[];
+	/** Direct toggle for a single subscription's `enabled` flag in YAML.
+	 *  `subscriptionId` follows the `${sessionId}::${name}` shape emitted by
+	 *  `getCueGraphData` flattening — same dead-bridge fix as
+	 *  `getCueGraphData`. Returns false when the id can't be resolved, the
+	 *  YAML can't be parsed, or the named subscription isn't present. */
+	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => boolean;
+	/** Direct CUE activity-log snapshot — bypasses renderer IPC round-trip.
+	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
+	 *  Same dead-bridge fix as `getCueGraphData`. */
+	getCueActivityLog?: () => CueRunResult[];
 }
 
 /**
@@ -2354,93 +2364,65 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return subs;
 		});
 
-		// Toggle Cue subscription — uses IPC request-response pattern
+		// Toggle Cue subscription — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:toggleCueSubscription` to
+		// the renderer and waited 10 s for a response, but no renderer code
+		// ever registered a handler for that channel. Every web-UI toggle
+		// silently became a no-op after a 10 s stall. Same dead-bridge fix as
+		// `setGetCueSubscriptionsCallback` and `setTriggerCueSubscriptionCallback`.
 		server.setToggleCueSubscriptionCallback(async (subscriptionId: string, enabled: boolean) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for toggleCueSubscription', 'WebServer');
+			if (!deps.setCueSubscriptionEnabled) {
+				logger.warn('setCueSubscriptionEnabled dependency not available', 'WebServer');
 				return false;
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:toggleCueSubscription:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? false);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for toggleCueSubscription', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:toggleCueSubscription',
-					subscriptionId,
-					enabled,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`toggleCueSubscription callback timed out for ${subscriptionId}`,
-						'WebServer'
-					);
-					resolve(false);
-				}, 10000);
-			});
+			return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
 		});
 
-		// Get Cue activity log — uses IPC request-response pattern
+		// Get Cue activity log — calls engine directly in the main process.
+		// Previously forwarded to the renderer with no listener registered —
+		// the 30 s timeout fired every time and the web UI's activity tab
+		// always rendered empty. Maps `CueRunResult[]` from the engine into
+		// the web-facing `CueActivityEntry[]` shape and applies the same
+		// optional `sessionId` filter the IPC bounce used to apply renderer-side.
 		server.setGetCueActivityCallback(async (sessionId?: string, limit?: number) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueActivity', 'WebServer');
+			if (!deps.getCueActivityLog) {
+				logger.warn('getCueActivityLog dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueActivity:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueActivity', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:getCueActivity',
-					sessionId,
-					limit ?? 50,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueActivity callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			const runs = deps.getCueActivityLog();
+			const filteredBySession =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? runs.filter((r) => r.sessionId === sessionId)
+					: runs;
+			// `limit` is applied after sessionId filtering so the caller gets
+			// `N` matching entries rather than `N` total of which some may be
+			// filtered out — mirroring how `cueEngine.getActivityLog(limit)`
+			// would behave without the per-session filter.
+			const limited =
+				typeof limit === 'number' && limit > 0
+					? filteredBySession.slice(0, limit)
+					: filteredBySession;
+			const entries: CueActivityEntry[] = limited.map((r) => ({
+				id: r.runId,
+				subscriptionId: `${r.sessionId}::${r.subscriptionName}`,
+				subscriptionName: r.subscriptionName,
+				eventType: r.event.type,
+				sessionId: r.sessionId,
+				timestamp: Date.parse(r.startedAt) || 0,
+				// Map engine-side status (`timeout` / `stopped` are terminal
+				// failure variants) onto the web-facing four-state enum.
+				status:
+					r.status === 'completed'
+						? 'completed'
+						: r.status === 'running'
+							? 'running'
+							: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+								? 'failed'
+								: 'triggered',
+				result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+				duration: r.durationMs,
+			}));
+			return entries;
 		});
 
 		// Trigger a Cue subscription by name — calls engine directly in the main process.

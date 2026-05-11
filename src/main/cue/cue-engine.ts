@@ -633,6 +633,71 @@ export class CueEngine {
 		return this.activityLog.getAll(limit);
 	}
 
+	/**
+	 * Flip the `enabled` flag on a single subscription in its owning session's
+	 * cue.yaml, then refresh that session so the trigger sources reattach.
+	 *
+	 * `subscriptionId` follows the `${sessionId}::${name}` shape the web
+	 * server's `setGetCueSubscriptionsCallback` emits — same identity we
+	 * surface to remote callers (CLI / web UI). Anything that can't be parsed
+	 * back to a live session + matching subscription returns `false` so the
+	 * caller can surface a "no such subscription" failure to the user
+	 * instead of silently doing nothing.
+	 *
+	 * Comments and field ordering in the raw YAML are NOT preserved — the
+	 * implementation parses → mutates → serializes. That matches the existing
+	 * pipeline-editor write path (which also re-emits the YAML from a
+	 * structured graph), and is acceptable for a single-field flip from a
+	 * remote toggle.
+	 */
+	setSubscriptionEnabled(subscriptionId: string, enabled: boolean): boolean {
+		const sepIdx = subscriptionId.indexOf('::');
+		if (sepIdx <= 0 || sepIdx === subscriptionId.length - 2) return false;
+		const sessionId = subscriptionId.slice(0, sepIdx);
+		const subName = subscriptionId.slice(sepIdx + 2);
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		if (!session) return false;
+		const projectRoot = session.projectRoot;
+		if (!projectRoot) return false;
+
+		const file = readCueConfigFile(projectRoot);
+		if (!file) return false;
+
+		let parsed: unknown;
+		try {
+			parsed = yaml.load(file.raw);
+		} catch (err) {
+			captureException(err, { operation: 'setSubscriptionEnabled:yamlLoad', sessionId });
+			return false;
+		}
+		if (!parsed || typeof parsed !== 'object') return false;
+		const subs = (parsed as Record<string, unknown>).subscriptions;
+		if (!Array.isArray(subs)) return false;
+
+		let found = false;
+		for (const sub of subs) {
+			if (!sub || typeof sub !== 'object') continue;
+			if ((sub as Record<string, unknown>).name === subName) {
+				(sub as Record<string, unknown>).enabled = enabled;
+				found = true;
+				break;
+			}
+		}
+		if (!found) return false;
+
+		try {
+			const serialized = yaml.dump(parsed, { lineWidth: -1, noRefs: true });
+			writeCueConfigFile(projectRoot, serialized);
+		} catch (err) {
+			captureException(err, { operation: 'setSubscriptionEnabled:yamlWrite', sessionId });
+			return false;
+		}
+
+		this.refreshSession(sessionId, projectRoot);
+		return true;
+	}
+
 	/** Returns the lifetime count of Cue events recorded in the journal. */
 	getEventCount(): number {
 		return countCueEvents();
