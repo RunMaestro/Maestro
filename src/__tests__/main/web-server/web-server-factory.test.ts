@@ -1262,26 +1262,32 @@ describe('web-server/web-server-factory', () => {
 		// renderer via `remote:toggleCueSubscription` and waited 10 s for a
 		// response, but no renderer handler existed. Every web-UI toggle
 		// silently no-op'd. Now it must call the injected dep directly.
+		// Subscription ids follow `${sessionId}::${pipeline}::${name}` so
+		// two pipelines under one session that share a sub name don't
+		// collide (CodeRabbit #983 major).
 		it('delegates straight to setCueSubscriptionEnabled without any IPC bounce', async () => {
-			const setCueSubscriptionEnabled = vi.fn().mockReturnValue(true);
+			const setCueSubscriptionEnabled = vi.fn().mockResolvedValue(true);
 			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionEnabled });
 			const server = createWebServer() as any;
 
 			expect(server.setToggleCueSubscriptionCallback).toHaveBeenCalledTimes(1);
 			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
 
-			const ok = await callback('agent-1::Digest Script', false);
-			expect(setCueSubscriptionEnabled).toHaveBeenCalledWith('agent-1::Digest Script', false);
+			const ok = await callback('agent-1::Obsidian Daily Pipe::Digest Script', false);
+			expect(setCueSubscriptionEnabled).toHaveBeenCalledWith(
+				'agent-1::Obsidian Daily Pipe::Digest Script',
+				false
+			);
 			expect(ok).toBe(true);
 		});
 
 		it('propagates a false return when the engine cannot find the subscription', async () => {
-			const setCueSubscriptionEnabled = vi.fn().mockReturnValue(false);
+			const setCueSubscriptionEnabled = vi.fn().mockResolvedValue(false);
 			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionEnabled });
 			const server = createWebServer() as any;
 			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
 
-			const ok = await callback('agent-1::Missing', true);
+			const ok = await callback('agent-1::P::Missing', true);
 			expect(ok).toBe(false);
 		});
 
@@ -1293,7 +1299,7 @@ describe('web-server/web-server-factory', () => {
 			const server = createWebServer() as any;
 			const callback = server.setToggleCueSubscriptionCallback.mock.calls[0][0];
 
-			const ok = await callback('agent-1::Digest Script', false);
+			const ok = await callback('agent-1::P::Digest Script', false);
 			expect(ok).toBe(false);
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('setCueSubscriptionEnabled dependency not available'),
@@ -1311,6 +1317,7 @@ describe('web-server/web-server-factory', () => {
 			sessionId: 'agent-1',
 			sessionName: 'Obsidian Digest',
 			subscriptionName: 'Digest Script',
+			pipelineName: 'Obsidian Daily Pipe',
 			event: { type: 'time.scheduled' } as any,
 			status: 'completed' as const,
 			stdout: 'all good',
@@ -1334,7 +1341,10 @@ describe('web-server/web-server-factory', () => {
 			expect(entries).toHaveLength(1);
 			expect(entries[0]).toMatchObject({
 				id: 'run-1',
-				subscriptionId: 'agent-1::Digest Script',
+				// Same identity contract as the subscriptions list, so a
+				// web UI could navigate from an activity row to the toggle
+				// callback without re-deriving the id.
+				subscriptionId: 'agent-1::Obsidian Daily Pipe::Digest Script',
 				subscriptionName: 'Digest Script',
 				eventType: 'time.scheduled',
 				sessionId: 'agent-1',
@@ -1343,6 +1353,22 @@ describe('web-server/web-server-factory', () => {
 				result: 'all good',
 			});
 			expect(entries[0].timestamp).toBe(Date.parse('2026-05-11T07:00:00.000Z'));
+		});
+
+		it('falls back to base-name stripping for the subscriptionId when pipelineName is absent', async () => {
+			const getCueActivityLog = vi.fn().mockReturnValue([
+				{
+					...sampleRun,
+					pipelineName: undefined,
+					subscriptionName: 'LegacyPipe-chain-2',
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueActivityLog });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueActivityCallback.mock.calls[0][0];
+
+			const [entry] = await callback();
+			expect(entry.subscriptionId).toBe('agent-1::LegacyPipe::LegacyPipe-chain-2');
 		});
 
 		it('filters by sessionId before applying limit', async () => {

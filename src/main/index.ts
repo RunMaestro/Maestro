@@ -358,7 +358,7 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getGraphData();
 	},
-	setCueSubscriptionEnabled: (subscriptionId, enabled) => {
+	setCueSubscriptionEnabled: async (subscriptionId, enabled) => {
 		if (!cueEngine) return false;
 		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
 	},

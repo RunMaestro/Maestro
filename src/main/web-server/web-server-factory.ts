@@ -103,11 +103,14 @@ export interface WebServerFactoryDependencies {
 	 *  `cue list` call timed out). */
 	getCueGraphData?: () => CueGraphSession[];
 	/** Direct toggle for a single subscription's `enabled` flag in YAML.
-	 *  `subscriptionId` follows the `${sessionId}::${name}` shape emitted by
-	 *  `getCueGraphData` flattening — same dead-bridge fix as
-	 *  `getCueGraphData`. Returns false when the id can't be resolved, the
-	 *  YAML can't be parsed, or the named subscription isn't present. */
-	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => boolean;
+	 *  `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
+	 *  emitted by `getCueGraphData` flattening (via `composeCueSubscriptionId`)
+	 *  — same dead-bridge fix as `getCueGraphData`. Returns `false` when the
+	 *  id can't be resolved, the YAML can't be parsed, or the named
+	 *  subscription isn't present. Async because the engine serialises
+	 *  per-`projectRoot` writes via a promise chain to keep concurrent
+	 *  toggles from clobbering each other. */
+	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	/** Direct CUE activity-log snapshot — bypasses renderer IPC round-trip.
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */
@@ -2404,7 +2407,14 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					: filteredBySession;
 			const entries: CueActivityEntry[] = limited.map((r) => ({
 				id: r.runId,
-				subscriptionId: `${r.sessionId}::${r.subscriptionName}`,
+				// Same identity contract as the subscriptions list — the
+				// pipeline discriminator falls back to base-name stripping
+				// when the run record has no `pipelineName`, matching how
+				// `getCueGraphData`'s flatten emits ids.
+				subscriptionId: composeCueSubscriptionId(r.sessionId, {
+					name: r.subscriptionName,
+					pipeline_name: r.pipelineName,
+				}),
 				subscriptionName: r.subscriptionName,
 				eventType: r.event.type,
 				sessionId: r.sessionId,
