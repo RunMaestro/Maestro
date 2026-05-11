@@ -819,6 +819,31 @@ subscriptions:
 			);
 		});
 
+		it('rejects source_sub string when source_session is an array', () => {
+			// Symmetric to the previous test — guards the opposite shape-mismatch
+			// branch (`source_session` is an array but `source_sub` is a plain
+			// string) so the error message stays specific.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in-invalid-shape-2',
+						event: 'agent.completed',
+						source_session: ['A', 'B'],
+						source_sub: 'chain-a',
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be an array when "source_session" is an array'
+					),
+				])
+			);
+		});
+
 		it('does not emit a misleading source_sub/source_session shape error when source_session is missing', () => {
 			// Regression: the type-shape consistency check used to fire
 			// "source_sub must be a string when source_session is a string" even

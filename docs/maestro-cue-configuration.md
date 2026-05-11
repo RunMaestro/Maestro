@@ -238,8 +238,9 @@ If an AI agent writes `cue.yaml` directly (without using the visual editor), inc
 
 1. Initial trigger subscription uses `action: command` with a valid `command` object.
 2. The downstream `agent.completed` subscription includes `source_sub` pointing to that command subscription name.
-3. Keep `pipeline_name` consistent across all subs in the pipeline.
-4. Keep per-node identity fields (`target_node_key`, `fan_out_node_keys`) stable once created.
+3. For fan-in chains, when `source_sub` / `source_session` / `source_session_ids` are arrays, all three must be the **same length and positionally aligned**: index `i` in each array refers to the same upstream source. The validator rejects mismatched lengths.
+4. Keep `pipeline_name` consistent across all subs in the pipeline.
+5. Keep per-node identity fields (`target_node_key`, `fan_out_node_keys`) stable once created.
 
 Example:
 
