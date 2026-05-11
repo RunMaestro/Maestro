@@ -368,12 +368,15 @@ function validateEventSpecificFields(
 		}
 		// For fan-in chains, source_sub should align positionally with
 		// source_session so each upstream source maps to its exact upstream sub.
-		// Skip when source_session is undefined — the required-field check above
-		// already errored, and re-emitting a misleading "must be a string when
-		// source_session is a string" here just adds noise.
+		// Skip when either side is null/undefined — the required-field check
+		// above already errored on absent source_session, and re-emitting a
+		// misleading "must be a string when source_session is a string" here
+		// just adds noise. `!= null` intentionally treats `null` and `undefined`
+		// the same: a YAML `source_session: ~` or `source_session: null` parses
+		// to null but is semantically the same "absent" case.
 		const sourceSession = sub.source_session;
 		const sourceSub = sub.source_sub;
-		if (sourceSession !== undefined && sourceSub !== undefined) {
+		if (sourceSession != null && sourceSub != null) {
 			const sourceSessionIsArray = Array.isArray(sourceSession);
 			const sourceSubIsArray = Array.isArray(sourceSub);
 			if (sourceSessionIsArray && sourceSubIsArray) {

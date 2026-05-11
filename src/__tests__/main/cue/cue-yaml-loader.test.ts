@@ -848,6 +848,34 @@ subscriptions:
 			);
 		});
 
+		it('does not emit a misleading source_sub/source_session shape error when source_session is explicitly null', () => {
+			// YAML `source_session: ~` parses to null. The shape-check guard
+			// must treat null the same as undefined so a `~` value doesn't
+			// produce both a required-field error AND a misleading shape error.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'null-source-session',
+						event: 'agent.completed',
+						source_session: null,
+						source_sub: ['chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"source_session" is required')])
+			);
+			expect(result.errors).not.toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
 		it('accepts prompt_file as alternative to prompt', () => {
 			const result = validateCueConfig({
 				subscriptions: [

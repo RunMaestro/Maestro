@@ -12,7 +12,7 @@ When you need to find an existing config, check `.maestro/cue.yaml` first, then 
 
 Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `prompt` (with template variables), and event-specific fields.
 
-**One cue.yaml per agent project root.** The engine reads ONLY `<projectRoot>/.maestro/cue.yaml` for each agent — there is no parent-directory walk, no ancestor fallback, and no shared "global" cue.yaml. If your fleet has agents at three different project roots, you maintain three cue.yaml files. See **Multi-Root Pipelines** below before authoring a pipeline that spans more than one project root.
+**One cue.yaml per agent project root.** Each agent's engine looks for the canonical `<projectRoot>/.maestro/cue.yaml` (falling back to the legacy `<projectRoot>/maestro-cue.yaml` as described in the canonical-first + legacy-fallback rule above), **scoped strictly to that agent's own project root** — there is no parent-directory walk, no ancestor fallback into a workspace-wide config, and no implicit aggregation across roots. If your fleet has agents at three different project roots, you maintain three cue.yaml files (one per root, canonical or legacy per the rule above). See **Multi-Root Pipelines** below before authoring a pipeline that spans more than one project root.
 
 ### Event Types
 
