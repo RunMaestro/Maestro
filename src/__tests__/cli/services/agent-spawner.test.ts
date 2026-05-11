@@ -2133,6 +2133,10 @@ Some text with [x] in it that's not a checkbox
 			const c = args.indexOf('-C');
 			expect(c).toBeGreaterThanOrEqual(0);
 			expect(args[c + 1]).toBe('/working');
+			// Regression: issue #959 — `-C` is a root-level global flag on Codex
+			// and is silently ignored when it appears after the `exec` subcommand.
+			// Ensure -C precedes exec.
+			expect(c).toBeLessThan(args.indexOf('exec'));
 			// resume args are ['resume', '<id>']
 			expect(args).toContain('resume');
 			expect(args).toContain('codex-thread-123');

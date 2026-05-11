@@ -96,6 +96,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
+	workingDirArgsBeforeBatchPrefix?: boolean; // If true, workingDirArgs are placed BEFORE batchModePrefix (e.g. Codex `-C` is a root-level global flag and must precede the `exec` subcommand)
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
@@ -203,6 +204,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
 		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
 		workingDirArgs: (dir: string) => ['-C', dir], // Set working directory
+		// `-C` / `--cd` is a root-level global flag on the Codex CLI and is silently
+		// ignored when it appears after the `exec` subcommand (see issue #959 and
+		// https://github.com/openai/codex/issues/9671).
+		workingDirArgsBeforeBatchPrefix: true,
 		imageArgs: (imagePath: string) => ['-i', imagePath], // Image attachment: codex exec -i /path/to/image.png
 		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: codex exec -m gpt-5.3-codex
 		// Agent-specific configuration options shown in UI

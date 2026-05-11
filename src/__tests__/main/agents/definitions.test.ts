@@ -225,6 +225,19 @@ describe('agent-definitions', () => {
 			expect(args).toEqual(['-C', '/path/to/project']);
 		});
 
+		// Regression: issue #959 — Codex's `-C` is a root-level global flag
+		// and must precede the `exec` subcommand.
+		it('marks codex workingDirArgs as belonging before batchModePrefix', () => {
+			const codex = getAgentDefinition('codex');
+			expect(codex?.workingDirArgsBeforeBatchPrefix).toBe(true);
+		});
+
+		it('does not mark factory-droid workingDirArgs as belonging before batchModePrefix', () => {
+			const droid = getAgentDefinition('factory-droid');
+			// Droid's `--cwd` is a subcommand-scoped flag — keep current ordering
+			expect(droid?.workingDirArgsBeforeBatchPrefix).toBeFalsy();
+		});
+
 		it('should use = syntax for Copilot resume args', () => {
 			const copilot = getAgentDefinition('copilot-cli');
 			expect(copilot?.resumeArgs).toBeDefined();

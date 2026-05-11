@@ -110,6 +110,16 @@ export function buildAgentArgs(
 		finalArgs = [...agent.batchModePrefix, ...finalArgs];
 	}
 
+	// Some agents (Codex) require workingDirArgs to appear BEFORE the batch-mode
+	// subcommand because the flag is parsed as a root-level global, not a
+	// subcommand flag. Prepend here so the result is `<cmd> -C <dir> exec ...`
+	// instead of `<cmd> exec -C <dir> ...`. Agents whose workingDirArgs are
+	// subcommand-scoped (Droid `--cwd`, Gemini `--include-directories`) fall
+	// through to the post-batchMode append below.
+	if (agent.workingDirArgs && options.cwd && agent.workingDirArgsBeforeBatchPrefix) {
+		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
+	}
+
 	if (agent.batchModeArgs && inBatchMode) {
 		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
 		// when readOnlyMode is active. Batch mode args grant write/approval permissions
@@ -128,7 +138,7 @@ export function buildAgentArgs(
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}
 
-	if (agent.workingDirArgs && options.cwd) {
+	if (agent.workingDirArgs && options.cwd && !agent.workingDirArgsBeforeBatchPrefix) {
 		finalArgs = [...finalArgs, ...agent.workingDirArgs(options.cwd)];
 	}
 

@@ -574,6 +574,16 @@ async function spawnJsonLineAgent(
 	// Build args from agent definition (without the prompt or model/customArgs —
 	// those come from applyAgentConfigOverrides via configOptions).
 	const preOverrideArgs: string[] = [];
+
+	// Codex's `-C` / `--cd` is a root-level global flag and is silently ignored
+	// when it appears after the `exec` subcommand (issue #959 /
+	// https://github.com/openai/codex/issues/9671). Prepend the working-dir
+	// args BEFORE batchModePrefix so the final ordering is
+	// `codex -C <dir> exec ...` instead of `codex exec ... -C <dir>`.
+	if (toolType === 'codex' && def?.workingDirArgs) {
+		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
+
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
 	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
@@ -594,11 +604,6 @@ async function spawnJsonLineAgent(
 
 	if (agentSessionId && def?.resumeArgs) {
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
-	// Codex requires explicit working directory arg (other agents use process cwd)
-	if (toolType === 'codex' && def?.workingDirArgs) {
-		preOverrideArgs.push(...def.workingDirArgs(cwd));
 	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)

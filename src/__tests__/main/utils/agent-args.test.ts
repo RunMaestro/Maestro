@@ -203,6 +203,68 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// Regression: issue #959 — Codex's `-C` is a root-level global flag and
+	// must appear BEFORE the `exec` subcommand. Agents that opt into
+	// `workingDirArgsBeforeBatchPrefix` place workingDirArgs at the very start.
+	it('places workingDirArgs before batchModePrefix when workingDirArgsBeforeBatchPrefix is true', () => {
+		const agent = makeAgent({
+			id: 'codex',
+			batchModePrefix: ['exec'],
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+			jsonOutputArgs: ['--json'],
+			workingDirArgs: (dir: string) => ['-C', dir],
+			workingDirArgsBeforeBatchPrefix: true,
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'do stuff',
+			cwd: 'D:\\Projects\\MyProject',
+		});
+		expect(result).toEqual([
+			'-C',
+			'D:\\Projects\\MyProject',
+			'exec',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--skip-git-repo-check',
+			'--json',
+		]);
+		// Sanity: `-C` must come before `exec`, not after
+		expect(result.indexOf('-C')).toBeLessThan(result.indexOf('exec'));
+	});
+
+	it('keeps subcommand-scoped workingDirArgs after batchModePrefix when flag is omitted (Droid)', () => {
+		const agent = makeAgent({
+			id: 'factory-droid',
+			batchModePrefix: ['exec'],
+			batchModeArgs: ['--skip-permissions-unsafe'],
+			workingDirArgs: (dir: string) => ['--cwd', dir],
+			// workingDirArgsBeforeBatchPrefix intentionally not set
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'do stuff',
+			cwd: '/project',
+		});
+		// `--cwd` stays after `exec` to preserve Droid's subcommand-scoped flag
+		expect(result.indexOf('exec')).toBeLessThan(result.indexOf('--cwd'));
+		expect(result).toEqual(['exec', '--skip-permissions-unsafe', '--cwd', '/project']);
+	});
+
+	it('does not duplicate workingDirArgs when workingDirArgsBeforeBatchPrefix is true', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['exec'],
+			workingDirArgs: (dir: string) => ['-C', dir],
+			workingDirArgsBeforeBatchPrefix: true,
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'hello',
+			cwd: '/project',
+		});
+		const dashCCount = result.filter((a) => a === '-C').length;
+		expect(dashCCount).toBe(1);
+	});
+
 	// -- readOnlyArgs --
 	it('adds readOnlyArgs when readOnlyMode is true', () => {
 		const agent = makeAgent({ readOnlyArgs: ['--agent', 'plan'] });
