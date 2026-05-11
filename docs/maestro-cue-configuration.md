@@ -19,6 +19,10 @@ your-project/
 
 Maestro discovers this file automatically when the Cue Encore Feature is enabled. Each agent that has a `.maestro/cue.yaml` in its project root gets its own independent Cue engine instance.
 
+<Note>
+**One cue.yaml per agent project root.** The engine reads ONLY `<projectRoot>/.maestro/cue.yaml` for each agent — it does not walk parent directories and does not fall back to any ancestor or workspace-wide config. If your fleet has agents at multiple project roots, you maintain one cue.yaml per root. See [Multi-root pipelines](#multi-root-pipelines-agents-in-different-project-roots) below.
+</Note>
+
 ## Full Schema
 
 ```yaml
@@ -68,6 +72,30 @@ When two or more agents are registered against the same project directory (for e
 Accepted values for `owner_agent_id`: the agent's internal id (UUID) **or** its display name (e.g. `Obsidian`).
 
 Subscriptions with an explicit `agent_id` continue to fan out independently of ownership — useful when a single shared config intentionally targets multiple agents in the same workspace.
+
+## Multi-root pipelines (agents in different project roots)
+
+When a pipeline spans agents that live in **different** project roots, it is physically multiple cue.yaml files — one per participating agent's project root. The engine never aggregates yaml across roots, so a "single root cue.yaml" is not a reliable pattern for a multi-root agent fleet.
+
+**The rule:** Each subscription lives in the `.maestro/cue.yaml` of the agent that owns it. "Owning agent" = the agent whose `agent_id` matches the subscription's `agent_id` field. Cross-agent chains between subscriptions in different files are stitched at runtime via stable IDs in `source_session_ids` and `fan_out_ids` — they do not require a shared file.
+
+Where each role lives:
+
+| Subscription role                                                      | Lives in cue.yaml under...                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Trigger consumed by agent A (e.g. `file.changed` that prompts agent A) | Agent A's project root                                       |
+| Fan-out from A to [B, C, D]                                            | Agent A's project root (set `fan_out_ids` to B, C, D)        |
+| `agent.completed` chain step where upstream is X, downstream is Y      | Agent Y's project root (set `source_session_ids` to X)       |
+| Fan-in synthesis where upstreams are A, B, C and downstream is Z       | Agent Z's project root (set `source_session_ids` to A, B, C) |
+| Command node (`action: command`) attached to agent W's session         | Agent W's project root (it shares W's session and cwd)       |
+
+**Orchestration "at the root."** If you have an orchestrator agent whose project root sits above the worker agents in the filesystem, the orchestrator's own `.maestro/cue.yaml` is naturally where fan-in / synthesis subscriptions land — because it owns those subscriptions, not because it is "the root." Workers' triggers still live in each worker's own cue.yaml.
+
+**Use stable IDs across roots.** For chains and fan-out between agents at different roots, prefer the UUID-keyed fields (`source_session_ids: [<agent-uuid>]`, `fan_out_ids: [<uuid>, ...]`) over the legacy name-based fields (`source_session`, `fan_out`). Names are valid as a fallback but silently break when an agent is renamed; the UUID form survives renames.
+
+**Pipeline grouping across files.** A pipeline that spans roots still appears as one card in the Cue dashboard / Pipeline Editor as long as every participating subscription carries the same `pipeline_name` (and same `# Pipeline: Name (color: #hex)` comment header in each file). The visual editor handles this automatically; if you hand-author, keep the values consistent across every file.
+
+**The visual editor is the easy path.** When you save a multi-root pipeline from the Pipeline Editor, Maestro automatically partitions the subscriptions by owning agent's project root and writes one yaml per participating cwd. If you find yourself authoring a multi-root pipeline by hand and it gets fiddly, building it in the Pipeline Editor and letting it emit the per-cwd files is the supported path.
 
 ## Subscriptions
 
