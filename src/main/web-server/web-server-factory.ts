@@ -20,6 +20,7 @@ import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { WebPlaybook, CueSubscriptionInfo } from './types';
 import type { CueGraphSession } from '../../shared/cue/contracts';
+import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
 import {
@@ -33,6 +34,39 @@ import {
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
+ *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
+ *  human-readable string so day-pinned schedules don't show up as
+ *  `undefined` in the CLI:
+ *
+ *  - `schedule_times: ['07:00']`                              → `"07:00"`
+ *  - `schedule_times: ['07:00']`, `schedule_days: ['mon','wed']` → `"07:00 (Mon, Wed)"`
+ *  - `interval_minutes: 5`                                    → `"every 5m"`
+ *  - `schedule_days: ['mon','wed']` (no times, no interval)   → `"days: Mon, Wed"`
+ *  - none of the above                                        → `undefined`
+ */
+function formatCueSchedule(sub: {
+	schedule_times?: string[];
+	schedule_days?: string[];
+	interval_minutes?: number;
+}): string | undefined {
+	const days =
+		Array.isArray(sub.schedule_days) && sub.schedule_days.length > 0
+			? sub.schedule_days.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')
+			: null;
+	if (Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0) {
+		const base = sub.schedule_times.join(', ');
+		return days ? `${base} (${days})` : base;
+	}
+	if (typeof sub.interval_minutes === 'number') {
+		return `every ${sub.interval_minutes}m`;
+	}
+	if (days) {
+		return `days: ${days}`;
+	}
+	return undefined;
+}
 
 /** Store interface for sessions */
 interface SessionsStore {
@@ -2293,18 +2327,19 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				for (const sub of session.subscriptions) {
 					subs.push({
 						// No stable per-subscription id in YAML; compose one from
-						// the owning session and the name (unique-within-pipeline
-						// by validator contract).
-						id: `${session.sessionId}::${sub.name}`,
+						// session + pipeline + name. Names are unique within a
+						// pipeline (validator contract), so the pipeline
+						// discriminator is what guarantees the id stays unique
+						// when two pipelines under the same session each define
+						// a sub with the same name. Without it, downstream
+						// resolvers (e.g. `setSubscriptionEnabled` in the
+						// follow-up PR) would match by name only and silently
+						// toggle the wrong row.
+						id: composeCueSubscriptionId(session.sessionId, sub),
 						name: sub.name,
 						eventType: sub.event,
 						pattern: typeof sub.watch === 'string' ? sub.watch : undefined,
-						schedule:
-							Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0
-								? sub.schedule_times.join(', ')
-								: typeof sub.interval_minutes === 'number'
-									? `every ${sub.interval_minutes}m`
-									: undefined,
+						schedule: formatCueSchedule(sub),
 						sessionId: session.sessionId,
 						sessionName: session.sessionName,
 						enabled: sub.enabled !== false,

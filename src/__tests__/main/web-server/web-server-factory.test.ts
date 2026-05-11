@@ -1040,6 +1040,7 @@ describe('web-server/web-server-factory', () => {
 							prompt: '',
 							schedule_times: ['07:00'],
 							action: 'command',
+							pipeline_name: 'Obsidian Daily Pipe',
 						},
 						{
 							name: 'Obsidian Daily Pipe-chain-1',
@@ -1048,6 +1049,7 @@ describe('web-server/web-server-factory', () => {
 							prompt: 'follow up',
 							source_session: 'Obsidian Digest',
 							source_sub: 'Digest Script',
+							pipeline_name: 'Obsidian Daily Pipe',
 						},
 					],
 				},
@@ -1063,6 +1065,7 @@ describe('web-server/web-server-factory', () => {
 							prompt: '',
 							schedule_times: ['07:00'],
 							action: 'command',
+							pipeline_name: 'Obsidian Daily Pipe',
 						},
 					],
 				},
@@ -1078,7 +1081,10 @@ describe('web-server/web-server-factory', () => {
 			expect(getCueGraphData).toHaveBeenCalledTimes(1);
 			expect(all).toHaveLength(3);
 			expect(all[0]).toMatchObject({
-				id: 'agent-1::Digest Script',
+				// `sessionId::pipeline::name` — the pipeline discriminator
+				// prevents collisions when two pipelines in the same session
+				// each define a sub with the same name.
+				id: 'agent-1::Obsidian Daily Pipe::Digest Script',
 				name: 'Digest Script',
 				eventType: 'time.scheduled',
 				sessionId: 'agent-1',
@@ -1088,10 +1094,112 @@ describe('web-server/web-server-factory', () => {
 				triggerCount: 0,
 			});
 			expect(all[2]).toMatchObject({
+				id: 'agent-2::Obsidian Daily Pipe::Git Script',
 				name: 'Git Script',
 				sessionId: 'agent-2',
 				enabled: false,
 			});
+		});
+
+		it('disambiguates ids when two pipelines in the same session share a sub name', async () => {
+			// CodeRabbit #983 (major): without the pipeline discriminator,
+			// both rows would emit id `agent-1::Foo` and a downstream toggle
+			// would mutate the wrong subscription. Lock in distinct ids.
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Foo',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 5,
+							pipeline_name: 'Pipeline A',
+						},
+						{
+							name: 'Foo',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 5,
+							pipeline_name: 'Pipeline B',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const all = await callback();
+			expect(all).toHaveLength(2);
+			expect(all[0].id).toBe('agent-1::Pipeline A::Foo');
+			expect(all[1].id).toBe('agent-1::Pipeline B::Foo');
+			expect(new Set(all.map((s: { id: string }) => s.id)).size).toBe(2);
+		});
+
+		it('falls back to the -chain-N stripped base name when pipeline_name is absent (legacy YAML)', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'LegacyPipe-chain-2',
+							event: 'agent.completed',
+							enabled: true,
+							prompt: '',
+							source_session: 'Worker',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const [entry] = await callback();
+			expect(entry.id).toBe('agent-1::LegacyPipe::LegacyPipe-chain-2');
+		});
+
+		it('renders schedule_days alongside schedule_times in the CLI schedule string', async () => {
+			// Greptile #982 + Pedram: previously `schedule_days` was silently
+			// dropped from the flattened output, so day-pinned schedules
+			// looked indistinguishable from every-day schedules in `cue list`.
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'WeekdayMorning',
+							event: 'time.scheduled',
+							enabled: true,
+							prompt: '',
+							schedule_times: ['07:00'],
+							schedule_days: ['mon', 'wed', 'fri'],
+							pipeline_name: 'Sched',
+						},
+						{
+							name: 'DaysOnly',
+							event: 'time.scheduled',
+							enabled: true,
+							prompt: '',
+							schedule_days: ['sat', 'sun'],
+							pipeline_name: 'Sched',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const all = await callback();
+			expect(all[0].schedule).toBe('07:00 (Mon, Wed, Fri)');
+			expect(all[1].schedule).toBe('days: Sat, Sun');
 		});
 
 		it('filters by sessionId when one is supplied', async () => {
