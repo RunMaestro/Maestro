@@ -18,7 +18,8 @@ import { execGit } from '../utils/remote-git';
 import { getSshRemoteById } from '../stores';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook } from './types';
+import type { WebPlaybook, CueSubscriptionInfo } from './types';
+import type { CueGraphSession } from '../../shared/cue/contracts';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
 import {
@@ -61,6 +62,12 @@ export interface WebServerFactoryDependencies {
 		prompt?: string,
 		sourceAgentId?: string
 	) => boolean;
+	/** Direct CUE graph-data snapshot — bypasses renderer IPC round-trip.
+	 *  Required by `setGetCueSubscriptionsCallback` to answer the CLI's
+	 *  `get_cue_subscriptions` message in-process instead of forwarding it
+	 *  to the renderer (which never registered a listener, so every CLI
+	 *  `cue list` call timed out). */
+	getCueGraphData?: () => CueGraphSession[];
 }
 
 /**
@@ -2263,42 +2270,53 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Cue Automation Callbacks ============
 
-		// Get Cue subscriptions — uses IPC request-response pattern
+		// Get Cue subscriptions — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:getCueSubscriptions` to
+		// the renderer and waited 30 s for a response, but no renderer code
+		// ever registered a handler for that channel. The CLI's 10 s timeout
+		// fired every time, surfacing as `cue list` hanging with
+		// `Command timed out waiting for cue_subscriptions`. Mirrors the same
+		// pattern as `triggerCueSubscription` below — the engine lives in
+		// main process anyway, so the IPC bounce was never needed.
 		server.setGetCueSubscriptionsCallback(async (sessionId?: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueSubscriptions', 'WebServer');
+			if (!deps.getCueGraphData) {
+				logger.warn('getCueGraphData dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueSubscriptions:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueSubscriptions', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
+			const graph = deps.getCueGraphData();
+			const filtered =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? graph.filter((gs) => gs.sessionId === sessionId)
+					: graph;
+			const subs: CueSubscriptionInfo[] = [];
+			for (const session of filtered) {
+				for (const sub of session.subscriptions) {
+					subs.push({
+						// No stable per-subscription id in YAML; compose one from
+						// the owning session and the name (unique-within-pipeline
+						// by validator contract).
+						id: `${session.sessionId}::${sub.name}`,
+						name: sub.name,
+						eventType: sub.event,
+						pattern: typeof sub.watch === 'string' ? sub.watch : undefined,
+						schedule:
+							Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0
+								? sub.schedule_times.join(', ')
+								: typeof sub.interval_minutes === 'number'
+									? `every ${sub.interval_minutes}m`
+									: undefined,
+						sessionId: session.sessionId,
+						sessionName: session.sessionName,
+						enabled: sub.enabled !== false,
+						// Per-subscription last-triggered / count are not yet
+						// tracked by the engine (only per-session). Leave the
+						// numeric fields zero so the CLI renders "never triggered"
+						// rather than fabricating a value.
+						triggerCount: 0,
+					});
 				}
-				mainWindow.webContents.send('remote:getCueSubscriptions', sessionId, responseChannel);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueSubscriptions callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			}
+			return subs;
 		});
 
 		// Toggle Cue subscription — uses IPC request-response pattern

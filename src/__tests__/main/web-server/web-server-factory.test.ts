@@ -1019,4 +1019,133 @@ describe('web-server/web-server-factory', () => {
 			);
 		});
 	});
+
+	describe('Cue subscription callbacks', () => {
+		// Regression: previously this callback forwarded the request to the
+		// renderer via `remote:getCueSubscriptions` and waited 30 s for a
+		// response, but no renderer handler existed. Every `maestro-cli cue
+		// list` call timed out. Now it must call the injected graph-data
+		// dependency directly and flatten the result.
+		it('flattens engine graph data into CueSubscriptionInfo[] without any IPC bounce', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Obsidian Digest',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Digest Script',
+							event: 'time.scheduled',
+							enabled: true,
+							prompt: '',
+							schedule_times: ['07:00'],
+							action: 'command',
+						},
+						{
+							name: 'Obsidian Daily Pipe-chain-1',
+							event: 'agent.completed',
+							enabled: true,
+							prompt: 'follow up',
+							source_session: 'Obsidian Digest',
+							source_sub: 'Digest Script',
+						},
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Obsidian Git',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Git Script',
+							event: 'time.scheduled',
+							enabled: false,
+							prompt: '',
+							schedule_times: ['07:00'],
+							action: 'command',
+						},
+					],
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+
+			expect(server.setGetCueSubscriptionsCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(getCueGraphData).toHaveBeenCalledTimes(1);
+			expect(all).toHaveLength(3);
+			expect(all[0]).toMatchObject({
+				id: 'agent-1::Digest Script',
+				name: 'Digest Script',
+				eventType: 'time.scheduled',
+				sessionId: 'agent-1',
+				sessionName: 'Obsidian Digest',
+				enabled: true,
+				schedule: '07:00',
+				triggerCount: 0,
+			});
+			expect(all[2]).toMatchObject({
+				name: 'Git Script',
+				sessionId: 'agent-2',
+				enabled: false,
+			});
+		});
+
+		it('filters by sessionId when one is supplied', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Obsidian Digest',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Digest Script',
+							event: 'time.scheduled',
+							enabled: true,
+							prompt: '',
+							schedule_times: ['07:00'],
+						},
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Obsidian Git',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Git Script',
+							event: 'time.scheduled',
+							enabled: true,
+							prompt: '',
+							schedule_times: ['07:00'],
+						},
+					],
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const filtered = await callback('agent-2');
+			expect(filtered).toHaveLength(1);
+			expect(filtered[0].sessionId).toBe('agent-2');
+		});
+
+		it('returns [] and warns when the engine dependency is missing', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const result = await callback();
+			expect(result).toEqual([]);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('getCueGraphData dependency not available'),
+				'WebServer'
+			);
+		});
+	});
 });
