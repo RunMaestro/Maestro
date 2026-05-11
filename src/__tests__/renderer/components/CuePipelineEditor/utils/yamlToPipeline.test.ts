@@ -1783,4 +1783,114 @@ describe('subscriptionsToPipelines — chain subs resolve upstream via source_su
 		expect(edgeExists(trigger, cmd1)).toBe(true);
 		expect(edgeExists(trigger, cmd2)).toBe(true);
 	});
+
+	// Regression: when chain subs carry `target_node_key` (the keyed dedup
+	// path in `getOrCreateAgentNode`), the legacy sessionName fallback is
+	// skipped. If chain-2 (fan-in) is processed before chain-4 because of
+	// the chain-index sort, chain-2's source_sub → chain-4 lookup fails to
+	// find the not-yet-created chain-4 target node and falls back to a
+	// session-name resolver that invents a phantom agent. Then chain-4's
+	// keyed target creates a SECOND agent for the same session — and the
+	// real chain-4 target ends up disconnected from chain-2 on the canvas.
+	// Reproduces the Obsidian Daily Pipe shape from the user bug report.
+	it('keeps fan-in wiring intact when chains carry target_node_key and chain-index ordering misranks dependencies', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'Pipeline 1-cmd-a',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: './script1.sh',
+				action: 'command',
+				command: { mode: 'shell', shell: './script1.sh' },
+				schedule_times: ['07:00'],
+				agent_id: 'session-0',
+				pipeline_name: 'Pipeline 1',
+				target_node_key: 'cmd-a-key',
+			},
+			{
+				name: 'Pipeline 1-cmd-b',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: './script2.sh',
+				action: 'command',
+				command: { mode: 'shell', shell: './script2.sh' },
+				schedule_times: ['07:00'],
+				agent_id: 'session-1',
+				pipeline_name: 'Pipeline 1',
+				target_node_key: 'cmd-b-key',
+			},
+			{
+				name: 'Pipeline 1-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'report output',
+				source_session: 'Cue Test 1',
+				source_session_ids: 'session-0',
+				source_sub: 'Pipeline 1-cmd-a',
+				agent_id: 'session-0',
+				pipeline_name: 'Pipeline 1',
+				target_node_key: 'chain-1-key',
+			},
+			{
+				// Fan-in (chain-2) is misranked under chain-index sort:
+				// it sources chain-4 (idx 4) but its own idx is 2.
+				name: 'Pipeline 1-chain-2',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'aggregate',
+				source_session: ['Cue Test 1', 'Cue Test 2'],
+				source_session_ids: ['session-0', 'session-1'],
+				source_sub: ['Pipeline 1-chain-1', 'Pipeline 1-chain-4'],
+				agent_id: 'session-2',
+				pipeline_name: 'Pipeline 1',
+				target_node_key: 'chain-2-key',
+			},
+			{
+				name: 'Pipeline 1-chain-4',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'report output',
+				source_session: 'Cue Test 2',
+				source_session_ids: 'session-1',
+				source_sub: 'Pipeline 1-cmd-b',
+				agent_id: 'session-1',
+				pipeline_name: 'Pipeline 1',
+				target_node_key: 'chain-4-key',
+			},
+		];
+		const sessions = makeSessions('Cue Test 1', 'Cue Test 2', 'Cue Test Main');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+		const p = pipelines[0];
+
+		const triggers = p.nodes.filter((n) => n.type === 'trigger');
+		const commands = p.nodes.filter((n) => n.type === 'command');
+		const agents = p.nodes.filter((n) => n.type === 'agent');
+		const errors = p.nodes.filter((n) => n.type === 'error');
+
+		expect(errors).toHaveLength(0);
+		expect(triggers).toHaveLength(1);
+		expect(commands).toHaveLength(2);
+		// Exactly three agents: Cue Test 1, Cue Test 2, Cue Test Main —
+		// no phantom duplicates from premature creation.
+		expect(agents).toHaveLength(3);
+		const agentNames = agents.map((a) => (a.data as AgentNodeData).sessionName).sort();
+		expect(agentNames).toEqual(['Cue Test 1', 'Cue Test 2', 'Cue Test Main']);
+
+		const cmdA = commands.find((n) => (n.data as CommandNodeData).name === 'Pipeline 1-cmd-a')!;
+		const cmdB = commands.find((n) => (n.data as CommandNodeData).name === 'Pipeline 1-cmd-b')!;
+		const a1 = agents.find((n) => (n.data as AgentNodeData).sessionName === 'Cue Test 1')!;
+		const a2 = agents.find((n) => (n.data as AgentNodeData).sessionName === 'Cue Test 2')!;
+		const main = agents.find((n) => (n.data as AgentNodeData).sessionName === 'Cue Test Main')!;
+
+		const edgeExists = (from: PipelineNode, to: PipelineNode) =>
+			p.edges.some((e) => e.source === from.id && e.target === to.id);
+
+		// Full chain must be connected end-to-end.
+		expect(edgeExists(cmdA, a1)).toBe(true);
+		expect(edgeExists(cmdB, a2)).toBe(true);
+		expect(edgeExists(a1, main)).toBe(true);
+		expect(edgeExists(a2, main)).toBe(true);
+	});
 });

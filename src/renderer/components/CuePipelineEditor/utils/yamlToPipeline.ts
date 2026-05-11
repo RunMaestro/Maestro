@@ -506,8 +506,18 @@ export function subscriptionsToPipelines(
 		// YAML write order:
 		//   1. Initial triggers first (so agents exist before their chain
 		//      consumers try to reference them).
-		//   2. Within chain subs, sort by chain index (matches the pipeline's
-		//      natural left-to-right flow).
+		//   2. Within chain subs, topologically sort by `source_sub` so a
+		//      chain that references another chain comes AFTER its source.
+		//      Chain index is only a TIE-BREAKER for ready subs and for the
+		//      cycle-fallback path — it does NOT reliably encode dependency
+		//      order. Example: chain-2 fan-in with source_sub=[chain-1,
+		//      chain-4] must come after chain-4 (index 4 > 2) so that
+		//      chain-2's source lookup finds chain-4's already-registered
+		//      target node in subNameToNode. Without that ordering, the
+		//      source lookup falls back to session-name resolution and
+		//      invents a premature agent node — and when chain-4 later
+		//      creates its own keyed target, the canvas ends up with a
+		//      disconnected phantom agent next to the real one.
 		//   3. Break ties on subscription name for total determinism.
 		// Without this, re-saving YAML in a different order used to visually
 		// swap agents that shared a session name — the "two agents swapped"
@@ -523,15 +533,85 @@ export function subscriptionsToPipelines(
 		// `-fanin` suffix as a very high chain index so fan-in always sorts
 		// last among non-initial subs.
 		const isLegacyFanIn = (name: string) => /-fanin$/.test(name);
-		const sorted = [...subs].sort((a, b) => {
-			const aInit = isInitialTrigger(a) ? 0 : 1;
-			const bInit = isInitialTrigger(b) ? 0 : 1;
-			if (aInit !== bInit) return aInit - bInit;
-			const aIdx = isLegacyFanIn(a.name) ? Number.MAX_SAFE_INTEGER : getChainIndex(a.name);
-			const bIdx = isLegacyFanIn(b.name) ? Number.MAX_SAFE_INTEGER : getChainIndex(b.name);
+		const chainPriority = (name: string): number =>
+			isLegacyFanIn(name) ? Number.MAX_SAFE_INTEGER : getChainIndex(name);
+		const tieBreak = (a: CueSubscription, b: CueSubscription): number => {
+			const aIdx = chainPriority(a.name);
+			const bIdx = chainPriority(b.name);
 			if (aIdx !== bIdx) return aIdx - bIdx;
 			return a.name.localeCompare(b.name);
-		});
+		};
+
+		const initialTriggerSubs: CueSubscription[] = [];
+		const chainSubsForSort: CueSubscription[] = [];
+		for (const sub of subs) {
+			if (isInitialTrigger(sub)) initialTriggerSubs.push(sub);
+			else chainSubsForSort.push(sub);
+		}
+		initialTriggerSubs.sort(tieBreak);
+
+		// Kahn's algorithm over chain subs, prioritising lowest chain index
+		// among ready candidates so the chain-index intuition still wins
+		// when it doesn't violate a real source_sub dependency. Only chain
+		// subs participate in the topology — initial-trigger subs (including
+		// command-action triggers) have already been added in the previous
+		// step and their `subNameToNode` entries are created by the trigger
+		// branch below before any chain sub runs.
+		const chainSubNames = new Set(chainSubsForSort.map((s) => s.name));
+		const chainByName = new Map(chainSubsForSort.map((s) => [s.name, s]));
+		const refsOf = (sub: CueSubscription): string[] => {
+			const raw = Array.isArray(sub.source_sub)
+				? sub.source_sub
+				: sub.source_sub
+					? [sub.source_sub]
+					: [];
+			return raw.filter((r): r is string => typeof r === 'string' && chainSubNames.has(r));
+		};
+		const indegree = new Map<string, number>();
+		const dependents = new Map<string, string[]>();
+		for (const sub of chainSubsForSort) {
+			indegree.set(sub.name, refsOf(sub).length);
+		}
+		for (const sub of chainSubsForSort) {
+			for (const ref of refsOf(sub)) {
+				const list = dependents.get(ref) ?? [];
+				list.push(sub.name);
+				dependents.set(ref, list);
+			}
+		}
+		const ready: string[] = chainSubsForSort
+			.filter((s) => (indegree.get(s.name) ?? 0) === 0)
+			.map((s) => s.name);
+		const orderedChainSubs: CueSubscription[] = [];
+		const consumed = new Set<string>();
+		while (ready.length > 0) {
+			// Pick the ready candidate with the lowest tie-break ranking.
+			let bestIdx = 0;
+			for (let i = 1; i < ready.length; i++) {
+				if (tieBreak(chainByName.get(ready[i])!, chainByName.get(ready[bestIdx])!) < 0) {
+					bestIdx = i;
+				}
+			}
+			const [name] = ready.splice(bestIdx, 1);
+			consumed.add(name);
+			orderedChainSubs.push(chainByName.get(name)!);
+			for (const dep of dependents.get(name) ?? []) {
+				const next = (indegree.get(dep) ?? 0) - 1;
+				indegree.set(dep, next);
+				if (next === 0) ready.push(dep);
+			}
+		}
+		// Cycle fallback: if any chain sub never reached indegree=0 (the
+		// YAML contains a self-referential source_sub loop), append the
+		// remaining subs in tie-break order so they still render — the
+		// loader stays lossy-but-visible instead of silently dropping them.
+		if (consumed.size < chainSubsForSort.length) {
+			const leftovers = chainSubsForSort.filter((s) => !consumed.has(s.name));
+			leftovers.sort(tieBreak);
+			orderedChainSubs.push(...leftovers);
+		}
+
+		const sorted: CueSubscription[] = [...initialTriggerSubs, ...orderedChainSubs];
 		const knownSubNames = new Set(sorted.map((s) => s.name));
 
 		let triggerCount = 0;
