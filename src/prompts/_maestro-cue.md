@@ -265,26 +265,26 @@ A pipeline that spans agents living in **different** project roots is NOT a sing
 **When authoring multi-root pipelines by hand, the rule is:**
 
 - **Each subscription lives in its owning agent's local `.maestro/cue.yaml`.** "Owning agent" = the agent whose `agent_id` matches the subscription's `agent_id` field. Put the subscription in that agent's project root, not anywhere else.
-- **Cross-agent chains stitch at runtime via stable IDs, not via shared files.** Use `source_session_ids: [<upstream-agent-uuid>]` (and/or `source_session: <upstream-agent-name>` as a fallback) for `agent.completed` chains; use `fan_out_ids: [<target-agent-uuid>, ...]` for fan-out. The downstream subscription itself lives in the _downstream_ (consuming) agent's cue.yaml — the agent whose `agent_id` it carries.
+- **Cross-agent chains stitch at runtime via the standard `source_session` / `fan_out` fields, with `_ids` companions for rename stability.** For `agent.completed` chains, `source_session` (the upstream agent's display name, or an array of names for fan-in) is **required** by the validator — supply `source_session_ids: [<upstream-agent-uuid>]` **alongside** it so the dispatcher can resolve the chain even if the upstream is renamed (ids are preferred at lookup time, names are the fallback). Same shape for fan-out: `fan_out: [<target-name>, ...]` is the canonical field, plus `fan_out_ids: [<uuid>, ...]` for rename safety. The downstream subscription itself lives in the _downstream_ (consuming) agent's cue.yaml — the agent whose `agent_id` it carries.
 - **Fan-in / synthesis / orchestration subscriptions live with their target agent.** If "agent X waits for A, B, C to complete and summarizes," that fan-in subscription is in agent X's cue.yaml (not in A's, B's, or C's). When agent X is an orchestrator sitting at the workspace root and the workers are in subdirectories, that fan-in naturally lands in the root workspace's `.maestro/cue.yaml` — but the rule is "owning agent's cwd," not "root cwd."
 - **A single root cue.yaml is NOT a reliable pattern for a multi-root fleet.** Subscriptions placed at the root that name workers in subdirectories will never reach those workers — the workers' engines never read the root file. If the visual editor previously emitted a single root yaml that "worked," that pipeline only had subs whose `agent_id` resolved to the root agent.
 
 **Where to author what:**
 
-| Subscription role                                                       | Lives in cue.yaml under...                                   |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Trigger consumed by agent A (e.g. `file.changed` that prompts agent A)  | Agent A's project root                                       |
-| Fan-out from A to [B, C, D]                                             | Agent A's project root (set `fan_out_ids` to B, C, D)        |
-| `agent.completed` chain step where downstream is agent Y, upstream is X | Agent Y's project root (set `source_session_ids` to X)       |
-| Fan-in synthesis where downstream is Z, upstreams are A, B, C           | Agent Z's project root (set `source_session_ids` to A, B, C) |
-| Command node (`action: command`) attached to agent W's session          | Agent W's project root (it shares W's session/cwd)           |
+| Subscription role                                                       | Lives in cue.yaml under...                                                        |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Trigger consumed by agent A (e.g. `file.changed` that prompts agent A)  | Agent A's project root                                                            |
+| Fan-out from A to [B, C, D]                                             | Agent A's project root (set `fan_out` + `fan_out_ids`)                            |
+| `agent.completed` chain step where downstream is agent Y, upstream is X | Agent Y's project root (set `source_session` + `source_session_ids` to X)         |
+| Fan-in synthesis where downstream is Z, upstreams are A, B, C           | Agent Z's project root (set `source_session` + `source_session_ids` to [A, B, C]) |
+| Command node (`action: command`) attached to agent W's session          | Agent W's project root (it shares W's session/cwd)                                |
 
 **Discovery / writing checklist for hand-edited multi-root pipelines:**
 
 1. List the participating agents and their project roots: `{{MAESTRO_CLI_PATH}} list agents` (note each agent's `id` and `cwd`).
 2. For each agent that owns one or more subscriptions in the pipeline, open / create `<that-agent-cwd>/.maestro/cue.yaml`.
 3. Write each subscription under the cue.yaml of its `agent_id` owner. Use the same `pipeline_name` value across all files so the dashboard groups them under one pipeline card.
-4. For cross-agent references, prefer stable UUIDs in `source_session_ids` and `fan_out_ids` over the legacy name-based `source_session` / `fan_out` (names are valid as a fallback but break on rename).
+4. For cross-agent references, always set `source_session` / `fan_out` (the validator requires `source_session` on every `agent.completed` sub) and **additionally** set the parallel `source_session_ids` / `fan_out_ids` UUID arrays so the dispatcher survives an upstream rename. The dispatcher prefers ids at lookup time; names are the fallback. Omitting the ids works but breaks silently when an agent gets renamed.
 5. Validate from any agent's workspace with `{{MAESTRO_CLI_PATH}} cue list` — the command reports every agent's parsed config, so a missing or misplaced sub is immediately visible.
 
 **Single-root pipelines** (all subs target one agent, or all participating agents share one project root) live in exactly one cue.yaml under that one root — the multi-root rules above don't apply. The "Shared Workspaces" section below covers the related case where >1 agent is registered against the _same_ project root.

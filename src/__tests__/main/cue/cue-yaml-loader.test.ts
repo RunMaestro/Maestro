@@ -112,6 +112,7 @@ subscriptions:
   - name: relay
     event: agent.completed
     source_session: researcher
+    source_sub: researcher-step
     action: command
     command:
       mode: cli
@@ -125,6 +126,7 @@ subscriptions:
 			expect(result).not.toBeNull();
 			const sub = result!.subscriptions[0];
 			expect(sub.action).toBe('command');
+			expect(sub.source_sub).toBe('researcher-step');
 			expect(sub.command).toEqual({
 				mode: 'cli',
 				cli: {
@@ -809,6 +811,35 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
+		it('does not emit a misleading source_sub/source_session shape error when source_session is missing', () => {
+			// Regression: the type-shape consistency check used to fire
+			// "source_sub must be a string when source_session is a string" even
+			// though source_session was undefined (the required-field check above
+			// already errored). Verify that only the required-field error is
+			// surfaced for the missing source_session, not the shape error.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'missing-source-session',
+						event: 'agent.completed',
+						source_sub: ['chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"source_session" is required')])
+			);
+			expect(result.errors).not.toEqual(
 				expect.arrayContaining([
 					expect.stringContaining(
 						'"source_sub" must be a string when "source_session" is a string'
