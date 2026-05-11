@@ -555,6 +555,10 @@ vi.mock('../../../web/mobile/AutoRunSetupSheet', () => ({
 	AutoRunSetupSheet: () => null,
 }));
 
+vi.mock('../../../web/mobile/MarketplaceSheet', () => ({
+	MarketplaceSheet: () => null,
+}));
+
 vi.mock('../../../web/mobile/NotificationSettingsSheet', () => ({
 	NotificationSettingsSheet: () => null,
 }));
@@ -634,11 +638,23 @@ vi.mock('../../../web/hooks/useAutoRun', () => ({
 		autoRunState: null,
 		isLoadingDocs: false,
 		selectedDoc: null,
+		playbooks: [],
+		isLoadingPlaybooks: false,
 		loadDocuments: vi.fn(),
 		loadDocumentContent: vi.fn(),
 		saveDocumentContent: vi.fn(),
-		launchAutoRun: vi.fn(),
+		resetDocumentTasks: vi.fn().mockResolvedValue(true),
+		launchAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		stopAutoRun: vi.fn(),
+		loadGitBranches: vi.fn().mockResolvedValue({ branches: [] }),
+		listWorktrees: vi.fn().mockResolvedValue([]),
+		resumeAutoRunError: vi.fn().mockResolvedValue(true),
+		skipAutoRunDocument: vi.fn().mockResolvedValue(true),
+		abortAutoRunError: vi.fn().mockResolvedValue(true),
+		loadPlaybooks: vi.fn(),
+		createPlaybook: vi.fn().mockResolvedValue(null),
+		updatePlaybook: vi.fn().mockResolvedValue(null),
+		deletePlaybook: vi.fn().mockResolvedValue(true),
 	}),
 }));
 

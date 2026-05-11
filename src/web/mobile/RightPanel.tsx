@@ -30,6 +30,8 @@ export interface RightPanelProps {
 	onAutoRunSelectedDocumentChange?: (filename: string | null) => void;
 	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
 	onAutoRunOpenFolderPicker?: () => void;
+	/** Open the Playbook Exchange (marketplace) sheet from the inline panel's empty state. */
+	onAutoRunOpenMarketplace?: () => void;
 	sendRequest: UseWebSocketReturn['sendRequest'];
 	send: UseWebSocketReturn['send'];
 	onViewDiff?: (filePath: string) => void;
@@ -69,6 +71,7 @@ export function RightPanel({
 	onAutoRunOpenSetup,
 	onAutoRunSelectedDocumentChange,
 	onAutoRunOpenFolderPicker,
+	onAutoRunOpenMarketplace,
 	sendRequest,
 	send,
 	onViewDiff,
@@ -300,6 +303,7 @@ export function RightPanel({
 							onOpenDocument={onAutoRunOpenDocument}
 							onSelectedDocumentChange={onAutoRunSelectedDocumentChange}
 							onOpenFolderPicker={onAutoRunOpenFolderPicker}
+							onOpenMarketplace={onAutoRunOpenMarketplace}
 						/>
 					)}
 					{currentTab === 'git' && (

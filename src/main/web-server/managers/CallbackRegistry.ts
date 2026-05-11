@@ -64,8 +64,12 @@ import type {
 	GroupData,
 	GetGitStatusCallback,
 	GetGitDiffCallback,
+	GetGitBranchesForSessionCallback,
+	ListWorktreesForSessionCallback,
 	GitStatusResult,
 	GitDiffResult,
+	GitBranchesResult,
+	ListWorktreesResult,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
 	GetGroupChatStateCallback,
@@ -92,6 +96,12 @@ import type {
 	NotifyCenterFlashCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
+	GetMarketplaceManifestCallback,
+	GetMarketplaceDocumentCallback,
+	GetMarketplaceReadmeCallback,
+	ImportMarketplacePlaybookCallback,
+	MarketplaceManifestResult,
+	MarketplaceImportResult,
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 	GetSessionHistoryOptions,
@@ -155,6 +165,8 @@ export interface WebServerCallbacks {
 	renameSession: RenameSessionCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
+	getGitBranchesForSession: GetGitBranchesForSessionCallback | null;
+	listWorktreesForSession: ListWorktreesForSessionCallback | null;
 	getGroupChats: GetGroupChatsCallback | null;
 	startGroupChat: StartGroupChatCallback | null;
 	getGroupChatState: GetGroupChatStateCallback | null;
@@ -173,6 +185,10 @@ export interface WebServerCallbacks {
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
+	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
+	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
+	importMarketplacePlaybook: ImportMarketplacePlaybookCallback | null;
 	listDesktopSessions: ListDesktopSessionsCallback | null;
 	getSessionHistory: GetSessionHistoryCallback | null;
 }
@@ -229,6 +245,8 @@ export class CallbackRegistry {
 		renameSession: null,
 		getGitStatus: null,
 		getGitDiff: null,
+		getGitBranchesForSession: null,
+		listWorktreesForSession: null,
 		getGroupChats: null,
 		startGroupChat: null,
 		getGroupChatState: null,
@@ -247,6 +265,10 @@ export class CallbackRegistry {
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
 		notifyCenterFlash: null,
+		getMarketplaceManifest: null,
+		getMarketplaceDocument: null,
+		getMarketplaceReadme: null,
+		importMarketplacePlaybook: null,
 		listDesktopSessions: null,
 		getSessionHistory: null,
 	};
@@ -564,6 +586,16 @@ export class CallbackRegistry {
 		return this.callbacks.getGitDiff(sessionId, filePath);
 	}
 
+	async getGitBranchesForSession(sessionId: string): Promise<GitBranchesResult> {
+		if (!this.callbacks.getGitBranchesForSession) return { branches: [] };
+		return this.callbacks.getGitBranchesForSession(sessionId);
+	}
+
+	async listWorktreesForSession(sessionId: string): Promise<ListWorktreesResult> {
+		if (!this.callbacks.listWorktreesForSession) return { worktrees: [] };
+		return this.callbacks.listWorktreesForSession(sessionId);
+	}
+
 	async getGroupChats(): Promise<GroupChatState[]> {
 		if (!this.callbacks.getGroupChats) return [];
 		return this.callbacks.getGroupChats();
@@ -680,6 +712,37 @@ export class CallbackRegistry {
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
+	}
+
+	async getMarketplaceManifest(options?: {
+		refresh?: boolean;
+	}): Promise<MarketplaceManifestResult | null> {
+		if (!this.callbacks.getMarketplaceManifest) return null;
+		return this.callbacks.getMarketplaceManifest(options);
+	}
+
+	async getMarketplaceDocument(
+		playbookPath: string,
+		filename: string
+	): Promise<{ content: string } | null> {
+		if (!this.callbacks.getMarketplaceDocument) return null;
+		return this.callbacks.getMarketplaceDocument(playbookPath, filename);
+	}
+
+	async getMarketplaceReadme(playbookPath: string): Promise<{ content: string | null } | null> {
+		if (!this.callbacks.getMarketplaceReadme) return null;
+		return this.callbacks.getMarketplaceReadme(playbookPath);
+	}
+
+	async importMarketplacePlaybook(
+		sessionId: string,
+		playbookId: string,
+		targetFolderName: string
+	): Promise<MarketplaceImportResult> {
+		if (!this.callbacks.importMarketplacePlaybook) {
+			return { success: false, error: 'Marketplace import not configured' };
+		}
+		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
 	}
 
 	listDesktopSessions(): DesktopSessionEntry[] {
@@ -901,6 +964,14 @@ export class CallbackRegistry {
 		this.callbacks.getGitDiff = callback;
 	}
 
+	setGetGitBranchesForSessionCallback(callback: GetGitBranchesForSessionCallback): void {
+		this.callbacks.getGitBranchesForSession = callback;
+	}
+
+	setListWorktreesForSessionCallback(callback: ListWorktreesForSessionCallback): void {
+		this.callbacks.listWorktreesForSession = callback;
+	}
+
 	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {
 		this.callbacks.getGroupChats = callback;
 	}
@@ -971,6 +1042,22 @@ export class CallbackRegistry {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {
+		this.callbacks.getMarketplaceManifest = callback;
+	}
+
+	setGetMarketplaceDocumentCallback(callback: GetMarketplaceDocumentCallback): void {
+		this.callbacks.getMarketplaceDocument = callback;
+	}
+
+	setGetMarketplaceReadmeCallback(callback: GetMarketplaceReadmeCallback): void {
+		this.callbacks.getMarketplaceReadme = callback;
+	}
+
+	setImportMarketplacePlaybookCallback(callback: ImportMarketplacePlaybookCallback): void {
+		this.callbacks.importMarketplacePlaybook = callback;
 	}
 
 	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {

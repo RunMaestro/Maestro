@@ -731,6 +731,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 		});
@@ -779,6 +780,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 		});
@@ -827,6 +829,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 		});
@@ -876,6 +879,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 			expect(onClose).toHaveBeenCalled();
@@ -1388,6 +1392,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 		});
@@ -1536,6 +1541,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				{ enabled: false, remoteId: null },
+				undefined,
 				undefined
 			);
 		});
@@ -2389,6 +2395,145 @@ describe('NewInstanceModal', () => {
 			expect(args[12]).toBe('xhigh');
 		});
 
+		it('forwards source.groupId through to onCreate so duplicates inherit the group (issue #827)', async () => {
+			const sourceSession: Session = {
+				id: 'session-grouped',
+				name: 'Grouped Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				groupId: 'group-abc',
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Grouped Agent (Copy)');
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			// 14th positional arg (index 13) is groupId; must equal source.groupId so
+			// the duplicate lands in the same group as the original.
+			expect(onCreate).toHaveBeenCalled();
+			const args = onCreate.mock.calls[0];
+			expect(args[13]).toBe('group-abc');
+		});
+
+		it('does not clobber the user-typed name when sourceSession reference changes (issue #827)', async () => {
+			// Regression: AppModals derives sourceSession from a useMemo over the
+			// sessions array. Any unrelated sessions update produces a new object
+			// reference. The pre-fill effect must depend on sourceSession?.id, not
+			// the full object, otherwise it re-runs and overwrites whatever the
+			// user has typed in the name field.
+			const baseSession: Session = {
+				id: 'session-1',
+				name: 'Original Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			const { rerender } = render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={baseSession}
+				/>
+			);
+
+			await waitFor(() => {
+				const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+				expect(nameInput.value).toBe('Original Agent (Copy)');
+			});
+
+			// User edits the pre-filled name.
+			const nameInput = screen.getByLabelText('Agent Name') as HTMLInputElement;
+			await act(async () => {
+				fireEvent.change(nameInput, { target: { value: 'My New Agent' } });
+			});
+			expect(nameInput.value).toBe('My New Agent');
+
+			// Parent re-renders with a NEW object reference for the same source
+			// session (simulating the upstream useMemo recomputing when the
+			// sessions array updates). The user-typed value must be preserved.
+			await act(async () => {
+				rerender(
+					<NewInstanceModal
+						isOpen={true}
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+						sourceSession={{ ...baseSession }}
+					/>
+				);
+			});
+
+			expect((screen.getByLabelText('Agent Name') as HTMLInputElement).value).toBe('My New Agent');
+		});
+
 		it('should display SSH selector even when no agent is selected', async () => {
 			// This tests the bug where SSH section was hidden when no agents were available
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
@@ -2552,6 +2697,7 @@ describe('NewInstanceModal', () => {
 					syncHistory: false,
 					workingDirOverride: '/test/path',
 				},
+				undefined,
 				undefined
 			);
 		});
@@ -2777,6 +2923,7 @@ describe('NewInstanceModal', () => {
 					remoteId: 'remote-1',
 					workingDirOverride: '/home/devuser/my-project',
 				}),
+				undefined,
 				undefined
 			);
 		});
@@ -2888,6 +3035,7 @@ describe('NewInstanceModal', () => {
 					remoteId: 'remote-1',
 					workingDirOverride: '/explicit/override/path',
 				}),
+				undefined,
 				undefined
 			);
 		});

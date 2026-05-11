@@ -11,6 +11,14 @@ vi.mock('electron', () => ({
 	ipcMain: {
 		once: vi.fn(),
 	},
+	app: {
+		getPath: vi.fn().mockReturnValue('/tmp/userData'),
+		getVersion: vi.fn().mockReturnValue('0.16.17'),
+		on: vi.fn(),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn().mockReturnValue([]),
+	},
 }));
 
 // Mock WebServer - use class syntax to make it a proper constructor
@@ -73,6 +81,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRenameSessionCallback = vi.fn();
 			setGetGitStatusCallback = vi.fn();
 			setGetGitDiffCallback = vi.fn();
+			setGetGitBranchesForSessionCallback = vi.fn();
+			setListWorktreesForSessionCallback = vi.fn();
 			setGetGroupChatsCallback = vi.fn();
 			setStartGroupChatCallback = vi.fn();
 			setGetGroupChatStateCallback = vi.fn();
@@ -95,6 +105,10 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setKillTerminalForWebCallback = vi.fn();
 			setNotifyToastCallback = vi.fn();
 			setNotifyCenterFlashCallback = vi.fn();
+			setGetMarketplaceManifestCallback = vi.fn();
+			setGetMarketplaceDocumentCallback = vi.fn();
+			setGetMarketplaceReadmeCallback = vi.fn();
+			setImportMarketplacePlaybookCallback = vi.fn();
 			setListDesktopSessionsCallback = vi.fn();
 			setGetSessionHistoryCallback = vi.fn();
 
@@ -130,6 +144,23 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock marketplace-service so the import callback path is testable without
+// hitting GitHub / the local cache. Each test that exercises the callback
+// can override the per-fn return values.
+vi.mock('../../../main/services/marketplace-service', () => ({
+	getMarketplaceManifest: vi.fn(),
+	refreshMarketplaceManifest: vi.fn(),
+	getMarketplaceDocument: vi.fn(),
+	getMarketplaceReadme: vi.fn(),
+	importMarketplacePlaybook: vi.fn(),
+}));
+
+// Mock Sentry — captureException is called from the import callback's
+// failure branch.
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
@@ -138,6 +169,7 @@ import { WebServer } from '../../../main/web-server/WebServer';
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
+import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -864,6 +896,127 @@ describe('web-server/web-server-factory', () => {
 			callback();
 
 			expect(mockHistoryManager.getAllEntries).toHaveBeenCalled();
+		});
+	});
+
+	describe('importMarketplacePlaybookCallback behavior', () => {
+		// Helper that wires deps to a sessions array + sshRemotes array, builds
+		// the factory, and returns the registered import callback.
+		const setupImportCallback = (
+			sessions: Array<Record<string, unknown>>,
+			sshRemotes: Array<Record<string, unknown>>
+		) => {
+			mockSessionsStore.get = vi.fn((key: string, defaultValue?: any) => {
+				if (key === 'sessions') return sessions;
+				return defaultValue;
+			}) as any;
+			const originalSettingsGet = mockSettingsStore.get as ReturnType<typeof vi.fn>;
+			mockSettingsStore.get = vi.fn((key: string, defaultValue?: any) => {
+				if (key === 'sshRemotes') return sshRemotes;
+				return originalSettingsGet(key, defaultValue);
+			}) as any;
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const setImport = server.setImportMarketplacePlaybookCallback as ReturnType<typeof vi.fn>;
+			return setImport.mock.calls[0][0] as (
+				sessionId: string,
+				playbookId: string,
+				targetFolderName: string
+			) => Promise<{ success: boolean; error?: string }>;
+		};
+
+		it('should fail loudly when sessionSshRemoteConfig.enabled but remoteId points at no entry', async () => {
+			// Mirrors the desktop IPC test: a session with SSH explicitly
+			// enabled but an unresolvable remoteId must NOT silently land the
+			// playbook on the local filesystem.
+			const callback = setupImportCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: {
+							enabled: true,
+							remoteId: 'non-existent-remote',
+						},
+					},
+				],
+				[]
+			);
+
+			const result = await callback('session-1', 'pb', 'dest');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SSH remote not found or disabled');
+			expect(importMarketplacePlaybook).not.toHaveBeenCalled();
+		});
+
+		it('should fail loudly when the matching SSH remote entry is disabled', async () => {
+			const callback = setupImportCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+				[{ id: 'remote-1', enabled: false }]
+			);
+
+			const result = await callback('session-1', 'pb', 'dest');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SSH remote not found or disabled');
+			expect(importMarketplacePlaybook).not.toHaveBeenCalled();
+		});
+
+		it('should fail loudly when sessionSshRemoteConfig.enabled but remoteId is null', async () => {
+			const callback = setupImportCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: { enabled: true, remoteId: null },
+					},
+				],
+				[]
+			);
+
+			const result = await callback('session-1', 'pb', 'dest');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SSH remote not found or disabled');
+			expect(importMarketplacePlaybook).not.toHaveBeenCalled();
+		});
+
+		it('should treat sessionSshRemoteConfig.enabled === false as no SSH and import locally', async () => {
+			// A session with `enabled: false` and a populated remoteId must
+			// NOT be treated as remote — `enabled` is the source of truth.
+			// We assert the resolver returned `undefined` for sshConfig (i.e.
+			// no remote was looked up); whether the downstream import call
+			// succeeds is irrelevant — we only care that the SSH gate let it
+			// through as a local import.
+			vi.mocked(importMarketplacePlaybook).mockResolvedValueOnce({
+				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
+				importedDocs: [],
+				importedAssets: [],
+			});
+			const callback = setupImportCallback(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/auto-run',
+						sessionSshRemoteConfig: { enabled: false, remoteId: 'remote-1' },
+					},
+				],
+				[{ id: 'remote-1', enabled: true }]
+			);
+
+			await callback('session-1', 'pb', 'dest');
+
+			expect(importMarketplacePlaybook).toHaveBeenCalledTimes(1);
+			expect(importMarketplacePlaybook).toHaveBeenCalledWith(
+				expect.objectContaining({ sshConfig: undefined })
+			);
 		});
 	});
 });

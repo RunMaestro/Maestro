@@ -6,7 +6,7 @@
  * and when understanding reaches 80%, submits a well-structured GitHub issue.
  *
  * Features:
- * - Provider selection (reuses agent configuration pattern)
+ * - Auto-picks the first available supported provider — no selection step
  * - Chat interface with progress bar
  * - Screenshot drag-and-drop
  * - Support package opt-in
@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ImagePlus,
-	MessageSquareHeart,
 	Send,
 	X,
 	Package,
@@ -38,9 +37,8 @@ import {
 	type FeedbackMessage,
 	type FeedbackParsedResponse,
 } from '../services/feedbackConversation';
-import { isBetaAgent } from '../../shared/agentMetadata';
-import { ThemedSelect } from './shared/ThemedSelect';
 import { openUrl } from '../utils/openUrl';
+import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 
 // ============================================================================
@@ -122,15 +120,17 @@ interface ExistingIssue {
 
 export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackChatViewProps) {
 	// --- State ---
-	const [step, setStep] = useState<
-		'gh-check' | 'provider-select' | 'chat' | 'matching' | 'submitting' | 'done'
-	>('gh-check');
+	const [step, setStep] = useState<'gh-check' | 'chat' | 'matching' | 'submitting' | 'done'>(
+		'gh-check'
+	);
 	const [ghAuth, setGhAuth] = useState<{ checking: boolean; ok: boolean; message?: string }>({
 		checking: true,
 		ok: false,
 	});
 	const [selectedAgent, setSelectedAgent] = useState<ToolType>('claude-code');
 	const [detectedAgents, setDetectedAgents] = useState<Set<string>>(new Set());
+	const [agentsLoaded, setAgentsLoaded] = useState(false);
+	const [agentsDetectError, setAgentsDetectError] = useState<string | null>(null);
 	const [messages, setMessages] = useState<FeedbackMessage[]>([]);
 	const [inputValue, setInputValue] = useState('');
 	const [isLoading, setIsLoading] = useState(false);
@@ -154,11 +154,11 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const startedRef = useRef(false);
 
 	// --- Report desired width based on current step ---
 	useEffect(() => {
-		const isNarrow = step === 'gh-check' || step === 'provider-select';
-		onWidthChange?.(isNarrow ? 462 : 858);
+		onWidthChange?.(step === 'gh-check' ? 462 : 858);
 	}, [step, onWidthChange]);
 
 	// --- GH Auth Check ---
@@ -169,7 +169,6 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				const result = await window.maestro.feedback.checkGhAuth();
 				if (mounted) {
 					setGhAuth({ checking: false, ok: result.authenticated, message: result.message });
-					if (result.authenticated) setStep('provider-select');
 				}
 			} catch {
 				if (mounted) {
@@ -194,9 +193,18 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					// Auto-select first available
 					const firstAvailable = AGENT_TILES.find((t) => t.supported && available.has(t.id));
 					if (firstAvailable) setSelectedAgent(firstAvailable.id);
+					setAgentsLoaded(true);
 				}
-			} catch {
-				// Ignore
+			} catch (error) {
+				// Report so we hear about IPC/runtime failures in production rather
+				// than misclassifying them as "no providers installed".
+				captureException(error, { extra: { source: 'FeedbackChatView.agentDetect' } });
+				if (mounted) {
+					setAgentsDetectError(
+						error instanceof Error ? error.message : 'Failed to detect AI providers.'
+					);
+					setAgentsLoaded(true);
+				}
 			}
 		})();
 		return () => {
@@ -226,14 +234,15 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	}, []);
 
 	// --- Publish draft state so the sidebar Feedback button + close handler
-	//     know whether the user has unsaved work that would be lost. Once the
+	//     know whether the user has unsaved work that would be lost. We only
+	//     count it as a draft once the user has actually sent a message —
+	//     unsubmitted typing or staged attachments don't count. Once the
 	//     issue is submitted (step === 'done') there's nothing left to lose.
 	useEffect(() => {
-		const hasContent =
-			messages.length > 0 || inputValue.trim().length > 0 || attachments.length > 0;
-		const hasDraft = hasContent && step !== 'done';
+		const hasSentMessage = messages.some((m) => m.role === 'user');
+		const hasDraft = hasSentMessage && step !== 'done';
 		useFeedbackDraftStore.getState().setHasDraft(hasDraft);
-	}, [messages, inputValue, attachments, step]);
+	}, [messages, step]);
 
 	// --- Background issue search — fires after every agent response ---
 	const runIssueSearch = useCallback(async (query: string) => {
@@ -292,9 +301,28 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			// Focus input immediately — no auto-greeting, user speaks first
 			requestAnimationFrame(() => inputRef.current?.focus());
 		} catch (error) {
+			// Surface IPC/runtime failures from getConversationPrompt() and
+			// managerRef.current.start() to Sentry so production breakage is
+			// visible — these are unexpected errors, not recoverable conditions.
+			captureException(error, { extra: { source: 'FeedbackChatView.startConversation' } });
+			// Release the auto-start latch so a future state change can retry,
+			// and surface the error in the boot screen with a Close action.
+			startedRef.current = false;
 			setSubmitError(error instanceof Error ? error.message : 'Failed to start conversation');
 		}
 	}, [selectedAgent]);
+
+	// --- Auto-start conversation once GH auth + agent detection are ready.
+	//     The previous "pick a provider" screen is gone (#766) — Maestro infers
+	//     the provider from the first detected supported agent.
+	useEffect(() => {
+		if (startedRef.current) return;
+		if (ghAuth.checking || !ghAuth.ok) return;
+		if (!agentsLoaded || agentsDetectError) return;
+		if (availableTiles.length === 0) return;
+		startedRef.current = true;
+		void startConversation();
+	}, [ghAuth, agentsLoaded, agentsDetectError, availableTiles, startConversation]);
 
 	// --- Send message ---
 	const sendMessage = useCallback(async () => {
@@ -537,73 +565,80 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		);
 	}
 
-	// --- Provider Selection ---
-	if (step === 'provider-select') {
+	// --- Agent detection failed (IPC/runtime error, not "zero providers") ---
+	if (agentsDetectError) {
 		return (
-			<div className="flex flex-col gap-5 p-6">
-				<div className="flex items-center gap-4">
-					<div
-						className="w-20 h-20 rounded-xl flex items-center justify-center shrink-0"
-						style={{ backgroundColor: `${theme.colors.accent}20` }}
-					>
-						<MessageSquareHeart className="w-10 h-10" style={{ color: theme.colors.accent }} />
-					</div>
-					<p className="text-sm" style={{ color: theme.colors.textDim }}>
-						Thank you for taking the time to give us feedback! Whether you're reporting an issue or
-						recommending a feature, an AI will help shape it into a well-structured GitHub issue for
-						us to act on. Pick which AI provider powers that conversation below.
+			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.error }} />
+				<div>
+					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+						Could not detect AI providers
+					</p>
+					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
+						{agentsDetectError}
 					</p>
 				</div>
+				<button
+					type="button"
+					onClick={onCancel}
+					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+				>
+					Close
+				</button>
+			</div>
+		);
+	}
 
-				<div className="flex flex-col gap-2">
-					<label className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
-						AI Provider
-					</label>
-					<ThemedSelect
-						value={selectedAgent}
-						options={availableTiles.map((tile) => ({
-							value: tile.id,
-							label: `${tile.name}${isBetaAgent(tile.id) ? ' (Beta)' : ''}`,
-						}))}
-						onChange={(v) => setSelectedAgent(v as ToolType)}
-						theme={theme}
-					/>
-					<p className="text-[11px]" style={{ color: theme.colors.textDim }}>
-						This selects the provider that drives the feedback conversation — it doesn't create a
-						new agent in your sidebar.
+	// --- No supported AI provider detected ---
+	if (agentsLoaded && availableTiles.length === 0) {
+		return (
+			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
+				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
+				<div>
+					<p className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+						No supported AI providers detected
 					</p>
-					{availableTiles.length === 0 && (
-						<p className="text-xs" style={{ color: theme.colors.warning }}>
-							No supported AI providers detected. Install Claude Code, Codex, or OpenCode.
-						</p>
-					)}
+					<p className="text-xs leading-relaxed max-w-sm" style={{ color: theme.colors.textDim }}>
+						Inline feedback uses an AI to shape your report into a well-structured GitHub issue.
+						Install Claude Code, Codex, or OpenCode and try again.
+					</p>
 				</div>
+				<button
+					type="button"
+					onClick={onCancel}
+					className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+				>
+					Close
+				</button>
+			</div>
+		);
+	}
 
+	// --- Booting: GH ok, agent detection or conversation start in flight ---
+	if (step === 'gh-check') {
+		return (
+			<div className="flex flex-col items-center gap-3 py-8 px-6">
+				<Spinner size={24} color={theme.colors.accent} />
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					Starting feedback session...
+				</p>
 				{submitError && (
-					<p className="text-xs" style={{ color: theme.colors.warning }}>
-						{submitError}
-					</p>
+					<>
+						<p className="text-xs" style={{ color: theme.colors.warning }}>
+							{submitError}
+						</p>
+						<button
+							type="button"
+							onClick={onCancel}
+							className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						>
+							Close
+						</button>
+					</>
 				)}
-
-				<div className="flex justify-end gap-2">
-					<button
-						type="button"
-						onClick={onCancel}
-						className="px-4 py-2 rounded text-xs transition-colors hover:bg-white/5"
-						style={{ color: theme.colors.textDim }}
-					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						onClick={startConversation}
-						disabled={availableTiles.length === 0}
-						className="px-4 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40"
-						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					>
-						Start
-					</button>
-				</div>
 			</div>
 		);
 	}

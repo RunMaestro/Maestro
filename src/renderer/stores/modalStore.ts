@@ -92,6 +92,7 @@ export interface RenameTabModalData {
 
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
+	sessionId: string;
 	tabId: string;
 	initialCommand: string;
 	initialCwd: string;

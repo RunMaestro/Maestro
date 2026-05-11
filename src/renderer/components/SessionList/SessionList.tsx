@@ -33,6 +33,8 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
@@ -118,7 +120,15 @@ interface SessionListProps {
 
 function SessionListInner(props: SessionListProps) {
 	// Store subscriptions
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
+	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
+	// so the 200ms batched flush no longer cascades a sidebar re-render unless a
+	// sidebar-relevant field actually changed. See sessionEquality.ts.
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		sidebarSessionEquality
+	);
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
@@ -166,7 +176,18 @@ function SessionListInner(props: SessionListProps) {
 						});
 					}
 				}
-				setCueSessionMap(map);
+				// Preserve referential identity when nothing changed — the map is fed
+				// to every SessionItem as a prop, and a fresh reference busts memo even
+				// when contents are equal. With cue activity ticks coming in at ~1Hz this
+				// would otherwise re-render all sidebar rows on every tick.
+				setCueSessionMap((prev) => {
+					if (prev.size !== map.size) return map;
+					for (const [id, next] of map) {
+						const cur = prev.get(id);
+						if (!cur || cur.count !== next.count || cur.active !== next.active) return map;
+					}
+					return prev;
+				});
 			} catch (err: unknown) {
 				// "Cue engine not initialized" is the expected pre-init case;
 				// treat anything else as a real failure and surface it. Note
@@ -464,48 +485,59 @@ function SessionListInner(props: SessionListProps) {
 		activeSessionId
 	);
 
-	// PERF: Cached callback maps to prevent SessionItem re-renders
-	// These Maps store stable function references keyed by session/editing ID
-	// The callbacks themselves are memoized, so the Map values remain stable
+	// PERF: Cached callback maps to prevent SessionItem re-renders.
+	// These Maps store stable function references keyed by session id. They only
+	// depend on the *set of session ids* — not on per-session field changes — so
+	// rebuilding them on every sidebar field change (state/name/etc.) was
+	// wasted work that broke SessionItem's React.memo bail-out (5 × N closures
+	// per flush). Key off a derived id signature instead.
+	const sessionIdsKey = useMemo(() => sessions.map((s) => s.id).join('|'), [sessions]);
+
+	// Read sessions through a ref inside the memos so the deps stay tied to the
+	// id-set (sessionIdsKey) rather than the array reference. The handlers care
+	// only about the *set of session ids*, not about per-session field changes.
+	const sessionsRef = useRef(sessions);
+	sessionsRef.current = sessions;
+
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => setActiveSessionId(s.id));
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessionIdsKey, setActiveSessionId]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => handleDragStart(s.id));
 		});
 		return map;
-	}, [sessions, handleDragStart]);
+	}, [sessionIdsKey, handleDragStart]);
 
 	const contextMenuHandlers = useMemo(() => {
 		const map = new Map<string, (e: React.MouseEvent) => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, (e: React.MouseEvent) => handleContextMenu(e, s.id));
 		});
 		return map;
-	}, [sessions, handleContextMenu]);
+	}, [sessionIdsKey, handleContextMenu]);
 
 	const finishRenameHandlers = useMemo(() => {
 		const map = new Map<string, (newName: string) => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, (newName: string) => finishRenamingSession(s.id, newName));
 		});
 		return map;
-	}, [sessions, finishRenamingSession]);
+	}, [sessionIdsKey, finishRenamingSession]);
 
 	const toggleBookmarkHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => toggleBookmark(s.id));
 		});
 		return map;
-	}, [sessions, toggleBookmark]);
+	}, [sessionIdsKey, toggleBookmark]);
 
 	// Helper: compute navIndexMap key for a session based on render context
 	const getNavKey = (variant: string, session: Session, groupId?: string): string => {

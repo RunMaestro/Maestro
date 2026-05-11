@@ -120,6 +120,14 @@ export interface AutoRunInlineProps {
 	 * backwards compatibility.
 	 */
 	onOpenFolderPicker?: () => void;
+	/**
+	 * Open the Playbook Exchange (marketplace) sheet directly from the inline
+	 * panel — mirrors desktop's "Add Docs" / Docs Overview affordance which
+	 * surfaces both Create-doc and Marketplace as co-equal entry points. When
+	 * omitted, the empty-state Marketplace CTA is hidden so older callers and
+	 * tests keep working.
+	 */
+	onOpenMarketplace?: () => void;
 }
 
 type EditorMode = 'preview' | 'edit';
@@ -139,6 +147,7 @@ export function AutoRunInline({
 	onAbortAfterError,
 	onSelectedDocumentChange,
 	onOpenFolderPicker,
+	onOpenMarketplace,
 }: AutoRunInlineProps) {
 	const colors = useThemeColors();
 	const {
@@ -747,22 +756,75 @@ export function AutoRunInline({
 							.maestro/playbooks/
 						</code>
 					</p>
-					<button
-						onClick={() => setShowCreate(true)}
+					{/* Docs Overview CTAs — mirrors desktop's "Add Docs" surface where both
+					    Create-doc and Browse Playbook Exchange are co-equal entry points.
+					    Without the marketplace CTA here, mobile users in the empty state
+					    have no path to discover existing playbooks (they can only create
+					    a blank doc), which is the gap PR #947 left open. */}
+					<div
 						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '8px',
 							marginTop: '8px',
-							padding: '10px 16px',
-							borderRadius: '8px',
-							border: `1px solid ${colors.accent}`,
-							backgroundColor: `${colors.accent}15`,
-							color: colors.accent,
-							fontSize: '13px',
-							fontWeight: 600,
-							cursor: 'pointer',
+							width: '100%',
+							maxWidth: '280px',
 						}}
 					>
-						+ Create document
-					</button>
+						<button
+							onClick={() => setShowCreate(true)}
+							style={{
+								padding: '10px 16px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.accent}`,
+								backgroundColor: `${colors.accent}15`,
+								color: colors.accent,
+								fontSize: '13px',
+								fontWeight: 600,
+								cursor: 'pointer',
+							}}
+						>
+							+ Create document
+						</button>
+						{onOpenMarketplace && (
+							<button
+								onClick={onOpenMarketplace}
+								aria-label="Browse Playbook Exchange"
+								style={{
+									padding: '10px 16px',
+									borderRadius: '8px',
+									border: `1px solid ${colors.border}`,
+									backgroundColor: 'transparent',
+									color: colors.textMain,
+									fontSize: '13px',
+									fontWeight: 600,
+									cursor: 'pointer',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									gap: '8px',
+								}}
+							>
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									aria-hidden="true"
+								>
+									<rect x="3" y="3" width="7" height="7" rx="1" />
+									<rect x="14" y="3" width="7" height="7" rx="1" />
+									<rect x="14" y="14" width="7" height="7" rx="1" />
+									<rect x="3" y="14" width="7" height="7" rx="1" />
+								</svg>
+								Browse Playbook Exchange
+							</button>
+						)}
+					</div>
 				</div>
 				{showHelp && <HelpSheet colors={colors} onClose={() => setShowHelp(false)} />}
 				{showCreate && (
