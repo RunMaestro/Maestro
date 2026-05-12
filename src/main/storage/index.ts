@@ -7,6 +7,7 @@
 
 export { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 export { OpenCodeSessionStorage } from './opencode-session-storage';
+export { KiloSessionStorage } from './kilo-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
 export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 
@@ -14,6 +15,7 @@ import Store from 'electron-store';
 import { registerSessionStorage } from '../agents';
 import { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 import { OpenCodeSessionStorage } from './opencode-session-storage';
+import { KiloSessionStorage } from './kilo-session-storage';
 import { CodexSessionStorage } from './codex-session-storage';
 import { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 
@@ -34,6 +36,7 @@ export interface InitializeSessionStoragesOptions {
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
 	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new OpenCodeSessionStorage());
+	registerSessionStorage(new KiloSessionStorage());
 	registerSessionStorage(new CodexSessionStorage());
 	registerSessionStorage(new FactoryDroidSessionStorage());
 }

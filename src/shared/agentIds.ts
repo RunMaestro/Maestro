@@ -20,6 +20,7 @@ export const AGENT_IDS = [
 	'gemini-cli',
 	'qwen3-coder',
 	'opencode',
+	'kilo',
 	'factory-droid',
 	'aider',
 ] as const;

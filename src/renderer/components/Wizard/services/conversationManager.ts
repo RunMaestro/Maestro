@@ -723,8 +723,9 @@ class ConversationManager {
 				return args;
 			}
 
-			case 'opencode': {
-				// OpenCode requires 'run' batch mode with JSON output for wizard conversations
+			case 'opencode':
+			case 'kilo': {
+				// OpenCode / Kilo require 'run' batch mode with JSON output for wizard conversations
 				const args = [];
 
 				// Add base args (if any) - batchModePrefix will be added by buildAgentArgs
@@ -799,8 +800,8 @@ class ConversationManager {
 		try {
 			const lines = output.split('\n');
 
-			// For OpenCode: concatenate all text parts
-			if (agentType === 'opencode') {
+			// For OpenCode / Kilo: concatenate all text parts (KiloCode is a 1:1 fork)
+			if (agentType === 'opencode' || agentType === 'kilo') {
 				const textParts: string[] = [];
 				for (const line of lines) {
 					if (!line.trim()) continue;

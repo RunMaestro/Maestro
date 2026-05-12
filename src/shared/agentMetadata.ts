@@ -19,6 +19,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'gemini-cli': 'Gemini CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
+	kilo: 'Kilo',
 	'factory-droid': 'Factory Droid',
 	aider: 'Aider',
 };
@@ -40,7 +41,11 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'opencode',
+	'kilo',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -64,7 +69,11 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
  */
-export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['opencode', 'factory-droid']);
+export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'opencode',
+	'kilo',
+	'factory-droid',
+]);
 
 /**
  * Check whether an agent is in beta status.

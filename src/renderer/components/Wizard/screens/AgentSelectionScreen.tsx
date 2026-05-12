@@ -198,6 +198,36 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'kilo':
+			// Kilo (KiloCode) - lightning bolt over terminal frame
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<rect
+						x="4"
+						y="8"
+						width="40"
+						height="32"
+						rx="4"
+						stroke={color}
+						strokeWidth="2"
+						fill="none"
+					/>
+					<path
+						d="M26 14l-8 12h6l-2 8 8-12h-6l2-8z"
+						fill={color}
+						stroke={color}
+						strokeWidth="1.5"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			);
+
 		case 'qwen3-coder':
 			// Qwen - Alibaba cloud inspired
 			return (

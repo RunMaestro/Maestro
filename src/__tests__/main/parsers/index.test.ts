@@ -8,6 +8,7 @@ import {
 	clearParserRegistry,
 	ClaudeOutputParser,
 	OpenCodeOutputParser,
+	KiloOutputParser,
 	CodexOutputParser,
 } from '../../../main/parsers';
 
@@ -33,6 +34,14 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('opencode')).toBe(true);
 		});
 
+		it('should register Kilo parser', () => {
+			expect(hasOutputParser('kilo')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('kilo')).toBe(true);
+		});
+
 		it('should register Codex parser', () => {
 			expect(hasOutputParser('codex')).toBe(false);
 
@@ -49,21 +58,21 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('factory-droid')).toBe(true);
 		});
 
-		it('should register exactly 4 parsers', () => {
+		it('should register exactly 5 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(4); // Claude, OpenCode, Codex, Factory Droid
+			expect(parsers.length).toBe(5); // Claude, OpenCode, Kilo, Codex, Factory Droid
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 
-			// Second initialization should still have exactly 4
+			// Second initialization should still have exactly 5
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 	});
 
@@ -73,7 +82,7 @@ describe('parsers/index', () => {
 
 			ensureParsersInitialized();
 
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 
 		it('should be idempotent after first call', () => {
@@ -130,6 +139,11 @@ describe('parsers/index', () => {
 		it('should export OpenCodeOutputParser class', () => {
 			const parser = new OpenCodeOutputParser();
 			expect(parser.agentId).toBe('opencode');
+		});
+
+		it('should export KiloOutputParser class', () => {
+			const parser = new KiloOutputParser();
+			expect(parser.agentId).toBe('kilo');
 		});
 
 		it('should export CodexOutputParser class', () => {

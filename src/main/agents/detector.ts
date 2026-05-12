@@ -251,8 +251,9 @@ export class AgentDetector {
 		try {
 			// Agent-specific model discovery commands
 			switch (agentId) {
-				case 'opencode': {
-					// OpenCode: `opencode models` returns one model per line
+				case 'opencode':
+				case 'kilo': {
+					// OpenCode / Kilo: `<binary> models` returns one model per line
 					const result = await execFileNoThrow(command, ['models'], undefined, env);
 
 					if (result.exitCode !== 0) {
