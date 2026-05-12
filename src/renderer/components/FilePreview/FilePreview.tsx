@@ -6,6 +6,8 @@ import React, {
 	useCallback,
 	forwardRef,
 	useImperativeHandle,
+	lazy,
+	Suspense,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -54,6 +56,8 @@ import {
 	isReadableTextPreview,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
+	pickPreviewTier,
+	countLines,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -64,6 +68,11 @@ import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
 import { HighlightedCodeEditor } from './HighlightedCodeEditor';
 import { logger } from '../../utils/logger';
+
+// Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
+// means small-file previews don't pay the ~135 KB cost of markdown-it +
+// react-virtuoso + DOMPurify until a large file actually triggers it.
+const MarkdownPreviewFast = lazy(() => import('./markdownFast'));
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -225,6 +234,18 @@ export const FilePreview = React.memo(
 			if (!file?.content) return false;
 			return file.content.length > LARGE_FILE_TOKEN_SKIP_THRESHOLD;
 		}, [file?.content]);
+
+		// Choose preview tier for markdown files. react-markdown handles small
+		// files; large files route to MarkdownPreviewFast (markdown-it + virtuoso).
+		// Tier is memoized on path so switching tabs and coming back doesn't
+		// re-decide. Phase 2 will add a manual override chip; for now the choice
+		// is automatic.
+		const previewTier = useMemo(() => {
+			if (!file?.content || !isMarkdown) return 'rich' as const;
+			const bytes = file.content.length;
+			const lines = countLines(file.content);
+			return pickPreviewTier(bytes, lines);
+		}, [file?.path, file?.content, isMarkdown]);
 
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
@@ -1413,6 +1434,40 @@ export const FilePreview = React.memo(
 							onMatchCount={searchMode === 'text' ? setMatchCount : undefined}
 							onJqError={setJqError}
 						/>
+					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<MarkdownPreviewFast
+								content={file.content}
+								theme={theme}
+								markdownContainerRef={markdownContainerRef}
+								fileTreeIndices={fileTreeIndices}
+								cwd={cwd}
+								homeDir={homeDir}
+								filePath={file.path}
+								onFileClick={onFileClick}
+								onExternalLinkClick={(href, opts) => {
+									if (/^file:\/\//.test(href)) {
+										void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
+										return;
+									}
+									if (/^https?:\/\/|^mailto:/.test(href)) {
+										openUrl(href, opts);
+									}
+								}}
+							/>
+						</Suspense>
 					) : isMarkdown ? (
 						<div
 							ref={markdownContainerRef}

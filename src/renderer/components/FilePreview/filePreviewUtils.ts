@@ -31,6 +31,60 @@ export const LARGE_FILE_TOKEN_SKIP_THRESHOLD = 1024 * 1024; // 1MB
 /** Files larger than this will have content truncated for syntax highlighting */
 export const LARGE_FILE_PREVIEW_LIMIT = 100 * 1024; // 100KB
 
+// ─── Preview Tier Thresholds (markdown perf) ──────────────────────────────────
+//
+// Three-tier preview strategy for markdown / text / code:
+//   - Rich  : current react-markdown pipeline; full feature parity. Default for small files.
+//   - Fast  : markdown-it + DOMPurify + react-virtuoso block virtualization. Dynamically imported.
+//   - Giant : CodeMirror 6 read-only viewer for multi-MB / multi-million-line files. Phase 4.
+//
+// The Fast tier handles the user-reported 300k-line markdown case. Tier picked once
+// per file open (memoized on path); a header chip lets users escalate/de-escalate.
+
+/** Bytes above this route to Fast tier instead of Rich. */
+export const FAST_TIER_BYTES = 256 * 1024; // 256KB
+
+/** Lines above this route to Fast tier instead of Rich (catches dense narrow content). */
+export const FAST_TIER_LINES = 5_000;
+
+/** Bytes above this route to Giant tier (CodeMirror 6) instead of Fast. */
+export const GIANT_TIER_BYTES = 4 * 1024 * 1024; // 4MB
+
+/** Lines above this route to Giant tier. */
+export const GIANT_TIER_LINES = 200_000;
+
+export type PreviewTier = 'rich' | 'fast' | 'giant';
+
+/**
+ * Pick a preview tier based on file size. Pass `bytes` from the file's content
+ * length and `lines` from a single newline scan. Both are evaluated; the larger
+ * tier wins so a long thin file (millions of one-char lines) still escalates.
+ *
+ * Phase 1 lands Fast tier; Giant tier returns 'fast' here until CodeMirror tier
+ * ships, so the result is always currently-renderable.
+ */
+export function pickPreviewTier(bytes: number, lines: number): PreviewTier {
+	if (bytes > GIANT_TIER_BYTES || lines > GIANT_TIER_LINES) {
+		// TODO(Phase 4): return 'giant' once MarkdownPreviewGiant is implemented.
+		// Fast tier still beats Rich here, so prefer it as the safe fallback.
+		return 'fast';
+	}
+	if (bytes > FAST_TIER_BYTES || lines > FAST_TIER_LINES) {
+		return 'fast';
+	}
+	return 'rich';
+}
+
+/** Count newlines without splitting the whole string (cheap O(n) scan). */
+export function countLines(content: string): number {
+	if (!content) return 0;
+	let count = 1;
+	for (let i = 0; i < content.length; i++) {
+		if (content.charCodeAt(i) === 10) count++;
+	}
+	return count;
+}
+
 // ─── Language Detection ───────────────────────────────────────────────────────
 
 /** Map filename extension to syntax highlighting language code */

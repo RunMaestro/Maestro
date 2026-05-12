@@ -10,6 +10,12 @@ import {
 	resolveImagePath,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
+	pickPreviewTier,
+	countLines,
+	FAST_TIER_BYTES,
+	FAST_TIER_LINES,
+	GIANT_TIER_BYTES,
+	GIANT_TIER_LINES,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 
 describe('filePreviewUtils', () => {
@@ -294,6 +300,78 @@ describe('filePreviewUtils', () => {
 
 		it('LARGE_FILE_PREVIEW_LIMIT is 100KB', () => {
 			expect(LARGE_FILE_PREVIEW_LIMIT).toBe(100 * 1024);
+		});
+	});
+
+	describe('countLines', () => {
+		it('returns 0 for empty input', () => {
+			expect(countLines('')).toBe(0);
+		});
+
+		it('returns 1 for a single line with no trailing newline', () => {
+			expect(countLines('hello')).toBe(1);
+		});
+
+		it('counts newlines plus one', () => {
+			expect(countLines('a\nb\nc')).toBe(3);
+		});
+
+		it('counts the trailing newline as an extra empty line', () => {
+			expect(countLines('a\n')).toBe(2);
+		});
+	});
+
+	describe('pickPreviewTier', () => {
+		it('returns rich for small files', () => {
+			expect(pickPreviewTier(1024, 50)).toBe('rich');
+			expect(pickPreviewTier(FAST_TIER_BYTES, FAST_TIER_LINES)).toBe('rich');
+		});
+
+		it('escalates to fast when bytes exceed FAST_TIER_BYTES', () => {
+			expect(pickPreviewTier(FAST_TIER_BYTES + 1, 100)).toBe('fast');
+		});
+
+		it('escalates to fast when lines exceed FAST_TIER_LINES even if bytes are small', () => {
+			expect(pickPreviewTier(1024, FAST_TIER_LINES + 1)).toBe('fast');
+		});
+
+		it('returns fast (giant fallback) when bytes exceed GIANT_TIER_BYTES', () => {
+			// Phase 1: Giant tier is not yet implemented, so it falls back to fast.
+			// Update this expectation to 'giant' when MarkdownPreviewGiant ships.
+			expect(pickPreviewTier(GIANT_TIER_BYTES + 1, 100)).toBe('fast');
+		});
+
+		it('returns fast (giant fallback) when lines exceed GIANT_TIER_LINES', () => {
+			expect(pickPreviewTier(1024, GIANT_TIER_LINES + 1)).toBe('fast');
+		});
+
+		it('handles the user-reported 300k-line markdown case', () => {
+			// 300k lines × ~50 bytes ≈ 15MB — over the giant threshold but Phase 1
+			// safely routes to fast tier.
+			expect(pickPreviewTier(15 * 1024 * 1024, 300_000)).toBe('fast');
+		});
+	});
+
+	describe('preview tier threshold values', () => {
+		it('FAST_TIER_BYTES is 256KB', () => {
+			expect(FAST_TIER_BYTES).toBe(256 * 1024);
+		});
+
+		it('FAST_TIER_LINES is 5,000', () => {
+			expect(FAST_TIER_LINES).toBe(5_000);
+		});
+
+		it('GIANT_TIER_BYTES is 4MB', () => {
+			expect(GIANT_TIER_BYTES).toBe(4 * 1024 * 1024);
+		});
+
+		it('GIANT_TIER_LINES is 200,000', () => {
+			expect(GIANT_TIER_LINES).toBe(200_000);
+		});
+
+		it('fast threshold is below giant threshold', () => {
+			expect(FAST_TIER_BYTES).toBeLessThan(GIANT_TIER_BYTES);
+			expect(FAST_TIER_LINES).toBeLessThan(GIANT_TIER_LINES);
 		});
 	});
 });
