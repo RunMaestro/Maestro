@@ -450,7 +450,8 @@ app.whenReady().then(async () => {
 		protocol.handle(RENDERER_SCHEME, async (request) => {
 			const url = new URL(request.url);
 			const requestedPath = decodeURIComponent(url.pathname);
-			const relative = requestedPath === '/' || requestedPath === '' ? '/index.html' : requestedPath;
+			const relative =
+				requestedPath === '/' || requestedPath === '' ? '/index.html' : requestedPath;
 			const resolved = path.normalize(path.join(rendererRoot, relative));
 			if (!resolved.startsWith(rendererRoot)) {
 				return new Response('forbidden', { status: 403 });
