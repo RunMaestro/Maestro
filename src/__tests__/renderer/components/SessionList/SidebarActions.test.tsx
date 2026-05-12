@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SidebarActions } from '../../../../renderer/components/SessionList/SidebarActions';
-import type { Theme } from '../../../../renderer/types';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -19,11 +19,16 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 		showUnreadAgentsOnly: false,
 		hasUnreadAgents: false,
 		addNewSession: vi.fn(),
-		setLeftSidebarOpen: vi.fn(),
 		toggleShowUnreadAgentsOnly: vi.fn(),
 		...overrides,
 	};
 }
+
+// SidebarActions calls cycleLeftSidebar via useUIStore.getState() rather than
+// taking the setter as a prop, so reset the store between tests.
+beforeEach(() => {
+	useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
+});
 
 describe('SidebarActions', () => {
 	it('renders collapse button, New Agent, and Feedback when sidebar is open', () => {
@@ -66,40 +71,33 @@ describe('SidebarActions', () => {
 		expect(openFeedback).toHaveBeenCalledOnce();
 	});
 
-	it('toggles sidebar open/closed on collapse button click', () => {
-		const setLeftSidebarOpen = vi.fn();
-		render(<SidebarActions {...createProps({ leftSidebarOpen: true, setLeftSidebarOpen })} />);
+	it('cycles open → collapsed strip on collapse-button click', () => {
+		useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
+		render(<SidebarActions {...createProps({ leftSidebarOpen: true })} />);
 
-		// Click the collapse button (first button)
-		const collapseBtn = screen.getByTitle(/Collapse Sidebar/);
+		const collapseBtn = screen.getByTitle(/Collapse to status strip/);
 		fireEvent.click(collapseBtn);
-		expect(setLeftSidebarOpen).toHaveBeenCalledWith(false);
+		expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		expect(useUIStore.getState().leftSidebarHidden).toBe(false);
 	});
 
 	it('prevents collapse when no sessions and sidebar is open', () => {
-		const setLeftSidebarOpen = vi.fn();
-		render(
-			<SidebarActions
-				{...createProps({ hasNoSessions: true, leftSidebarOpen: true, setLeftSidebarOpen })}
-			/>
-		);
+		useUIStore.setState({ leftSidebarOpen: true, leftSidebarHidden: false });
+		render(<SidebarActions {...createProps({ hasNoSessions: true, leftSidebarOpen: true })} />);
 
 		const collapseBtn = screen.getByTitle('Add an agent first to collapse sidebar');
 		fireEvent.click(collapseBtn);
-		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+		// Disabled button — no state change.
+		expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 	});
 
-	it('allows expanding sidebar even with no sessions', () => {
-		const setLeftSidebarOpen = vi.fn();
-		render(
-			<SidebarActions
-				{...createProps({ hasNoSessions: true, leftSidebarOpen: false, setLeftSidebarOpen })}
-			/>
-		);
+	it('cycles collapsed strip → hidden on next click', () => {
+		useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+		render(<SidebarActions {...createProps({ hasNoSessions: true, leftSidebarOpen: false })} />);
 
-		const expandBtn = screen.getByTitle(/Expand Sidebar/);
-		fireEvent.click(expandBtn);
-		expect(setLeftSidebarOpen).toHaveBeenCalledWith(true);
+		const hideBtn = screen.getByTitle(/Hide sidebar/);
+		fireEvent.click(hideBtn);
+		expect(useUIStore.getState().leftSidebarHidden).toBe(true);
 	});
 
 	it('renders unread agents filter button', () => {

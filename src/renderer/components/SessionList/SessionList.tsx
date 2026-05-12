@@ -143,6 +143,7 @@ function SessionListInner(props: SessionListProps) {
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
+	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
 	const persistentWebLink = useSettingsStore((s) => s.persistentWebLink);
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
@@ -260,7 +261,6 @@ function SessionListInner(props: SessionListProps) {
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
-	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
 	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
 	const setGroupChatsExpanded = useSettingsStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
@@ -753,7 +753,10 @@ function SessionListInner(props: SessionListProps) {
 		<div
 			ref={sidebarContainerRef}
 			tabIndex={0}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20`}
+			data-panel="left"
+			data-collapsed={leftSidebarOpen ? 'false' : 'true'}
+			data-hidden={leftSidebarHidden ? 'true' : 'false'}
+			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -1392,7 +1395,6 @@ function SessionListInner(props: SessionListProps) {
 				sidebarWidth={leftSidebarWidthState}
 				addNewSession={addNewSession}
 				openFeedback={props.openFeedback}
-				setLeftSidebarOpen={setLeftSidebarOpen}
 				toggleShowUnreadAgentsOnly={toggleShowUnreadAgentsOnly}
 			/>
 

@@ -14,6 +14,7 @@ import {
 	Server,
 	Bookmark,
 	Brain,
+	Menu,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
@@ -94,6 +95,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	const gitTooltip = useHoverTooltip(150);
@@ -110,6 +112,24 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			data-tour="header-controls"
 		>
 			<div className="flex items-center gap-4 min-w-0 overflow-hidden">
+				{/* Inline hamburger — appears only when the left sidebar is fully
+				    hidden. Renders INSIDE the header row so it shifts content
+				    rightward instead of floating over the session name. */}
+				{leftSidebarHidden && (
+					<button
+						type="button"
+						onClick={() => {
+							useUIStore.getState().setLeftSidebarHidden(false);
+							useUIStore.getState().setLeftSidebarOpen(true);
+						}}
+						className="shrink-0 p-1 rounded hover:bg-white/5 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						aria-label="Show agents sidebar"
+						title="Show sidebar"
+					>
+						<Menu className="w-4 h-4" />
+					</button>
+				)}
 				<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
 					{/* Session name - hidden at narrow widths via CSS container query */}
 					{showAgentName && (
@@ -455,36 +475,20 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					hasCapability('supportsUsageStats') &&
 					activeTabContextWindow > 0 && (
 						<div
-							className="header-context-widget flex flex-col items-end mr-2 relative cursor-pointer"
+							className="header-context-widget flex items-center mr-2 relative cursor-pointer"
+							data-testid="header-context-widget"
 							{...contextTooltip.triggerHandlers}
 						>
-							{/* Full label shown at wide widths, compact label shown at narrow widths via CSS */}
+							{/* Plain-text readout: "X% context remaining" — clearer than a
+							    gauge bar at narrow widths and avoids redundant label+bar. */}
 							<span
-								className="header-context-label-full text-[10px] font-bold uppercase"
-								style={{ color: theme.colors.textDim }}
+								className="text-xs font-mono font-medium tabular-nums whitespace-nowrap"
+								style={{
+									color: getContextColor(activeTabContextUsage, theme),
+								}}
 							>
-								Context Window
+								{Math.round(activeTabContextUsage)}%
 							</span>
-							<span
-								className="header-context-label-compact text-[10px] font-bold uppercase hidden"
-								style={{ color: theme.colors.textDim }}
-								aria-hidden="true"
-							>
-								Context
-							</span>
-							{/* Gauge width controlled via CSS container query */}
-							<div
-								className="header-context-gauge w-24 h-1.5 rounded-full mt-1 overflow-hidden"
-								style={{ backgroundColor: theme.colors.border }}
-							>
-								<div
-									className="h-full transition-all duration-500 ease-out"
-									style={{
-										width: `${activeTabContextUsage}%`,
-										backgroundColor: getContextColor(activeTabContextUsage, theme),
-									}}
-								/>
-							</div>
 
 							{/* Context Window Tooltip */}
 							{contextTooltip.isOpen && activeSession.inputMode === 'ai' && (
@@ -647,7 +651,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				{hasCapability('supportsProjectMemory') && (
 					<button
 						onClick={() => setMemoryViewerOpen(true)}
-						className="p-2 rounded hover:bg-white/5"
+						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Memory Viewer (${shortcuts.openMemoryViewer ? formatShortcutKeys(shortcuts.openMemoryViewer.keys) : formatShortcutKeys(['Meta', 'Shift', 'm'])})`}
 						data-tour="memory-viewer-button"
 					>
@@ -662,7 +666,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							setActiveAgentSessionId(null);
 							setAgentSessionsOpen(true);
 						}}
-						className="p-2 rounded hover:bg-white/5"
+						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Agent Sessions (${shortcuts.agentSessions ? formatShortcutKeys(shortcuts.agentSessions.keys) : formatShortcutKeys(['Meta', 'Shift', 'l'])})`}
 						data-tour="agent-sessions-button"
 					>

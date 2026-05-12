@@ -961,6 +961,15 @@ export interface EncoreFeatureFlags {
 	usageStats: boolean;
 	symphony: boolean;
 	maestroCue: boolean;
+	/**
+	 * Exposes the desktop renderer over the embedded web server as a
+	 * `/<token>/desktop` route, with every `ipcMain.handle()` reachable via
+	 * a `bridge.invoke` WebSocket protocol. Off by default — the surface
+	 * widening is intentional but high-blast-radius, and the user must
+	 * explicitly opt in. Requires app restart to take effect (the bridge
+	 * hook is installed once at server startup).
+	 */
+	webDesktopBundle: boolean;
 }
 
 // Director's Notes settings for synopsis generation

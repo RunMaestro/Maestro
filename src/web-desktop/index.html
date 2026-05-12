@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Maestro (Web Desktop)</title>
+		<style>
+			html,
+			body,
+			#root {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+				background: #0a0a0a;
+				color: #eee;
+				font-family:
+					-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+					sans-serif;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="root">
+			<div style="padding: 24px; font-family: monospace">Loading Maestro web-desktop bundle…</div>
+		</div>
+		<script>
+			// Server may inject __MAESTRO_CONFIG__ via /<token>/desktop/config.js.
+			// If absent (e.g. dev or local file load), the shim derives URLs from
+			// window.location at runtime.
+		</script>
+		<script type="module" src="./bootstrap.ts"></script>
+	</body>
+</html>

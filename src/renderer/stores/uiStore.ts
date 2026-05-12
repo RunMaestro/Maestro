@@ -15,8 +15,10 @@ import type { FocusArea, RightPanelTab } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 
 export interface UIStoreState {
-	// Sidebar
+	// Sidebar — tri-state via two booleans: !hidden && open = full panel,
+	// !hidden && !open = collapsed status-dot strip, hidden = no panel at all.
 	leftSidebarOpen: boolean;
+	leftSidebarHidden: boolean;
 	rightPanelOpen: boolean;
 
 	// Focus
@@ -64,6 +66,8 @@ export interface UIStoreActions {
 	// Sidebar
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleLeftSidebar: () => void;
+	setLeftSidebarHidden: (hidden: boolean | ((prev: boolean) => boolean)) => void;
+	cycleLeftSidebar: () => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleRightPanel: () => void;
 
@@ -139,6 +143,7 @@ function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
+	leftSidebarHidden: false,
 	rightPanelOpen: true,
 	activeFocus: 'main',
 	activeRightTab: 'files',
@@ -162,6 +167,15 @@ export const useUIStore = create<UIStore>()((set) => ({
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
 	toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
+	setLeftSidebarHidden: (v) => set((s) => ({ leftSidebarHidden: resolve(v, s.leftSidebarHidden) })),
+	// Cycle: full → collapsed → hidden → full. Lets the same control walk
+	// through all three states with a single click.
+	cycleLeftSidebar: () =>
+		set((s) => {
+			if (s.leftSidebarHidden) return { leftSidebarHidden: false, leftSidebarOpen: true };
+			if (s.leftSidebarOpen) return { leftSidebarOpen: false, leftSidebarHidden: false };
+			return { leftSidebarOpen: false, leftSidebarHidden: true };
+		}),
 	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
 

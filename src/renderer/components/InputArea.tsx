@@ -17,6 +17,7 @@ import {
 	Pin,
 	Sparkles,
 	Gauge,
+	MoreHorizontal,
 } from 'lucide-react';
 import type { Session, Theme, BatchRunState, Shortcut, ThinkingMode, ThinkingItem } from '../types';
 import {
@@ -40,6 +41,7 @@ import { WizardInputPanel } from './InlineWizard';
 import { NotificationPopover } from './NotificationPopover';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
+import { useViewportBreakpoint } from '../hooks/ui';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 import { filterSlashCommands, highlightSlashCommand } from '../utils/search';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../shared/agentMetadata';
@@ -277,6 +279,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const [effortMenuOpen, setEffortMenuOpen] = useState(false);
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const effortMenuRef = useRef<HTMLDivElement>(null);
+
+	// Narrow-viewport: collapse the right-hand toggle pills (History, Plan-Mode,
+	// Thinking, Enter hint) behind a "…" button so the toolbar stays on one row.
+	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
+	const [toolbarExpanded, setToolbarExpanded] = useState(false);
+	const showToggleGroup = !isNarrowViewport || toolbarExpanded;
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
@@ -936,8 +944,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				</div>
 			)}
 
-			<div className="flex gap-3">
-				<div className="flex-1 flex flex-col">
+			<div className="flex gap-3 min-w-0">
+				<div className="flex-1 flex flex-col min-w-0">
 					<div
 						className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
 						style={{
@@ -1222,12 +1230,34 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									)}
 							</div>
 
-							<div className="flex items-center gap-2 ml-auto" data-tour="toolbar-toggles">
+							{isNarrowViewport && (
+								<button
+									type="button"
+									onClick={() => setToolbarExpanded((v) => !v)}
+									className="ml-auto flex items-center justify-center w-7 h-7 rounded-full transition-all opacity-60 hover:opacity-100"
+									style={{
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+									title={toolbarExpanded ? 'Hide options' : 'Show options'}
+									aria-label={toolbarExpanded ? 'Hide toolbar options' : 'Show toolbar options'}
+								>
+									{toolbarExpanded ? (
+										<X className="w-3.5 h-3.5" />
+									) : (
+										<MoreHorizontal className="w-3.5 h-3.5" />
+									)}
+								</button>
+							)}
+							<div
+								className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
+								data-tour="toolbar-toggles"
+							>
 								{/* Save to History toggle - AI mode only */}
 								{session.inputMode === 'ai' && onToggleTabSaveToHistory && (
 									<button
 										onClick={onToggleTabSaveToHistory}
-										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 											tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
 										}`}
 										style={{
@@ -1252,7 +1282,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									hasCapability('supportsReadOnlyMode') && (
 										<button
 											onClick={onToggleTabReadOnlyMode}
-											className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+											className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 												isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
 											}`}
 											style={{
@@ -1275,7 +1305,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								{session.inputMode === 'ai' && supportsThinking && onToggleTabShowThinking && (
 									<button
 										onClick={onToggleTabShowThinking}
-										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
 											tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
 										}`}
 										style={{
@@ -1337,7 +1367,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				</div>
 
 				{/* Notifications & Send/Interrupt Button - Right Side */}
-				<div className="flex flex-col gap-2">
+				<div className="flex flex-col gap-2 flex-shrink-0">
 					<button
 						ref={notificationBtnRef}
 						type="button"

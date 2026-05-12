@@ -169,6 +169,13 @@ export interface LiveSessionInfo {
  * Callbacks required by the message handler
  */
 export interface MessageHandlerCallbacks {
+	/**
+	 * Predicate that gates the optional Web-Desktop Bundle bridge.invoke
+	 * channel. Read on every invocation so toggling the Encore Feature in
+	 * Settings takes effect without a process restart. Defaults to false
+	 * (bridge disabled) — see WebServer.getWebDesktopBundleEnabled.
+	 */
+	getWebDesktopBundleEnabled: () => boolean;
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
 	executeCommand: (
 		sessionId: string,
@@ -733,9 +740,44 @@ export class WebSocketMessageHandler {
 				this.handleGetSessionHistory(client, message);
 				break;
 
+			case 'bridge.invoke':
+				void this.handleBridgeInvoke(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
+	}
+
+	/**
+	 * Generic IPC bridge — dispatch a bridge.invoke message to the matching
+	 * ipcMain handler and return the result/error as a bridge.response.
+	 *
+	 * Gated on the `encoreFeatures.webDesktopBundle` Encore Feature. When the
+	 * flag is off (the default) we reject the invoke without ever touching
+	 * the ipcMain registry, so adding a new ipcMain handler can't accidentally
+	 * widen the web surface.
+	 */
+	private async handleBridgeInvoke(client: WebClient, message: WebClientMessage): Promise<void> {
+		const isEnabled = this.callbacks.getWebDesktopBundleEnabled?.() ?? false;
+		if (!isEnabled) {
+			client.socket.send(
+				JSON.stringify({
+					type: 'bridge.response',
+					requestId: (message as { requestId?: string | number }).requestId,
+					ok: false,
+					error:
+						'Web-Desktop Bundle is disabled. Enable it in Settings → Encore Features and restart Maestro.',
+				})
+			);
+			return;
+		}
+		const { handleBridgeInvoke } = await import('./bridgeHandlers');
+		await handleBridgeInvoke(
+			client,
+			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
+			(c, payload) => c.socket.send(JSON.stringify(payload))
+		);
 	}
 
 	/**

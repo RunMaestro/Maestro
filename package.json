@@ -23,6 +23,8 @@
 		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
 		"dev:web": "vite --config vite.config.web.mts",
+		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
+		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
 		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
 		"build:prompts": "echo 'No-op: prompts are now loaded from disk at runtime (see prompt-manager.ts)'",

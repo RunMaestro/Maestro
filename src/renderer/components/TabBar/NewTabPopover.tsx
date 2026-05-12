@@ -74,7 +74,14 @@ export const NewTabPopover = memo(function NewTabPopover({
 		const btn = btnRef.current;
 		if (!btn) return;
 		const rect = btn.getBoundingClientRect();
-		setPopoverPos({ top: rect.bottom + 4, left: rect.left });
+		// Right-align the popover when the button is too close to the right edge
+		// so the labels don't get clipped on narrow viewports (iOS Safari).
+		const POPOVER_WIDTH = 200;
+		const VIEWPORT_MARGIN = 8;
+		const viewportW = window.innerWidth || document.documentElement.clientWidth;
+		const wouldOverflow = rect.left + POPOVER_WIDTH > viewportW - VIEWPORT_MARGIN;
+		const left = wouldOverflow ? Math.max(VIEWPORT_MARGIN, rect.right - POPOVER_WIDTH) : rect.left;
+		setPopoverPos({ top: rect.bottom + 4, left });
 		setPopoverOpen((open) => !open);
 	}, [onNewFileTab, onNewBrowserTab, onNewTerminalTab, onNewTab]);
 

@@ -516,6 +516,27 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const layerIdRef = useRef<string>();
 	const [isRefreshing, setIsRefreshing] = useState(false);
 
+	// Touch devices can't reliably fire dblclick (browsers reserve double-tap
+	// for zoom). On coarse-pointer devices, a single tap opens the file.
+	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
+		typeof window !== 'undefined' && window.matchMedia
+			? window.matchMedia('(pointer: coarse)').matches
+			: false
+	);
+	useEffect(() => {
+		if (typeof window === 'undefined' || !window.matchMedia) return;
+		const mql = window.matchMedia('(pointer: coarse)');
+		const handler = (e: MediaQueryListEvent) => setIsTouchPointer(e.matches);
+		mql.addEventListener?.('change', handler);
+		return () => mql.removeEventListener?.('change', handler);
+	}, []);
+
+	// Long-press → context menu on touch. ~500ms hold opens the same menu the
+	// right-click does on desktop. Move cancels (scroll) and the click that
+	// fires after touchend is suppressed via longPressFiredRef.
+	const longPressTimerRef = useRef<number | null>(null);
+	const longPressFiredRef = useRef<boolean>(false);
+
 	// Refresh overlay state
 	const [overlayOpen, setOverlayOpen] = useState(false);
 	const [overlayPosition, setOverlayPosition] = useState<{ top: number; left: number } | null>(
@@ -1110,7 +1131,56 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							e.preventDefault();
 						}
 					}}
+					onTouchStart={(e) => {
+						longPressFiredRef.current = false;
+						if (longPressTimerRef.current) {
+							window.clearTimeout(longPressTimerRef.current);
+						}
+						const touch = e.touches[0];
+						const x = touch.clientX;
+						const y = touch.clientY;
+						longPressTimerRef.current = window.setTimeout(() => {
+							longPressFiredRef.current = true;
+							setSelectedFileIndex(globalIndex);
+							setContextMenu({ x, y, node, path: fullPath });
+							// iOS dispatches a synthetic mousedown after the long-press
+							// touchend at the original touch coords (on the file row,
+							// NOT the menu). useClickOutside would catch it and close
+							// the menu before the user can tap any item. Intercept it
+							// in the capture phase so the click-outside handler never
+							// sees it. One-shot; auto-cleans after 1s if nothing fires.
+							const swallow = (ev: Event) => {
+								ev.stopPropagation();
+								document.removeEventListener('mousedown', swallow, true);
+								document.removeEventListener('click', swallow, true);
+							};
+							document.addEventListener('mousedown', swallow, true);
+							document.addEventListener('click', swallow, true);
+							window.setTimeout(() => {
+								document.removeEventListener('mousedown', swallow, true);
+								document.removeEventListener('click', swallow, true);
+							}, 1000);
+						}, 500);
+					}}
+					onTouchMove={() => {
+						// Treat any move as a scroll, not a long-press
+						if (longPressTimerRef.current) {
+							window.clearTimeout(longPressTimerRef.current);
+							longPressTimerRef.current = null;
+						}
+					}}
+					onTouchEnd={() => {
+						if (longPressTimerRef.current) {
+							window.clearTimeout(longPressTimerRef.current);
+							longPressTimerRef.current = null;
+						}
+					}}
 					onClick={(e) => {
+						// Suppress the synthetic click that follows a long-press
+						if (longPressFiredRef.current) {
+							longPressFiredRef.current = false;
+							return;
+						}
 						setSelectedFileIndex(globalIndex);
 						// Only change focus if not filtering
 						if (fileTreeFilter.length === 0) {
@@ -1122,6 +1192,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							} else {
 								toggleFolder(fullPath, session.id, setSessions);
 							}
+						} else if (isTouchPointer) {
+							// Touch devices can't reliably double-tap — open the file
+							// on a single tap. Desktop mouse users keep dblclick below.
+							handleFileClick(node, fullPath, session);
 						}
 					}}
 					onDoubleClick={() => {

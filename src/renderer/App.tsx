@@ -70,6 +70,7 @@ import {
 	useCliActivityMonitoring,
 	useMobileLandscape,
 	useAppRemoteEventListeners,
+	useViewportBreakpoint,
 	// UI
 	useThemeStyles,
 	useAppHandlers,
@@ -334,6 +335,11 @@ function MaestroConsoleInner() {
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
 
+	// --- RESPONSIVE BREAKPOINT (drives drawer-mode sidebars on narrow viewports) ---
+	const { isNarrow: isNarrowViewport, isMdDown: isMdDownViewport } = useViewportBreakpoint();
+	// Auto-collapse / mutual-exclusion effects live further down, after
+	// leftSidebarOpen / rightPanelOpen are pulled from the UI store.
+
 	// --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
 	const { pushNavigation, navigateBack, navigateForward } = useNavigationHistory();
 
@@ -556,6 +562,24 @@ function MaestroConsoleInner() {
 	// State: individual selectors for granular re-render control
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+
+	// Auto-collapse both sidebars when the viewport is narrow (fresh load OR
+	// transition). MainPanel needs the full width. Users can still toggle
+	// either drawer open; on narrow widths opening one auto-closes the other
+	// (the mutual-exclusion effect right below).
+	useEffect(() => {
+		if (isNarrowViewport) {
+			useUIStore.getState().setLeftSidebarOpen(false);
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [isNarrowViewport]);
+
+	// Mutual exclusion on narrow: opening one drawer closes the other.
+	useEffect(() => {
+		if (isNarrowViewport && leftSidebarOpen && rightPanelOpen) {
+			useUIStore.getState().setRightPanelOpen(false);
+		}
+	}, [isNarrowViewport, leftSidebarOpen, rightPanelOpen]);
 	const activeRightTab = useUIStore((s) => s.activeRightTab);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -2614,8 +2638,8 @@ function MaestroConsoleInner() {
 	return (
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
 			<div
-				className={`flex h-screen w-full font-mono overflow-hidden transition-colors duration-300 ${
-					isMobileLandscape || useNativeTitleBar ? 'pt-0' : 'pt-10'
+				className={`flex maestro-app-shell w-full font-mono overflow-hidden transition-colors duration-300 ${
+					isMobileLandscape || useNativeTitleBar || isMdDownViewport ? 'pt-0' : 'pt-10'
 				}`}
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -2662,8 +2686,8 @@ function MaestroConsoleInner() {
 					</div>
 				)}
 
-				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape or when using native title bar) --- */}
-				{!isMobileLandscape && !useNativeTitleBar && (
+				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape, native title bar, narrow viewport, or web build) --- */}
+				{!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && (
 					<div
 						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={
@@ -3099,6 +3123,25 @@ function MaestroConsoleInner() {
 						<SessionList {...sessionListProps} />
 					</ErrorBoundary>
 				)}
+
+				{/* --- MOBILE BACKDROP (taps anywhere outside a drawer to close it) --- */}
+				{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
+					<div
+						className="maestro-mobile-backdrop"
+						onClick={() => {
+							setLeftSidebarOpen(false);
+							setRightPanelOpen(false);
+						}}
+						aria-hidden
+					/>
+				)}
+
+				{/* Sidebar-show opener is now rendered inline inside the
+				    MainPanelHeader (left edge of the header row) so it shifts
+				    content instead of overlapping the session name. */}
+
+				{/* Right-edge mobile button removed — the existing top-right panel
+				    toggle in MainPanelHeader already handles opening Files. */}
 
 				{/* --- SYSTEM LOG VIEWER (replaces center content when open, lazy-loaded) --- */}
 				{logViewerOpen && (
