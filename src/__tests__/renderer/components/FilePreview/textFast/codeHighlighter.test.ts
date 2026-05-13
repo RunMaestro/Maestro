@@ -103,10 +103,13 @@ describe('createTextCodeHighlighter', () => {
 		const observer = FakeIntersectionObserver.instances[0];
 		const codeEl = root.querySelector('code')!;
 		observer.trigger([codeEl]);
-		await new Promise((r) => setTimeout(r, 0));
-		await new Promise((r) => setTimeout(r, 0));
 
-		expect(codeEl.innerHTML).toContain('TXT-HL:const x = 1;');
+		// The highlight chain is async (`import('shiki')` → `createHighlighter`
+		// → `codeToHtml` → set innerHTML). A fixed number of `setTimeout(0)`
+		// flushes is flaky on CPU-contended CI; poll until the result appears.
+		await vi.waitFor(() => {
+			expect(codeEl.innerHTML).toContain('TXT-HL:const x = 1;');
+		});
 		expect(codeEl.getAttribute(HIGHLIGHTED_ATTR)).toBe('true');
 	});
 
@@ -116,11 +119,11 @@ describe('createTextCodeHighlighter', () => {
 		handle.observe(root);
 		const observer = FakeIntersectionObserver.instances[0];
 		observer.trigger([root.querySelector('code')!]);
-		await new Promise((r) => setTimeout(r, 0));
-		await new Promise((r) => setTimeout(r, 0));
 		// Mock emits language-${opts.lang}, so we should see language-typescript
-		// after alias resolution.
-		expect(root.querySelector('code')!.innerHTML).toContain('TXT-HL:x');
+		// after alias resolution. Poll for the async highlight to complete.
+		await vi.waitFor(() => {
+			expect(root.querySelector('code')!.innerHTML).toContain('TXT-HL:x');
+		});
 	});
 
 	it('skips elements with unsupported languages', async () => {
