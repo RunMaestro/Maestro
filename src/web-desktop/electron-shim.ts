@@ -64,7 +64,12 @@ class BridgeClient {
 		try {
 			this.ws = new WebSocket(url);
 		} catch (err) {
-			console.error('[bridge] WebSocket construction failed', err);
+			// SyntaxError on a malformed URL or SECURITY_ERR from a blocked
+			// port can throw synchronously. Without scheduling the same retry
+			// the close path uses, this.ready would never resolve and every
+			// subsequent invoke() would hang on `await this.ready`.
+			console.error('[bridge] WebSocket construction failed — retrying in 1s', err);
+			setTimeout(() => this.connect(url), 1000);
 			return;
 		}
 		this.ws.addEventListener('open', () => {
@@ -175,7 +180,13 @@ const bridge = new BridgeClient({ wsUrl: getWsUrl() });
 export const ipcRenderer = {
 	invoke: (channel: string, ...args: unknown[]) => bridge.invoke(channel, ...args),
 	send: (channel: string, ...args: unknown[]) => {
-		void bridge.invoke(channel, ...args).catch(() => {});
+		// ipcRenderer.send is fire-and-forget by contract, but on the WS bridge
+		// we still get a rejection if the channel is unknown or the server-side
+		// handler throws. Log it so the failure is debuggable — don't rethrow,
+		// callers don't expect a Promise here.
+		void bridge.invoke(channel, ...args).catch((err) => {
+			console.error(`[bridge] send(${channel}) failed`, err);
+		});
 	},
 	on: (channel: string, listener: Listener) => {
 		bridge.on(channel, listener);
