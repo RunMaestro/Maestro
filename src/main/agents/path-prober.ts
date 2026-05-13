@@ -334,6 +334,14 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Winget
 			...wingetLinks('copilot'),
 		],
+		kilo: [
+			...npmGlobal('kilo'),
+			path.join(home, 'scoop', 'shims', 'kilo.exe'),
+			path.join(home, 'scoop', 'apps', 'kilo', 'current', 'kilo.exe'),
+			path.join(home, '.volta', 'bin', 'kilo'),
+			path.join(home, '.volta', 'bin', 'kilo.cmd'),
+			...goBin('kilo'),
+		],
 		gemini: [
 			// npm global installation
 			...npmGlobal('gemini'),
@@ -457,6 +465,12 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			path.join(home, 'bin', 'copilot'),
 			// Node version managers
 			...nodeVersionManagers('copilot'),
+		],
+		kilo: [
+			...localBin('kilo'),
+			...homebrew('kilo'),
+			...npmGlobal('kilo'),
+			...nodeVersionManagers('kilo'),
 		],
 		gemini: [
 			// npm global paths

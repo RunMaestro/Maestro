@@ -438,8 +438,8 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 	try {
 		const lines = output.split('\n');
 
-		// For OpenCode: concatenate all text parts
-		if (agentType === 'opencode') {
+		// For OpenCode / Kilo: concatenate all text parts
+		if (agentType === 'opencode' || agentType === 'kilo') {
 			const textParts: string[] = [];
 			for (const line of lines) {
 				if (!line.trim()) continue;
@@ -568,6 +568,19 @@ function buildArgsForAgent(agent: any): string[] {
 
 		case 'copilot-cli': {
 			const args = [...(agent.args || [])];
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
+			return args;
+		}
+
+		case 'kilo': {
+			// Return base args plus read-only restriction for wizard conversations.
+			// The IPC handler's buildAgentArgs() adds batchModePrefix, jsonOutputArgs,
+			// and workingDirArgs automatically when a prompt is present.
+			const args = [...(agent.args || [])];
+
+			// Add read-only mode: '--agent plan'
 			if (agent.readOnlyArgs) {
 				args.push(...agent.readOnlyArgs);
 			}

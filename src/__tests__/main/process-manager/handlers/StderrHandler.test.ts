@@ -164,6 +164,62 @@ describe('StderrHandler', () => {
 		});
 	});
 
+	describe('Kilo compatibility warning filtering', () => {
+		it('should strip Kilo compatibility warning and emit remaining content as data', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'kilo',
+			});
+
+			const dataSpy = vi.fn();
+			const stderrSpy = vi.fn();
+			emitter.on('data', dataSpy);
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(
+				sessionId,
+				"Failed to obtain server version. Unable to check client-server compatibility. Set checkCompatibility=false to skip version check.Hello! I'm your AI coding assistant."
+			);
+
+			expect(dataSpy).toHaveBeenCalledWith(sessionId, "Hello! I'm your AI coding assistant.");
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should drop warning-only Kilo stderr without emitting an error', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'kilo',
+			});
+
+			const dataSpy = vi.fn();
+			const stderrSpy = vi.fn();
+			emitter.on('data', dataSpy);
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(
+				sessionId,
+				'Failed to obtain server version. Unable to check client-server compatibility. Set checkCompatibility=false to skip version check.'
+			);
+
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should still emit normal Kilo stderr when no compatibility warning is present', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'kilo',
+			});
+
+			const stderrSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(sessionId, 'Kilo failed to connect to remote endpoint');
+
+			expect(stderrSpy).toHaveBeenCalledWith(
+				sessionId,
+				'Kilo failed to connect to remote endpoint'
+			);
+		});
+	});
+
 	describe('Codex tracing line filtering', () => {
 		it('should filter Rust tracing lines and emit remaining content as data', () => {
 			const { handler, emitter, sessionId } = createTestContext({

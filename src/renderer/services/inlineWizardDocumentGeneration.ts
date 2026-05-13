@@ -95,8 +95,8 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 				}
 			}
 
-			// OpenCode format
-			else if (agentType === 'opencode') {
+			// OpenCode / Kilo format
+			else if (agentType === 'opencode' || agentType === 'kilo') {
 				if (msg.type === 'text' && msg.part?.text) {
 					textParts.push(msg.part.text);
 				}
@@ -573,8 +573,8 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 	try {
 		const lines = output.split('\n');
 
-		// For OpenCode: concatenate all text parts
-		if (agentType === 'opencode') {
+		// For OpenCode / Kilo: concatenate all text parts
+		if (agentType === 'opencode' || agentType === 'kilo') {
 			const textParts: string[] = [];
 			for (const line of lines) {
 				if (!line.trim()) continue;
@@ -668,6 +668,13 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 		}
 
 		case 'opencode': {
+			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// batchModePrefix, jsonOutputArgs, and workingDirArgs automatically
+			// when a prompt is present.
+			return [...(agent.args || [])];
+		}
+
+		case 'kilo': {
 			// Return only base args — the IPC handler's buildAgentArgs() adds
 			// batchModePrefix, jsonOutputArgs, and workingDirArgs automatically
 			// when a prompt is present.

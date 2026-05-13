@@ -15,6 +15,9 @@ import type { ManagedProcess, AgentError } from '../types';
 const CODEX_TRACING_LINE =
 	/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.]*Z\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+\w+/;
 
+const KILO_COMPATIBILITY_WARNING =
+	/^Failed to obtain server version\. Unable to check client-server compatibility\.\s*Set checkCompatibility=false to skip version check\./i;
+
 interface StderrHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
@@ -107,80 +110,67 @@ export class StderrHandler {
 				return;
 			}
 
-			// For JSONL agents with output parsers (copilot-cli, codex, opencode,
-			// factory-droid), suppress stderr display. These agents emit MCP server
-			// startup messages, shell profile banners, and other initialization noise
-			// to stderr that should not be shown to the user. Error detection has
-			// already happened above, so real errors are already captured.
-			if (outputParser && toolType !== 'codex') {
-				// Codex is excluded because it has its own special stderr handling below
-				// that re-emits actual response content from stderr as data.
-				logger.info('[ProcessManager] Suppressing stderr for JSONL agent', 'ProcessManager', {
-					sessionId,
-					toolType,
-					stderrPreview: cleanedStderr.substring(0, 100),
-				});
-				return;
-			}
-
-			// Codex writes both Rust tracing diagnostics and actual responses to stderr.
-			// Strip tracing lines (e.g. "2026-02-08T04:39:23Z ERROR codex_core::rollout::list: ...")
-			// and the "Reading prompt from stdin..." prefix, then re-emit any remaining
-			// content as regular data so it renders normally instead of as an error.
-			if (toolType === 'codex') {
-				const lines = cleanedStderr.split('\n');
-				const tracingLines: string[] = [];
-				const contentLines: string[] = [];
-
-				for (const line of lines) {
-					if (CODEX_TRACING_LINE.test(line)) {
-						tracingLines.push(line);
-					} else if (line.startsWith('Reading prompt from stdin...')) {
-						// Strip the prefix; keep any trailing content on the same line
-						const after = line.slice('Reading prompt from stdin...'.length);
-						if (after) contentLines.push(after);
-					} else {
-						contentLines.push(line);
+			// Some agent wrappers write non-fatal diagnostics and the actual assistant
+			// response to stderr. Strip known noise and re-emit the remaining content
+			// as regular data so it renders as assistant output instead of an error.
+			if (toolType === 'codex' || toolType === 'kilo') {
+				const normalizedOutput = this.extractNonErrorContent(toolType, cleanedStderr, sessionId);
+				if (normalizedOutput !== null) {
+					if (normalizedOutput) {
+						this.emitter.emit('data', sessionId, normalizedOutput);
 					}
+					return;
 				}
-
-				// Log suppressed tracing lines for debugging
-				if (tracingLines.length > 0) {
-					logger.debug(
-						'[ProcessManager] Codex tracing lines filtered from stderr',
-						'ProcessManager',
-						{
-							sessionId,
-							count: tracingLines.length,
-							preview: tracingLines[0].substring(0, 120),
-						}
-					);
-				}
-
-				const remainingContent = contentLines.join('\n').trim();
-				if (remainingContent) {
-					if (managedProcess.isStreamJsonMode) {
-						// In JSON mode, structured data comes from stdout via CodexOutputParser.
-						// Suppress stderr echo to prevent raw human-readable text in the terminal.
-						logger.debug(
-							'[ProcessManager] Suppressing Codex stderr in stream-json mode',
-							'ProcessManager',
-							{
-								sessionId,
-								contentLength: remainingContent.length,
-								preview: remainingContent.substring(0, 120),
-							}
-						);
-					} else {
-						// Non-JSON mode: stderr may contain the actual response
-						this.emitter.emit('data', sessionId, remainingContent);
-					}
-				}
-				return;
 			}
 
 			// Emit to separate 'stderr' event for AI processes
 			this.emitter.emit('stderr', sessionId, cleanedStderr);
 		}
+	}
+
+	private extractNonErrorContent(
+		toolType: ManagedProcess['toolType'],
+		cleanedStderr: string,
+		sessionId: string
+	): string | null {
+		const lines = cleanedStderr.split('\n');
+		const filteredLines: string[] = [];
+		const suppressedLines: string[] = [];
+
+		for (const line of lines) {
+			if (toolType === 'codex' && CODEX_TRACING_LINE.test(line)) {
+				suppressedLines.push(line);
+				continue;
+			}
+
+			if (toolType === 'codex' && line.startsWith('Reading prompt from stdin...')) {
+				suppressedLines.push(line);
+				const after = line.slice('Reading prompt from stdin...'.length).trimStart();
+				if (after) filteredLines.push(after);
+				continue;
+			}
+
+			if (toolType === 'kilo' && KILO_COMPATIBILITY_WARNING.test(line)) {
+				const after = line.replace(KILO_COMPATIBILITY_WARNING, '').trimStart();
+				suppressedLines.push(line);
+				if (after) filteredLines.push(after);
+				continue;
+			}
+
+			filteredLines.push(line);
+		}
+
+		if (suppressedLines.length === 0) {
+			return null;
+		}
+
+		logger.debug('[ProcessManager] Filtered non-fatal stderr lines', 'ProcessManager', {
+			sessionId,
+			toolType,
+			count: suppressedLines.length,
+			preview: suppressedLines[0].substring(0, 120),
+		});
+
+		return filteredLines.join('\n').trim();
 	}
 }

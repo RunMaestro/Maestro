@@ -66,6 +66,13 @@ export const AGENT_TILES: AgentTile[] = [
 		brandColor: '#F97316', // Orange
 	},
 	{
+		id: 'kilo',
+		name: 'Kilo',
+		supported: true,
+		description: 'Open-source AI coding assistant',
+		brandColor: '#EAB308', // Amber
+	},
+	{
 		id: 'factory-droid',
 		name: 'Factory Droid',
 		supported: true,
@@ -199,6 +206,25 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'kilo':
+			// Kilo - lightning bolt
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M27 4L11 26h10l-3 18 19-26H27l0-14z"
+						fill={color}
+						stroke={color}
+						strokeWidth="1.5"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			);
 		case 'factory-droid':
 			// Factory Droid - pinwheel/flower logo
 			return (

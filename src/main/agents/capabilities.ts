@@ -240,6 +240,32 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 *
 	 * Verified capabilities based on CLI testing (droid exec --help) and session file analysis.
 	 */
+	kilo: {
+		supportsResume: true,
+		supportsReadOnlyMode: true,
+		supportsJsonOutput: true,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: true,
+		supportsSlashCommands: false,
+		supportsSessionStorage: true,
+		supportsCostTracking: true,
+		supportsUsageStats: true,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: true,
+		supportsWizard: true,
+		supportsGroupChatModeration: true,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: false,
+	},
+
 	'factory-droid': {
 		supportsResume: true, // -s, --session-id <id> (requires a prompt) - Verified
 		supportsReadOnlyMode: true, // Default mode (no --auto flags) - Verified

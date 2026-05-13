@@ -359,6 +359,51 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'kilo',
+		name: 'Kilo',
+		binaryName: 'kilo',
+		command: 'kilo',
+		args: [],
+		batchModePrefix: ['run'],
+		jsonOutputArgs: ['--format', 'json'],
+		resumeArgs: (sessionId: string) => ['--session', sessionId],
+		readOnlyArgs: ['--agent', 'plan'],
+		readOnlyCliEnforced: true,
+		modelArgs: (modelId: string) => ['--model', modelId],
+		imageArgs: (imagePath: string) => ['-f', imagePath],
+		defaultEnvVars: {
+			KILO_CONFIG_CONTENT:
+				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
+		},
+		readOnlyEnvOverrides: {
+			KILO_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., "ollama/qwen3:8b", "anthropic/claude-sonnet-4-20250514"). Leave empty for default.',
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model (e.g., 400000 for Claude/GPT-5.2, 128000 for GPT-4o).',
+				default: 128000,
+			},
+		],
+	},
+	{
 		id: 'factory-droid',
 		name: 'Factory Droid',
 		binaryName: 'droid',

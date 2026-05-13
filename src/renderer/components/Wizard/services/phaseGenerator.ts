@@ -476,6 +476,64 @@ export function validateDocuments(documents: ParsedDocument[]): {
 	};
 }
 
+function buildGenerationArgsForAgent(agent: any, agentType: ToolType): string[] {
+	switch (agentType) {
+		case 'claude-code': {
+			const args = [...(agent.args || [])];
+			if (!args.includes('--output-format')) {
+				args.push('--output-format', 'stream-json');
+			}
+			if (!args.includes('--include-partial-messages')) {
+				args.push('--include-partial-messages');
+			}
+			if (!args.includes('--allowedTools')) {
+				args.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS', 'Write');
+			}
+			return args;
+		}
+
+		case 'codex': {
+			return [...(agent.args || [])];
+		}
+
+		case 'opencode':
+		case 'kilo': {
+			return [...(agent.args || [])];
+		}
+
+		default: {
+			return [...(agent.args || [])];
+		}
+	}
+}
+
+function getGenerationStdinFlags({
+	isSshSession,
+	supportsStreamJsonInput,
+}: {
+	isSshSession: boolean;
+	supportsStreamJsonInput: boolean;
+}): {
+	sendPromptViaStdin: boolean;
+	sendPromptViaStdinRaw: boolean;
+} {
+	if (isSshSession) {
+		return { sendPromptViaStdin: false, sendPromptViaStdinRaw: false };
+	}
+
+	if (supportsStreamJsonInput) {
+		return {
+			sendPromptViaStdin: false,
+			sendPromptViaStdinRaw: false,
+		};
+	}
+
+	return {
+		sendPromptViaStdin: false,
+		sendPromptViaStdinRaw: true,
+	};
+}
+
 /**
  * Intelligent splitting of a single large document into phases
  *
@@ -1132,16 +1190,13 @@ class PhaseGenerator {
 			// Build args for document generation
 			// The agent can write files ONLY to the Auto Run folder (enforced via prompt)
 			// This allows documents to stream in via file watcher as they're created
-			const argsForSpawn = [...(agent.args || [])];
-			if (config.agentType === 'claude-code') {
-				if (!argsForSpawn.includes('--include-partial-messages')) {
-					argsForSpawn.push('--include-partial-messages');
-				}
-				// Allow Write tool so agent can create files directly in Auto Run folder
-				// The prompt strictly limits writes to the Auto Run folder only
-				if (!argsForSpawn.includes('--allowedTools')) {
-					argsForSpawn.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS', 'Write');
-				}
+			const argsForSpawn = buildGenerationArgsForAgent(agent, config.agentType);
+			const { sendPromptViaStdin } = getGenerationStdinFlags({
+				isSshSession: !!config.sshRemoteConfig?.enabled,
+				supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+			});
+			if (sendPromptViaStdin && !argsForSpawn.includes('--input-format')) {
+				argsForSpawn.push('--input-format', 'stream-json');
 			}
 
 			// Use the agent's resolved path if available, falling back to command name
