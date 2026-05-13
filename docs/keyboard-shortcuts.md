@@ -129,7 +129,8 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | Focus Output             | `Esc` while in input                              |
 | Focus Input              | `Esc` while in output                             |
 | Open Output Search       | `Cmd+F` while in output                           |
-| Prev/Next Message        | `Up/Down Arrow` while in output                   |
+| Scroll Output            | `Up/Down Arrow` while in output                   |
+| Prev/Next Message        | `Shift+Up/Down Arrow` while in output             |
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 

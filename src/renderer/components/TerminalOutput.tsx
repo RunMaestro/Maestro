@@ -1889,11 +1889,12 @@ export const TerminalOutput = memo(
 						setActiveFocus('main');
 						return;
 					}
-					// Arrow key navigation: jump message-by-message when the scrollback has
-					// focus. Skip when the user is typing in an input/textarea inside the
-					// region — those handle their own arrow-key cursor movement.
+					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
+					// an input/textarea inside the region — those handle their own
+					// arrow-key cursor movement.
 					if (
 						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+						e.shiftKey &&
 						!e.metaKey &&
 						!e.ctrlKey &&
 						!e.altKey &&
@@ -1904,6 +1905,31 @@ export const TerminalOutput = memo(
 							e.preventDefault();
 							jumpToMessageEdge(container, '[data-log-index]', e.key === 'ArrowUp' ? 'up' : 'down');
 						}
+						return;
+					}
+					// Plain Arrow keys: nudge scroll by ~100px (instant, no smooth behavior).
+					if (
+						e.key === 'ArrowUp' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
+						e.preventDefault();
+						scrollContainerRef.current?.scrollBy({ top: -100 });
+						return;
+					}
+					if (
+						e.key === 'ArrowDown' &&
+						!e.shiftKey &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
+						e.preventDefault();
+						scrollContainerRef.current?.scrollBy({ top: 100 });
 						return;
 					}
 					// Option/Alt+Up: page up

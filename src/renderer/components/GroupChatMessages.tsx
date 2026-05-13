@@ -205,22 +205,29 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2 outline-none"
 				onKeyDown={(e) => {
 					if (
-						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
-						!e.metaKey &&
-						!e.ctrlKey &&
-						!e.altKey &&
-						!isTextInputTarget(e.target)
+						(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') ||
+						e.metaKey ||
+						e.ctrlKey ||
+						e.altKey ||
+						isTextInputTarget(e.target)
 					) {
-						const container = containerRef.current;
-						if (container) {
-							e.preventDefault();
-							jumpToMessageEdge(
-								container,
-								'[data-message-timestamp]',
-								e.key === 'ArrowUp' ? 'up' : 'down'
-							);
-						}
+						return;
 					}
+					const container = containerRef.current;
+					if (!container) return;
+					// Shift+Arrow: jump message-by-message.
+					if (e.shiftKey) {
+						e.preventDefault();
+						jumpToMessageEdge(
+							container,
+							'[data-message-timestamp]',
+							e.key === 'ArrowUp' ? 'up' : 'down'
+						);
+						return;
+					}
+					// Plain Arrow: nudge scroll by ~100px.
+					e.preventDefault();
+					container.scrollBy({ top: e.key === 'ArrowUp' ? -100 : 100 });
 				}}
 			>
 				{/* Prose styles for markdown rendering */}

@@ -464,26 +464,58 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('keyboard navigation', () => {
-		it('jumps to previous message on ArrowUp key', () => {
+		it('nudges scroll up on plain ArrowUp', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
+			const scrollBySpy = vi.fn();
+			scrollContainer.scrollBy = scrollBySpy;
+
 			fireEvent.keyDown(outputDiv, { key: 'ArrowUp' });
+
+			expect(scrollBySpy).toHaveBeenCalledWith({ top: -100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
+		});
+
+		it('nudges scroll down on plain ArrowDown', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			const scrollBySpy = vi.fn();
+			scrollContainer.scrollBy = scrollBySpy;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowDown' });
+
+			expect(scrollBySpy).toHaveBeenCalledWith({ top: 100 });
+			expect(mockJumpToMessageEdge).not.toHaveBeenCalled();
+		});
+
+		it('jumps to previous message on Shift+ArrowUp', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowUp', shiftKey: true });
 
 			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(scrollContainer, '[data-log-index]', 'up');
 		});
 
-		it('jumps to next message on ArrowDown key', () => {
+		it('jumps to next message on Shift+ArrowDown', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			fireEvent.keyDown(outputDiv, { key: 'ArrowDown' });
+			fireEvent.keyDown(outputDiv, { key: 'ArrowDown', shiftKey: true });
 
 			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(
 				scrollContainer,
