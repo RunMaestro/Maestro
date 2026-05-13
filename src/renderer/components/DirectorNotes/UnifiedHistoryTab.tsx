@@ -82,11 +82,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const { directorNotesSettings } = useSettings();
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
-			? ['AUTO', 'USER', 'CUE']
-			: ['AUTO', 'USER'];
+			? ['USER', 'AUTO', 'CUE']
+			: ['USER', 'AUTO'];
 
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>

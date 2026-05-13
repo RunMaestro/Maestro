@@ -90,11 +90,11 @@ export const HistoryPanel = React.memo(
 		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 		const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
-			? ['AUTO', 'USER', 'CUE']
-			: ['AUTO', 'USER'];
+			? ['USER', 'AUTO', 'CUE']
+			: ['USER', 'AUTO'];
 
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
