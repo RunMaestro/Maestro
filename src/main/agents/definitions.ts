@@ -376,7 +376,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
 		},
 		readOnlyEnvOverrides: {
-			KILO_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+			// Keep blanket permission grants to prevent stdin prompts that hang batch mode.
+			// Read-only enforcement comes from --agent plan (readOnlyArgs), not env config.
+			KILO_CONFIG_CONTENT:
+				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
 		},
 		configOptions: [
 			{

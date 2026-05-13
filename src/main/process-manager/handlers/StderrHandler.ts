@@ -136,6 +136,7 @@ export class StderrHandler {
 		const lines = cleanedStderr.split('\n');
 		const filteredLines: string[] = [];
 		const suppressedLines: string[] = [];
+		let allLinesSuppressible = true;
 
 		for (const line of lines) {
 			if (toolType === 'codex' && CODEX_TRACING_LINE.test(line)) {
@@ -157,10 +158,18 @@ export class StderrHandler {
 				continue;
 			}
 
+			allLinesSuppressible = false;
 			filteredLines.push(line);
 		}
 
 		if (suppressedLines.length === 0) {
+			return null;
+		}
+
+		// Only re-emit as assistant data when every original line was suppressible.
+		// If a chunk mixes suppressible noise with genuine error content, let it
+		// fall through to stderr so errors aren't silently hidden in the transcript.
+		if (!allLinesSuppressible) {
 			return null;
 		}
 

@@ -332,7 +332,7 @@
 		"electron-builder": "^24.9.1",
 		"electron-devtools-installer": "^4.0.0",
 		"electron-playwright-helpers": "^2.0.1",
-		"@electron/rebuild": "^4.0.4",
+		"electron-rebuild": "^3.2.9",
 		"esbuild": "^0.24.2",
 		"eslint": "^9.39.2",
 		"eslint-config-prettier": "^10.1.8",

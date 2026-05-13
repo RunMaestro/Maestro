@@ -235,10 +235,11 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Factory Droid - Enterprise AI coding assistant from Factory
-	 * https://docs.factory.ai/cli
+	 * Kilo (KiloCode) - A fork of OpenCode with identical CLI surface.
+	 * https://github.com/Kilo-Org/kilocode
 	 *
-	 * Verified capabilities based on CLI testing (droid exec --help) and session file analysis.
+	 * Capabilities mirror OpenCode since KiloCode is a 1:1 fork with the
+	 * same CLI flags, JSON output format, and session storage layout.
 	 */
 	kilo: {
 		supportsResume: true,
@@ -247,7 +248,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionId: true,
 		supportsImageInput: true,
 		supportsImageInputOnResume: true,
-		supportsSlashCommands: false,
+		supportsSlashCommands: true,
 		supportsSessionStorage: true,
 		supportsCostTracking: true,
 		supportsUsageStats: true,
@@ -264,6 +265,8 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: true,
 		usesJsonLineOutput: true,
 		usesCombinedContextWindow: false,
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	'factory-droid': {
