@@ -6,6 +6,7 @@ import {
 	Copy,
 	Check,
 	ArrowDown,
+	ArrowUp,
 	Eye,
 	FileText,
 	RotateCcw,
@@ -27,6 +28,11 @@ import {
 	filterTextByLinesHelper,
 	getCachedAnsiHtml,
 } from '../utils/textProcessing';
+import {
+	jumpToMessageEdge,
+	scrollMessageToTop,
+	isTextInputTarget,
+} from '../utils/messageScrollNavigation';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
@@ -873,6 +879,25 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{/* Jump to top of this message - bottom left corner */}
+					<button
+						onClick={() => {
+							const container = scrollContainerRef.current;
+							const messageEl = logItemRef.current;
+							if (container && messageEl) {
+								scrollMessageToTop(container, messageEl);
+							}
+						}}
+						className="absolute bottom-2 left-2 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+						style={{
+							color: theme.colors.textDim,
+							transition: 'opacity 0.15s ease-in-out',
+						}}
+						title="Jump to top of this message"
+						aria-label="Jump to top of this message"
+					>
+						<ArrowUp className="w-3.5 h-3.5" />
+					</button>
 					{/* Action buttons - bottom right corner */}
 					<div
 						className="absolute bottom-2 right-2 flex items-center gap-1"
@@ -1864,16 +1889,21 @@ export const TerminalOutput = memo(
 						setActiveFocus('main');
 						return;
 					}
-					// Arrow key scrolling (instant, no smooth behavior)
-					// Plain arrow keys: scroll by ~100px
-					if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-						e.preventDefault();
-						scrollContainerRef.current?.scrollBy({ top: -100 });
-						return;
-					}
-					if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-						e.preventDefault();
-						scrollContainerRef.current?.scrollBy({ top: 100 });
+					// Arrow key navigation: jump message-by-message when the scrollback has
+					// focus. Skip when the user is typing in an input/textarea inside the
+					// region — those handle their own arrow-key cursor movement.
+					if (
+						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+						!e.metaKey &&
+						!e.ctrlKey &&
+						!e.altKey &&
+						!isTextInputTarget(e.target)
+					) {
+						const container = scrollContainerRef.current;
+						if (container) {
+							e.preventDefault();
+							jumpToMessageEdge(container, '[data-log-index]', e.key === 'ArrowUp' ? 'up' : 'down');
+						}
 						return;
 					}
 					// Option/Alt+Up: page up

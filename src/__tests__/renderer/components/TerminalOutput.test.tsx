@@ -73,6 +73,20 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
 }));
 
+// Track message-by-message navigation calls
+const mockJumpToMessageEdge = vi.fn().mockReturnValue(true);
+
+vi.mock('../../../renderer/utils/messageScrollNavigation', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../renderer/utils/messageScrollNavigation')
+	>('../../../renderer/utils/messageScrollNavigation');
+	return {
+		...actual,
+		jumpToMessageEdge: (...args: Parameters<typeof actual.jumpToMessageEdge>) =>
+			mockJumpToMessageEdge(...args),
+	};
+});
+
 // Default theme for testing
 const defaultTheme: Theme = {
 	id: 'test-theme' as any,
@@ -450,35 +464,32 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('keyboard navigation', () => {
-		it('scrolls up on ArrowUp key', () => {
+		it('jumps to previous message on ArrowUp key', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
-
-			// Mock scrollBy
-			const scrollBySpy = vi.fn();
-			scrollContainer.scrollBy = scrollBySpy;
 
 			fireEvent.keyDown(outputDiv, { key: 'ArrowUp' });
 
-			expect(scrollBySpy).toHaveBeenCalledWith({ top: -100 });
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(scrollContainer, '[data-log-index]', 'up');
 		});
 
-		it('scrolls down on ArrowDown key', () => {
+		it('jumps to next message on ArrowDown key', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
 
 			const outputDiv = container.firstChild as HTMLElement;
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			const scrollBySpy = vi.fn();
-			scrollContainer.scrollBy = scrollBySpy;
-
 			fireEvent.keyDown(outputDiv, { key: 'ArrowDown' });
 
-			expect(scrollBySpy).toHaveBeenCalledWith({ top: 100 });
+			expect(mockJumpToMessageEdge).toHaveBeenCalledWith(
+				scrollContainer,
+				'[data-log-index]',
+				'down'
+			);
 		});
 
 		it('scrolls page up on Alt+ArrowUp', () => {
