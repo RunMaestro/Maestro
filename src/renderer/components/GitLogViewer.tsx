@@ -7,6 +7,7 @@ import { Diff, Hunk } from 'react-diff-view';
 import { parseGitDiff } from '../utils/gitDiffParser';
 import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
+import { useSettingsStore } from '../stores/settingsStore';
 import 'react-diff-view/style/index.css';
 
 interface GitLogEntry {
@@ -42,6 +43,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 	const listRef = useRef<HTMLDivElement>(null);
 	const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
 	// Keyboard navigation via shared hook
 	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
@@ -486,7 +488,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 									</div>
 								) : parsedDiff && parsedDiff.length > 0 ? (
 									<div className="font-mono text-sm">
-										<style>{generateDiffViewStyles(theme)}</style>
+										<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
 										{parsedDiff.map((file, fileIndex) => (
 											<div key={fileIndex} className="mb-6">
 												{/* File header */}

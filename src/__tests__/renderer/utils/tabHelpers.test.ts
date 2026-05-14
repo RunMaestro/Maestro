@@ -2986,6 +2986,40 @@ describe('tabHelpers', () => {
 			expect(result3!.type).toBe('ai');
 			expect(result3!.id).toBe('ai-2');
 		});
+
+		// Regression: when the user is on a browser tab whose adjacent AI tab is
+		// also referenced by session.activeTabId (a stale leftover from before
+		// the browser tab was opened), navigating prev to the AI tab used to no-op
+		// because the AI branch's "already active" early-return ignored
+		// activeBrowserTabId and returned without clearing it. The browser tab
+		// outranks the AI tab in findActiveUnifiedTabIndex, so the user-visible
+		// active tab never changed.
+		it('navigates from active browser tab to AI tab even when activeTabId still points at that AI tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				browserTabs: [browserTab],
+				activeTabId: 'ai-1', // Stale — points at the AI tab we're about to navigate to
+				activeBrowserTabId: 'browser-1', // What the user is actually on
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = navigateToPrevUnifiedTab(session);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('ai-1');
+			expect(result!.session.activeTabId).toBe('ai-1');
+			expect(result!.session.activeBrowserTabId).toBeNull();
+			expect(result!.session.activeFileTabId).toBeNull();
+			expect(result!.session.activeTerminalTabId).toBeNull();
+		});
 	});
 
 	describe('extractQuickTabName', () => {

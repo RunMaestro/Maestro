@@ -14,7 +14,7 @@ import {
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
-import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
+import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2, ArrowUp } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { stripMarkdown } from '../utils/textProcessing';
@@ -24,6 +24,11 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
 import { useMessageGistStore } from '../stores/messageGistStore';
+import {
+	jumpToMessageEdge,
+	scrollMessageToTop,
+	isTextInputTarget,
+} from '../utils/messageScrollNavigation';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -194,7 +199,36 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		return (
 			<div
 				ref={containerRef}
-				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2"
+				tabIndex={0}
+				role="region"
+				aria-label="Group chat messages"
+				className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2 outline-none"
+				onKeyDown={(e) => {
+					if (
+						(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') ||
+						e.metaKey ||
+						e.ctrlKey ||
+						e.altKey ||
+						isTextInputTarget(e.target)
+					) {
+						return;
+					}
+					const container = containerRef.current;
+					if (!container) return;
+					// Shift+Arrow: jump message-by-message.
+					if (e.shiftKey) {
+						e.preventDefault();
+						jumpToMessageEdge(
+							container,
+							'[data-message-timestamp]',
+							e.key === 'ArrowUp' ? 'up' : 'down'
+						);
+						return;
+					}
+					// Plain Arrow: nudge scroll by ~100px.
+					e.preventDefault();
+					container.scrollBy({ top: e.key === 'ArrowUp' ? -100 : 100 });
+				}}
 			>
 				{/* Prose styles for markdown rendering */}
 				<style>{proseStyles}</style>
@@ -405,6 +439,26 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 										</div>
 									)}
 
+									{/* Jump to top of this message - bottom left corner */}
+									<button
+										onClick={(e) => {
+											const messageEl = e.currentTarget.closest<HTMLElement>(
+												'[data-message-timestamp]'
+											);
+											if (messageEl && containerRef.current) {
+												scrollMessageToTop(containerRef.current, messageEl);
+											}
+										}}
+										className="absolute bottom-2 left-2 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+										style={{
+											color: theme.colors.textDim,
+											transition: 'opacity 0.15s ease-in-out',
+										}}
+										title={`Jump to top of this message (${formatShortcutKeys(['Shift', 'ArrowUp'])} for previous)`}
+										aria-label="Jump to top of this message"
+									>
+										<ArrowUp className="w-3.5 h-3.5" />
+									</button>
 									{/* Action buttons - bottom right corner (non-user messages only) */}
 									{!isUser && (
 										<div

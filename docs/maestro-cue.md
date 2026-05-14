@@ -146,7 +146,7 @@ The header **?** button opens a built-in quick-reference guide covering Cue's pu
 
 ## Configuration File
 
-Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
+Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. Each agent has its **own** cue.yaml under its **own** project root — the engine reads only that file (no parent-directory walk, no shared workspace file). For pipelines that span agents at different roots, see [Multi-root pipelines](./maestro-cue-configuration#multi-root-pipelines-agents-in-different-project-roots) in the Configuration Reference. See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
 
 ## Event Types
 

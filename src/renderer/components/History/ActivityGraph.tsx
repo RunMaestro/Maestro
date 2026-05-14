@@ -3,6 +3,8 @@ import { Check } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { LOOKBACK_OPTIONS, CUE_COLOR } from './historyConstants';
 import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 
 /** Pre-computed activity graph bucket from backend */
 export interface GraphBucket {
@@ -46,6 +48,8 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 }) => {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const autoBarColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const graphRef = useRef<HTMLDivElement>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
 	const {
@@ -341,8 +345,8 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 					</div>
 					<div className="flex flex-col gap-0.5">
 						<div className="flex items-center justify-between gap-3">
-							<span style={{ color: theme.colors.warning }}>Auto</span>
-							<span className="font-bold" style={{ color: theme.colors.warning }}>
+							<span style={{ color: autoBarColor }}>Auto</span>
+							<span className="font-bold" style={{ color: autoBarColor }}>
 								{bucketData[hoveredIndex].auto}
 							</span>
 						</div>
@@ -415,7 +419,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 									<div
 										style={{
 											height: `${autoPercent}%`,
-											backgroundColor: theme.colors.warning,
+											backgroundColor: autoBarColor,
 											minHeight: '1px',
 										}}
 									/>

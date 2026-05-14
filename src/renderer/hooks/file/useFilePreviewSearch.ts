@@ -3,6 +3,25 @@ import { useState, useRef, useEffect, useCallback, RefObject } from 'react';
 /** Maximum search query length to prevent expensive regex operations */
 const MAX_SEARCH_QUERY_LENGTH = 200;
 
+/**
+ * Pluggable search source. The Fast tier provides one of these (via the
+ * markdownFastRef's imperative handle) so the hook can report accurate match
+ * counts for a virtualized document where most content is not in the DOM.
+ *
+ * Adapter responsibilities:
+ *   - `findHits(query)` — return ALL matches in the document (not just the
+ *     ones currently mounted), each tagged with the block index they live in.
+ *   - `scrollToMatch(match)` — bring the match's block into view (typically
+ *     via `virtuoso.scrollToIndex`).
+ *
+ * When `searchAdapter` is omitted the hook falls back to its DOM-walker
+ * count + native scrollIntoView (the Rich tier behavior).
+ */
+export interface FilePreviewSearchAdapter {
+	findHits(query: string): Array<{ sourceOffset: number; length: number; blockIndex: number }>;
+	scrollToMatch(match: { blockIndex: number }): void;
+}
+
 export interface UseFilePreviewSearchParams {
 	codeContainerRef: RefObject<HTMLDivElement | null>;
 	markdownContainerRef: RefObject<HTMLDivElement | null>;
@@ -26,6 +45,8 @@ export interface UseFilePreviewSearchParams {
 	displayedContentLength?: number;
 	initialSearchQuery?: string;
 	onSearchQueryChange?: (query: string) => void;
+	/** Optional pluggable search source for tiers where DOM walking undercounts (Fast tier). */
+	searchAdapter?: FilePreviewSearchAdapter;
 }
 
 export interface UseFilePreviewSearchReturn {
@@ -62,6 +83,7 @@ export function useFilePreviewSearch({
 	displayedContentLength,
 	initialSearchQuery,
 	onSearchQueryChange,
+	searchAdapter,
 }: UseFilePreviewSearchParams): UseFilePreviewSearchReturn {
 	// Search state - use initialSearchQuery if provided, and notify parent of changes
 	const [internalSearchQuery, setInternalSearchQuery] = useState(
@@ -109,7 +131,11 @@ export function useFilePreviewSearch({
 			isImage ||
 			isCsv ||
 			isJsonl ||
-			(isJson && isJqMode)
+			(isJson && isJqMode) ||
+			// Fast tier provides its own adapter — defer counting + scroll to
+			// the markdown/readable-text CSS-Highlight effect below, which has
+			// been widened to handle code Fast tier when an adapter is present.
+			searchAdapter
 		) {
 			setTotalMatches(0);
 			setCurrentMatchIndex(-1);
@@ -206,17 +232,21 @@ export function useFilePreviewSearch({
 		isJson,
 		isJqMode,
 		accentColor,
+		// The early-return guard reads `searchAdapter` to defer to the Fast/Giant
+		// tier's own search; include it in deps so flipping the tier chip
+		// re-runs the effect with the fresh adapter state.
+		searchAdapter,
 	]);
 
-	// Search matches in markdown preview mode - use CSS Custom Highlight API
+	// Search matches in markdown preview mode - use CSS Custom Highlight API.
+	// Also runs for Fast tier non-markdown content when a search adapter is
+	// provided (the adapter supplies the authoritative match count; the
+	// effect still applies CSS Highlights to currently-mounted DOM text).
 	useEffect(() => {
-		if (
-			(!isMarkdown && !isReadableText) ||
-			markdownEditMode ||
-			!searchQuery.trim() ||
-			!markdownContainerRef.current
-		) {
-			if ((isMarkdown || isReadableText) && !markdownEditMode) {
+		const adapterActive = Boolean(searchAdapter);
+		const isTextLike = isMarkdown || isReadableText || adapterActive;
+		if (!isTextLike || markdownEditMode || !searchQuery.trim() || !markdownContainerRef.current) {
+			if (isTextLike && !markdownEditMode) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(-1);
 				matchElementsRef.current = [];
@@ -252,41 +282,53 @@ export function useFilePreviewSearch({
 				}
 			}
 
-			// Update match count and sync current index
-			setTotalMatches(allRanges.length);
+			// When a search adapter is supplied (Fast tier), its `findHits` is
+			// authoritative — the DOM walker only sees the small slice of
+			// currently-mounted blocks. We still apply CSS Highlights to the
+			// visible ranges so the user can see matches in view, but the
+			// match COUNT and scroll target come from the adapter.
+			const adapterHits = searchAdapter ? searchAdapter.findHits(searchQuery) : null;
+			const totalCount = adapterHits ? adapterHits.length : allRanges.length;
+			setTotalMatches(totalCount);
 
 			// Create highlights
-			if (allRanges.length > 0) {
-				const targetIndex =
-					currentMatchIndex < 0 ? 0 : Math.min(currentMatchIndex, allRanges.length - 1);
+			if (totalCount > 0) {
+				const targetIndex = currentMatchIndex < 0 ? 0 : Math.min(currentMatchIndex, totalCount - 1);
 				if (targetIndex !== currentMatchIndex) {
 					setCurrentMatchIndex(targetIndex);
 				}
 
-				// Create highlight for all matches (yellow)
-				const allHighlight = new (window as any).Highlight(...allRanges);
-				(CSS as any).highlights.set('search-results', allHighlight);
+				// Highlight whatever DOM-mounted matches exist. Even with the
+				// adapter, only on-screen text nodes can carry highlights — that's
+				// fine, scrolling brings new blocks into view which then receive
+				// highlight via the next effect run.
+				if (allRanges.length > 0) {
+					const allHighlight = new (window as any).Highlight(...allRanges);
+					(CSS as any).highlights.set('search-results', allHighlight);
+					const visibleIndex = Math.min(targetIndex, allRanges.length - 1);
+					const currentHighlight = new (window as any).Highlight(allRanges[visibleIndex]);
+					(CSS as any).highlights.set('search-current', currentHighlight);
+				} else {
+					(CSS as any).highlights.delete('search-results');
+					(CSS as any).highlights.delete('search-current');
+				}
 
-				// Create highlight for current match (accent color)
-				const currentHighlight = new (window as any).Highlight(allRanges[targetIndex]);
-				(CSS as any).highlights.set('search-current', currentHighlight);
-
-				// Scroll to current match
-				const currentRange = allRanges[targetIndex];
-				const rect = currentRange.getBoundingClientRect();
-				const scrollParent = contentRef.current;
-
-				if (scrollParent && rect) {
-					// Calculate position of the match relative to the scroll container's top
-					// rect.top is viewport-relative, so we need to account for current scroll
-					// and the scroll container's viewport position
-					const scrollContainerRect = scrollParent.getBoundingClientRect();
-					const matchOffsetInScrollContainer =
-						rect.top - scrollContainerRect.top + scrollParent.scrollTop;
-					// Calculate scroll position to center the match vertically
-					const scrollTop =
-						matchOffsetInScrollContainer - scrollParent.clientHeight / 2 + rect.height / 2;
-					scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+				// Scroll: prefer the adapter's scrollToMatch (Fast tier — moves
+				// the virtualizer); fall back to native scrollIntoView via Range.
+				if (adapterHits && adapterHits[targetIndex]) {
+					searchAdapter!.scrollToMatch(adapterHits[targetIndex]);
+				} else if (allRanges.length > 0) {
+					const currentRange = allRanges[Math.min(targetIndex, allRanges.length - 1)];
+					const rect = currentRange.getBoundingClientRect();
+					const scrollParent = contentRef.current;
+					if (scrollParent && rect) {
+						const scrollContainerRect = scrollParent.getBoundingClientRect();
+						const matchOffsetInScrollContainer =
+							rect.top - scrollContainerRect.top + scrollParent.scrollTop;
+						const scrollTop =
+							matchOffsetInScrollContainer - scrollParent.clientHeight / 2 + rect.height / 2;
+						scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+					}
 				}
 			} else {
 				setCurrentMatchIndex(-1);
@@ -344,6 +386,7 @@ export function useFilePreviewSearch({
 		markdownEditMode,
 		currentMatchIndex,
 		accentColor,
+		searchAdapter,
 	]);
 
 	// Handle search in edit mode - count matches, paint highlights, and update state

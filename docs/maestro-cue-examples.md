@@ -90,6 +90,10 @@ Lint, test, and deploy in sequence. Each step only runs if the previous one succ
 
 **Agents needed:** `linter`, `tester`, `deployer`
 
+<Note>
+This example assumes each agent has its own project root and therefore its own `.maestro/cue.yaml`. The three files below live under three different project roots — that's the supported pattern for multi-root pipelines (the engine reads each agent's own cue.yaml and never aggregates across roots). See [Multi-root pipelines](./maestro-cue-configuration#multi-root-pipelines-agents-in-different-project-roots) for the full rule. If all three agents share one project root, put all three subscriptions in a single `.maestro/cue.yaml` and use `agent_id` (or `settings.owner_agent_id` plus an explicit `agent_id` per sub) to route each one.
+</Note>
+
 The `linter` agent's `.maestro/cue.yaml`:
 
 ```yaml

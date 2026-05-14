@@ -91,8 +91,41 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 	}
 };
 
-// Estimated row heights for virtualization
-// Entry breakdown: p-3 (24px padding) + header (~24px) + mb-2 (8px) + summary (~48px for 3 lines)
-// Footer adds: mt-2 pt-2 border-t (~20px)
-export const ESTIMATED_ROW_HEIGHT = 124; // Height for entry with footer
-export const ESTIMATED_ROW_HEIGHT_SIMPLE = 104; // Height for entry without footer
+// Estimated row heights for virtualization. Used by the row virtualizer
+// before measureElement reports the actual rendered size. If these
+// underestimate, adjacent rows briefly overlap in the moment between the
+// initial render and the ResizeObserver callback — pick values that match
+// the worst-case rendered height for each variant so that any correction
+// from measureElement only ever shrinks the row.
+//
+// Breakdown (Tailwind defaults): p-3 (12px × 2) + 1px border × 2
+//   + header row (~20px) + mb-2 (8px)
+//   + 3-line text-xs leading-relaxed summary (~60px, the line-clamp ceiling)
+//   = ~116px base
+// Footer adds: mt-2 (8) + pt-2 (8) + 1px border-t + content (~16px) = ~33px
+// CUE "Triggered by:" subtitle adds: mt-1 (4) + ~14px = ~18px
+export const ESTIMATED_ROW_HEIGHT_BASE = 116;
+export const ESTIMATED_ROW_HEIGHT_FOOTER = 33;
+export const ESTIMATED_ROW_HEIGHT_CUE_SUBTITLE = 18;
+export const ESTIMATED_ROW_HEIGHT = ESTIMATED_ROW_HEIGHT_BASE + ESTIMATED_ROW_HEIGHT_FOOTER; // 149
+export const ESTIMATED_ROW_HEIGHT_SIMPLE = ESTIMATED_ROW_HEIGHT_BASE; // 116
+
+/** Estimate a row's rendered height from the entry's content variant. */
+export const estimateHistoryRowHeight = (entry: {
+	type?: string;
+	elapsedTimeMs?: number;
+	usageStats?: { totalCostUsd?: number };
+	achievementAction?: string;
+	hostname?: string;
+	cueEventType?: string;
+}): number => {
+	let height = ESTIMATED_ROW_HEIGHT_BASE;
+	const hasFooter =
+		entry.elapsedTimeMs !== undefined ||
+		(entry.usageStats && (entry.usageStats.totalCostUsd ?? 0) > 0) ||
+		!!entry.achievementAction ||
+		!!entry.hostname;
+	if (hasFooter) height += ESTIMATED_ROW_HEIGHT_FOOTER;
+	if (entry.type === 'CUE' && entry.cueEventType) height += ESTIMATED_ROW_HEIGHT_CUE_SUBTITLE;
+	return height;
+};

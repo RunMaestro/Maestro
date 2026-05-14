@@ -88,6 +88,13 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+// Mock InlineWizardContext to avoid Provider requirement
+vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
+	useInlineWizardContext: () => ({
+		wizardActiveSessions: new Map(),
+	}),
+}));
+
 // Mock GitStatusContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	useGitStatus: () => ({

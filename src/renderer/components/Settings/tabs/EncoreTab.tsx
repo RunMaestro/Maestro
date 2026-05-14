@@ -23,12 +23,15 @@ import {
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
+import { useDebouncedCallback } from '../../../hooks/utils/useThrottle';
 import { captureException } from '../../../utils/sentry';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
 import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
+import { DEFAULT_CUE_SETTINGS, type CueSettings } from '../../../../shared/cue';
+import { cueService } from '../../../services/cue';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -220,6 +223,77 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
 		});
 	};
+
+	// ── Maestro Cue global settings (autosaved to every known cue.yaml) ─────
+	// State is loaded once when the section becomes visible and persisted via
+	// a debounced IPC call so typing in the number inputs does not hammer the
+	// filesystem. Loaded === false until the IPC fetch resolves so the inputs
+	// don't briefly render with the defaults and then snap to the loaded value.
+	const [cueSettings, setCueSettings] = useState<CueSettings>({ ...DEFAULT_CUE_SETTINGS });
+	const [cueSettingsLoaded, setCueSettingsLoaded] = useState(false);
+	const [cueSettingsSaveState, setCueSettingsSaveState] = useState<
+		'idle' | 'saving' | 'saved' | 'error' | 'no-targets'
+	>('idle');
+	// Local string state for queue size so the user can clear the field while
+	// typing without the controlled-input round-trip snapping back to a number.
+	const [cueQueueSizeStr, setCueQueueSizeStr] = useState(String(DEFAULT_CUE_SETTINGS.queue_size));
+
+	useEffect(() => {
+		if (!isOpen || !encoreFeatures.maestroCue) return;
+		let cancelled = false;
+		cueService
+			.getSettings()
+			.then((settings) => {
+				if (cancelled) return;
+				const merged: CueSettings = {
+					...DEFAULT_CUE_SETTINGS,
+					...(settings && Object.keys(settings).length > 0 ? settings : {}),
+				};
+				setCueSettings(merged);
+				setCueQueueSizeStr(String(merged.queue_size));
+			})
+			.catch((err: unknown) => {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'EncoreTab.loadCueSettings' },
+				});
+			})
+			.finally(() => {
+				if (!cancelled) setCueSettingsLoaded(true);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, encoreFeatures.maestroCue]);
+
+	const persistCueSettings = useCallback((next: CueSettings) => {
+		setCueSettingsSaveState('saving');
+		cueService
+			.saveSettings(next)
+			.then((result) => {
+				setCueSettingsSaveState(result.writtenRoots.length === 0 ? 'no-targets' : 'saved');
+			})
+			.catch((err: unknown) => {
+				setCueSettingsSaveState('error');
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'EncoreTab.saveCueSettings' },
+				});
+			});
+	}, []);
+	const { debouncedCallback: debouncedPersistCueSettings } = useDebouncedCallback(
+		persistCueSettings as (...args: unknown[]) => void,
+		400
+	);
+
+	const updateCueSettings = useCallback(
+		(patch: Partial<CueSettings>) => {
+			setCueSettings((prev) => {
+				const next = { ...prev, ...patch };
+				debouncedPersistCueSettings(next);
+				return next;
+			});
+		},
+		[debouncedPersistCueSettings]
+	);
 
 	return (
 		<div className="space-y-6">
@@ -716,6 +790,194 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						/>
 					</div>
 				</button>
+
+				{encoreFeatures.maestroCue && (
+					<div
+						className="px-4 pb-4 space-y-4 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div className="flex items-center justify-between pt-3">
+							<div
+								className="text-xs font-bold uppercase opacity-70"
+								style={{ color: theme.colors.textMain }}
+							>
+								Global Cue Settings
+							</div>
+							{cueSettingsLoaded && (
+								<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									{cueSettingsSaveState === 'saving' && 'Saving…'}
+									{cueSettingsSaveState === 'saved' && 'Saved'}
+									{cueSettingsSaveState === 'error' && (
+										<span style={{ color: theme.colors.error }}>Save failed</span>
+									)}
+									{cueSettingsSaveState === 'no-targets' && (
+										<span style={{ color: theme.colors.warning }}>
+											No cue.yaml yet — open a pipeline to persist
+										</span>
+									)}
+								</div>
+							)}
+						</div>
+
+						{!cueSettingsLoaded ? (
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Loading settings…
+							</div>
+						) : (
+							<>
+								<div>
+									<label
+										className="block text-[11px] font-medium mb-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										Timeout (minutes)
+									</label>
+									<input
+										type="number"
+										min={1}
+										max={1440}
+										value={cueSettings.timeout_minutes}
+										onChange={(e) =>
+											updateCueSettings({
+												timeout_minutes: Math.max(1, parseInt(e.target.value, 10) || 30),
+											})
+										}
+										className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									/>
+									<p
+										className="text-[10px] mt-1 opacity-70"
+										style={{ color: theme.colors.textDim }}
+									>
+										Maximum time a triggered run can execute before it&apos;s automatically stopped.
+										Increase if your tasks regularly need more time.
+									</p>
+								</div>
+
+								<div>
+									<label
+										className="block text-[11px] font-medium mb-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										On Source Failure
+									</label>
+									<div className="relative">
+										<select
+											value={cueSettings.timeout_on_fail}
+											onChange={(e) =>
+												updateCueSettings({
+													timeout_on_fail: e.target.value as 'break' | 'continue',
+												})
+											}
+											className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm"
+											style={{
+												backgroundColor: theme.colors.bgMain,
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+											}}
+											aria-label="On source failure behavior"
+										>
+											<option value="break">Break (stop chain)</option>
+											<option value="continue">Continue (skip failed)</option>
+										</select>
+										<ChevronDown
+											className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+											style={{ color: theme.colors.textDim }}
+										/>
+									</div>
+									<p
+										className="text-[10px] mt-1 opacity-70"
+										style={{ color: theme.colors.textDim }}
+									>
+										What to do when a pipeline stage times out or errors. &quot;Break&quot; stops
+										the entire chain; &quot;Continue&quot; skips the failed stage and proceeds to
+										the next.
+									</p>
+								</div>
+
+								<div>
+									<label
+										className="block text-[11px] font-medium mb-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										Max Concurrent Runs
+									</label>
+									<input
+										type="number"
+										min={1}
+										max={10}
+										value={cueSettings.max_concurrent}
+										onChange={(e) =>
+											updateCueSettings({
+												max_concurrent: Math.min(
+													10,
+													Math.max(1, parseInt(e.target.value, 10) || 1)
+												),
+											})
+										}
+										className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									/>
+									<p
+										className="text-[10px] mt-1 opacity-70"
+										style={{ color: theme.colors.textDim }}
+									>
+										How many Cue-triggered runs can execute in parallel. Higher values increase
+										throughput but agents may conflict on shared files. Default: 1.
+									</p>
+								</div>
+
+								<div>
+									<label
+										className="block text-[11px] font-medium mb-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										Event Queue Size
+									</label>
+									<input
+										type="number"
+										min={0}
+										max={10000}
+										value={cueQueueSizeStr}
+										onChange={(e) => {
+											const raw = e.target.value;
+											setCueQueueSizeStr(raw);
+											const parsed = raw === '' ? 0 : parseInt(raw, 10);
+											if (!Number.isNaN(parsed)) {
+												updateCueSettings({
+													queue_size: Math.min(10000, Math.max(0, parsed)),
+												});
+											}
+										}}
+										onBlur={() => setCueQueueSizeStr(String(cueSettings.queue_size))}
+										className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									/>
+									<p
+										className="text-[10px] mt-1 opacity-70"
+										style={{ color: theme.colors.textDim }}
+									>
+										Events that arrive while the concurrent limit is reached are buffered here. When
+										the queue is full, the oldest event is dropped. Set to 0 to disable buffering.
+										Default: 512.
+									</p>
+								</div>
+							</>
+						)}
+					</div>
+				)}
 			</div>
 
 			{/* Director's Notes Feature Section */}

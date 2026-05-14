@@ -28,14 +28,32 @@ vi.mock('../../../../main/web-server', () => ({
 	WebServer: vi.fn(),
 }));
 
-// Mock cli-server-discovery so handlers don't touch the real filesystem
+// Mock cli-server-discovery so handlers don't touch the real filesystem.
+// `readCliServerInfo` mirrors the last-written info so `ensureCliServer`'s
+// verification step (added when we made the discovery file write retry on
+// silent failures) can succeed in tests without doing real disk I/O.
+let lastWrittenInfo: any = null;
 vi.mock('../../../../shared/cli-server-discovery', () => ({
-	writeCliServerInfo: vi.fn(),
-	deleteCliServerInfo: vi.fn(),
+	writeCliServerInfo: vi.fn((info: any) => {
+		lastWrittenInfo = info;
+	}),
+	deleteCliServerInfo: vi.fn(() => {
+		lastWrittenInfo = null;
+	}),
+	readCliServerInfo: vi.fn(() => lastWrittenInfo),
 }));
 
-import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
-import { writeCliServerInfo, deleteCliServerInfo } from '../../../../shared/cli-server-discovery';
+import {
+	registerWebHandlers,
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+} from '../../../../main/ipc/handlers/web';
+import {
+	writeCliServerInfo,
+	deleteCliServerInfo,
+	readCliServerInfo,
+} from '../../../../shared/cli-server-discovery';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -46,6 +64,16 @@ describe('web handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		lastWrittenInfo = null;
+		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
+		// clearAllMocks blew away their implementations.
+		vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
+			lastWrittenInfo = info;
+		});
+		vi.mocked(deleteCliServerInfo).mockImplementation(() => {
+			lastWrittenInfo = null;
+		});
+		vi.mocked(readCliServerInfo).mockImplementation(() => lastWrittenInfo);
 
 		// Create mock web server
 		mockWebServer = {
@@ -701,6 +729,198 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toBe(0);
+		});
+	});
+
+	describe('ensureCliServer', () => {
+		// Helper to build the deps object the way main/index.ts does.
+		function buildDeps() {
+			return {
+				getWebServer: () => webServerRef.current,
+				setWebServer: (server: any) => {
+					webServerRef.current = server;
+				},
+				createWebServer: mockCreateWebServer,
+				settingsStore: mockSettingsStore,
+			};
+		}
+
+		it('publishes the discovery file on first try when the server starts cleanly', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(mockWebServer.start).toHaveBeenCalledTimes(1);
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token', pid: process.pid })
+			);
+		});
+
+		it('refreshes the discovery file when an already-running server is reused', async () => {
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
+		it('retries when start() throws and succeeds on a subsequent attempt', async () => {
+			webServerRef.current = null;
+			const failingServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockRejectedValue(new Error('EADDRINUSE')),
+				stop: vi.fn().mockResolvedValue(undefined),
+				getPort: vi.fn().mockReturnValue(8080),
+				getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			};
+			const succeedingServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockResolvedValue({
+					port: 9090,
+					token: 'retry-token',
+					url: 'http://localhost:9090',
+				}),
+				getPort: vi.fn().mockReturnValue(9090),
+				getSecurityToken: vi.fn().mockReturnValue('retry-token'),
+			};
+			mockCreateWebServer.mockReturnValueOnce(failingServer).mockReturnValueOnce(succeedingServer);
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(failingServer.start).toHaveBeenCalled();
+			expect(succeedingServer.start).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 9090, token: 'retry-token' })
+			);
+		});
+
+		it('returns false after exhausting retries when start() keeps failing', async () => {
+			webServerRef.current = null;
+			mockCreateWebServer.mockImplementation(() => ({
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				start: vi.fn().mockRejectedValue(new Error('persistent failure')),
+				stop: vi.fn().mockResolvedValue(undefined),
+				getPort: vi.fn().mockReturnValue(8080),
+				getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			}));
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(false);
+			// Up to 3 attempts, each creating a fresh server.
+			expect(mockCreateWebServer).toHaveBeenCalledTimes(3);
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('retries when the discovery file is missing after a successful write', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+			// First write looks like it succeeded but readback finds nothing
+			// (simulating the silent-failure case the retry guards against).
+			let writeCount = 0;
+			vi.mocked(writeCliServerInfo).mockImplementation((info: any) => {
+				writeCount++;
+				// First attempt: pretend the file vanished. Second+: persist.
+				if (writeCount > 1) {
+					lastWrittenInfo = info;
+				}
+			});
+
+			const ok = await ensureCliServer(buildDeps());
+
+			expect(ok).toBe(true);
+			expect(writeCount).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	describe('cli discovery watchdog', () => {
+		function buildDeps() {
+			return {
+				getWebServer: () => webServerRef.current,
+				setWebServer: (server: any) => {
+					webServerRef.current = server;
+				},
+				createWebServer: mockCreateWebServer,
+				settingsStore: mockSettingsStore,
+			};
+		}
+
+		afterEach(() => {
+			stopCliDiscoveryWatchdog();
+			vi.useRealTimers();
+		});
+
+		it('rewrites the discovery file when it goes missing while the server is running', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			// Prime the file as if a previous write succeeded.
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+
+			// Simulate external deletion of the discovery file.
+			lastWrittenInfo = null;
+			vi.mocked(writeCliServerInfo).mockClear();
+
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
+		it('does nothing when the discovery file already matches the running server', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = {
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: Date.now(),
+			};
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.mocked(writeCliServerInfo).mockClear();
+			vi.advanceTimersByTime(1000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('skips work when no server is running', () => {
+			vi.useFakeTimers();
+			webServerRef.current = null;
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			vi.advanceTimersByTime(2000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+		});
+
+		it('stops firing after stopCliDiscoveryWatchdog is called', () => {
+			vi.useFakeTimers();
+			mockWebServer.isActive.mockReturnValue(true);
+			lastWrittenInfo = null; // missing — would normally trigger a write
+
+			startCliDiscoveryWatchdog(buildDeps(), 1000);
+			stopCliDiscoveryWatchdog();
+			vi.advanceTimersByTime(5000);
+
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
 		});
 	});
 });

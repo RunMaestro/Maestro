@@ -14,6 +14,9 @@ import type { FileNode } from '../../types/fileTree';
 import type { WizardStep } from '../Wizard/WizardContext';
 import type { FlatFileItem } from '../FileSearchModal';
 
+// Modal store (for reading per-modal data passed by callers)
+import { useModalStore, selectModalData } from '../../stores/modalStore';
+
 // Utility Modal Components
 import { QuickActionsModal } from '../QuickActionsModal';
 import { TabSwitcherModal } from '../TabSwitcherModal';
@@ -449,6 +452,12 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onSwitchQueueSession,
 	onReorderQueueItems,
 }: AppUtilityModalsProps) {
+	// Read per-modal data from the modal store for modals that support it.
+	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
+	// the BatchRunnerModal opens with all freshly generated docs pre-selected.
+	const batchRunnerData = useModalStore(selectModalData('batchRunner'));
+	const batchRunnerPresetDocuments = batchRunnerData?.presetDocuments;
+
 	return (
 		<>
 			{/* --- QUICK ACTIONS MODAL (Cmd+K) --- */}
@@ -626,6 +635,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					showConfirmation={showConfirmation}
 					folderPath={activeSession.autoRunFolderPath}
 					currentDocument={activeSession.autoRunSelectedFile || ''}
+					presetDocuments={batchRunnerPresetDocuments}
 					allDocuments={autoRunDocumentList}
 					documentTree={autoRunDocumentTree}
 					getDocumentTaskCount={getDocumentTaskCount}

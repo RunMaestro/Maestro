@@ -11,6 +11,7 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
+import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import type { AgentId } from '../shared/agentIds';
 import { CueEngine } from './cue/cue-engine';
 import { configureCueTelemetry } from './cue/cue-telemetry';
@@ -64,6 +65,8 @@ import {
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -265,23 +268,12 @@ if (crashReportingEnabled && !isDevelopment) {
 				ipcMode: IPCMode.Classic,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
-				// Filter out sensitive data
+				// Filter out sensitive data + unfixable OS / Chromium / user-env noise.
+				// See src/shared/sentryFilters.ts for the full classification.
 				beforeSend(event) {
-					// Drop unfixable Windows drive-root noise: EBUSY/EPERM on always-locked
-					// system files (pagefile.sys, hiberfil.sys, DumpStack.log.tmp, ...) that
-					// show up when users point watchers at C:\ or similar. See MAESTRO-G5/G6.
-					const firstException = event.exception?.values?.[0];
-					const exceptionValue = firstException?.value ?? '';
-					if (
-						/^(EBUSY|EPERM): [^,]+, lstat /i.test(exceptionValue) &&
-						/(pagefile\.sys|hiberfil\.sys|swapfile\.sys|DumpStack\.log|System Volume Information)/i.test(
-							exceptionValue
-						)
-					) {
+					if (shouldDropSentryEvent(event)) {
 						return null;
 					}
-
-					// Remove any potential sensitive data from the event
 					if (event.user) {
 						delete event.user.ip_address;
 						delete event.user.email;
@@ -388,6 +380,18 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return false;
 		return cueEngine.triggerSubscription(subscriptionName, prompt, sourceAgentId);
 	},
+	getCueGraphData: () => {
+		if (!cueEngine) return [];
+		return cueEngine.getGraphData();
+	},
+	setCueSubscriptionEnabled: async (subscriptionId, enabled) => {
+		if (!cueEngine) return false;
+		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
+	},
+	getCueActivityLog: () => {
+		if (!cueEngine) return [];
+		return cueEngine.getActivityLog();
+	},
 });
 
 // createWindow is now handled by windowManager (Phase 4 refactoring)
@@ -421,557 +425,590 @@ if (!gotSingleInstanceLock) {
 	process.exit(0);
 }
 
-app.whenReady().then(async () => {
-	// Serve the production renderer over `app://` so static and dynamic ES
-	// module imports succeed on Electron 41 (Chromium 138 blocks both under
-	// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so
-	// we read assets directly via fs and return a Response.
-	if (!isDevelopment) {
-		const rendererRoot = path.resolve(__dirname, '../renderer');
-		const mimeByExt: Record<string, string> = {
-			'.html': 'text/html; charset=utf-8',
-			'.js': 'text/javascript; charset=utf-8',
-			'.mjs': 'text/javascript; charset=utf-8',
-			'.css': 'text/css; charset=utf-8',
-			'.json': 'application/json; charset=utf-8',
-			'.svg': 'image/svg+xml',
-			'.png': 'image/png',
-			'.jpg': 'image/jpeg',
-			'.jpeg': 'image/jpeg',
-			'.gif': 'image/gif',
-			'.ico': 'image/x-icon',
-			'.webp': 'image/webp',
-			'.woff': 'font/woff',
-			'.woff2': 'font/woff2',
-			'.ttf': 'font/ttf',
-			'.otf': 'font/otf',
-			'.map': 'application/json; charset=utf-8',
-		};
-		protocol.handle(RENDERER_SCHEME, async (request) => {
-			const url = new URL(request.url);
-			const requestedPath = decodeURIComponent(url.pathname);
-			const relative =
-				requestedPath === '/' || requestedPath === '' ? '/index.html' : requestedPath;
-			const resolved = path.normalize(path.join(rendererRoot, relative));
-			if (!resolved.startsWith(rendererRoot)) {
-				return new Response('forbidden', { status: 403 });
-			}
-			try {
-				const data = await readFile(resolved);
-				const ext = path.extname(resolved).toLowerCase();
-				const contentType = mimeByExt[ext] ?? 'application/octet-stream';
-				return new Response(new Uint8Array(data), {
-					status: 200,
-					headers: { 'content-type': contentType },
-				});
-			} catch (err) {
-				logger.warn(`Renderer asset not found: ${resolved}`, 'Window', { err: String(err) });
-				return new Response('not found', { status: 404 });
-			}
-		});
-	}
-
-	// Load logger settings first
-	const logLevel = store.get('logLevel', 'info');
-	logger.setLogLevel(logLevel);
-	const maxLogBuffer = store.get('maxLogBuffer', 1000);
-	logger.setMaxLogBuffer(maxLogBuffer);
-
-	logger.info('Maestro application starting', 'Startup', {
-		version: app.getVersion(),
-		platform: process.platform,
-		logLevel,
-	});
-
-	// Check for WSL + Windows mount issues early
-	checkWslEnvironment(process.cwd());
-
-	// Initialize core services
-	logger.info('Initializing core services', 'Startup');
-	processManager = new ProcessManager();
-	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
-	agentDetector = new AgentDetector();
-
-	// Initialize core prompts from disk (must happen before features that use them)
-	try {
-		await initializePrompts();
-	} catch (error) {
-		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
-		await captureException(error instanceof Error ? error : new Error(String(error)), {
-			operation: 'startup:initializePrompts',
-		});
-		const { dialog } = await import('electron');
-		dialog.showErrorBox(
-			'Startup Error',
-			'Failed to load system prompts. Please reinstall the application.'
-		);
-		app.quit();
-		return;
-	}
-
-	// One-time migration: bake standing instructions into moderator prompt customization
-	const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
-	const migratedKey = 'moderatorStandingInstructionsMigrated';
-
-	if (standingInstructions && !store.get(migratedKey, false)) {
-		try {
-			const currentPrompt = getPrompt('group-chat-moderator-system');
-
-			// Only migrate if the exact standing instructions content isn't already in the prompt
-			if (!currentPrompt.includes(standingInstructions)) {
-				const sectionHeader = '## Standing Instructions';
-				const newSection = `${sectionHeader}\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
-
-				let migratedPrompt: string;
-				if (currentPrompt.includes(sectionHeader)) {
-					migratedPrompt = currentPrompt.replace(
-						/## Standing Instructions[\s\S]*?(?=\n## |\s*$)/,
-						newSection
-					);
-				} else {
-					migratedPrompt = `${currentPrompt}\n\n${newSection}`;
+app
+	.whenReady()
+	.then(async () => {
+		// Serve the production renderer over `app://` so static and dynamic ES
+		// module imports succeed on Electron 41 (Chromium 138 blocks both under
+		// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so
+		// we read assets directly via fs and return a Response.
+		if (!isDevelopment) {
+			const rendererRoot = path.resolve(__dirname, '../renderer');
+			const mimeByExt: Record<string, string> = {
+				'.html': 'text/html; charset=utf-8',
+				'.js': 'text/javascript; charset=utf-8',
+				'.mjs': 'text/javascript; charset=utf-8',
+				'.css': 'text/css; charset=utf-8',
+				'.json': 'application/json; charset=utf-8',
+				'.svg': 'image/svg+xml',
+				'.png': 'image/png',
+				'.jpg': 'image/jpeg',
+				'.jpeg': 'image/jpeg',
+				'.gif': 'image/gif',
+				'.ico': 'image/x-icon',
+				'.webp': 'image/webp',
+				'.woff': 'font/woff',
+				'.woff2': 'font/woff2',
+				'.ttf': 'font/ttf',
+				'.otf': 'font/otf',
+				'.map': 'application/json; charset=utf-8',
+			};
+			protocol.handle(RENDERER_SCHEME, async (request) => {
+				const url = new URL(request.url);
+				const requestedPath = decodeURIComponent(url.pathname);
+				const relative =
+					requestedPath === '/' || requestedPath === '' ? '/index.html' : requestedPath;
+				const resolved = path.normalize(path.join(rendererRoot, relative));
+				if (!resolved.startsWith(rendererRoot)) {
+					return new Response('forbidden', { status: 403 });
 				}
-				await savePrompt('group-chat-moderator-system', migratedPrompt);
-				logger.info(
-					'Migrated moderator standing instructions into prompt customization',
+				try {
+					const data = await readFile(resolved);
+					const ext = path.extname(resolved).toLowerCase();
+					const contentType = mimeByExt[ext] ?? 'application/octet-stream';
+					return new Response(new Uint8Array(data), {
+						status: 200,
+						headers: { 'content-type': contentType },
+					});
+				} catch (err) {
+					logger.warn(`Renderer asset not found: ${resolved}`, 'Window', {
+						err: String(err),
+					});
+					return new Response('not found', { status: 404 });
+				}
+			});
+		}
+
+		// Load logger settings first
+		const logLevel = store.get('logLevel', 'info');
+		logger.setLogLevel(logLevel);
+		const maxLogBuffer = store.get('maxLogBuffer', 1000);
+		logger.setMaxLogBuffer(maxLogBuffer);
+
+		logger.info('Maestro application starting', 'Startup', {
+			version: app.getVersion(),
+			platform: process.platform,
+			logLevel,
+		});
+
+		// Check for WSL + Windows mount issues early
+		checkWslEnvironment(process.cwd());
+
+		// Initialize core services
+		logger.info('Initializing core services', 'Startup');
+		processManager = new ProcessManager();
+		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
+		agentDetector = new AgentDetector();
+
+		// Bring up the CLI server and publish the discovery file as early as
+		// possible. Done here (before initializePrompts / Cue / history / etc.)
+		// so an unhandled error later in startup can't silently leave maestro-cli
+		// without a discovery file — the symptom that previously forced users to
+		// toggle Live Mode on/off to coax the file into existence.
+		const cliServerDeps = {
+			getWebServer: () => webServer,
+			setWebServer: (server: WebServer | null) => {
+				webServer = server;
+			},
+			createWebServer,
+			settingsStore: store,
+		};
+		await ensureCliServer(cliServerDeps);
+		startCliDiscoveryWatchdog(cliServerDeps);
+
+		// Initialize core prompts from disk (must happen before features that use them)
+		try {
+			await initializePrompts();
+		} catch (error) {
+			logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+			await captureException(error instanceof Error ? error : new Error(String(error)), {
+				operation: 'startup:initializePrompts',
+			});
+			const { dialog } = await import('electron');
+			dialog.showErrorBox(
+				'Startup Error',
+				'Failed to load system prompts. Please reinstall the application.'
+			);
+			app.quit();
+			return;
+		}
+
+		// One-time migration: bake standing instructions into moderator prompt customization
+		const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
+		const migratedKey = 'moderatorStandingInstructionsMigrated';
+
+		if (standingInstructions && !store.get(migratedKey, false)) {
+			try {
+				const currentPrompt = getPrompt('group-chat-moderator-system');
+
+				// Only migrate if the exact standing instructions content isn't already in the prompt
+				if (!currentPrompt.includes(standingInstructions)) {
+					const sectionHeader = '## Standing Instructions';
+					const newSection = `${sectionHeader}\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
+
+					let migratedPrompt: string;
+					if (currentPrompt.includes(sectionHeader)) {
+						migratedPrompt = currentPrompt.replace(
+							/## Standing Instructions[\s\S]*?(?=\n## |\s*$)/,
+							newSection
+						);
+					} else {
+						migratedPrompt = `${currentPrompt}\n\n${newSection}`;
+					}
+					await savePrompt('group-chat-moderator-system', migratedPrompt);
+					logger.info(
+						'Migrated moderator standing instructions into prompt customization',
+						'Startup'
+					);
+				}
+				store.set(migratedKey, true);
+			} catch (err) {
+				await captureException(err instanceof Error ? err : new Error(String(err)), {
+					migratedKey,
+					standingInstructionsSlice: standingInstructions.slice(0, 200),
+				});
+				logger.warn(
+					'Failed to persist migrated moderator standing instructions, will retry next launch',
 					'Startup'
 				);
 			}
-			store.set(migratedKey, true);
-		} catch (err) {
-			await captureException(err instanceof Error ? err : new Error(String(err)), {
-				migratedKey,
-				standingInstructionsSlice: standingInstructions.slice(0, 200),
-			});
-			logger.warn(
-				'Failed to persist migrated moderator standing instructions, will retry next launch',
-				'Startup'
-			);
 		}
-	}
 
-	// Load custom agent paths from settings
-	const allAgentConfigs = agentConfigsStore.get('configs', {});
-	const customPaths: Record<string, string> = {};
-	for (const [agentId, config] of Object.entries(allAgentConfigs)) {
-		if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-			customPaths[agentId] = config.customPath as string;
+		// Load custom agent paths from settings
+		const allAgentConfigs = agentConfigsStore.get('configs', {});
+		const customPaths: Record<string, string> = {};
+		for (const [agentId, config] of Object.entries(allAgentConfigs)) {
+			if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
+				customPaths[agentId] = config.customPath as string;
+			}
 		}
-	}
-	if (Object.keys(customPaths).length > 0) {
-		agentDetector.setCustomPaths(customPaths);
-		logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
-	}
+		if (Object.keys(customPaths).length > 0) {
+			agentDetector.setCustomPaths(customPaths);
+			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
+		}
 
-	// Initialize Cue Engine for event-driven automation
-	cueEngine = new CueEngine({
-		getSessions: () => {
-			const stored = sessionsStore.get('sessions', []);
-			return stored.map((s: any) => ({
-				id: s.id,
-				name: s.name,
-				toolType: s.toolType,
-				cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
-				projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
-			}));
-		},
-		onCueRun: async ({
-			runId,
-			sessionId,
-			prompt,
-			subscriptionName,
-			event,
-			timeoutMs,
-			action,
-			command,
-		}) => {
-			const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
-			const storedSession = storedSessions.find((s) => s.id === sessionId);
-			if (!storedSession) {
-				throw new Error(`Cue target session not found: ${sessionId}`);
-			}
-
-			const projectRoot =
-				storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
-			const templateContext: TemplateContext = {
-				session: {
-					id: storedSession.id,
-					name: storedSession.name,
-					toolType: storedSession.toolType,
-					cwd: projectRoot,
-					projectRoot,
-					fullPath: storedSession.fullPath,
-					autoRunFolderPath: storedSession.autoRunFolderPath,
-				},
-				conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
-			};
-
-			// `action: command` runs a shell command or maestro-cli call instead of an
-			// AI prompt — skip agent path resolution and SSH wrapping.
-			if (action === 'command') {
-				if (!command) {
-					// Should be unreachable post-validator, but guard anyway so a
-					// misconfigured subscription fails loudly instead of silently
-					// executing `prompt` (a shell/cli sentinel) as an AI prompt.
-					throw new Error(
-						`Cue subscription "${subscriptionName}" has action='command' but no command payload`
-					);
-				}
-				const sessionInfo = {
-					id: storedSession.id,
-					name: storedSession.name,
-					toolType: storedSession.toolType,
-					cwd: projectRoot,
-					projectRoot,
-					autoRunFolderPath: storedSession.autoRunFolderPath,
-				};
-				const subscription = {
-					name: subscriptionName,
-					event: event.type,
-					enabled: true,
-					prompt,
-					action,
-					command,
-				};
-				const cmdLog = (level: string, message: string) => {
-					if (level === 'error') logger.error(message, 'Cue');
-					else if (level === 'warn') logger.warn(message, 'Cue');
-					else if (level === 'debug') logger.debug(message, 'Cue');
-					else logger.cue(message, 'Cue');
-				};
-				const cmdResult =
-					command.mode === 'shell'
-						? await executeCueShell({
-								runId,
-								session: sessionInfo,
-								subscription,
-								event,
-								shellCommand: command.shell,
-								projectRoot,
-								templateContext,
-								timeoutMs,
-								onLog: cmdLog,
-								// Forward SSH config so shell commands run on the remote
-								// host when the owning session is SSH-remote-enabled.
-								sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-								sshStore: createSshRemoteStoreAdapter(store),
-							})
-						: await executeCueCli({
-								runId,
-								session: sessionInfo,
-								subscription,
-								event,
-								cli: command.cli,
-								templateContext,
-								timeoutMs,
-								onLog: cmdLog,
-								// CLI mode intentionally stays local: `maestro-cli send`
-								// targets the local Maestro daemon (routing messages to
-								// sessions managed by this app), so SSH wrapping would
-								// point at the wrong daemon and `maestro-cli.js` may not
-								// exist on the remote host.
-							});
-				const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-				// Fire-and-forget: this is on the Cue execution path; the
-				// caller doesn't need to wait for the disk write to settle.
-				void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
-				return cmdResult;
-			}
-
-			const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
-
-			// Resolve the agent's binary path using the agent detector.
-			// Without this, Cue falls back to the bare command name (e.g., 'claude')
-			// which fails with ENOENT when spawn() can't find it on PATH.
-			let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
-			if (!resolvedAgentPath && agentDetector) {
-				const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
-				if (detectedAgent?.available && detectedAgent.path) {
-					resolvedAgentPath = detectedAgent.path;
-				}
-			}
-
-			const result = await executeCuePrompt({
+		// Initialize Cue Engine for event-driven automation
+		cueEngine = new CueEngine({
+			getSessions: () => {
+				const stored = sessionsStore.get('sessions', []);
+				return stored.map((s: any) => ({
+					id: s.id,
+					name: s.name,
+					toolType: s.toolType,
+					cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
+					projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
+				}));
+			},
+			onCueRun: async ({
 				runId,
-				session: {
+				sessionId,
+				prompt,
+				subscriptionName,
+				event,
+				timeoutMs,
+				action,
+				command,
+			}) => {
+				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+				const storedSession = storedSessions.find((s) => s.id === sessionId);
+				if (!storedSession) {
+					throw new Error(`Cue target session not found: ${sessionId}`);
+				}
+
+				const projectRoot =
+					storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
+				const templateContext: TemplateContext = {
+					session: {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						fullPath: storedSession.fullPath,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					},
+					conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
+				};
+
+				// `action: command` runs a shell command or maestro-cli call instead of an
+				// AI prompt — skip agent path resolution and SSH wrapping.
+				if (action === 'command') {
+					if (!command) {
+						// Should be unreachable post-validator, but guard anyway so a
+						// misconfigured subscription fails loudly instead of silently
+						// executing `prompt` (a shell/cli sentinel) as an AI prompt.
+						throw new Error(
+							`Cue subscription "${subscriptionName}" has action='command' but no command payload`
+						);
+					}
+					const sessionInfo = {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					};
+					const subscription = {
+						name: subscriptionName,
+						event: event.type,
+						enabled: true,
+						prompt,
+						action,
+						command,
+					};
+					const cmdLog = (level: string, message: string) => {
+						if (level === 'error') logger.error(message, 'Cue');
+						else if (level === 'warn') logger.warn(message, 'Cue');
+						else if (level === 'debug') logger.debug(message, 'Cue');
+						else logger.cue(message, 'Cue');
+					};
+					const cmdResult =
+						command.mode === 'shell'
+							? await executeCueShell({
+									runId,
+									session: sessionInfo,
+									subscription,
+									event,
+									shellCommand: command.shell,
+									projectRoot,
+									templateContext,
+									timeoutMs,
+									onLog: cmdLog,
+									// Forward SSH config so shell commands run on the remote
+									// host when the owning session is SSH-remote-enabled.
+									sshRemoteConfig: storedSession.sessionSshRemoteConfig,
+									sshStore: createSshRemoteStoreAdapter(store),
+								})
+							: await executeCueCli({
+									runId,
+									session: sessionInfo,
+									subscription,
+									event,
+									cli: command.cli,
+									templateContext,
+									timeoutMs,
+									onLog: cmdLog,
+									// CLI mode intentionally stays local: `maestro-cli send`
+									// targets the local Maestro daemon (routing messages to
+									// sessions managed by this app), so SSH wrapping would
+									// point at the wrong daemon and `maestro-cli.js` may not
+									// exist on the remote host.
+								});
+					const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
+					// Fire-and-forget: this is on the Cue execution path; the
+					// caller doesn't need to wait for the disk write to settle.
+					void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+					return cmdResult;
+				}
+
+				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
+
+				// Resolve the agent's binary path using the agent detector.
+				// Without this, Cue falls back to the bare command name (e.g., 'claude')
+				// which fails with ENOENT when spawn() can't find it on PATH.
+				let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
+				if (!resolvedAgentPath && agentDetector) {
+					const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
+					if (detectedAgent?.available && detectedAgent.path) {
+						resolvedAgentPath = detectedAgent.path;
+					}
+				}
+
+				const result = await executeCuePrompt({
+					runId,
+					session: {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					},
+					subscription: {
+						name: subscriptionName,
+						event: event.type,
+						enabled: true,
+						prompt,
+					},
+					event,
+					promptPath: prompt,
+					toolType: storedSession.toolType,
+					projectRoot,
+					templateContext,
+					timeoutMs,
+					sshRemoteConfig: storedSession.sessionSshRemoteConfig,
+					customPath: resolvedAgentPath,
+					customArgs: storedSession.customArgs,
+					customEnvVars: storedSession.customEnvVars,
+					customModel: storedSession.customModel,
+					customEffort: storedSession.customEffort,
+					onLog: (level, message) => {
+						if (level === 'error') {
+							logger.error(message, 'Cue');
+						} else if (level === 'warn') {
+							logger.warn(message, 'Cue');
+						} else if (level === 'debug') {
+							logger.debug(message, 'Cue');
+						} else {
+							logger.cue(message, 'Cue');
+						}
+					},
+					sshStore: createSshRemoteStoreAdapter(store),
+					agentConfigValues,
+				});
+
+				const historyEntry = recordCueHistoryEntry(result, {
 					id: storedSession.id,
 					name: storedSession.name,
 					toolType: storedSession.toolType,
 					cwd: projectRoot,
 					projectRoot,
 					autoRunFolderPath: storedSession.autoRunFolderPath,
-				},
-				subscription: {
-					name: subscriptionName,
-					event: event.type,
-					enabled: true,
-					prompt,
-				},
-				event,
-				promptPath: prompt,
-				toolType: storedSession.toolType,
-				projectRoot,
-				templateContext,
-				timeoutMs,
-				sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-				customPath: resolvedAgentPath,
-				customArgs: storedSession.customArgs,
-				customEnvVars: storedSession.customEnvVars,
-				customModel: storedSession.customModel,
-				customEffort: storedSession.customEffort,
-				onLog: (level, message) => {
-					if (level === 'error') {
-						logger.error(message, 'Cue');
-					} else if (level === 'warn') {
-						logger.warn(message, 'Cue');
-					} else if (level === 'debug') {
-						logger.debug(message, 'Cue');
-					} else {
-						logger.cue(message, 'Cue');
-					}
-				},
-				sshStore: createSshRemoteStoreAdapter(store),
-				agentConfigValues,
-			});
+				});
+				void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+				return result;
+			},
+			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
+			onLog: (_level, message, data) => {
+				logger.cue(message, 'Cue', data);
+				// Push activity updates to renderer
+				if (mainWindow && isWebContentsAvailable(mainWindow) && data) {
+					mainWindow.webContents.send('cue:activityUpdate', data);
+				}
+			},
+			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
+			onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
+			// Phase 01 — gate cue_events stats lineage writes on the
+			// `encoreFeatures.usageStats` flag. Read on every record so toggling
+			// the Encore flag at runtime takes effect without an app restart.
+			getUsageStatsEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return ef.usageStats === true;
+			},
+		});
 
-			const historyEntry = recordCueHistoryEntry(result, {
-				id: storedSession.id,
-				name: storedSession.name,
-				toolType: storedSession.toolType,
-				cwd: projectRoot,
-				projectRoot,
-				autoRunFolderPath: storedSession.autoRunFolderPath,
+		// Configure Cue telemetry submitter. Reads installationId / encore flags
+		// on every event so toggling Cue or usageStats at runtime takes effect
+		// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
+		// — both flags required.
+		configureCueTelemetry({
+			getInstallationId: () => store.get('installationId') as string | null,
+			getAppVersion: () => app.getVersion(),
+			getPlatform: () => process.platform,
+			isEncoreEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return ef.maestroCue === true && ef.usageStats === true;
+			},
+		});
+
+		logger.info('Core services initialized', 'Startup');
+
+		// Initialize history manager (handles migration from legacy format if needed)
+		logger.info('Initializing history manager', 'Startup');
+		const historyManager = getHistoryManager();
+		try {
+			await historyManager.initialize();
+			logger.info('History manager initialized', 'Startup');
+			// Start watching history directory for external changes (from CLI, etc.)
+			historyManager.startWatching((sessionId) => {
+				logger.debug(
+					`History file changed for session ${sessionId}, notifying renderer`,
+					'HistoryWatcher'
+				);
+				if (isWebContentsAvailable(mainWindow)) {
+					mainWindow.webContents.send('history:externalChange', sessionId);
+				}
 			});
-			void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
-			return result;
-		},
-		onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
-		onLog: (_level, message, data) => {
-			logger.cue(message, 'Cue', data);
-			// Push activity updates to renderer
-			if (mainWindow && isWebContentsAvailable(mainWindow) && data) {
-				mainWindow.webContents.send('cue:activityUpdate', data);
+		} catch (error) {
+			void captureException(error);
+			// Migration failed - log error but continue with app startup
+			// History will be unavailable but the app will still function
+			logger.error(`Failed to initialize history manager: ${error}`, 'Startup');
+			logger.warn('Continuing without history - history features will be unavailable', 'Startup');
+		}
+
+		// Initialize stats database for usage tracking
+		logger.info('Initializing stats database', 'Startup');
+		try {
+			initializeStatsDB();
+			logger.info('Stats database initialized', 'Startup');
+		} catch (error) {
+			void captureException(error);
+			// Stats initialization failed - log error but continue with app startup
+			// Stats will be unavailable but the app will still function
+			logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
+			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
+		}
+
+		// Set up IPC handlers
+		logger.debug('Setting up IPC handlers', 'Startup');
+		setupIpcHandlers();
+
+		// Set up process event listeners
+		logger.debug('Setting up process event listeners', 'Startup');
+		setupProcessListeners();
+
+		// Start Cue engine if the Encore Feature flag is enabled
+		const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
+		if (encoreFeatures.maestroCue && cueEngine) {
+			logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
+			try {
+				cueEngine.start('system-boot');
+			} catch (err) {
+				void captureException(err);
+				logger.error(
+					`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
+					'Startup'
+				);
 			}
-		},
-		onPreventSleep: (reason) => powerManager.addBlockReason(reason),
-		onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
-		// Phase 01 — gate cue_events stats lineage writes on the
-		// `encoreFeatures.usageStats` flag. Read on every record so toggling
-		// the Encore flag at runtime takes effect without an app restart.
-		getUsageStatsEnabled: () => {
-			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-			return ef.usageStats === true;
-		},
-	});
+		}
 
-	// Configure Cue telemetry submitter. Reads installationId / encore flags
-	// on every event so toggling Cue or usageStats at runtime takes effect
-	// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
-	// — both flags required.
-	configureCueTelemetry({
-		getInstallationId: () => store.get('installationId') as string | null,
-		getAppVersion: () => app.getVersion(),
-		getPlatform: () => process.platform,
-		isEncoreEnabled: () => {
-			const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-			return ef.maestroCue === true && ef.usageStats === true;
-		},
-	});
+		// Set custom application menu to prevent macOS from injecting native
+		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
+		// menu items into the default Window menu. Without this, those keyboard
+		// events are intercepted at the NSMenu level and never reach the renderer.
+		//
+		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
+		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
+		// the keystroke at the NSMenu level before it reaches the renderer. This
+		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
+		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
+		// hides) so the native Close menu item is unnecessary.
+		if (isMacOS()) {
+			const template: Electron.MenuItemConstructorOptions[] = [
+				{
+					// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
+					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
+					// quit role (as "Quit and Keep Windows"), and that keystroke sits
+					// one modifier away from Opt+Q (Maestro Cue), causing accidental
+					// quits. Click events from accelerators carry modifier flags, so
+					// we can detect Option held and ignore the keystroke entirely.
+					role: 'appMenu',
+					submenu: [
+						{ role: 'about' },
+						{ type: 'separator' },
+						{ role: 'services' },
+						{ type: 'separator' },
+						{ role: 'hide' },
+						{ role: 'hideOthers' },
+						{ role: 'unhide' },
+						{ type: 'separator' },
+						{
+							label: 'Quit Maestro',
+							accelerator: 'Cmd+Q',
+							click: (_item, _window, event) => {
+								if (event?.altKey) {
+									logger.info(
+										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
+										'Menu'
+									);
+									return;
+								}
+								app.quit();
+							},
+						},
+					],
+				},
+				{
+					// Custom Edit menu — equivalent to `role: 'editMenu'` minus
+					// `undo` / `redo`. Those built-in roles register Cmd+Z /
+					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
+					// keystroke at the OS layer before the renderer can see it
+					// (same trap as `role: 'close'` eating Cmd+W — see the note
+					// above the appMenu block). Removing them frees Cmd+Z for the
+					// image annotator's stroke-undo handler.
+					//
+					// Side effect: Chromium in Electron relies on the Edit > Undo
+					// menu role to deliver Cmd+Z to focused textareas/inputs on
+					// macOS, so without it native text-field undo silently does
+					// nothing. The renderer-side `useTextEditorUndo` hook
+					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
+					// that behavior by calling `document.execCommand('undo')` on
+					// text targets. The annotator's own Cmd+Z listener bails out
+					// for text targets, so the two paths don't conflict.
+					label: 'Edit',
+					submenu: [
+						{ role: 'cut' },
+						{ role: 'copy' },
+						{ role: 'paste' },
+						{ role: 'pasteAndMatchStyle' },
+						{ role: 'delete' },
+						{ type: 'separator' },
+						{ role: 'selectAll' },
+					],
+				},
+				{
+					label: 'Window',
+					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
+				},
+			];
+			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+		} else {
+			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
+			Menu.setApplicationMenu(null);
+		}
 
-	logger.info('Core services initialized', 'Startup');
+		// Create main window
+		logger.info('Creating main window', 'Startup');
+		createWindow();
 
-	// Initialize history manager (handles migration from legacy format if needed)
-	logger.info('Initializing history manager', 'Startup');
-	const historyManager = getHistoryManager();
-	try {
-		await historyManager.initialize();
-		logger.info('History manager initialized', 'Startup');
-		// Start watching history directory for external changes (from CLI, etc.)
-		historyManager.startWatching((sessionId) => {
-			logger.debug(
-				`History file changed for session ${sessionId}, notifying renderer`,
-				'HistoryWatcher'
-			);
-			if (isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('history:externalChange', sessionId);
+		// Flush any deep link URL that arrived before the window was ready (cold start)
+		flushPendingDeepLink(() => mainWindow);
+
+		// Note: History file watching is handled by HistoryManager.startWatching() above
+		// which uses the new per-session file format in the history/ directory
+
+		// Start CLI activity watcher (Phase 4 refactoring)
+		cliWatcher.start();
+
+		// CLI server was already started + discovery file published earlier in
+		// startup (see ensureCliServer call right after agentDetector init).
+		// Republish here too, since callbacks like getMainWindow are now wired
+		// to a real window and a stale file from a previous run shouldn't outlive
+		// our actual port/token.
+		await ensureCliServer(cliServerDeps);
+
+		// Start settings file watcher for external changes (e.g., maestro-cli settings set)
+		settingsWatcher.start();
+
+		app.on('activate', () => {
+			if (BrowserWindow.getAllWindows().length === 0) {
+				createWindow();
 			}
 		});
-	} catch (error) {
-		void captureException(error);
-		// Migration failed - log error but continue with app startup
-		// History will be unavailable but the app will still function
-		logger.error(`Failed to initialize history manager: ${error}`, 'Startup');
-		logger.warn('Continuing without history - history features will be unavailable', 'Startup');
-	}
 
-	// Initialize stats database for usage tracking
-	logger.info('Initializing stats database', 'Startup');
-	try {
-		initializeStatsDB();
-		logger.info('Stats database initialized', 'Startup');
-	} catch (error) {
-		void captureException(error);
-		// Stats initialization failed - log error but continue with app startup
-		// Stats will be unavailable but the app will still function
-		logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
-		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
-	}
-
-	// Set up IPC handlers
-	logger.debug('Setting up IPC handlers', 'Startup');
-	setupIpcHandlers();
-
-	// Set up process event listeners
-	logger.debug('Setting up process event listeners', 'Startup');
-	setupProcessListeners();
-
-	// Start Cue engine if the Encore Feature flag is enabled
-	const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
-	if (encoreFeatures.maestroCue && cueEngine) {
-		logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
-		try {
-			cueEngine.start('system-boot');
-		} catch (err) {
-			void captureException(err);
-			logger.error(
-				`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
-				'Startup'
-			);
-		}
-	}
-
-	// Set custom application menu to prevent macOS from injecting native
-	// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-	// menu items into the default Window menu. Without this, those keyboard
-	// events are intercepted at the NSMenu level and never reach the renderer.
-	//
-	// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-	// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-	// the keystroke at the NSMenu level before it reaches the renderer. This
-	// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-	// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-	// hides) so the native Close menu item is unnecessary.
-	if (isMacOS()) {
-		const template: Electron.MenuItemConstructorOptions[] = [
-			{
-				// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
-				// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-				// quit role (as "Quit and Keep Windows"), and that keystroke sits
-				// one modifier away from Opt+Q (Maestro Cue), causing accidental
-				// quits. Click events from accelerators carry modifier flags, so
-				// we can detect Option held and ignore the keystroke entirely.
-				role: 'appMenu',
-				submenu: [
-					{ role: 'about' },
-					{ type: 'separator' },
-					{ role: 'services' },
-					{ type: 'separator' },
-					{ role: 'hide' },
-					{ role: 'hideOthers' },
-					{ role: 'unhide' },
-					{ type: 'separator' },
-					{
-						label: 'Quit Maestro',
-						accelerator: 'Cmd+Q',
-						click: (_item, _window, event) => {
-							if (event?.altKey) {
-								logger.info(
-									'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-									'Menu'
-								);
-								return;
-							}
-							app.quit();
-						},
-					},
-				],
-			},
-			{
-				// Custom Edit menu — equivalent to `role: 'editMenu'` minus
-				// `undo` / `redo`. Those built-in roles register Cmd+Z /
-				// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-				// keystroke at the OS layer before the renderer can see it
-				// (same trap as `role: 'close'` eating Cmd+W — see the note
-				// above the appMenu block). Native text inputs still handle
-				// Cmd+Z internally via the AppKit responder chain, so removing
-				// the menu items has no effect on text-field undo or
-				// copy/paste; it frees Cmd+Z for the image annotator's
-				// stroke-undo handler.
-				label: 'Edit',
-				submenu: [
-					{ role: 'cut' },
-					{ role: 'copy' },
-					{ role: 'paste' },
-					{ role: 'pasteAndMatchStyle' },
-					{ role: 'delete' },
-					{ type: 'separator' },
-					{ role: 'selectAll' },
-				],
-			},
-			{
-				label: 'Window',
-				submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-			},
-		];
-		Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-	} else {
-		// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-		Menu.setApplicationMenu(null);
-	}
-
-	// Create main window
-	logger.info('Creating main window', 'Startup');
-	createWindow();
-
-	// Flush any deep link URL that arrived before the window was ready (cold start)
-	flushPendingDeepLink(() => mainWindow);
-
-	// Note: History file watching is handled by HistoryManager.startWatching() above
-	// which uses the new per-session file format in the history/ directory
-
-	// Start CLI activity watcher (Phase 4 refactoring)
-	cliWatcher.start();
-
-	// Auto-start CLI server for CLI IPC (writes discovery file for CLI to connect)
-	await ensureCliServer({
-		getWebServer: () => webServer,
-		setWebServer: (server) => {
-			webServer = server;
-		},
-		createWebServer,
-		settingsStore: store,
-	});
-
-	// Start settings file watcher for external changes (e.g., maestro-cli settings set)
-	settingsWatcher.start();
-
-	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0) {
-			createWindow();
-		}
-	});
-
-	// Listen for system resume (after sleep/suspend) and notify renderer
-	// This allows the renderer to refresh settings that may have been reset
-	powerMonitor.on('resume', () => {
-		logger.info('System resumed from sleep/suspend', 'PowerMonitor');
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('app:systemResume');
-		}
-		// Replay missed time-based Cue triggers and kick GitHub pollers so a
-		// laptop that's been asleep doesn't sit on stale subscriptions until
-		// the next scheduled tick. Idempotent against multiple resume events
-		// from the same wake (lid + display + monitor).
-		if (cueEngine?.isEnabled()) {
-			try {
-				cueEngine.reconcileAfterWake();
-			} catch (err) {
-				logger.error(`Cue reconcileAfterWake failed: ${err}`, 'PowerMonitor');
-				void captureException(err, { operation: 'cue.reconcileAfterWake' });
+		// Listen for system resume (after sleep/suspend) and notify renderer
+		// This allows the renderer to refresh settings that may have been reset
+		powerMonitor.on('resume', () => {
+			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
+			if (isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('app:systemResume');
 			}
-		}
+			// Replay missed time-based Cue triggers and kick GitHub pollers so a
+			// laptop that's been asleep doesn't sit on stale subscriptions until
+			// the next scheduled tick. Idempotent against multiple resume events
+			// from the same wake (lid + display + monitor).
+			if (cueEngine?.isEnabled()) {
+				try {
+					cueEngine.reconcileAfterWake();
+				} catch (err) {
+					logger.error(`Cue reconcileAfterWake failed: ${err}`, 'PowerMonitor');
+					void captureException(err, { operation: 'cue.reconcileAfterWake' });
+				}
+			}
+		});
+	})
+	.catch(async (err) => {
+		// Without this, an unhandled rejection anywhere in the long startup chain
+		// silently aborts initialization — historically the cause of the missing
+		// CLI discovery file. Log loudly and report to Sentry so we can actually
+		// diagnose future regressions instead of guessing.
+		logger.error(`Fatal error during app startup: ${err}`, 'Startup');
+		await captureException(err instanceof Error ? err : new Error(String(err)), {
+			operation: 'startup:whenReady',
+		});
 	});
-});
 
 app.on('window-all-closed', () => {
 	if (!isMacOS()) {
@@ -996,6 +1033,9 @@ quitHandler = createQuitHandler({
 	closeStatsDB,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
+		// Tear down the discovery-file watchdog so it doesn't try to rewrite
+		// the file after the quit handler has just deleted it.
+		stopCliDiscoveryWatchdog();
 		// Stop Cue engine on app quit
 		if (cueEngine?.isEnabled()) {
 			cueEngine.stop();

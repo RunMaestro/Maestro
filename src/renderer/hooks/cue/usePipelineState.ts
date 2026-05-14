@@ -81,8 +81,6 @@ export interface UsePipelineStateReturn {
 	savedStateRef: React.MutableRefObject<string>;
 	cueSettings: CueSettings;
 	setCueSettings: React.Dispatch<React.SetStateAction<CueSettings>>;
-	showSettings: boolean;
-	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
 	runningPipelineIds: Set<string>;
 	/**
 	 * Per-pipeline set of `sessionName`s whose agents are currently executing a
@@ -183,8 +181,7 @@ export function usePipelineState({
 	const isAllPipelinesView = pipelineState.selectedPipelineId === null;
 
 	// ── Extracted single-responsibility hooks ──────────────────────────────
-	const { cueSettings, setCueSettings, settingsLoaded, showSettings, setShowSettings } =
-		useCueSettings();
+	const { cueSettings, setCueSettings, settingsLoaded } = useCueSettings();
 
 	const { persistLayout, pendingSavedViewportRef, pipelinesLoaded } = usePipelineLayout({
 		reactFlowInstance,
@@ -401,8 +398,6 @@ export function usePipelineState({
 		savedStateRef,
 		cueSettings,
 		setCueSettings,
-		showSettings,
-		setShowSettings,
 		runningPipelineIds,
 		runningAgentsByPipeline,
 		runningSubscriptionsByPipeline,

@@ -52,6 +52,7 @@ import {
 	useKeyboardShortcutHelpers,
 	useKeyboardNavigation,
 	useMainKeyboardHandler,
+	useTextEditorUndo,
 	// Agent
 	useAgentSessionManagement,
 	useAgentExecution,
@@ -1439,6 +1440,7 @@ function MaestroConsoleInner() {
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
 		handleWizardComplete,
+		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
 		handleToggleWizardShowThinking,
 		handleWizardLaunchSession,
@@ -1700,6 +1702,11 @@ function MaestroConsoleInner() {
 	// --- MAIN KEYBOARD HANDLER ---
 	// Extracted hook for main keyboard event listener (empty deps, uses ref pattern)
 	const { keyboardHandlerRef, showSessionJumpNumbers } = useMainKeyboardHandler();
+
+	// Cmd+Z / Cmd+Shift+Z fallback for text inputs (Edit menu omits the undo
+	// role so the image annotator can claim Cmd+Z; this restores native
+	// textarea/input undo in Electron on macOS).
+	useTextEditorUndo();
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
@@ -2480,6 +2487,7 @@ function MaestroConsoleInner() {
 
 		// Complex wizard handlers
 		onWizardComplete: handleWizardComplete,
+		onWizardCompleteAndStartAutoRun: handleWizardCompleteAndStartAutoRun,
 		onWizardLetsGo: handleWizardLetsGo,
 		onWizardRetry: retryInlineWizardMessage,
 		onWizardClearError: clearInlineWizardError,

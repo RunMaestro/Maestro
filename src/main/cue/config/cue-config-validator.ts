@@ -368,20 +368,28 @@ function validateEventSpecificFields(
 		}
 		// For fan-in chains, source_sub should align positionally with
 		// source_session so each upstream source maps to its exact upstream sub.
+		// Skip when either side is null/undefined — the required-field check
+		// above already errored on absent source_session, and re-emitting a
+		// misleading "must be a string when source_session is a string" here
+		// just adds noise. `!= null` intentionally treats `null` and `undefined`
+		// the same: a YAML `source_session: ~` or `source_session: null` parses
+		// to null but is semantically the same "absent" case.
 		const sourceSession = sub.source_session;
 		const sourceSub = sub.source_sub;
-		const sourceSessionIsArray = Array.isArray(sourceSession);
-		const sourceSubIsArray = Array.isArray(sourceSub);
-		if (Array.isArray(sourceSession) && Array.isArray(sourceSub)) {
-			if (sourceSession.length !== sourceSub.length) {
-				errors.push(
-					`${prefix}: "source_sub" length (${sourceSub.length}) must match "source_session" length (${sourceSession.length})`
-				);
+		if (sourceSession != null && sourceSub != null) {
+			const sourceSessionIsArray = Array.isArray(sourceSession);
+			const sourceSubIsArray = Array.isArray(sourceSub);
+			if (sourceSessionIsArray && sourceSubIsArray) {
+				if (sourceSession.length !== sourceSub.length) {
+					errors.push(
+						`${prefix}: "source_sub" length (${sourceSub.length}) must match "source_session" length (${sourceSession.length})`
+					);
+				}
+			} else if (sourceSessionIsArray && typeof sourceSub === 'string') {
+				errors.push(`${prefix}: "source_sub" must be an array when "source_session" is an array`);
+			} else if (!sourceSessionIsArray && sourceSubIsArray) {
+				errors.push(`${prefix}: "source_sub" must be a string when "source_session" is a string`);
 			}
-		} else if (sourceSessionIsArray && typeof sourceSub === 'string') {
-			errors.push(`${prefix}: "source_sub" must be an array when "source_session" is an array`);
-		} else if (!sourceSessionIsArray && sourceSubIsArray) {
-			errors.push(`${prefix}: "source_sub" must be a string when "source_session" is a string`);
 		}
 	} else if (event === 'task.pending') {
 		if (!sub.watch || typeof sub.watch !== 'string') {

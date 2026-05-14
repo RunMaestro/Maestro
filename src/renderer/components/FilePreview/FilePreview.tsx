@@ -6,6 +6,8 @@ import React, {
 	useCallback,
 	forwardRef,
 	useImperativeHandle,
+	lazy,
+	Suspense,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -52,8 +54,11 @@ import {
 	countMarkdownTasks,
 	extractHeadings,
 	isReadableTextPreview,
+	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
+	pickPreviewTier,
+	scanLineStats,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -64,6 +69,21 @@ import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
 import { HighlightedCodeEditor } from './HighlightedCodeEditor';
 import { logger } from '../../utils/logger';
+
+// Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
+// means small-file previews don't pay the ~135 KB cost of markdown-it +
+// react-virtuoso + DOMPurify until a large file actually triggers it.
+const MarkdownPreviewFast = lazy(() => import('./markdownFast'));
+
+// Lazy-loaded Fast tier preview for plain text and code files. Same lazy
+// strategy as the markdown Fast tier — small text files don't pay for
+// TanStack Virtual + Shiki until a large file triggers the Fast tier.
+const TextPreviewFast = lazy(() => import('./textFast'));
+
+// Lazy-loaded Giant tier preview (CodeMirror 6). Used for multi-MB / multi-
+// million-line files where even the Fast tiers would struggle to parse +
+// render. CM6 is ~300 KB gz so we keep it well off the main bundle.
+const GiantPreview = lazy(() => import('./giantPreview'));
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -102,6 +122,10 @@ export const FilePreview = React.memo(
 			isTabMode,
 			lastModified,
 			onReloadFile,
+			previewTierOverride,
+			onPreviewTierChange,
+			htmlRenderMode = false,
+			onHtmlRenderModeChange,
 		},
 		ref
 	) {
@@ -140,6 +164,15 @@ export const FilePreview = React.memo(
 		const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
+		// Imperative handle for the lazy-loaded Fast tier preview. Used by the
+		// TOC to scroll to a heading via virtuoso.scrollToIndex when in Fast tier.
+		const markdownFastRef = useRef<import('./markdownFast').MarkdownPreviewFastHandle>(null);
+		// Imperative handle for the lazy-loaded text/code Fast tier preview.
+		// Cmd+F search delegates to this handle when in Fast tier non-markdown.
+		const textFastRef = useRef<import('./textFast').TextPreviewFastHandle>(null);
+		// Imperative handle for the lazy-loaded Giant tier preview. Cmd+F in
+		// Giant tier opens CodeMirror's native search panel via this handle.
+		const giantRef = useRef<import('./giantPreview').GiantPreviewHandle>(null);
 
 		// Reset full content view when file changes
 		useEffect(() => {
@@ -201,6 +234,7 @@ export const FilePreview = React.memo(
 		// Compute derived values - must be before any early returns but after hooks
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
+		const isHtml = file ? /\.html?$/i.test(file.name) : false;
 		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const isJsonl = language === 'jsonl';
@@ -226,6 +260,27 @@ export const FilePreview = React.memo(
 			return file.content.length > LARGE_FILE_TOKEN_SKIP_THRESHOLD;
 		}, [file?.content]);
 
+		// Choose preview tier based on file size + line shape. Applies to all
+		// text-like content (markdown, plain text, source code) — binary and
+		// image files always stay in Rich. Tier is memoized on path so
+		// switching tabs and coming back doesn't re-decide.
+		//
+		// `scanLineStats` returns both line count and longest single line in
+		// one pass; the long-line signal pushes pathological files (e.g. a
+		// 488 KB single line) past Fast straight into Giant, where CM6's
+		// `lineWrapping` extension keeps the renderer responsive.
+		const autoTier = useMemo(() => {
+			if (!file?.content || isImage || isBinary) return 'rich' as const;
+			const bytes = file.content.length;
+			const { lines, maxLineLength } = scanLineStats(file.content);
+			return pickPreviewTier(bytes, lines, maxLineLength);
+		}, [file?.path, file?.content, isImage, isBinary]);
+
+		// Effective tier respects the user's per-tab override, falling back to
+		// the auto-picked tier. The PreviewTierChip in the header lets the user
+		// flip between modes; selection is persisted via onPreviewTierChange.
+		const previewTier = previewTierOverride ?? autoTier;
+
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
 			if (!file?.content) return '';
@@ -240,6 +295,38 @@ export const FilePreview = React.memo(
 			}
 			return file.content;
 		}, [file?.content, isMarkdown, isImage, isBinary, showFullContent]);
+
+		// Tier-aware search adapter, memoized so its identity only changes when
+		// the routing actually flips. useFilePreviewSearch lists searchAdapter
+		// in its effect dependency array, so an unstable identity would re-run
+		// the effect on every render — refs are stable so they don't belong in
+		// the deps even though the callbacks close over them.
+		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
+		//   Fast text/code → textFast handle (page-virtualized hit map)
+		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
+		const searchAdapter = useMemo(() => {
+			if (previewTier === 'fast' && isMarkdown) {
+				return {
+					findHits: (q: string) => markdownFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (m: { blockIndex: number }) => markdownFastRef.current?.scrollToMatch(m),
+				};
+			}
+			if (previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary) {
+				return {
+					findHits: (q: string) => textFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (m: { blockIndex: number }) => textFastRef.current?.scrollToMatch(m),
+				};
+			}
+			if (previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary) {
+				return {
+					findHits: () => [],
+					scrollToMatch: () => {
+						/* CM6 owns scrolling */
+					},
+				};
+			}
+			return undefined;
+		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary]);
 
 		// Search state and effects (code highlighting, markdown CSS Highlight API, edit textarea)
 		const {
@@ -273,6 +360,7 @@ export const FilePreview = React.memo(
 			displayedContentLength: displayContent.length,
 			initialSearchQuery,
 			onSearchQueryChange,
+			searchAdapter,
 		});
 
 		// Bionify reading mode follows the global setting; disabled while search highlights are active.
@@ -853,6 +941,14 @@ export const FilePreview = React.memo(
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				e.stopPropagation();
+				// Giant tier: hand off to CodeMirror's native search panel.
+				// CM6 owns its own panel UI; layering the in-app search bar on
+				// top would just duplicate the count display while CM6 does the
+				// real work.
+				if (previewTier === 'giant' && giantRef.current) {
+					giantRef.current.openSearch();
+					return;
+				}
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
 			} else if (e.key === 's' && (e.metaKey || e.ctrlKey) && isEditableText && markdownEditMode) {
@@ -1012,6 +1108,20 @@ export const FilePreview = React.memo(
 					copyPathToClipboard={copyPathToClipboard}
 					headerBtnClass={headerBtnClass}
 					headerIconClass={headerIconClass}
+					isHtml={isHtml}
+					htmlRenderMode={htmlRenderMode}
+					setHtmlRenderMode={(v) => onHtmlRenderModeChange?.(v)}
+					showTierChip={
+						!markdownEditMode &&
+						!isImage &&
+						!isBinary &&
+						!(isHtml && htmlRenderMode) &&
+						(isMarkdown || isReadableText || isCodeFile(language)) &&
+						!!file
+					}
+					autoTier={autoTier}
+					previewTierOverride={previewTierOverride}
+					onPreviewTierChange={onPreviewTierChange}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1395,6 +1505,26 @@ export const FilePreview = React.memo(
 								}
 							}}
 						/>
+					) : isHtml && htmlRenderMode && !markdownEditMode ? (
+						// Rendered HTML preview. Feeds file.content into an iframe via
+						// srcDoc so local and SSH-remote files work the same way — the
+						// bytes are already in memory. Sandbox lets scripts/popups/forms
+						// run but withholds same-origin so the page cannot reach the host
+						// renderer.
+						<iframe
+							title={file.name}
+							srcDoc={file.content}
+							sandbox="allow-scripts allow-popups allow-forms"
+							referrerPolicy="no-referrer"
+							data-testid="html-render-iframe"
+							style={{
+								width: '100%',
+								height: '100%',
+								minHeight: '60vh',
+								border: 'none',
+								backgroundColor: '#fff',
+							}}
+						/>
 					) : isCsv && !markdownEditMode ? (
 						<CsvTableRenderer
 							content={file.content}
@@ -1413,6 +1543,64 @@ export const FilePreview = React.memo(
 							onMatchCount={searchMode === 'text' ? setMatchCount : undefined}
 							onJqError={setJqError}
 						/>
+					) : previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading giant preview…
+								</div>
+							}
+						>
+							<GiantPreview
+								ref={giantRef}
+								content={file.content}
+								language={language}
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
+					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<MarkdownPreviewFast
+								ref={markdownFastRef}
+								content={file.content}
+								theme={theme}
+								markdownContainerRef={markdownContainerRef}
+								fileTreeIndices={fileTreeIndices}
+								cwd={cwd}
+								homeDir={homeDir}
+								filePath={file.path}
+								onFileClick={onFileClick}
+								onExternalLinkClick={(href, opts) => {
+									if (/^file:\/\//.test(href)) {
+										void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
+										return;
+									}
+									if (/^https?:\/\/|^mailto:/.test(href)) {
+										openUrl(href, opts);
+									}
+								}}
+							/>
+						</Suspense>
 					) : isMarkdown ? (
 						<div
 							ref={markdownContainerRef}
@@ -1452,6 +1640,29 @@ export const FilePreview = React.memo(
 								{file.content}
 							</ReactMarkdown>
 						</div>
+					) : isReadableText && previewTier === 'fast' && !markdownEditMode ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<TextPreviewFast
+								ref={textFastRef}
+								content={file.content}
+								language="text"
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
 						<div>
 							{/* Large file truncation banner (readable text) */}
@@ -1495,6 +1706,29 @@ export const FilePreview = React.memo(
 								{displayContent}
 							</BionifyTextBlock>
 						</div>
+					) : previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary ? (
+						<Suspense
+							fallback={
+								<div
+									style={{
+										padding: '24px',
+										color: theme.colors.textDim,
+										fontSize: '13px',
+									}}
+								>
+									Loading fast preview…
+								</div>
+							}
+						>
+							<TextPreviewFast
+								ref={textFastRef}
+								content={file.content}
+								language={language}
+								theme={theme}
+								containerRef={markdownContainerRef}
+								filePath={file.path}
+							/>
+						</Suspense>
 					) : (
 						<div ref={codeContainerRef}>
 							{/* Large file truncation banner */}
@@ -1556,6 +1790,11 @@ export const FilePreview = React.memo(
 						tocOverlayRef={tocOverlayRef}
 						isMarkdown={isMarkdown}
 						markdownEditMode={markdownEditMode}
+						onSelectHeading={
+							previewTier === 'fast'
+								? (slug) => markdownFastRef.current?.scrollToHeading(slug) ?? false
+								: undefined
+						}
 					/>
 				</div>
 

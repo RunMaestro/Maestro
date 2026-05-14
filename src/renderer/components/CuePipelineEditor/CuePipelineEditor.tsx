@@ -158,13 +158,8 @@ function CuePipelineEditorInner({
 		setPipelineState,
 		isAllPipelinesView,
 		isDirty,
-		setIsDirty,
 		saveStatus,
 		validationErrors,
-		cueSettings,
-		setCueSettings,
-		showSettings,
-		setShowSettings,
 		runningPipelineIds,
 		runningAgentsByPipeline,
 		runningSubscriptionsByPipeline,
@@ -445,8 +440,6 @@ function CuePipelineEditorInner({
 				setTriggerDrawerOpen={setTriggerDrawerOpen}
 				agentDrawerOpen={agentDrawerOpen}
 				setAgentDrawerOpen={setAgentDrawerOpen}
-				showSettings={showSettings}
-				setShowSettings={setShowSettings}
 				pipelines={pipelineState.pipelines}
 				selectedPipelineId={pipelineState.selectedPipelineId}
 				selectPipeline={selectPipeline}
@@ -491,11 +484,6 @@ function CuePipelineEditorInner({
 				selectedPipelineId={pipelineState.selectedPipelineId}
 				pipelines={pipelineState.pipelines}
 				selectPipeline={selectPipeline}
-				showSettings={showSettings}
-				cueSettings={cueSettings}
-				setCueSettings={setCueSettings}
-				setShowSettings={setShowSettings}
-				setIsDirty={setIsDirty}
 				selectedNode={selectedNode}
 				selectedEdge={selectedEdge}
 				selectedNodeHasOutgoingEdge={selectedNodeHasOutgoingEdge}

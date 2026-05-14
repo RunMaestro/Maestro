@@ -27,7 +27,11 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import type { SettingsStoreInterface } from '../../stores/types';
-import { writeCliServerInfo, deleteCliServerInfo } from '../../../shared/cli-server-discovery';
+import {
+	writeCliServerInfo,
+	deleteCliServerInfo,
+	readCliServerInfo,
+} from '../../../shared/cli-server-discovery';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -64,38 +68,144 @@ function refreshCliDiscoveryFile(port: number, token: string): void {
 }
 
 /**
- * Ensure the CLI server is running and write the discovery file.
+ * Verify the discovery file on disk matches the running server. Used by
+ * `ensureCliServer` and the watchdog to detect silent write failures or
+ * external interference (deleted file, stale pid, etc.).
+ */
+function discoveryFileMatches(port: number, token: string): boolean {
+	const info = readCliServerInfo();
+	return info !== null && info.port === port && info.token === token && info.pid === process.pid;
+}
+
+/** Number of times `ensureCliServer` will retry on failure. */
+const ENSURE_CLI_MAX_ATTEMPTS = 3;
+
+/**
+ * Ensure the CLI server is running and the discovery file is published.
  *
  * Called during app initialization to make the web server always available
  * for CLI IPC connections. The server binds to 0.0.0.0 — this is intentional
  * for LAN accessibility; the UUID security token prevents unauthorized access.
+ *
+ * Retries on any failure (port collision, transient fs error, etc.) and
+ * verifies the discovery file is actually present on disk after each attempt.
+ * Historically this could fail silently when a later `whenReady` step threw
+ * before we got here, leaving the CLI unable to connect until the user
+ * manually toggled Live Mode.
  */
-export async function ensureCliServer(deps: WebHandlerDependencies): Promise<void> {
+export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boolean> {
 	const { getWebServer, setWebServer, createWebServer } = deps;
 
-	try {
-		let webServer = getWebServer();
+	for (let attempt = 1; attempt <= ENSURE_CLI_MAX_ATTEMPTS; attempt++) {
+		try {
+			let webServer = getWebServer();
 
-		// Create web server if it doesn't exist
-		if (!webServer) {
-			logger.info('Creating CLI server', 'CliServer');
-			webServer = createWebServer();
-			setWebServer(webServer);
+			if (!webServer) {
+				logger.info(`Creating CLI server (attempt ${attempt})`, 'CliServer');
+				webServer = createWebServer();
+				setWebServer(webServer);
+			}
+
+			if (!webServer.isActive()) {
+				logger.info(`Starting CLI server (attempt ${attempt})`, 'CliServer');
+				const { port, token } = await webServer.start();
+				logger.info(`CLI server running on port ${port}`, 'CliServer');
+				refreshCliDiscoveryFile(port, token);
+			} else {
+				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
+			}
+
+			if (discoveryFileMatches(webServer.getPort(), webServer.getSecurityToken())) {
+				if (attempt > 1) {
+					logger.info(`CLI discovery file confirmed after ${attempt} attempt(s)`, 'CliServer');
+				}
+				return true;
+			}
+
+			logger.warn(
+				`CLI discovery file missing/mismatched after write (attempt ${attempt}); will retry`,
+				'CliServer'
+			);
+		} catch (error: any) {
+			logger.error(
+				`Failed to start CLI server (attempt ${attempt}): ${error?.message ?? error}`,
+				'CliServer'
+			);
+			// Tear down the (potentially half-initialized) server so the next
+			// attempt creates a fresh instance instead of reusing a broken one.
+			const existing = getWebServer();
+			if (existing) {
+				try {
+					await existing.stop();
+				} catch {
+					// Best-effort cleanup — the next attempt will recreate the server.
+				}
+				setWebServer(null);
+			}
 		}
 
-		// Start if not already running
-		if (!webServer.isActive()) {
-			logger.info('Starting CLI server', 'CliServer');
-			const { port, token } = await webServer.start();
-			logger.info(`CLI server running on port ${port}`, 'CliServer');
+		if (attempt < ENSURE_CLI_MAX_ATTEMPTS) {
+			await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+		}
+	}
+
+	logger.error(
+		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts — maestro-cli will be unavailable until Live Mode is toggled`,
+		'CliServer'
+	);
+	return false;
+}
+
+/** Active watchdog timer, if any. */
+let cliDiscoveryWatchdog: ReturnType<typeof setInterval> | null = null;
+
+/** Default interval between watchdog checks. */
+const CLI_WATCHDOG_INTERVAL_MS = 30_000;
+
+/**
+ * Start a periodic watchdog that re-publishes the CLI discovery file whenever
+ * it goes missing or drifts out of sync with the running server. Defense in
+ * depth for cases the main-path retry can't catch (file deleted externally,
+ * disk hiccup after a successful write, etc.).
+ *
+ * Safe to call multiple times — the previous timer is cleared first. Pass
+ * `intervalMs` only for tests; production uses the default 30s interval.
+ */
+export function startCliDiscoveryWatchdog(
+	deps: WebHandlerDependencies,
+	intervalMs: number = CLI_WATCHDOG_INTERVAL_MS
+): void {
+	stopCliDiscoveryWatchdog();
+	cliDiscoveryWatchdog = setInterval(() => {
+		const webServer = deps.getWebServer();
+		if (!webServer || !webServer.isActive()) {
+			return;
+		}
+		const port = webServer.getPort();
+		const token = webServer.getSecurityToken();
+		if (discoveryFileMatches(port, token)) {
+			return;
+		}
+		logger.warn('CLI discovery file is missing or stale — watchdog republishing', 'CliServer');
+		try {
 			refreshCliDiscoveryFile(port, token);
-		} else {
-			// Server already running — still write discovery file in case it's stale
-			refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
+		} catch (err: any) {
+			logger.error(
+				`Watchdog failed to refresh CLI discovery file: ${err?.message ?? err}`,
+				'CliServer'
+			);
 		}
-	} catch (error: any) {
-		logger.error(`Failed to start CLI server: ${error.message}`, 'CliServer');
-		// Non-fatal: app continues without CLI IPC
+	}, intervalMs);
+	// Don't keep the event loop alive just for the watchdog — Electron's
+	// lifecycle owns process exit and we don't want this timer to delay quit.
+	cliDiscoveryWatchdog.unref?.();
+}
+
+/** Stop the discovery-file watchdog (called on app quit). */
+export function stopCliDiscoveryWatchdog(): void {
+	if (cliDiscoveryWatchdog) {
+		clearInterval(cliDiscoveryWatchdog);
+		cliDiscoveryWatchdog = null;
 	}
 }
 

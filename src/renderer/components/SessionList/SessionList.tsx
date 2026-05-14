@@ -36,8 +36,10 @@ import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { WizardIndicator } from './WizardIndicator';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -153,6 +155,44 @@ function SessionListInner(props: SessionListProps) {
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+
+	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
+	// render the wand glyph on agent rows AND on the group header / Bookmarks
+	// header for the group(s) those agents live in.
+	const { wizardActiveSessions } = useInlineWizardContext();
+
+	// Roll wizard activity up to the container level (group + bookmarks). For
+	// each session running the wizard, resolve to its parent if it's a worktree
+	// child (worktree children inherit groupId/bookmarked but are filtered out
+	// of `sortedGroupSessionsById` / `bookmarkedSessions`), then bucket by group
+	// and bookmark flag. `null` groupId = ungrouped.
+	const wizardRollup = useMemo(() => {
+		const groups = new Map<string | null, { isGeneratingDocs: boolean }>();
+		let bookmarkActive = false;
+		let bookmarkGenerating = false;
+		if (wizardActiveSessions.size === 0) {
+			return { groups, bookmarkActive, bookmarkGenerating };
+		}
+		const sessionById = new Map(sessions.map((s) => [s.id, s] as const));
+		for (const [sessionId, info] of wizardActiveSessions) {
+			let s = sessionById.get(sessionId);
+			if (!s) continue;
+			if (s.parentSessionId) {
+				const parent = sessionById.get(s.parentSessionId);
+				if (parent) s = parent;
+			}
+			const key = s.groupId ?? null;
+			const existing = groups.get(key);
+			groups.set(key, {
+				isGeneratingDocs: (existing?.isGeneratingDocs ?? false) || info.isGeneratingDocs,
+			});
+			if (s.bookmarked) {
+				bookmarkActive = true;
+				if (info.isGeneratingDocs) bookmarkGenerating = true;
+			}
+		}
+		return { groups, bookmarkActive, bookmarkGenerating };
+	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
 	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
@@ -608,6 +648,8 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					wizardActive={wizardActiveSessions.has(session.id)}
+					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
@@ -659,6 +701,8 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
+										wizardActive={wizardActiveSessions.has(child.id)}
+										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -969,6 +1013,10 @@ function SessionListInner(props: SessionListProps) {
 									)}
 									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
 									<span>Bookmarks</span>
+									<WizardIndicator
+										active={wizardRollup.bookmarkActive}
+										generatingDocs={wizardRollup.bookmarkGenerating}
+									/>
 								</div>
 							</button>
 
@@ -1068,6 +1116,10 @@ function SessionListInner(props: SessionListProps) {
 										) : (
 											<span onDoubleClick={() => startRenamingGroup(group.id)}>{group.name}</span>
 										)}
+										<WizardIndicator
+											active={wizardRollup.groups.has(group.id)}
+											generatingDocs={!!wizardRollup.groups.get(group.id)?.isGeneratingDocs}
+										/>
 									</div>
 									{/* Delete button for empty groups */}
 									{groupSessions.length === 0 && (
@@ -1191,6 +1243,10 @@ function SessionListInner(props: SessionListProps) {
 									)}
 									<Folder className="w-3.5 h-3.5" />
 									<span>Ungrouped Agents</span>
+									<WizardIndicator
+										active={wizardRollup.groups.has(null)}
+										generatingDocs={!!wizardRollup.groups.get(null)?.isGeneratingDocs}
+									/>
 								</div>
 								{!showUnreadAgentsOnly && (
 									<button

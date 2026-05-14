@@ -519,7 +519,7 @@ export class CallbackRegistry {
 			autoScroll: true,
 			notificationsEnabled: true,
 			audioFeedbackEnabled: false,
-			colorBlindMode: 'false',
+			colorBlindMode: 'none',
 			conductorProfile: '',
 			maxOutputLines: null,
 			shortcuts: {},

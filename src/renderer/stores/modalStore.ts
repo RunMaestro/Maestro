@@ -174,6 +174,12 @@ export interface KeyboardMasteryData {
 	level: number;
 }
 
+/** Batch Runner modal data — used to pre-seed the doc list when opened programmatically (e.g. from the inline wizard's "Start Auto Run" button). */
+export interface BatchRunnerModalData {
+	/** Document filenames (without `.md`) to pre-populate the run list with. When set, overrides the default `[currentDocument]` initialization. */
+	presetDocuments?: string[];
+}
+
 // ============================================================================
 // Modal ID Registry
 // ============================================================================
@@ -279,6 +285,7 @@ export interface ModalDataMap {
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
+	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	deleteAgent: DeleteAgentModalData;
@@ -736,7 +743,9 @@ export function getModalActions() {
 
 		// Batch Runner Modal
 		setBatchRunnerModalOpen: (open: boolean) =>
-			open ? openModal('batchRunner') : closeModal('batchRunner'),
+			open ? openModal('batchRunner', {}) : closeModal('batchRunner'),
+		openBatchRunnerWithPresets: (presetDocuments: string[]) =>
+			openModal('batchRunner', { presetDocuments }),
 
 		// Auto Run Setup Modal
 		setAutoRunSetupModalOpen: (open: boolean) =>

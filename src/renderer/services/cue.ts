@@ -26,6 +26,14 @@ export const cueService = {
 		});
 	},
 
+	async saveSettings(settings: CueSettings): Promise<{ writtenRoots: string[] }> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.saveSettings(settings),
+			errorContext: 'Cue saveSettings',
+			rethrow: true,
+		});
+	},
+
 	async getStatus(): Promise<CueSessionStatus[]> {
 		return createIpcMethod({
 			call: () => window.maestro.cue.getStatus(),

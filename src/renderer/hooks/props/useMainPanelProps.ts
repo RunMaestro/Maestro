@@ -296,6 +296,7 @@ export interface UseMainPanelPropsDeps {
 
 	// Complex wizard handlers (passed through from App.tsx)
 	onWizardComplete?: () => void;
+	onWizardCompleteAndStartAutoRun?: () => void;
 	onWizardLetsGo?: () => void;
 	onWizardRetry?: () => void;
 	onWizardClearError?: () => void;
@@ -512,6 +513,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onWizardCancelGeneration: deps.endInlineWizard,
 			// Complex wizard handlers (passed through from App.tsx)
 			onWizardComplete: deps.onWizardComplete,
+			onWizardCompleteAndStartAutoRun: deps.onWizardCompleteAndStartAutoRun,
 			onWizardLetsGo: deps.onWizardLetsGo,
 			onWizardRetry: deps.onWizardRetry,
 			onWizardClearError: deps.onWizardClearError,
@@ -688,6 +690,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.endInlineWizard,
 			// Complex wizard handlers
 			deps.onWizardComplete,
+			deps.onWizardCompleteAndStartAutoRun,
 			deps.onWizardLetsGo,
 			deps.onWizardRetry,
 			deps.onWizardClearError,

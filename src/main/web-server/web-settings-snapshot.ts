@@ -45,7 +45,7 @@ export function buildWebSettingsSnapshot(settingsStore: SettingsStoreInterface):
 		autoScroll: true,
 		notificationsEnabled: settingsStore.get('osNotificationsEnabled', true) as boolean,
 		audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
-		colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
+		colorBlindMode: settingsStore.get('colorBlindMode', 'none') as string,
 		conductorProfile: settingsStore.get('conductorProfile', '') as string,
 		maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
 		shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,

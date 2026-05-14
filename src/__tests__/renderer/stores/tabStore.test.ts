@@ -613,6 +613,31 @@ describe('tabStore', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.filePreviewTabs[0].editContent).toBeUndefined();
 		});
+
+		it('should set file tab html render mode', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			useTabStore.getState().setFileTabHtmlRenderMode('file-1', true);
+			let session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].htmlRenderMode).toBe(true);
+
+			useTabStore.getState().setFileTabHtmlRenderMode('file-1', false);
+			session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].htmlRenderMode).toBe(false);
+		});
+
+		it('setFileTabHtmlRenderMode is a no-op for non-existent file tab', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			useTabStore.getState().setFileTabHtmlRenderMode('non-existent', true);
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.filePreviewTabs[0].htmlRenderMode).toBeUndefined();
+		});
 	});
 
 	// ========================================================================

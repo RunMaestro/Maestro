@@ -31,6 +31,111 @@ export const LARGE_FILE_TOKEN_SKIP_THRESHOLD = 1024 * 1024; // 1MB
 /** Files larger than this will have content truncated for syntax highlighting */
 export const LARGE_FILE_PREVIEW_LIMIT = 100 * 1024; // 100KB
 
+// ─── Preview Tier Thresholds (markdown perf) ──────────────────────────────────
+//
+// Three-tier preview strategy for markdown / text / code:
+//   - Rich  : current react-markdown pipeline; full feature parity. Default for small files.
+//   - Fast  : markdown-it + DOMPurify + react-virtuoso block virtualization. Dynamically imported.
+//   - Giant : CodeMirror 6 read-only viewer for multi-MB / multi-million-line files. Phase 4.
+//
+// The Fast tier handles the user-reported 300k-line markdown case. Tier picked once
+// per file open (memoized on path); a header chip lets users escalate/de-escalate.
+
+/** Bytes above this route to Fast tier instead of Rich. */
+export const FAST_TIER_BYTES = 256 * 1024; // 256KB
+
+/** Lines above this route to Fast tier instead of Rich (catches dense narrow content). */
+export const FAST_TIER_LINES = 5_000;
+
+/**
+ * Bytes above this route to Giant tier (CodeMirror 6) instead of Fast.
+ *
+ * Bumped from the original plan's 4 MB to 8 MB so the Fast tier still owns
+ * the common "huge markdown" case (e.g. the user-reported 300k-line / ~15 MB
+ * file would otherwise lose rendered tables to CM6's source view). Giant
+ * kicks in only when markdown-it parse becomes the dominant latency — past
+ * ~8 MB, parse routinely exceeds 2 s on a modern Mac.
+ */
+export const GIANT_TIER_BYTES = 8 * 1024 * 1024; // 8MB
+
+/** Lines above this route to Giant tier. */
+export const GIANT_TIER_LINES = 500_000;
+
+/**
+ * Maximum length of any single line that the Fast tier can still render
+ * comfortably. Above this, the file is routed straight to Giant because the
+ * Fast tier renders each page with `white-space: pre`, and a multi-million-px
+ * wide div trips Chromium's wide-layer paths and pegs the main thread for
+ * tens of seconds (observed on a 488 KB single-line file).
+ *
+ * CodeMirror 6 handles arbitrary line widths via its `lineWrapping` extension,
+ * which is why escalation is the right answer rather than CSS workarounds in
+ * the Fast tier (`pre-wrap` + `overflow-wrap: anywhere` break the page-height
+ * model since one logical line can balloon to thousands of visual lines).
+ */
+export const LINE_LENGTH_GIANT_THRESHOLD = 10_000;
+
+export type PreviewTier = 'rich' | 'fast' | 'giant';
+
+/**
+ * Pick a preview tier based on file size shape. Pass `bytes` (content length),
+ * `lines` (newline count + 1), and `maxLineLength` (longest single line).
+ * The Giant-friendliest condition wins — a file with a single 500k-char line
+ * routes to Giant even if its total bytes are under 8 MB.
+ *
+ * Tier landings:
+ *   - Phase 1: Fast tier (markdown).
+ *   - Phase 3: Fast tier (plain text + code).
+ *   - Phase 4: Giant tier (CodeMirror 6) for files over GIANT_TIER_BYTES /
+ *     GIANT_TIER_LINES — used for markdown, text, and code alike.
+ *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
+ *     Giant regardless of byte / line count to avoid wide-layer freeze.
+ */
+export function pickPreviewTier(bytes: number, lines: number, maxLineLength = 0): PreviewTier {
+	if (
+		bytes > GIANT_TIER_BYTES ||
+		lines > GIANT_TIER_LINES ||
+		maxLineLength > LINE_LENGTH_GIANT_THRESHOLD
+	) {
+		return 'giant';
+	}
+	if (bytes > FAST_TIER_BYTES || lines > FAST_TIER_LINES) {
+		return 'fast';
+	}
+	return 'rich';
+}
+
+/**
+ * Count newlines + return the longest single line, in one pass. Kept as one
+ * scan because both signals feed `pickPreviewTier` and we never want to walk
+ * a multi-MB string twice.
+ *
+ * Lines are 1-indexed by convention: an empty string has 0 lines, a string
+ * with no newlines has 1 line.
+ */
+export function scanLineStats(content: string): { lines: number; maxLineLength: number } {
+	if (!content) return { lines: 0, maxLineLength: 0 };
+	let lines = 1;
+	let maxLineLength = 0;
+	let currentLength = 0;
+	for (let i = 0; i < content.length; i++) {
+		if (content.charCodeAt(i) === 10) {
+			if (currentLength > maxLineLength) maxLineLength = currentLength;
+			currentLength = 0;
+			lines++;
+		} else {
+			currentLength++;
+		}
+	}
+	if (currentLength > maxLineLength) maxLineLength = currentLength;
+	return { lines, maxLineLength };
+}
+
+/** Count newlines without splitting the whole string (cheap O(n) scan). */
+export function countLines(content: string): number {
+	return scanLineStats(content).lines;
+}
+
 // ─── Language Detection ───────────────────────────────────────────────────────
 
 /** Map filename extension to syntax highlighting language code */
@@ -71,6 +176,20 @@ const LANGUAGE_MAP: Record<string, string> = {
 export const getLanguageFromFilename = (filename: string): string => {
 	const ext = filename.split('.').pop()?.toLowerCase();
 	return LANGUAGE_MAP[ext || ''] || 'text';
+};
+
+/**
+ * Whether a language identifier represents code (vs plain prose).
+ *
+ * Used by FilePreview chip-visibility rules and tier-routing decisions to
+ * tell apart `.ts` / `.py` / `.css` files (Shiki-eligible code) from `.txt`
+ * / `.log` / `README` (plain prose).
+ *
+ * `'markdown'` is intentionally NOT considered code — markdown has its own
+ * Fast-tier renderer.
+ */
+export const isCodeFile = (language: string): boolean => {
+	return language !== 'text' && language !== 'markdown';
 };
 
 // ─── Readable Text Detection ──────────────────────────────────────────────────

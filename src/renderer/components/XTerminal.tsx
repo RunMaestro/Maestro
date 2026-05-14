@@ -246,6 +246,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const webglAddonRef = useRef<import('@xterm/addon-webgl').WebglAddon | null>(null);
 	// WebGL constructor class — cached after first dynamic import so re-init doesn't re-import.
 	const webglCtorRef = useRef<typeof import('@xterm/addon-webgl').WebglAddon | null>(null);
+	// `onContextLoss` returns a disposable that holds a closure reference to the
+	// addon and the logger. Without disposing it before throwing the addon away,
+	// every dispose/re-init cycle (each session switch under the active+visible
+	// gate added in commit 83e53fb75) leaks one subscription and root-holds the
+	// addon for GC. Tracked separately so the cleanup path can drop it.
+	const webglCtxLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
 
 	// Link context menu state
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
@@ -464,8 +470,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			pendingWebglLoadRef.current = null;
 			try {
 				const addon = new WebglAddon();
-				addon.onContextLoss(() => {
+				// Capture the disposable so the cleanup path (and the inactive branch
+				// of the isActive effect) can drop the subscription before discarding
+				// the addon. Without this, every re-init leaks an EventEmitter slot.
+				const ctxLossDisposable = addon.onContextLoss(() => {
 					logger.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
+					ctxLossDisposable.dispose();
+					webglCtxLossDisposableRef.current = null;
 					addon.dispose();
 					webglAddonRef.current = null;
 					// Force a full repaint so the fallback canvas renderer draws from the internal buffer.
@@ -473,6 +484,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				});
 				term.loadAddon(addon);
 				webglAddonRef.current = addon;
+				webglCtxLossDisposableRef.current = ctxLossDisposable;
 				webglCtorRef.current = WebglAddon;
 			} catch (err) {
 				logger.warn(
@@ -593,9 +605,10 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				);
 			});
 
-		if (onTitleChange) {
-			term.onTitleChange(onTitleChange);
-		}
+		// Capture the title-change disposable so `term.dispose()` doesn't have to
+		// fan it out for us — and so a future "react to onTitleChange prop change"
+		// effect can't accidentally stack subscriptions.
+		const titleChangeDisposable = onTitleChange ? term.onTitleChange(onTitleChange) : null;
 
 		terminalRef.current = term;
 		fitAddonRef.current = fitAddon;
@@ -610,9 +623,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			termElement.removeEventListener('contextmenu', handleContextMenu);
 			selectionChangeDisposable.dispose();
 			linkProviderDisposable.dispose();
+			titleChangeDisposable?.dispose();
 			resizeObserver.disconnect();
 			if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
 			if (selectionCopyTimerRef.current) clearTimeout(selectionCopyTimerRef.current);
+			webglCtxLossDisposableRef.current?.dispose();
+			webglCtxLossDisposableRef.current = null;
 			webglAddonRef.current?.dispose();
 			webglAddonRef.current = null;
 			term.dispose();
@@ -677,8 +693,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		if (!term) return;
 
 		if (!isActive) {
-			// Going inactive — dispose WebGL, fall back to the built-in canvas renderer
+			// Going inactive — dispose WebGL, fall back to the built-in canvas renderer.
+			// Drop the onContextLoss subscription first so the addon's callback closure
+			// (which root-holds the addon + term + logger) can be GC'd.
 			if (webglAddonRef.current) {
+				webglCtxLossDisposableRef.current?.dispose();
+				webglCtxLossDisposableRef.current = null;
 				webglAddonRef.current.dispose();
 				webglAddonRef.current = null;
 			}
@@ -689,14 +709,17 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				if (container && container.offsetWidth > 0 && container.offsetHeight > 0) {
 					try {
 						const addon = new webglCtorRef.current();
-						addon.onContextLoss(() => {
+						const ctxLossDisposable = addon.onContextLoss(() => {
 							logger.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
+							ctxLossDisposable.dispose();
+							webglCtxLossDisposableRef.current = null;
 							addon.dispose();
 							webglAddonRef.current = null;
 							term.refresh(0, term.rows - 1);
 						});
 						term.loadAddon(addon);
 						webglAddonRef.current = addon;
+						webglCtxLossDisposableRef.current = ctxLossDisposable;
 					} catch {
 						// WebGL re-init failed — canvas renderer remains active
 					}

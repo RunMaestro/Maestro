@@ -138,6 +138,7 @@ const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWiza
 		state: {} as any,
 		getStateForTab: vi.fn(() => undefined),
 		isWizardActiveForTab: vi.fn(() => false),
+		selectWizardTab: vi.fn(),
 		startWizard: vi.fn(),
 		endWizard: vi.fn().mockResolvedValue(null),
 		sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -642,7 +643,8 @@ describe('useWizardHandlers', () => {
 				expect.objectContaining({
 					onThinkingChunk: expect.any(Function),
 					onToolExecution: expect.any(Function),
-				})
+				}),
+				'tab-1'
 			);
 		});
 
@@ -1481,8 +1483,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'tab-1',
+					isWizardActiveForTab: vi.fn((id: string) => id === 'tab-1'),
 				} as any,
 			});
 
@@ -1498,8 +1499,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'other-tab',
+					isWizardActiveForTab: vi.fn((id: string) => id === 'other-tab'),
 				} as any,
 			});
 
@@ -1524,8 +1524,7 @@ describe('useWizardHandlers', () => {
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
-					isWizardActive: true,
-					wizardTabId: 'tab-1',
+					isWizardActiveForTab: vi.fn(() => true),
 				} as any,
 			});
 

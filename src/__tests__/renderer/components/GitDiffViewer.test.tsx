@@ -845,8 +845,10 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// The Plus icon from lucide-react should be present with green color
-			const greenSpans = document.querySelectorAll('.text-green-500');
+			// The Plus icon from lucide-react should be present with green color (inline style for colorblind support)
+			const greenSpans = Array.from(document.querySelectorAll<HTMLSpanElement>('span')).filter(
+				(s) => s.style.color === 'rgb(34, 197, 94)'
+			);
 			expect(greenSpans.length).toBeGreaterThan(0);
 		});
 
@@ -897,8 +899,10 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// There should be red minus sign for deletions
-			const redSpans = document.querySelectorAll('.text-red-500');
+			// There should be red minus sign for deletions (inline style for colorblind support)
+			const redSpans = Array.from(document.querySelectorAll<HTMLSpanElement>('span')).filter(
+				(s) => s.style.color === 'rgb(239, 68, 68)'
+			);
 			expect(redSpans.length).toBeGreaterThan(0);
 		});
 

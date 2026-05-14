@@ -7,6 +7,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
+import { useSettingsStore } from '../stores/settingsStore';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -82,6 +83,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		() => readStoredViewType() ?? initialViewType
 	);
 	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
 	// Persist the user's chosen view type so it sticks across all diff views and app restarts.
 	useEffect(() => {
@@ -302,13 +304,19 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 										) : (
 											<>
 												{fileStats.additions > 0 && (
-													<span className="text-green-500 flex items-center gap-0.5">
+													<span
+														className="flex items-center gap-0.5"
+														style={{ color: colorBlindMode ? '#009988' : '#22c55e' }}
+													>
 														<Plus className="w-3 h-3" />
 														{fileStats.additions}
 													</span>
 												)}
 												{fileStats.deletions > 0 && (
-													<span className="text-red-500 flex items-center gap-0.5">
+													<span
+														className="flex items-center gap-0.5"
+														style={{ color: colorBlindMode ? '#CC3311' : '#ef4444' }}
+													>
 														<Minus className="w-3 h-3" />
 														{fileStats.deletions}
 													</span>
@@ -346,7 +354,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						</div>
 					) : activeFile && activeFile.parsedDiff.length > 0 ? (
 						<div className="font-mono text-sm">
-							<style>{generateDiffViewStyles(theme)}</style>
+							<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
 							{activeFile.parsedDiff.map((file, fileIndex) => (
 								<div key={fileIndex}>
 									{/* File header */}
@@ -394,11 +402,17 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							</span>
 						) : (
 							<div className="flex items-center gap-2">
-								<span className="text-green-500 flex items-center gap-1">
+								<span
+									className="flex items-center gap-1"
+									style={{ color: colorBlindMode ? '#009988' : '#22c55e' }}
+								>
 									<Plus className="w-3 h-3" />
 									{stats.additions} additions
 								</span>
-								<span className="text-red-500 flex items-center gap-1">
+								<span
+									className="flex items-center gap-1"
+									style={{ color: colorBlindMode ? '#CC3311' : '#ef4444' }}
+								>
 									<Minus className="w-3 h-3" />
 									{stats.deletions} deletions
 								</span>

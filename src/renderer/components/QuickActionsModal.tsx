@@ -12,6 +12,7 @@ import type {
 import type { GroupChat } from '../../shared/group-chat-types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useModalStore } from '../stores/modalStore';
 import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
@@ -1278,6 +1279,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
 							if (diff.diff) {
 								setGitDiffPreview(diff.diff);
+							} else {
+								notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
 							}
 							setQuickActionOpen(false);
 						},

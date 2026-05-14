@@ -565,6 +565,13 @@ const mockMaestro = {
 		validateApiKey: vi.fn().mockResolvedValue({ valid: false }),
 	},
 	cue: {
+		getSettings: vi.fn().mockResolvedValue({
+			timeout_minutes: 30,
+			timeout_on_fail: 'break',
+			max_concurrent: 1,
+			queue_size: 512,
+		}),
+		saveSettings: vi.fn().mockResolvedValue({ writtenRoots: [] }),
 		getStatus: vi.fn().mockResolvedValue([]),
 		getActiveRuns: vi.fn().mockResolvedValue([]),
 		getActivityLog: vi.fn().mockResolvedValue([]),

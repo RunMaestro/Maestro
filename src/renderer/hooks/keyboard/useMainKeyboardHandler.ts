@@ -407,15 +407,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.handleNavForward();
 				trackShortcut('navForward');
 			} else if (ctx.isShortcut(e, 'toggleMode')) {
-				// Disable mode toggle for wizard tabs - they have a unique input that doesn't support CLI switchover
-				const activeTab = ctx.activeSession?.aiTabs?.find(
-					(t: AITab) => t.id === ctx.activeSession?.activeTabId
-				);
-				if (activeTab?.wizardState?.isActive) return;
 				e.preventDefault();
 				if (ctx.activeSessionId) {
 					// Cmd+J always opens a new terminal tab (analogous to Cmd+T for AI tabs).
 					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically.
+					// Safe in wizard tabs — it creates a new tab rather than disrupting wizard state.
 					ctx.handleOpenTerminalTab();
 					setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
 				} else {

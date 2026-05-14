@@ -205,7 +205,7 @@ describe('DisplayTab', () => {
 		it('renders the Reading Mode toggle and sub-options (ghosted when off)', () => {
 			render(<DisplayTab theme={mockTheme} />);
 
-			expect(screen.getByText('Reading Mode')).toBeInTheDocument();
+			expect(screen.getByText('Bionify Emphasis')).toBeInTheDocument();
 			const toggle = screen.getByRole('switch', { name: 'Bionify reading mode' });
 			expect(toggle).toHaveAttribute('aria-checked', 'false');
 			// Sub-options remain in the DOM but are ghosted via opacity/pointer-events

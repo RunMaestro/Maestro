@@ -7,6 +7,7 @@ import {
 	Clipboard,
 	Copy,
 	Globe,
+	Image as ImageIcon,
 	Save,
 	Edit,
 	Share2,
@@ -17,7 +18,9 @@ import { Spinner } from '../ui/Spinner';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatFileSize, formatDateTime } from './filePreviewUtils';
+import type { PreviewTier } from './filePreviewUtils';
 import { formatTokenCount } from '../../utils/tokenCounter';
+import { PreviewTierChip } from './PreviewTierChip';
 
 interface FilePreviewHeaderProps {
 	file: { name: string; content: string; path: string };
@@ -56,6 +59,18 @@ interface FilePreviewHeaderProps {
 	copyPathToClipboard: () => void;
 	headerBtnClass: string;
 	headerIconClass: string;
+	/** Whether the previewed file is HTML (.html / .htm). */
+	isHtml: boolean;
+	/** When true, FilePreview renders the HTML via webview instead of source. */
+	htmlRenderMode: boolean;
+	/** Flip between rendered HTML and source view. */
+	setHtmlRenderMode: (v: boolean) => void;
+	/** Show the preview-tier chip in the toolbar. Hidden in edit mode, on
+	 *  binary/image files, and when HTML render mode is active. */
+	showTierChip: boolean;
+	autoTier: PreviewTier;
+	previewTierOverride: PreviewTier | undefined;
+	onPreviewTierChange?: (tier: PreviewTier | undefined) => void;
 }
 
 export const FilePreviewHeader = React.memo(function FilePreviewHeader({
@@ -95,6 +110,13 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	copyPathToClipboard,
 	headerBtnClass,
 	headerIconClass,
+	isHtml,
+	htmlRenderMode,
+	setHtmlRenderMode,
+	showTierChip,
+	autoTier,
+	previewTierOverride,
+	onPreviewTierChange,
 }: FilePreviewHeaderProps) {
 	const [showBackPopup, setShowBackPopup] = useState(false);
 	const [showForwardPopup, setShowForwardPopup] = useState(false);
@@ -157,8 +179,32 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
 								title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
 							>
+								<ImageIcon className={headerIconClass} />
+							</button>
+						)}
+						{/* HTML render toggle - swap between rendered HTML and source view */}
+						{isHtml && !markdownEditMode && (
+							<button
+								onClick={() => setHtmlRenderMode(!htmlRenderMode)}
+								className={headerBtnClass}
+								style={{ color: htmlRenderMode ? theme.colors.accent : theme.colors.textDim }}
+								title={htmlRenderMode ? 'Show HTML source' : 'Render HTML in browser'}
+								data-testid="html-render-toggle"
+							>
 								<Globe className={headerIconClass} />
 							</button>
+						)}
+						{/* Preview tier chip - compact icon-only mode inside the toolbar */}
+						{showTierChip && (
+							<PreviewTierChip
+								theme={theme}
+								autoTier={autoTier}
+								override={previewTierOverride}
+								onSelect={(tier) => onPreviewTierChange?.(tier)}
+								iconOnly
+								headerBtnClass={headerBtnClass}
+								headerIconClass={headerIconClass}
+							/>
 						)}
 						{/* Toggle between edit and preview/view mode - for any editable text file */}
 						{isEditableText && (
