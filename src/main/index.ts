@@ -597,6 +597,7 @@ function setupIpcHandlers() {
 	}
 	registerExternalSessionsHandlers({
 		getCoordinator: () => externalSessionCoordinator,
+		getMainWindow: () => mainWindow,
 	});
 
 	// Helper to get agent config values (custom args/env vars, model, etc.)

@@ -2732,6 +2732,23 @@ interface MaestroAPI {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
+
+	// Storage activity API (external session-file watcher events).
+	// Backed by ExternalSessionCoordinator — see src/shared/sessionActivity.ts
+	// for the event shape and the `isActive(event)` helper.
+	storage: {
+		listExternalSessions: () => Promise<SessionActivityEvent[]>;
+		onExternalActivity: (callback: (events: SessionActivityEvent[]) => void) => () => void;
+	};
+}
+
+interface SessionActivityEvent {
+	agentId: string;
+	sessionId: string;
+	projectPath: string;
+	lastActivityAt: number;
+	source: 'local' | 'external';
+	sizeBytes: number;
 }
 
 declare global {
