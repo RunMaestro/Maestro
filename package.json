@@ -100,6 +100,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -132,6 +136,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -154,6 +162,10 @@
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
+				},
+				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
 				},
 				{
 					"from": "src/prompts/speckit",

@@ -33,8 +33,23 @@ import {
 	type ResolvedClaudeMode,
 	type UsageSnapshot,
 } from '../../agents/claude-mode-selector';
+import {
+	getSnapshot as getUsageSnapshot,
+	resolveConfigDirKey,
+	setSnapshot as setUsageSnapshot,
+} from '../../stores/claudeUsageStore';
+import { sampleUsage } from '../../agents/claude-usage-sampler';
+import { getMaestroPBinPath } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[ProcessManager]';
+
+/**
+ * When the spawner is about to consult the Claude usage snapshot under `auto`
+ * mode, refresh any cached snapshot older than this. The startup sampler
+ * populates the cache once; this keeps it from going stale across long
+ * Maestro sessions without resorting to a polling loop. Phase 2 task 8.
+ */
+const USAGE_SNAPSHOT_STALE_MS = 5 * 60 * 1000;
 
 /**
  * Helper to create handler options with consistent context
@@ -219,9 +234,61 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					const autoFallbackOnLimit =
 						settingsStore.get('claudeCode.autoFallbackToApiOnLimit', true) !== false;
 
-					// TODO(maestro-p phase 2, task 7): consult claudeUsageStore for the latest
-					// snapshot keyed by the resolved CLAUDE_CONFIG_DIR once that store lands.
-					const usageSnapshot: UsageSnapshot | null = null;
+					// Resolve the effective CLAUDE_CONFIG_DIR the spawn will use, so we can
+					// look up (and possibly refresh) the right snapshot. Precedence mirrors
+					// `applyAgentConfigOverrides`: session-level customEnvVars override
+					// agent-level customEnvVars. (The full agent-config lookup happens
+					// again later in the handler; reading it twice is cheaper than
+					// reordering the existing flow.)
+					const allConfigsForMode = agentConfigsStore.get('configs', {});
+					const claudeAgentConfig = (allConfigsForMode[agent.id] || {}) as {
+						customEnvVars?: Record<string, string>;
+					};
+					const effectiveEnvForLookup: Record<string, string> = {
+						...(claudeAgentConfig.customEnvVars ?? {}),
+						...(config.sessionCustomEnvVars ?? {}),
+					};
+					const claudeConfigDir = effectiveEnvForLookup.CLAUDE_CONFIG_DIR;
+					const configDirKey = resolveConfigDirKey(
+						claudeConfigDir ? { CLAUDE_CONFIG_DIR: claudeConfigDir } : {}
+					);
+
+					// Consult the snapshot store; if the cached entry is older than 5
+					// minutes, refresh it inline via `maestro-p --status` so the selector
+					// sees a fresh limit reading. We only spend the roundtrip when
+					// `headlessMode === 'auto'` — pinned modes ignore the snapshot anyway,
+					// per `selectMode` rule 1.
+					let usageSnapshot: UsageSnapshot | null = getUsageSnapshot(configDirKey);
+					if (headlessMode === 'auto') {
+						const snapshotAgeMs = usageSnapshot
+							? Date.now() - new Date(usageSnapshot.sampledAt).getTime()
+							: Number.POSITIVE_INFINITY;
+						if (snapshotAgeMs > USAGE_SNAPSHOT_STALE_MS) {
+							const claudeBinPathForSample =
+								config.sessionCustomPath || agent.path || agent.command;
+							const envForSample: Record<string, string> = { ...effectiveEnvForLookup };
+							if (claudeBinPathForSample) {
+								envForSample.MAESTRO_CLAUDE_BIN = claudeBinPathForSample;
+							}
+							const refreshed = await sampleUsage({
+								binPath: getMaestroPBinPath(),
+								configDir: claudeConfigDir,
+								cwd: config.cwd,
+								customEnvVars: envForSample,
+							});
+							if (refreshed) {
+								setUsageSnapshot(refreshed);
+								usageSnapshot = refreshed;
+								logger.debug('Claude usage snapshot refreshed (stale)', LOG_CONTEXT, {
+									sessionId: config.sessionId,
+									configDirKey,
+									ageMs: snapshotAgeMs === Number.POSITIVE_INFINITY ? null : snapshotAgeMs,
+								});
+							}
+							// On failure, fall through with whatever (possibly null) snapshot we had.
+							// The selector tolerates null and the spawn must proceed regardless.
+						}
+					}
 
 					resolvedClaudeMode = selectMode({
 						headlessMode,

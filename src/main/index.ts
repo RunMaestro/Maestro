@@ -118,6 +118,7 @@ import {
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { runStartupUsageSampling } from './agents/claude-usage-startup';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -432,6 +433,21 @@ app.whenReady().then(async () => {
 
 	// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 	settingsWatcher.start();
+
+	// Pre-populate the Claude usage snapshot store for every CLAUDE_CONFIG_DIR
+	// used by recent Claude Code sessions. Fire-and-forget — the mode selector
+	// tolerates an empty store, and we'd rather not delay the main window for
+	// a TUI roundtrip per Claude account. See `claude-usage-startup.ts`.
+	runStartupUsageSampling({
+		sessionsStore,
+		agentConfigsStore,
+		getAgentDetector: () => agentDetector,
+	}).catch((err) => {
+		// `runStartupUsageSampling` is documented as never-throwing, but a defensive
+		// .catch keeps the surrounding `app.whenReady().then(...)` chain from
+		// blowing up if that ever regresses.
+		logger.warn(`Startup usage sampling threw: ${err}`, 'Startup');
+	});
 
 	// Note: Web server is not auto-started - it starts when user enables web interface
 	// via live:startServer IPC call from the renderer
