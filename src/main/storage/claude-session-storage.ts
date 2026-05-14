@@ -33,7 +33,7 @@ import type {
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage } from './base-session-storage';
-import type { SearchableMessage } from './base-session-storage';
+import type { SearchableMessage, StorageWatchSpec } from './base-session-storage';
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -291,6 +291,36 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private getProjectsDir(): string {
 		return path.join(os.homedir(), '.claude', 'projects');
+	}
+
+	/**
+	 * Describes how to watch Claude Code's on-disk session storage for activity
+	 * from sessions Maestro did not spawn. Claude lays files out as
+	 * `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, so the matcher
+	 * requires exactly two path segments and a `.jsonl` suffix.
+	 *
+	 * The first segment is Claude's encoded form of the cwd produced by
+	 * {@link encodeClaudeProjectPath} (`/[^a-zA-Z0-9]/g` → `-`). The encoding is
+	 * lossy and there is no decode helper in the codebase to reuse, so the
+	 * encoded segment is passed through as `projectPath`. Downstream consumers
+	 * that need the real cwd must read it from the JSONL contents (e.g., a
+	 * `cwd` field on later entries) since the matcher contract is synchronous.
+	 */
+	getStorageWatchSpec(): StorageWatchSpec | null {
+		return {
+			rootDir: this.getProjectsDir(),
+			fileMatcher: (relPath) => {
+				const segments = relPath.split(path.sep);
+				if (segments.length !== 2) return null;
+				const [encodedProjectSegment, fileName] = segments;
+				if (!fileName.endsWith('.jsonl')) return null;
+				if (!encodedProjectSegment) return null;
+				return {
+					sessionId: fileName.slice(0, -'.jsonl'.length),
+					projectPath: encodedProjectSegment,
+				};
+			},
+		};
 	}
 
 	/**
