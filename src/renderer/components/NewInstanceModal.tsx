@@ -424,6 +424,11 @@ export function NewInstanceModal({
 		[agents, availableModels]
 	);
 
+	// Hoist groupId out of the callback so `sourceSession` reference changes
+	// (which we already know happen mid-modal — see the prefill effect below)
+	// don't strand a stale value behind the useCallback memo.
+	const sourceGroupId = sourceSession?.groupId;
+
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
@@ -480,7 +485,7 @@ export function NewInstanceModal({
 			agentCustomContextWindow,
 			agentCustomProviderPath,
 			sessionSshRemoteConfig,
-			sourceSession?.groupId
+			sourceGroupId
 		);
 		onClose();
 
@@ -512,6 +517,7 @@ export function NewInstanceModal({
 		expandTilde,
 		handleWorkingDirChange,
 		existingSessions,
+		sourceGroupId,
 	]);
 
 	// Check if form is valid for submission
