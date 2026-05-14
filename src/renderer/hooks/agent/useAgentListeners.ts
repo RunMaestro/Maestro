@@ -50,6 +50,7 @@ import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useClaudeUsageStore } from '../../stores/claudeUsageStore';
 
 // ============================================================================
 // Types
@@ -1592,16 +1593,22 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const unsubscribeClaudeModeResolved = window.maestro.process.onClaudeModeResolved?.(
 			(
 				sessionId: string,
-				resolution: { mode: 'interactive' | 'api'; reason: 'user' | 'auto' | 'limit' }
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey?: string;
+				}
 			) => {
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 						const current = s.claudeInteractive;
+						const nextSnapshotKey = resolution.configDirKey ?? current?.lastUsageSnapshotKey;
 						if (
 							current &&
 							current.mode === resolution.mode &&
-							current.modeReason === resolution.reason
+							current.modeReason === resolution.reason &&
+							current.lastUsageSnapshotKey === nextSnapshotKey
 						) {
 							return s;
 						}
@@ -1611,10 +1618,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								...(current ?? {}),
 								mode: resolution.mode,
 								modeReason: resolution.reason,
+								...(nextSnapshotKey ? { lastUsageSnapshotKey: nextSnapshotKey } : {}),
 							},
 						};
 					})
 				);
+				// A mode resolution implies the main-process snapshot store may
+				// have just been refreshed (the spawner re-samples when its cached
+				// entry is stale, and the limit-hit replay always re-samples).
+				// Pull the latest map so the badge tooltip and Usage Dashboard
+				// stay in sync without round-tripping per-render.
+				void useClaudeUsageStore.getState().refresh();
 			}
 		);
 

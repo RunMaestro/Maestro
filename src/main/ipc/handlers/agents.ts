@@ -15,6 +15,7 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import type { SessionsData, StoredSession } from '../../stores/types';
+import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -934,6 +935,17 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 			}
 		)
+	);
+
+	// Read all live Claude usage snapshots cached in `claudeUsageStore`.
+	// Snapshots beyond their 24h TTL are filtered out by the store. The badge,
+	// settings panel, and Usage Dashboard all read through this handler so they
+	// see the same source of truth as the mode selector.
+	ipcMain.handle(
+		'agents:getClaudeUsageSnapshots',
+		withIpcErrorLogging(handlerOpts('getClaudeUsageSnapshots'), async () => {
+			return getAllClaudeUsageSnapshots();
+		})
 	);
 
 	// Update a session's per-tab Claude headless-mode pin (Claude Code only).

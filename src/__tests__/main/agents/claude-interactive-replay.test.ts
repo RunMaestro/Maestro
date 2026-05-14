@@ -261,7 +261,10 @@ describe('claude-interactive-replay', () => {
 				(e) => e.channel === 'process:claude-mode-resolved'
 			);
 			expect(modeEvents).toHaveLength(1);
-			expect(modeEvents[0].args).toEqual(['tab-1', { mode: 'api', reason: 'limit' }]);
+			expect(modeEvents[0].args).toEqual([
+				'tab-1',
+				{ mode: 'api', reason: 'limit', configDirKey: '/Users/test/.claude' },
+			]);
 
 			// (d) processManager.spawn re-invoked with the api-mode config + original prompt + --resume
 			expect(harness.spawn).toHaveBeenCalledTimes(1);

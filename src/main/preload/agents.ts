@@ -200,7 +200,30 @@ export function createAgentsApi() {
 			modeReason: 'user' | 'auto' | 'limit'
 		): Promise<boolean> =>
 			ipcRenderer.invoke('agents:setClaudeInteractiveMode', sessionId, mode, modeReason),
+
+		/**
+		 * Read all live Claude usage snapshots cached in the main process. The
+		 * map is keyed by `configDirKey` (canonical absolute path of
+		 * `CLAUDE_CONFIG_DIR` or `~/.claude`). Entries older than 24h are
+		 * filtered out by the store before returning, so any value here is a
+		 * fresh observation suitable for the badge tooltip and Usage Dashboard.
+		 */
+		getClaudeUsageSnapshots: (): Promise<Record<string, ClaudeUsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
 	};
+}
+
+/**
+ * Wire-level shape of a Claude usage snapshot, mirroring the main-process
+ * `UsageSnapshot` type. Duplicated here so the renderer can reference it
+ * without crossing the main↔renderer module boundary.
+ */
+export interface ClaudeUsageSnapshot {
+	sampledAt: string;
+	configDirKey: string;
+	session: { percent: number; resetsAt: string };
+	weekAllModels: { percent: number; resetsAt: string };
+	weekSonnetOnly: { percent: number; resetsAt: string };
 }
 
 /**

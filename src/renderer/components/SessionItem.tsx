@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
+import { ClaudeModeBadge } from './SessionList/ClaudeModeBadge';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -312,6 +313,13 @@ export const SessionItem = memo(function SessionItem({
 							/>
 						</button>
 					))}
+
+				{/* Claude headless-mode badge: only renders for Claude Code sessions
+				    whose `claudeInteractive` state has been populated (i.e. the
+				    spawner has emitted at least one mode resolution). */}
+				{session.toolType === 'claude-code' && session.claudeInteractive && (
+					<ClaudeModeBadge sessionId={session.id} theme={theme} />
+				)}
 
 				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
 				<div className="relative ml-auto">

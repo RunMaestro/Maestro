@@ -47,6 +47,19 @@ interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
 }
 
+/**
+ * Wire-level shape of a Claude usage snapshot returned by
+ * `window.maestro.agents.getClaudeUsageSnapshots`. Mirrors the main-process
+ * `UsageSnapshot` declared in `claude-mode-selector.ts`.
+ */
+interface ClaudeUsageSnapshot {
+	sampledAt: string;
+	configDirKey: string;
+	session: { percent: number; resetsAt: string };
+	weekAllModels: { percent: number; resetsAt: string };
+	weekSonnetOnly: { percent: number; resetsAt: string };
+}
+
 interface AgentConfigOption {
 	key: string;
 	type: 'checkbox' | 'text' | 'number' | 'select';
@@ -302,7 +315,11 @@ interface MaestroAPI {
 		onClaudeModeResolved: (
 			callback: (
 				sessionId: string,
-				resolution: { mode: 'interactive' | 'api'; reason: 'user' | 'auto' | 'limit' }
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey?: string;
+				}
 			) => void
 		) => () => void;
 		onRemoteCommand: (
@@ -738,6 +755,7 @@ interface MaestroAPI {
 			mode: 'interactive' | 'api',
 			modeReason: 'user' | 'auto' | 'limit'
 		) => Promise<boolean>;
+		getClaudeUsageSnapshots: () => Promise<Record<string, ClaudeUsageSnapshot>>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

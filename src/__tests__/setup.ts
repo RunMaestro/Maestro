@@ -289,6 +289,9 @@ const mockMaestro = {
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),
 		// Model discovery for agents that support model selection
 		getModels: vi.fn().mockResolvedValue([]),
+		// Phase 2/3: claudeInteractive pin + usage snapshots
+		setClaudeInteractiveMode: vi.fn().mockResolvedValue(true),
+		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
 		// Capabilities for gating UI features based on agent type
 		getCapabilities: vi.fn().mockResolvedValue({
 			supportsResume: true,

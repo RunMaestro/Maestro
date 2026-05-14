@@ -199,6 +199,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// can be injected into the child env below.
 				// ========================================================================
 				let resolvedClaudeMode: { mode: ResolvedClaudeMode; reason: ClaudeModeReason } | undefined;
+				let resolvedClaudeConfigDirKey: string | undefined;
 				let claudeRealBinPath: string | undefined;
 				let effectiveCommand = config.command;
 				let effectiveBaseArgs = config.args;
@@ -303,6 +304,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						autoFallbackOnLimit,
 						now: new Date(),
 					});
+					resolvedClaudeConfigDirKey = configDirKey;
 
 					logger.info('Claude mode selector resolved', LOG_CONTEXT, {
 						sessionId: config.sessionId,
@@ -746,10 +748,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Emit Claude mode resolution so the renderer can mirror it onto
 				// session.claudeInteractive — the badge UI in phase 3 reads this state.
+				// `configDirKey` is the canonical key into `claudeUsageStore` so the
+				// badge tooltip can look up the live snapshot for this account.
 				if (resolvedClaudeMode && isWebContentsAvailable(mainWindow)) {
 					mainWindow.webContents.send('process:claude-mode-resolved', config.sessionId, {
 						mode: resolvedClaudeMode.mode,
 						reason: resolvedClaudeMode.reason,
+						configDirKey: resolvedClaudeConfigDirKey,
 					});
 				}
 

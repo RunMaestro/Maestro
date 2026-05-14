@@ -254,13 +254,21 @@ export function createProcessApi() {
 		onClaudeModeResolved: (
 			callback: (
 				sessionId: string,
-				resolution: { mode: 'interactive' | 'api'; reason: 'user' | 'auto' | 'limit' }
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey?: string;
+				}
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
-				resolution: { mode: 'interactive' | 'api'; reason: 'user' | 'auto' | 'limit' }
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey?: string;
+				}
 			) => callback(sessionId, resolution);
 			ipcRenderer.on('process:claude-mode-resolved', handler);
 			return () => ipcRenderer.removeListener('process:claude-mode-resolved', handler);

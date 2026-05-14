@@ -248,6 +248,7 @@ async function executeReplay(
 		mainWindow.webContents.send('process:claude-mode-resolved', sessionId, {
 			mode: 'api',
 			reason: 'limit',
+			configDirKey: ctx.configDirKey,
 		});
 	}
 

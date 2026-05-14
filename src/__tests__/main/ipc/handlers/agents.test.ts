@@ -161,6 +161,7 @@ describe('agents IPC handlers', () => {
 				'agents:getModels',
 				'agents:discoverSlashCommands',
 				'agents:setClaudeInteractiveMode',
+				'agents:getClaudeUsageSnapshots',
 			];
 
 			for (const channel of expectedChannels) {

@@ -32,6 +32,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { GitStatusWidget } from './GitStatusWidget';
 import { AgentSessionsBrowser } from './AgentSessionsBrowser';
 import { TabBar } from './TabBar';
+import { ClaudeModeBadge } from './SessionList/ClaudeModeBadge';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
@@ -876,6 +877,13 @@ export const MainPanel = React.memo(
 									<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
 										{/* Session name - hidden at narrow widths via CSS container query */}
 										<span className="header-session-name truncate">{activeSession.name}</span>
+										{/* Claude headless-mode badge: rendered next to the session name in
+										    the tab strip header so the active tab's mode is visible at a
+										    glance. Only shows for Claude Code sessions with claudeInteractive
+										    populated by the spawner. */}
+										{isClaudeCode && activeSession.claudeInteractive && (
+											<ClaudeModeBadge sessionId={activeSession.id} theme={theme} />
+										)}
 										<div
 											className="relative shrink-0"
 											onMouseEnter={
