@@ -63,6 +63,19 @@ export interface StorageWatchSpec {
 	 * every filesystem event, so it must not perform I/O.
 	 */
 	fileMatcher: SessionFileMatcher;
+	/**
+	 * Which `SessionFileWatcher` event the consumer should treat as the session
+	 * activity signal:
+	 * - `'append'` (default): existing per-session file grows in place
+	 *   (Claude / Codex / Factory Droid — single JSONL per session).
+	 * - `'create'`: each new message arrives as a brand-new file in a
+	 *   per-session directory (OpenCode pre-v1.2 JSON layout).
+	 *
+	 * Omitted is equivalent to `'append'`. The watcher itself still emits both
+	 * `create` and `append` events; this field tells phase 4's coordinator which
+	 * one to bind to as the live-activity signal for this agent.
+	 */
+	activityEvent?: 'append' | 'create';
 }
 
 /**

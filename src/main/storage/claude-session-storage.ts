@@ -320,6 +320,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					projectPath: encodedProjectSegment,
 				};
 			},
+			activityEvent: 'append',
 		};
 	}
 

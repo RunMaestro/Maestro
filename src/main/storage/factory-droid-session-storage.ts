@@ -190,6 +190,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 					projectPath: encodedProjectSegment,
 				};
 			},
+			activityEvent: 'append',
 		};
 	}
 

@@ -32,7 +32,11 @@ import type {
 	SessionReadOptions,
 	SessionMessage,
 } from '../agents';
-import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import {
+	BaseSessionStorage,
+	type SearchableMessage,
+	type StorageWatchSpec,
+} from './base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 
@@ -370,6 +374,35 @@ async function listJsonFilesRemote(dirPath: string, sshConfig: SshRemoteConfig):
  */
 export class OpenCodeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'opencode';
+
+	/**
+	 * Describes how to watch OpenCode's on-disk session storage for activity
+	 * from sessions Maestro did not spawn. Unlike Claude / Codex / Factory Droid
+	 * — which each maintain ONE JSONL file per session that grows via append —
+	 * OpenCode writes every new message as a SEPARATE `.json` file inside a
+	 * per-session directory. Activity therefore manifests as `'create'` events,
+	 * not `'append'`; this spec sets `activityEvent: 'create'` so phase 4's
+	 * coordinator binds to the right SessionFileWatcher signal. The session is
+	 * identified by the parent directory name (segment[1]), not the filename.
+	 */
+	getStorageWatchSpec(): StorageWatchSpec | null {
+		return {
+			rootDir: OPENCODE_STORAGE_DIR,
+			fileMatcher: (relPath) => {
+				if (!relPath) return null;
+				const segments = relPath.split(path.sep);
+				if (segments.length !== 3) return null;
+				const [, sessionSegment, fileName] = segments;
+				if (!sessionSegment) return null;
+				if (!fileName.endsWith('.json')) return null;
+				return {
+					sessionId: sessionSegment,
+					projectPath: '',
+				};
+			},
+			activityEvent: 'create',
+		};
+	}
 
 	/**
 	 * Get the session directory for a project (local)

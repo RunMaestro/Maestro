@@ -491,6 +491,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					projectPath: '',
 				};
 			},
+			activityEvent: 'append',
 		};
 	}
 
