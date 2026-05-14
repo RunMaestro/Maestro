@@ -756,6 +756,7 @@ interface MaestroAPI {
 			modeReason: 'user' | 'auto' | 'limit'
 		) => Promise<boolean>;
 		getClaudeUsageSnapshots: () => Promise<Record<string, ClaudeUsageSnapshot>>;
+		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

@@ -292,6 +292,7 @@ const mockMaestro = {
 		// Phase 2/3: claudeInteractive pin + usage snapshots
 		setClaudeInteractiveMode: vi.fn().mockResolvedValue(true),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 		// Capabilities for gating UI features based on agent type
 		getCapabilities: vi.fn().mockResolvedValue({
 			supportsResume: true,

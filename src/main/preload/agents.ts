@@ -210,6 +210,17 @@ export function createAgentsApi() {
 		 */
 		getClaudeUsageSnapshots: (): Promise<Record<string, ClaudeUsageSnapshot>> =>
 			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
+
+		/**
+		 * Force-refresh every known Claude usage snapshot. Walks the recent-session
+		 * `CLAUDE_CONFIG_DIR` set and re-runs `maestro-p --status` against each
+		 * one, writing fresh snapshots into the main-process store. Returns the
+		 * number of accounts that produced a snapshot — surfaces failures via the
+		 * count being lower than the total attempted (errors are logged to Sentry
+		 * by the underlying sampler).
+		 */
+		refreshClaudeUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('claude:usage:refresh-all'),
 	};
 }
 

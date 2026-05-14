@@ -16,6 +16,7 @@ import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import type { SessionsData, StoredSession } from '../../stores/types';
 import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
+import { runStartupUsageSampling } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -945,6 +946,42 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		'agents:getClaudeUsageSnapshots',
 		withIpcErrorLogging(handlerOpts('getClaudeUsageSnapshots'), async () => {
 			return getAllClaudeUsageSnapshots();
+		})
+	);
+
+	// Force-refresh every known Claude usage snapshot. Iterates the recent-session
+	// CLAUDE_CONFIG_DIR set the startup sampler walks and re-runs `maestro-p
+	// --status` against each one, writing fresh snapshots into `claudeUsageStore`.
+	// Backs the Usage Dashboard "Refresh" button and the settings panel
+	// "Refresh now" control — both surfaces re-read snapshots after this
+	// resolves. Returns the number of snapshots successfully refreshed so the
+	// UI can show "Refreshed N accounts" if it ever wants to.
+	ipcMain.handle(
+		'claude:usage:refresh-all',
+		withIpcErrorLogging(handlerOpts('refreshAllClaudeUsage'), async () => {
+			if (!sessionsStore) {
+				logger.warn(
+					'claude:usage:refresh-all invoked without a sessions store; skipping',
+					LOG_CONTEXT
+				);
+				return { refreshed: 0 };
+			}
+			// The structural typing the startup module uses is intentionally narrow
+			// (see `StoreReader<T>` in `claude-usage-startup.ts` — the comment there
+			// explains why it can't be expressed as `Store<SessionsData>`). Both
+			// stores satisfy the read-only `get(key, defaultValue)` shape it needs;
+			// the cast bridges the structural gap without widening the underlying
+			// stores' schemas.
+			const refreshed = await runStartupUsageSampling({
+				sessionsStore: sessionsStore as unknown as Parameters<
+					typeof runStartupUsageSampling
+				>[0]['sessionsStore'],
+				agentConfigsStore: agentConfigsStore as unknown as Parameters<
+					typeof runStartupUsageSampling
+				>[0]['agentConfigsStore'],
+				getAgentDetector,
+			});
+			return { refreshed };
 		})
 	);
 

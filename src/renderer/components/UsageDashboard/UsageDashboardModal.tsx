@@ -29,6 +29,7 @@ import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
 import { LongestAutoRunsTable } from './LongestAutoRunsTable';
+import { ClaudePlanUsage } from './ClaudePlanUsage';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
@@ -50,6 +51,7 @@ const OVERVIEW_SECTIONS = [
 ] as const;
 const AGENTS_SECTIONS = [
 	'session-stats',
+	'claude-plan-usage',
 	'agent-efficiency',
 	'agent-comparison',
 	'agent-usage',
@@ -365,6 +367,7 @@ export function UsageDashboardModal({
 		const labels: Record<SectionId, string> = {
 			'summary-cards': 'Summary Cards',
 			'session-stats': 'Agent Statistics',
+			'claude-plan-usage': 'Claude Plan Usage',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
 			'agent-usage': 'Agent Usage Chart',
@@ -949,6 +952,28 @@ export function UsageDashboardModal({
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Claude Plan Usage — per-CLAUDE_CONFIG_DIR Max plan quota burndown */}
+									<div
+										ref={setSectionRef('claude-plan-usage')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('claude-plan-usage')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'claude-plan-usage')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'claude-plan-usage'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '25ms',
+										}}
+										data-testid="section-claude-plan-usage"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Claude Plan Usage">
+											<ClaudePlanUsage theme={theme} />
 										</ChartErrorBoundary>
 									</div>
 

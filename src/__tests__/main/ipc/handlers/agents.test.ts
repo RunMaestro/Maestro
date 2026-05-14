@@ -80,6 +80,20 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 	stripAnsi: vi.fn((str: string) => str),
 }));
 
+// Mock the startup-usage-sampling helper so the new `claude:usage:refresh-all`
+// handler does not actually spawn `maestro-p --status` in tests. The handler
+// just delegates to this function — exercising the delegation contract here
+// (called once + return value plumbed) is the right unit test surface.
+const runStartupUsageSamplingMock = vi.fn();
+vi.mock('../../../../main/agents/claude-usage-startup', () => ({
+	runStartupUsageSampling: (...args: unknown[]) => runStartupUsageSamplingMock(...args),
+}));
+
+// Mock the claude usage store getter used by `agents:getClaudeUsageSnapshots`.
+vi.mock('../../../../main/stores/claudeUsageStore', () => ({
+	getAllSnapshots: vi.fn(() => ({})),
+}));
+
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
@@ -162,6 +176,7 @@ describe('agents IPC handlers', () => {
 				'agents:discoverSlashCommands',
 				'agents:setClaudeInteractiveMode',
 				'agents:getClaudeUsageSnapshots',
+				'claude:usage:refresh-all',
 			];
 
 			for (const channel of expectedChannels) {
@@ -1307,6 +1322,46 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any, 's', 'interactive', 'user');
 
 			expect(result).toBe(false);
+		});
+	});
+
+	describe('claude:usage:refresh-all', () => {
+		let mockSessionsStore: {
+			get: ReturnType<typeof vi.fn>;
+			set: ReturnType<typeof vi.fn>;
+		};
+
+		beforeEach(() => {
+			mockSessionsStore = {
+				get: vi.fn().mockReturnValue([]),
+				set: vi.fn(),
+			};
+			handlers.clear();
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: mockSessionsStore as any,
+			});
+			runStartupUsageSamplingMock.mockReset();
+			runStartupUsageSamplingMock.mockResolvedValue(2);
+		});
+
+		it('delegates to runStartupUsageSampling and returns the refresh count', async () => {
+			const handler = handlers.get('claude:usage:refresh-all');
+			const result = await handler!({} as any);
+
+			expect(runStartupUsageSamplingMock).toHaveBeenCalledTimes(1);
+			expect(result).toEqual({ refreshed: 2 });
+		});
+
+		it('returns refreshed:0 (without throwing) when no sessions store is wired', async () => {
+			handlers.clear();
+			registerAgentsHandlers(deps); // no sessionsStore
+
+			const handler = handlers.get('claude:usage:refresh-all');
+			const result = await handler!({} as any);
+
+			expect(runStartupUsageSamplingMock).not.toHaveBeenCalled();
+			expect(result).toEqual({ refreshed: 0 });
 		});
 	});
 
