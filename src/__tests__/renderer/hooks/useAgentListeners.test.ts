@@ -640,9 +640,7 @@ describe('useAgentListeners', () => {
 			// Should clear usage stats
 			expect(updatedTab?.usageStats).toBeUndefined();
 			// Should add a system log entry about resume failure
-			const resumeLog = updatedTab?.logs.find((l) =>
-				l.text.includes('Session resume failed')
-			);
+			const resumeLog = updatedTab?.logs.find((l) => l.text.includes('Session resume failed'));
 			expect(resumeLog).toBeDefined();
 			// Should reset context usage
 			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 0);
