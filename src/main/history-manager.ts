@@ -552,9 +552,16 @@ export class HistoryManager {
 			}
 
 			try {
-				const data: HistoryFileData = JSON.parse(raw);
-				let modified = false;
+				const { data, recovered } = parseHistoryFileData(raw);
+				let modified = recovered;
 				let perSessionUpdates = 0;
+
+				if (recovered) {
+					logger.warn(
+						`Recovered concatenated history JSON for session ${sessionId}; rewriting clean file`,
+						LOG_CONTEXT
+					);
+				}
 
 				for (const entry of data.entries) {
 					if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
@@ -567,10 +574,12 @@ export class HistoryManager {
 				if (modified) {
 					await fsp.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 					updatedCount += perSessionUpdates;
-					logger.debug(
-						`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
-						LOG_CONTEXT
-					);
+					if (perSessionUpdates > 0) {
+						logger.debug(
+							`Updated ${perSessionUpdates} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
+							LOG_CONTEXT
+						);
+					}
 				}
 			} catch (error) {
 				logger.warn(`Failed to update sessionName in session ${sessionId}: ${error}`, LOG_CONTEXT);
