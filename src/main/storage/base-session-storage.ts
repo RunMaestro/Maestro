@@ -30,6 +30,7 @@ import type {
 	SessionReadOptions,
 	SessionMessage,
 } from '../agents/session-storage';
+import type { SessionFileMatcher } from './session-file-watcher';
 
 /**
  * A simplified message representation for search purposes.
@@ -38,6 +39,30 @@ import type {
 export interface SearchableMessage {
 	role: 'user' | 'assistant';
 	textContent: string;
+}
+
+/**
+ * Spec describing how to watch this agent's on-disk session storage for
+ * activity from sessions Maestro did NOT spawn (e.g., the same user running
+ * the agent's CLI directly, or over SSH).
+ *
+ * Consumed by {@link SessionFileWatcher} to construct a chokidar watcher and
+ * route filesystem events to per-session activity events.
+ */
+export interface StorageWatchSpec {
+	/**
+	 * Absolute path to the directory the watcher should recursively observe.
+	 * Missing or unreadable directories are tolerated by the watcher — same-user
+	 * scope means it's normal for some agents to be uninstalled.
+	 */
+	rootDir: string;
+	/**
+	 * Pure, synchronous mapping from a path relative to `rootDir` to a session
+	 * match. Return `null` for paths that don't correspond to a tracked session
+	 * (sidecar metadata, wrong depth, unrelated junk). The matcher is called on
+	 * every filesystem event, so it must not perform I/O.
+	 */
+	fileMatcher: SessionFileMatcher;
 }
 
 /**
@@ -87,6 +112,27 @@ export abstract class BaseSessionStorage implements AgentSessionStorage {
 		projectPath: string,
 		sshConfig?: SshRemoteConfig
 	): Promise<SearchableMessage[]>;
+
+	/**
+	 * Return the spec needed to watch this agent's on-disk session storage for
+	 * activity from sessions Maestro did NOT spawn. Same-user, local-FS only —
+	 * SSH remote watching is out of scope (see {@link SessionFileWatcher}).
+	 *
+	 * Default returns `null`, meaning "this agent doesn't support watching"
+	 * (e.g., it has no predictable per-session file on disk). Subclasses that
+	 * write per-session JSONL files to a stable path should override.
+	 *
+	 * The returned `fileMatcher` is called on every chokidar event under
+	 * `rootDir`, so it MUST be synchronous, pure, and tolerant of unrelated
+	 * paths (return `null`). See {@link StorageWatchSpec} for the contract.
+	 *
+	 * @returns Spec describing the storage root and a path-to-session matcher,
+	 *   or `null` if this agent does not expose externally observable session
+	 *   files.
+	 */
+	getStorageWatchSpec(): StorageWatchSpec | null {
+		return null;
+	}
 
 	/**
 	 * Cursor-based pagination over listSessions() results.
