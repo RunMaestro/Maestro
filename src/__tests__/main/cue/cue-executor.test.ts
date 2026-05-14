@@ -1058,7 +1058,9 @@ describe('cue-executor', () => {
 
 			expect(entry.type).toBe('CUE');
 			expect(entry.id).toBe('test-uuid-1234');
-			expect(entry.summary).toBe('"Watch config" · Test Session — config.yaml');
+			// summary prefers a stdout excerpt when available, falling back to the
+			// trigger-label format (see buildCueRunSummary / extractCueOutputExcerpt).
+			expect(entry.summary).toBe('Task completed successfully');
 			expect(entry.fullResponse).toBe('Task completed successfully');
 			expect(entry.projectPath).toBe('/projects/test');
 			expect(entry.sessionId).toBe('session-1');

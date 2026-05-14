@@ -430,7 +430,7 @@ export const SessionItem = memo(function SessionItem({
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase animate-status-pulse"
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
 						style={{
 							backgroundColor: theme.colors.warning + '30',
 							color: theme.colors.warning,

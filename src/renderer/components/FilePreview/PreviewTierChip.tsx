@@ -206,9 +206,15 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		role="menuitem"
 		onClick={onClick}
 		aria-current={active ? 'true' : undefined}
-		className="w-full text-left px-3 py-2 flex items-start gap-2 transition-colors"
+		// Inactive rows get the standard hover-bg from Tailwind. Active rows
+		// keep the accent-tinted background via inline style — leaving that off
+		// when inactive lets `:hover` win (an inline `background: transparent`
+		// would otherwise override the hover class).
+		className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${
+			active ? '' : 'hover:bg-white/10'
+		}`}
 		style={{
-			backgroundColor: active ? theme.colors.accent + '20' : 'transparent',
+			backgroundColor: active ? theme.colors.accent + '20' : undefined,
 			color: active ? theme.colors.accent : theme.colors.textMain,
 		}}
 	>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, memo } from 'react';
+import { useState, useMemo, useCallback, useEffect, memo, Fragment } from 'react';
 import { ChevronRight, ChevronDown, Copy, Check, ChevronUp, List, Table2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { CollapsibleJsonViewer } from './CollapsibleJsonViewer';
@@ -422,9 +422,13 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 							const isExpanded = expandedLine === fl.line.index;
 
 							return (
-								<>
+								// Fragment carries the key — when .map() returns a
+								// fragment, React inspects the fragment for the key, not
+								// the inner elements. The previous shorthand `<>` had
+								// no key slot, so React fell back to index keys and
+								// warned in dev.
+								<Fragment key={fl.line.index}>
 									<tr
-										key={fl.line.index}
 										onClick={() => onRowClick(fl.line.index)}
 										style={{
 											backgroundColor:
@@ -490,7 +494,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 										})}
 									</tr>
 									{isExpanded && (
-										<tr key={`${fl.line.index}-detail`}>
+										<tr>
 											<td
 												colSpan={columns.length + 1}
 												style={{
@@ -507,7 +511,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 											</td>
 										</tr>
 									)}
-								</>
+								</Fragment>
 							);
 						})}
 					</tbody>

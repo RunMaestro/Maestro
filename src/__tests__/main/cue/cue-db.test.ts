@@ -454,6 +454,23 @@ describe('cue-db github seen tracking', () => {
 		expect(cutoff).toBeGreaterThan(before - olderThanMs - 1000);
 	});
 
+	it('github seen reads should be conservative when the database is closed', () => {
+		closeCueDb();
+
+		expect(isGitHubItemSeen('sub-1', 'pr:owner/repo:123')).toBe(true);
+		expect(hasAnyGitHubSeen('sub-1')).toBe(true);
+		expect(mockDb.prepare).not.toHaveBeenCalled();
+	});
+
+	it('github seen writes should no-op when the database is closed', () => {
+		closeCueDb();
+
+		markGitHubItemSeen('sub-1', 'pr:owner/repo:123');
+		pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
+
+		expect(mockDb.prepare).not.toHaveBeenCalled();
+	});
+
 	it('clearGitHubSeenForSubscription should delete all records for a subscription', () => {
 		clearGitHubSeenForSubscription('sub-1');
 

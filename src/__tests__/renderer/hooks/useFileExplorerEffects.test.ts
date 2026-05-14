@@ -216,6 +216,61 @@ describe('useFileExplorerEffects', () => {
 			);
 		});
 
+		it('does not prepend the project root to absolute file links', async () => {
+			const useFileExplorerEffects = await loadHook();
+			const session = createMockSession();
+			const handleOpenFileTab = vi.fn();
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				activeSessionIdRef: { current: 'session-1' },
+				handleOpenFileTab,
+			});
+
+			const { result } = renderHook(() => useFileExplorerEffects(deps));
+
+			await act(async () => {
+				await result.current.handleMainPanelFileClick('/test/project/src/index.ts:20');
+			});
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/project/src/index.ts',
+				undefined
+			);
+			expect(handleOpenFileTab).toHaveBeenCalledWith(
+				expect.objectContaining({
+					path: '/test/project/src/index.ts',
+					name: 'index.ts',
+				}),
+				{ openInNewTab: false }
+			);
+		});
+
+		it('strips line and column suffixes from relative file links', async () => {
+			const useFileExplorerEffects = await loadHook();
+			const session = createMockSession();
+			const handleOpenFileTab = vi.fn();
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				activeSessionIdRef: { current: 'session-1' },
+				handleOpenFileTab,
+			});
+
+			const { result } = renderHook(() => useFileExplorerEffects(deps));
+
+			await act(async () => {
+				await result.current.handleMainPanelFileClick('src/index.ts:20:5');
+			});
+
+			expect(window.maestro.fs.stat).toHaveBeenCalledWith('/test/project/src/index.ts', undefined);
+			expect(handleOpenFileTab).toHaveBeenCalledWith(
+				expect.objectContaining({
+					path: '/test/project/src/index.ts',
+					name: 'index.ts',
+				}),
+				{ openInNewTab: false }
+			);
+		});
+
 		it('does nothing when session is not found', async () => {
 			const useFileExplorerEffects = await loadHook();
 			useSessionStore.setState({

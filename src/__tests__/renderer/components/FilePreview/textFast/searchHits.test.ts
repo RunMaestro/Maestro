@@ -36,6 +36,15 @@ describe('findTextHits', () => {
 		expect(hits[2].blockIndex).toBe(1);
 	});
 
+	it('annotates each hit with offsetWithinBlock relative to the containing page', () => {
+		const hits = findTextHits(content, 'hello', pages);
+		// page 0 starts at sourceStart=0; matches at 0 and 12 → offsets 0 and 12.
+		// page 1 starts at sourceStart=24 (first char of 'HELLO'); match at 24 → offset 0.
+		expect(hits[0].offsetWithinBlock).toBe(0);
+		expect(hits[1].offsetWithinBlock).toBe(12);
+		expect(hits[2].offsetWithinBlock).toBe(0);
+	});
+
 	it('reports length equal to the original query (preserves case)', () => {
 		const hits = findTextHits(content, 'Hello', pages);
 		expect(hits.every((h) => h.length === 5)).toBe(true);

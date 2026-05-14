@@ -40,6 +40,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { logger } from '../utils/logger';
+import { notifyToast } from '../stores/notificationStore';
 
 // ============================================================================
 // Types
@@ -776,7 +777,7 @@ function PlaybookDetailView({
 							className="block text-xs mb-1"
 							style={{ color: theme.colors.textDim }}
 						>
-							Import to folder (relative to Auto Run folder or absolute path)
+							Import to folder (single name inside the Auto Run folder)
 						</label>
 						<div className="flex items-center gap-2">
 							<input
@@ -790,7 +791,7 @@ function PlaybookDetailView({
 									color: theme.colors.textMain,
 									backgroundColor: theme.colors.bgActivity,
 								}}
-								placeholder="folder-name or /absolute/path"
+								placeholder="folder-name"
 							/>
 							<button
 								onClick={onBrowseFolder}
@@ -1008,10 +1009,15 @@ export function MarketplaceModal({
 			setSelectedDocFilename(null);
 			setDocumentContent(null);
 
-			// Generate default folder name: category/title slug
-			const slug = `${playbook.category}/${playbook.title}`
+			// Generate default folder name: single-segment slug from the title.
+			// The main-process `assertSafeTargetFolderName` guard rejects any
+			// value containing path separators, `..`, `~`, or absolute paths
+			// (defense against path traversal from untrusted WS clients), so a
+			// `category/title` slug would fail validation and the import would
+			// silently no-op. Mirrors the mobile fix in PR #947.
+			const slug = playbook.title
 				.toLowerCase()
-				.replace(/[^a-z0-9/]+/g, '-')
+				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/-+/g, '-')
 				.replace(/^-|-$/g, '');
 			setTargetFolderName(slug);
@@ -1062,8 +1068,18 @@ export function MarketplaceModal({
 			onImportComplete(targetFolderName);
 			onClose();
 		} else {
-			// Could show an error toast here in future enhancement
+			// Surface the failure to the user. Without this the user sees the
+			// modal stay open with no feedback — the original "Import does
+			// nothing" bug report. The main-process validator rejects values
+			// with path separators / absolute paths, so most user-typed paths
+			// land here.
 			logger.error('Import failed:', undefined, result.error);
+			notifyToast({
+				color: 'red',
+				title: 'Import failed',
+				message: result.error || 'Unknown error',
+				dismissible: true,
+			});
 		}
 	}, [
 		selectedPlaybook,

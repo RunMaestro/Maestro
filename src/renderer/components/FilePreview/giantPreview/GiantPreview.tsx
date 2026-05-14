@@ -1,10 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { EditorState, StateEffect, type Extension } from '@codemirror/state';
+import { EditorState, EditorSelection, StateEffect, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { buildBaseExtensions } from './extensions';
 import { buildEditorTheme } from './themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from './languageLoader';
-import { openSearch, closeSearch } from './searchBridge';
+import { findAllInDoc } from './searchEngine';
+import { softWrapLongLines, mapToWrappedOffset, SOFT_WRAP_MAX_LINE_LENGTH } from './softWrap';
 import type { GiantPreviewHandle, GiantPreviewProps } from './types';
 
 /**
@@ -44,13 +45,21 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 		[theme]
 	);
 
+	// Soft-wrap pathologically long lines so CM6's per-line measurement pass
+	// doesn't freeze the renderer. Lines under the threshold pass through
+	// unchanged. The insertion map lets the search handle navigate CM6 to
+	// the correct (wrapped) offset for a hit located against the ORIGINAL
+	// content — so a query that straddles a wrap boundary still matches.
+	const wrap = useMemo(() => softWrapLongLines(content, SOFT_WRAP_MAX_LINE_LENGTH), [content]);
+	const displayContent = wrap.wrapped;
+
 	// Mount / remount the editor when content, language or theme changes.
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return;
 
 		const state = EditorState.create({
-			doc: content,
+			doc: displayContent,
 			extensions: baseExtensions,
 		});
 
@@ -76,33 +85,52 @@ export const GiantPreview = forwardRef<GiantPreviewHandle, GiantPreviewProps>(fu
 			viewRef.current = null;
 			setIsReady(false);
 		};
-	}, [content, language, baseExtensions]);
+	}, [displayContent, language, baseExtensions]);
 
-	// Bridge the host element to the parent containerRef so the existing
-	// search hook can scope to it for adapter-driven search effects.
+	// Bridge CM6's content element (not the host) to the parent containerRef.
+	// useFilePreviewSearch walks this container for DOM ranges to register CSS
+	// Highlights; scoping to `.cm-content` excludes the gutter (line numbers)
+	// so a search like "123" doesn't paint highlights on gutter digits and
+	// also keeps the all-matches count accurate when CM6's own match-count
+	// has to agree with the DOM-walker fallback.
 	useEffect(() => {
-		if (containerRef) containerRef.current = hostRef.current;
+		if (!containerRef) return;
+		const host = hostRef.current;
+		// `.cm-content` is a `<div>` in CM6, but querySelector returns the
+		// generic HTMLElement; widen to HTMLDivElement for the ref signature.
+		const contentEl = (host?.querySelector('.cm-content') as HTMLDivElement | null) ?? host;
+		containerRef.current = contentEl;
 	});
 
 	useImperativeHandle(
 		ref,
 		() => ({
-			openSearch: (initialQuery?: string) => {
-				if (viewRef.current) openSearch(viewRef.current, initialQuery);
+			findInContent: (query: string) => {
+				// Search the ORIGINAL content (not view.state.doc which has the
+				// soft-wrap newlines). This keeps matches that straddle a wrap
+				// boundary findable. The search is pure on `content`, so it
+				// must run even before CM6 has mounted — scrollToMatch handles
+				// mount-state on its own.
+				return findAllInDoc(content, query);
 			},
-			closeSearch: () => {
-				if (viewRef.current) closeSearch(viewRef.current);
-			},
-			// Giant tier doesn't enumerate matches — CM6's panel handles
-			// everything. The adapter contract still wants a function, so we
-			// return an empty array and the no-match path in the hook just
-			// shows "0 of 0" while the user uses CM6's panel directly.
-			findInContent: () => [],
-			scrollToMatch: () => {
-				/* CM6 search handles its own scrolling */
+			scrollToMatch: (hit) => {
+				const view = viewRef.current;
+				// Defensive: same-render race between useFilePreviewSearch's
+				// count + navigate effects can pass undefined when a fresh
+				// query shrinks the hit count below the current index.
+				if (!view || !hit) return;
+				const docLength = view.state.doc.length;
+				const wrappedStart = mapToWrappedOffset(wrap.insertionsAt, hit.sourceOffset);
+				const wrappedEnd = mapToWrappedOffset(wrap.insertionsAt, hit.sourceOffset + hit.length);
+				const from = Math.max(0, Math.min(wrappedStart, docLength));
+				const to = Math.max(from, Math.min(wrappedEnd, docLength));
+				view.dispatch({
+					selection: EditorSelection.single(from, to),
+					effects: EditorView.scrollIntoView(from, { y: 'center' }),
+				});
 			},
 		}),
-		[]
+		[content, wrap.insertionsAt]
 	);
 
 	return (

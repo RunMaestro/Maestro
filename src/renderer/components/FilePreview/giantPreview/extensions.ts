@@ -7,7 +7,7 @@ import {
 import { EditorState, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { keymap } from '@codemirror/view';
-import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { highlightSelectionMatches } from '@codemirror/search';
 import {
 	bracketMatching,
 	defaultHighlightStyle,
@@ -24,10 +24,12 @@ import {
  * commands, `EditorView.editable.of(false)` hides the cursor caret while
  * still allowing selection (useful for copy-paste).
  *
- * `search()` mounts the search panel; we open it programmatically via
- * `openSearchPanel(view)` in `searchBridge.ts` when the user presses Cmd+F.
- * `highlightSelectionMatches` paints same-string occurrences without
- * needing the panel.
+ * Search note: we deliberately omit `search()` and `searchKeymap`. Cmd+F is
+ * intercepted by FilePreview and routed to the app's shared search bar so
+ * the same UI works across Rich / Fast / Giant tiers (see search-hardening
+ * plan B4). `highlightSelectionMatches` is kept because it paints same-
+ * string occurrences when the user manually selects a range — independent
+ * of the search bar.
  *
  * The `defaultHighlightStyle` is provided as a fallback for tags the theme
  * adapter doesn't cover — applied via `fallback: true` so the adapter's
@@ -42,10 +44,9 @@ export function buildBaseExtensions(): Extension {
 		bracketMatching(),
 		indentOnInput(),
 		history(),
-		search({ top: true }),
 		highlightSelectionMatches(),
 		syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-		keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap]),
+		keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap]),
 		EditorState.readOnly.of(true),
 		EditorView.editable.of(false),
 		// Keyboard-only focus support (the editor element still receives
@@ -59,5 +60,17 @@ export function buildBaseExtensions(): Extension {
 		// thread. Wrapping costs readability on structured logs but avoids
 		// the freeze on the input shapes we explicitly route here.
 		EditorView.lineWrapping,
+		// `lineWrapping` alone uses `white-space: pre-wrap`, which only breaks
+		// at whitespace. A 500k-character line with no whitespace (e.g.
+		// minified JSON, an `AAAA…AAAA` log line) therefore still renders as
+		// one giant flat element and hits the same wide-layer freeze. Pair
+		// `overflow-wrap: anywhere` so the browser can break at any character
+		// boundary when no whitespace is available.
+		EditorView.theme({
+			'.cm-content, .cm-line': {
+				overflowWrap: 'anywhere',
+				wordBreak: 'break-word',
+			},
+		}),
 	];
 }
