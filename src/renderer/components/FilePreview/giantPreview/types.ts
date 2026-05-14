@@ -1,27 +1,26 @@
 import type { Theme } from '../../../constants/themes';
+import type { SearchHit } from '../search/types';
 
 /**
  * Imperative handle exposed by `GiantPreview`. The parent FilePreview wires
- * the handle to Cmd+F so search is delegated to CodeMirror's native panel.
+ * the handle to Cmd+F so search results count + navigation flow through the
+ * app's shared search bar instead of CodeMirror's native panel.
  *
- * `findHits` / `scrollToMatch` exist purely for parity with the Fast tier
- * search adapter contract: in Giant tier we don't enumerate every match
- * (the document is too big), so `findHits` returns a degenerate `[]` and
- * navigation happens entirely inside CM6's panel.
+ * `findInContent` enumerates every match in the loaded document; pure scan
+ * over the source string is acceptable up to the Giant tier's size ceiling
+ * (one full pass per query). `scrollToMatch` selects the matched range and
+ * scrolls the CM6 viewport — CM6's selection rendering then paints the
+ * active match indicator for free.
  */
 export interface GiantPreviewHandle {
 	/** Open CodeMirror's built-in search panel and focus its input. */
 	openSearch(initialQuery?: string): void;
 	/** Close CodeMirror's search panel. */
 	closeSearch(): void;
-	/** No-op placeholder kept for adapter parity with the Fast tier. */
-	findInContent(query: string): Array<{
-		sourceOffset: number;
-		length: number;
-		blockIndex: number;
-	}>;
-	/** No-op placeholder kept for adapter parity. */
-	scrollToMatch(match: { blockIndex: number }): void;
+	/** Find every occurrence of `query` in the loaded source. Empty query → []. */
+	findInContent(query: string): SearchHit[];
+	/** Select + scroll the matched range into view. No-op on out-of-range offsets. */
+	scrollToMatch(hit: SearchHit): void;
 }
 
 /**

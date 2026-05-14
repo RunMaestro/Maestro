@@ -64,6 +64,7 @@ import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
 import { remarkHighlight } from './remarkHighlight';
 import { useFilePreviewSearch } from '../../hooks/file';
+import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
@@ -302,25 +303,23 @@ export const FilePreview = React.memo(
 		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
 		//   Fast text/code → textFast handle (page-virtualized hit map)
 		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
-		const searchAdapter = useMemo(() => {
+		const searchAdapter = useMemo<FilePreviewSearchAdapter | undefined>(() => {
 			if (previewTier === 'fast' && isMarkdown) {
 				return {
-					findHits: (q: string) => markdownFastRef.current?.findInContent(q) ?? [],
-					scrollToMatch: (m: { blockIndex: number }) => markdownFastRef.current?.scrollToMatch(m),
+					findHits: (q) => markdownFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => markdownFastRef.current?.scrollToMatch(hit),
 				};
 			}
 			if (previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary) {
 				return {
-					findHits: (q: string) => textFastRef.current?.findInContent(q) ?? [],
-					scrollToMatch: (m: { blockIndex: number }) => textFastRef.current?.scrollToMatch(m),
+					findHits: (q) => textFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => textFastRef.current?.scrollToMatch(hit),
 				};
 			}
 			if (previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary) {
 				return {
-					findHits: () => [],
-					scrollToMatch: () => {
-						/* CM6 owns scrolling */
-					},
+					findHits: (q) => giantRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => giantRef.current?.scrollToMatch(hit),
 				};
 			}
 			return undefined;

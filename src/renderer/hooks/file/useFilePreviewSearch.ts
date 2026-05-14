@@ -1,26 +1,16 @@
 import { useState, useRef, useEffect, useCallback, RefObject } from 'react';
+import type {
+	SearchHit,
+	FilePreviewSearchAdapter,
+} from '../../components/FilePreview/search/types';
 
 /** Maximum search query length to prevent expensive regex operations */
 const MAX_SEARCH_QUERY_LENGTH = 200;
 
-/**
- * Pluggable search source. The Fast tier provides one of these (via the
- * markdownFastRef's imperative handle) so the hook can report accurate match
- * counts for a virtualized document where most content is not in the DOM.
- *
- * Adapter responsibilities:
- *   - `findHits(query)` — return ALL matches in the document (not just the
- *     ones currently mounted), each tagged with the block index they live in.
- *   - `scrollToMatch(match)` — bring the match's block into view (typically
- *     via `virtuoso.scrollToIndex`).
- *
- * When `searchAdapter` is omitted the hook falls back to its DOM-walker
- * count + native scrollIntoView (the Rich tier behavior).
- */
-export interface FilePreviewSearchAdapter {
-	findHits(query: string): Array<{ sourceOffset: number; length: number; blockIndex: number }>;
-	scrollToMatch(match: { blockIndex: number }): void;
-}
+// Re-export so existing consumers that import the adapter type from this hook
+// keep working. New code should import from
+// `components/FilePreview/search/types` directly.
+export type { SearchHit, FilePreviewSearchAdapter };
 
 export interface UseFilePreviewSearchParams {
 	codeContainerRef: RefObject<HTMLDivElement | null>;
