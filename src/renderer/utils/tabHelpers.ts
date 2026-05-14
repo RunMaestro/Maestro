@@ -1715,6 +1715,7 @@ export function createMergedSession(
 		unifiedClosedTabHistory: [],
 		// Default Auto Run folder path (user can change later)
 		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
+		claudeInteractive: toolType === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 	};
 
 	return { session, tabId };

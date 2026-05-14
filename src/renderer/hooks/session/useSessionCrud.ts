@@ -258,6 +258,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customProviderPath,
 					sessionSshRemoteConfig,
 					autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
+					claudeInteractive:
+						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
 				setSessions((prev) => [...prev, newSession]);

@@ -707,6 +707,19 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	// Per-tab Claude headless mode state (Claude Code agents only).
+	// Tracks whether this session is currently being driven via the API (`claude --print`)
+	// or the interactive TUI proxy (`maestro-p`). `modeReason` records who decided the mode:
+	// `user` for manual overrides (settings pin or per-tab toggle), `auto` for the mode
+	// selector's default choice, `limit` when auto-fallback flipped to API because the Max
+	// quota was exhausted. `lastUsageSnapshotKey` is the configDirKey of the usage snapshot
+	// the selector consulted, so the spawner can detect stale snapshots.
+	claudeInteractive?: {
+		mode: 'interactive' | 'api';
+		modeReason: 'user' | 'auto' | 'limit';
+		lastUsageSnapshotKey?: string;
+	};
 }
 
 export interface AgentConfigOption {
