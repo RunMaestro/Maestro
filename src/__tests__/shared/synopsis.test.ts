@@ -187,6 +187,74 @@ describe('synopsis', () => {
 			});
 		});
 
+		describe('Details-headline rescue', () => {
+			it('should promote bolded Details headline when Summary ends with "Task complete."', () => {
+				const response =
+					'**Summary:** The playbook file is gitignored — no commit needed for that. Task complete.\n\n**Details:** **Added maestro-p session-id discovery (session-watcher.ts)** — phase 1, task 6 of the maestro-p playbook.';
+				const result = parseSynopsis(response);
+
+				expect(result.shortSummary).toBe(
+					'Added maestro-p session-id discovery (session-watcher.ts)'
+				);
+				// Body is preserved as-is so HistoryDetailModal continues to show
+				// the model's original formatting.
+				expect(result.fullSynopsis).toContain('phase 1, task 6 of the maestro-p playbook');
+				expect(result.fullSynopsis).toContain('**Added maestro-p');
+			});
+
+			it('should promote bolded Details headline when Summary is "Checkbox flipped..."', () => {
+				const response =
+					'**Summary:** Checkbox flipped to [x]. Task done.\n\n**Details:** **Implemented the maestro-p stream-json emitter (phase 1, task 5)** with full event coverage.';
+				const result = parseSynopsis(response);
+
+				expect(result.shortSummary).toBe(
+					'Implemented the maestro-p stream-json emitter (phase 1, task 5)'
+				);
+				expect(result.fullSynopsis).toContain('full event coverage');
+			});
+
+			it('should promote markdown heading from Details when Summary is "Pushed cleanly..."', () => {
+				const response =
+					'**Summary:** Pushed cleanly. Per playbook instructions, I exit after one task.\n\n**Details:** ## Implemented the maestro-p TUI driver core (phase 1 task 3)\nThe new TuiDriver class spawns claude via node-pty.';
+				const result = parseSynopsis(response);
+
+				expect(result.shortSummary).toBe(
+					'Implemented the maestro-p TUI driver core (phase 1 task 3)'
+				);
+				expect(result.fullSynopsis).toContain('spawns claude via node-pty');
+			});
+
+			it('should leave wrap-up Summary alone when Details has no leading headline', () => {
+				const response =
+					'**Summary:** Task complete.\n\n**Details:** Updated the config file with new timeouts.';
+				const result = parseSynopsis(response);
+
+				// No headline to promote, so wrap-up Summary stays as-is rather than
+				// falling all the way to the generic "Task completed" default.
+				expect(result.shortSummary).toBe('Task complete.');
+				expect(result.fullSynopsis).toContain('Updated the config file');
+			});
+
+			it('should not promote when Summary is already strong', () => {
+				const response =
+					'**Summary:** Fixed login validation bug in auth handler\n\n**Details:** **Some secondary heading** with more detail.';
+				const result = parseSynopsis(response);
+
+				expect(result.shortSummary).toBe('Fixed login validation bug in auth handler');
+				// Details preserved verbatim since Summary was fine
+				expect(result.fullSynopsis).toContain('**Some secondary heading**');
+			});
+
+			it('should skip bolded labels like "**Note:**" — not headlines', () => {
+				const response =
+					'**Summary:** Task complete.\n\n**Details:** **Note:** all tests pass after the migration.';
+				const result = parseSynopsis(response);
+
+				// "Note:" is a label, not a headline — no promotion
+				expect(result.shortSummary).toBe('Task complete.');
+			});
+		});
+
 		describe('fallback behavior', () => {
 			it('should use first line as summary when no format detected', () => {
 				const response = 'Just a plain text response\nWith multiple lines.\nAnd more content.';
