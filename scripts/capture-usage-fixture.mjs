@@ -22,8 +22,10 @@ import * as path from 'path';
 
 const STRIP_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 // claude 2.1.141 uses ❯ (U+276F) as the input prompt indicator, NOT ›
-// (U+203A) as the original playbook documented. Real-world capture, not a
-// guess — see scripts/debug-claude-startup.mjs.
+// (U+203A) as the original playbook documented. Real-world capture during
+// the phase 1 task 9 work — see the matching change in src/maestro-p/
+// tui-driver.ts and the captures in src/__tests__/fixtures/maestro-p-usage/
+// captured/.
 const PROMPT_RE = /^❯\s/m;
 const SPINNER_RE = /\(\d+s\s*·\s*[↑↓]\s*\d+\s*tokens\s*·\s*\w+\)/;
 const READY_HOLD_MS = 1500;
