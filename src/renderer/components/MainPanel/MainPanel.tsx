@@ -21,6 +21,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -615,6 +616,8 @@ export const MainPanel = React.memo(
 
 			if (diff.diff) {
 				setGitDiffPreview(diff.diff);
+			} else {
+				notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
 			}
 		}, [
 			activeSession?.isGitRepo,
@@ -959,6 +962,7 @@ export const MainPanel = React.memo(
 							onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 							onToggleTabShowThinking={props.onToggleTabShowThinking}
 							onWizardComplete={props.onWizardComplete}
+							onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}
 							onWizardDocumentSelect={props.onWizardDocumentSelect}
 							onWizardContentChange={props.onWizardContentChange}
 							onWizardLetsGo={props.onWizardLetsGo}

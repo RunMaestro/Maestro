@@ -5,11 +5,12 @@
  * All Pipelines, individual pipelines (with rename/delete), and New Pipeline.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { ChevronDown, Plus, X, Check, Layers, Pencil } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { PIPELINE_COLORS } from './pipelineColors';
 
 export interface PipelineSelectorProps {
@@ -55,6 +56,11 @@ export function PipelineSelector({
 	const selectedPipeline = selectedPipelineId
 		? pipelines.find((p) => p.id === selectedPipelineId)
 		: null;
+
+	const sortedPipelines = useMemo(
+		() => [...pipelines].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
+		[pipelines]
+	);
 
 	const handleToggle = useCallback(() => {
 		setIsOpen((v) => !v);
@@ -191,7 +197,7 @@ export function PipelineSelector({
 					)}
 
 					{/* Pipeline list */}
-					{pipelines.map((pipeline) => (
+					{sortedPipelines.map((pipeline) => (
 						<div key={pipeline.id}>
 							<div
 								className="flex items-center gap-2 w-full px-3 py-2 text-xs"

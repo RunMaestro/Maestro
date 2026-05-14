@@ -301,6 +301,8 @@ export interface MainPanelProps {
 	// Wizard document generation callbacks
 	/** Called when wizard document generation completes and user clicks Done */
 	onWizardComplete?: () => void;
+	/** Called when user wants to complete the wizard AND immediately start the Batch Runner for the generated docs */
+	onWizardCompleteAndStartAutoRun?: () => void;
 	/** Called when user selects a different document in the wizard */
 	onWizardDocumentSelect?: (index: number) => void;
 	/** Called when user edits document content in the wizard */

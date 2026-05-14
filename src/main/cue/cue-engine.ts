@@ -62,9 +62,15 @@ import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './c
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
+import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
+import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
 import { recordRunCompleted as recordTelemetryRunCompleted } from './cue-telemetry';
+import {
+	parseCueSubscriptionId,
+	pipelineKeyForSubscription,
+} from '../../shared/cue/subscription-id';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -155,6 +161,17 @@ export class CueEngine {
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
 	private deps: CueEngineDeps;
+	/**
+	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
+	 * does a read → mutate → write cycle that is not atomic on the filesystem;
+	 * two concurrent toggles (e.g. rapid web-UI clicks, or a toggle racing the
+	 * pipeline editor's save) would otherwise silently overwrite each other.
+	 * Each call appends to the project's pending chain, so the writes serialise
+	 * per file even under concurrent invocation. The map entry is dropped when
+	 * the chain settles to keep this from growing unbounded across the lifetime
+	 * of the engine.
+	 */
+	private yamlWriteChains: Map<string, Promise<unknown>> = new Map();
 
 	/**
 	 * Intercept all onLog calls to route structured payloads into metrics.
@@ -631,6 +648,122 @@ export class CueEngine {
 		return this.activityLog.getAll(limit);
 	}
 
+	/**
+	 * Flip the `enabled` flag on a single subscription in its owning session's
+	 * cue.yaml, then refresh that session so the trigger sources reattach.
+	 *
+	 * `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
+	 * the web server's `setGetCueSubscriptionsCallback` emits via
+	 * `composeCueSubscriptionId` — same identity we surface to remote callers
+	 * (CLI / web UI). The pipeline discriminator is what guarantees we don't
+	 * silently mutate the wrong row when two pipelines in the same session
+	 * each define a sub with the same name. Anything that can't be parsed
+	 * back to a live session + matching subscription returns `false` so the
+	 * caller can surface a "no such subscription" failure to the user instead
+	 * of silently doing nothing.
+	 *
+	 * Concurrency: the read-modify-write cycle is serialised per `projectRoot`
+	 * via `yamlWriteChains`. Two concurrent toggles for subs in the same
+	 * project (rapid web-UI clicks, a toggle racing a pipeline-editor save)
+	 * would otherwise let whichever write lands second silently discard the
+	 * first one's `enabled` flip. The chain also re-reads the YAML immediately
+	 * before mutating so a writer that intervened *outside* the chain (any
+	 * non-engine writer of cue.yaml) is observed and rolled into the next
+	 * write rather than overwritten with stale state.
+	 *
+	 * Comments and field ordering in the raw YAML are NOT preserved — the
+	 * implementation parses → mutates → serialises. That matches the existing
+	 * pipeline-editor write path (which also re-emits the YAML from a
+	 * structured graph), and is acceptable for a single-field flip from a
+	 * remote toggle.
+	 */
+	async setSubscriptionEnabled(subscriptionId: string, enabled: boolean): Promise<boolean> {
+		const parsedId = parseCueSubscriptionId(subscriptionId);
+		if (!parsedId) return false;
+		const { sessionId, pipeline: targetPipeline, name: subName } = parsedId;
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		if (!session) return false;
+		const projectRoot = session.projectRoot;
+		if (!projectRoot) return false;
+
+		// Serialise per projectRoot so concurrent toggles (and other engine-
+		// driven YAML writes once they thread through this chain) can't trample
+		// each other. `prev` resolves before our work starts; any thrown error
+		// in `prev` is intentionally swallowed here so a failed earlier write
+		// doesn't poison later writes — each toggle reports its own pass/fail.
+		const prev = this.yamlWriteChains.get(projectRoot) ?? Promise.resolve();
+		const next = prev.then(
+			() =>
+				this.runSubscriptionEnabledWrite(sessionId, projectRoot, targetPipeline, subName, enabled),
+			() =>
+				this.runSubscriptionEnabledWrite(sessionId, projectRoot, targetPipeline, subName, enabled)
+		);
+		// Track the chain so the next call for this projectRoot waits on us.
+		this.yamlWriteChains.set(projectRoot, next);
+		const result = await next;
+		// Drop the entry when the chain has settled to ours — guard against
+		// dropping a later writer's promise that already replaced ours.
+		if (this.yamlWriteChains.get(projectRoot) === next) {
+			this.yamlWriteChains.delete(projectRoot);
+		}
+		return result;
+	}
+
+	private runSubscriptionEnabledWrite(
+		sessionId: string,
+		projectRoot: string,
+		targetPipeline: string,
+		subName: string,
+		enabled: boolean
+	): boolean {
+		const file = readCueConfigFile(projectRoot);
+		if (!file) return false;
+
+		let parsed: unknown;
+		try {
+			parsed = yaml.load(file.raw);
+		} catch (err) {
+			captureException(err, { operation: 'setSubscriptionEnabled:yamlLoad', sessionId });
+			return false;
+		}
+		if (!parsed || typeof parsed !== 'object') return false;
+		const subs = (parsed as Record<string, unknown>).subscriptions;
+		if (!Array.isArray(subs)) return false;
+
+		// Match BOTH pipeline AND name. Without the pipeline discriminator,
+		// two same-named subs in different pipelines under one session would
+		// have indistinguishable ids and the first-match heuristic could
+		// silently toggle the wrong row.
+		let found = false;
+		for (const sub of subs) {
+			if (!sub || typeof sub !== 'object') continue;
+			const subRecord = sub as Record<string, unknown>;
+			if (subRecord.name !== subName) continue;
+			const subPipeline = pipelineKeyForSubscription({
+				name: subRecord.name as string,
+				pipeline_name:
+					typeof subRecord.pipeline_name === 'string' ? subRecord.pipeline_name : undefined,
+			});
+			if (subPipeline !== targetPipeline) continue;
+			subRecord.enabled = enabled;
+			found = true;
+			break;
+		}
+		if (!found) return false;
+
+		try {
+			const serialized = yaml.dump(parsed, { lineWidth: -1, noRefs: true });
+			writeCueConfigFile(projectRoot, serialized);
+		} catch (err) {
+			captureException(err, { operation: 'setSubscriptionEnabled:yamlWrite', sessionId });
+			return false;
+		}
+
+		this.refreshSession(sessionId, projectRoot);
+		return true;
+	}
+
 	/** Returns the lifetime count of Cue events recorded in the journal. */
 	getEventCount(): number {
 		return countCueEvents();
@@ -709,6 +842,69 @@ export class CueEngine {
 	/** Returns the merged Cue settings from the first available session config */
 	getSettings() {
 		return this.queryService.getSettings();
+	}
+
+	/**
+	 * Persist updated global Cue settings to every known cue.yaml on disk and
+	 * refresh the in-memory session configs so the engine immediately reflects
+	 * the new values. Used by the Settings → Encore Features → Maestro Cue
+	 * panel, which autosaves on change without involving the pipeline editor.
+	 *
+	 * Strategy: read each unique session config root's raw YAML, swap only the
+	 * `settings:` block via js-yaml parse/dump (subscriptions, no_ancestor_fallback,
+	 * etc. are preserved verbatim from the parsed object — comments and exact
+	 * formatting are lost, same as the pipeline editor's save path).
+	 *
+	 * No-op safely when no sessions are registered (engine not yet bootstrapped):
+	 * in-memory settings remain at DEFAULT_CUE_SETTINGS and the next session's
+	 * cue.yaml load wins. The renderer warns the user when the call lands in
+	 * this state by inspecting the returned `writtenRoots` array.
+	 */
+	saveSettings(settings: import('./cue-types').CueSettings): { writtenRoots: string[] } {
+		// Dedupe by config root so two sessions sharing the same cue.yaml don't
+		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
+		// case) over the session's own projectRoot.
+		const states = this.registry.snapshot();
+		const sessions = this.deps.getSessions();
+		const projectRootById = new Map(sessions.map((s) => [s.id, s.projectRoot]));
+		const roots = new Set<string>();
+		for (const [sessionId, state] of states) {
+			const root = state.configRoot ?? projectRootById.get(sessionId);
+			if (root) roots.add(root);
+		}
+
+		const writtenRoots: string[] = [];
+		for (const root of roots) {
+			try {
+				const file = readCueConfigFile(root);
+				if (!file) continue;
+				const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
+				const existingSettings = (parsed.settings ?? {}) as Record<string, unknown>;
+				parsed.settings = { ...existingSettings, ...settings };
+				const dumped = yaml.dump(parsed, {
+					indent: 2,
+					lineWidth: 120,
+					noRefs: true,
+					quotingType: "'",
+					forceQuotes: false,
+				});
+				writeCueConfigFile(root, dumped);
+				writtenRoots.push(root);
+			} catch (err) {
+				void captureException(err, {
+					operation: 'cue.saveSettings',
+					extra: { root },
+				});
+			}
+		}
+
+		// Mirror the new settings into in-memory state so getSettings() returns
+		// the updated values immediately (without waiting for a YAML re-read).
+		for (const state of states.values()) {
+			state.config.settings = { ...state.config.settings, ...settings };
+		}
+
+		return { writtenRoots };
 	}
 
 	/** Returns all sessions with their parsed subscriptions (for graph visualization) */

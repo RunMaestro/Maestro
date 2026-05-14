@@ -407,6 +407,33 @@ describe('useSessionCrud', () => {
 			expect(session.customEffort).toBe('high');
 		});
 
+		it('inherits groupId on the new session when provided (issue #827)', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession(
+					'claude-code',
+					'/test/project',
+					'Duplicated Agent',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'group-abc'
+				);
+			});
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.groupId).toBe('group-abc');
+		});
+
 		it('sets input mode to terminal for terminal agent', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));

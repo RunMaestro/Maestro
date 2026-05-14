@@ -32,6 +32,10 @@ vi.mock('lucide-react', () => ({
 	ZoomIn: () => <span data-testid="zoom-in-icon">ZoomIn</span>,
 	ZoomOut: () => <span data-testid="zoom-out-icon">ZoomOut</span>,
 	Maximize2: () => <span data-testid="maximize-icon">Maximize2</span>,
+	// Icons added by PreviewTierChip in Phase 2.
+	Sparkles: () => <span data-testid="sparkles-icon">Sparkles</span>,
+	Zap: () => <span data-testid="zap-icon">Zap</span>,
+	Database: () => <span data-testid="database-icon">Database</span>,
 }));
 
 // Mock react-markdown
@@ -367,7 +371,10 @@ describe('FilePreview', () => {
 		});
 
 		it('shows the truncation banner for large readable text previews and can load the full file', () => {
-			const largeContent = 'Readable paragraph with plenty of words for truncation. '.repeat(4000);
+			// Multi-line content sized to trigger the legacy 100KB truncation banner
+			// (Rich tier) without crossing the long-line threshold that would
+			// escalate to Giant tier.
+			const largeContent = 'Readable paragraph with plenty of words for truncation.\n'.repeat(4000);
 
 			render(
 				<FilePreview
@@ -772,7 +779,9 @@ describe('FilePreview', () => {
 	describe('large file handling', () => {
 		it('shows truncation banner for files larger than 100KB', () => {
 			// Create content larger than LARGE_FILE_PREVIEW_LIMIT (100KB)
-			const largeContent = 'x'.repeat(150 * 1024); // 150KB
+			// Multi-line content to trigger the legacy Rich-tier truncation
+			// banner without escalating to Giant via the long-line signal.
+			const largeContent = ('x'.repeat(99) + '\n').repeat(1536); // ~150KB / ~1.5k lines
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -811,7 +820,8 @@ describe('FilePreview', () => {
 		});
 
 		it('truncates displayed content to 100KB for syntax highlighting', () => {
-			const largeContent = 'y'.repeat(200 * 1024); // 200KB
+			// Multi-line, no single line above the 10k long-line threshold.
+			const largeContent = ('y'.repeat(99) + '\n').repeat(2048); // ~200KB / ~2k lines
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -826,7 +836,8 @@ describe('FilePreview', () => {
 		});
 
 		it('loads full file content when "Load full file" button is clicked', () => {
-			const largeContent = 'y'.repeat(200 * 1024); // 200KB
+			// Multi-line, no single line above the 10k long-line threshold.
+			const largeContent = ('y'.repeat(99) + '\n').repeat(2048); // ~200KB / ~2k lines
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -1546,6 +1557,84 @@ print("world")
 			);
 
 			expect(screen.queryByTestId('csv-table-renderer')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('HTML render mode', () => {
+		const htmlFile = {
+			name: 'page.html',
+			content: '<!doctype html><body><h1>hello</h1></body>',
+			path: '/test/page.html',
+		};
+
+		it('shows the HTML render toggle for .html files', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} />);
+			expect(screen.getByTestId('html-render-toggle')).toBeInTheDocument();
+		});
+
+		it('shows the HTML render toggle for .htm files', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ ...htmlFile, name: 'legacy.htm', path: '/test/legacy.htm' }}
+				/>
+			);
+			expect(screen.getByTestId('html-render-toggle')).toBeInTheDocument();
+		});
+
+		it('does not show the HTML render toggle for non-HTML files', () => {
+			render(<FilePreview {...defaultProps} />);
+			expect(screen.queryByTestId('html-render-toggle')).not.toBeInTheDocument();
+		});
+
+		it('does not show the HTML render toggle while in edit mode', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} markdownEditMode={true} />);
+			expect(screen.queryByTestId('html-render-toggle')).not.toBeInTheDocument();
+		});
+
+		it('does not render the iframe when htmlRenderMode is false', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} htmlRenderMode={false} />);
+			expect(screen.queryByTestId('html-render-iframe')).not.toBeInTheDocument();
+		});
+
+		it('renders a sandboxed iframe when htmlRenderMode is true', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} htmlRenderMode={true} />);
+			const iframe = screen.getByTestId('html-render-iframe') as HTMLIFrameElement;
+			expect(iframe).toBeInTheDocument();
+			// Security-critical: scripts may run but the iframe must not be
+			// same-origin (no `allow-same-origin`), so the rendered page can't
+			// reach the host renderer.
+			const sandbox = iframe.getAttribute('sandbox') ?? '';
+			expect(sandbox).toContain('allow-scripts');
+			expect(sandbox).not.toContain('allow-same-origin');
+			expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
+			expect(iframe.getAttribute('srcdoc')).toBe(htmlFile.content);
+		});
+
+		it('does not render the iframe while in edit mode even if htmlRenderMode is true', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={htmlFile}
+					htmlRenderMode={true}
+					markdownEditMode={true}
+				/>
+			);
+			expect(screen.queryByTestId('html-render-iframe')).not.toBeInTheDocument();
+		});
+
+		it('calls onHtmlRenderModeChange when the toggle is clicked', () => {
+			const onHtmlRenderModeChange = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={htmlFile}
+					htmlRenderMode={false}
+					onHtmlRenderModeChange={onHtmlRenderModeChange}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('html-render-toggle'));
+			expect(onHtmlRenderModeChange).toHaveBeenCalledWith(true);
 		});
 	});
 });

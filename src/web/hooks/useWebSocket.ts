@@ -79,6 +79,9 @@ export interface SessionData {
 	// Worktree subagent support
 	parentSessionId?: string | null; // If this is a worktree child, links to parent session
 	worktreeBranch?: string | null; // Git branch for this worktree child
+	// Run-in-Worktree support (mobile AutoRun launch)
+	isGitRepo?: boolean; // Whether the session's cwd is a git repo
+	worktreeBasePath?: string | null; // Base path where worktrees are stored (parent session config)
 	// The session's configured Auto Run folder (null/undefined when not yet set).
 	// Used by the mobile/web folder picker to highlight the current selection.
 	autoRunFolderPath?: string | null;

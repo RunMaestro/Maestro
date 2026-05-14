@@ -72,6 +72,23 @@ export interface FilePreviewProps {
 	lastModified?: number;
 	/** Callback to reload file content from disk (called when user clicks Reload in the change banner) */
 	onReloadFile?: () => void;
+	/**
+	 * Per-tab preview tier override. When set, the FilePreview forces this
+	 * tier regardless of file size. When undefined, the auto-picker decides.
+	 */
+	previewTierOverride?: 'rich' | 'fast' | 'giant';
+	/**
+	 * Callback fired when the user picks a tier in the override chip.
+	 * Passing `undefined` returns the file to auto-tier mode.
+	 */
+	onPreviewTierChange?: (tier: 'rich' | 'fast' | 'giant' | undefined) => void;
+	/**
+	 * For HTML files only: when true, FilePreview swaps the source view for an
+	 * embedded iframe rendering of the HTML. Defaults to false (source view).
+	 */
+	htmlRenderMode?: boolean;
+	/** Setter for the HTML render toggle. Persisted per-tab via the tab store. */
+	onHtmlRenderModeChange?: (value: boolean) => void;
 }
 
 export interface FilePreviewHandle {

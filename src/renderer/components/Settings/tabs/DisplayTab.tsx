@@ -8,12 +8,13 @@
 
 import { useState } from 'react';
 import {
+	Accessibility,
 	ALargeSmall,
 	AlignHorizontalJustifyCenter,
 	AlertTriangle,
 	AppWindow,
-	BookOpen,
 	Database,
+	Eye,
 	FolderSearch,
 	GitBranch,
 	HelpCircle,
@@ -53,6 +54,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setMaxLogBuffer,
 		maxOutputLines,
 		setMaxOutputLines,
+		colorBlindMode,
+		setColorBlindMode,
 		bionifyReadingMode,
 		setBionifyReadingMode,
 		bionifyIntensity,
@@ -842,13 +845,68 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			<div data-setting-id="display-bionify-reading-mode">
-				<SettingsSectionHeading icon={BookOpen}>Reading Mode</SettingsSectionHeading>
+			<div>
+				<SettingsSectionHeading icon={Accessibility}>Accessibility</SettingsSectionHeading>
 				<p className="text-xs opacity-50 mb-2">
-					Applies Bionify-style emphasis only to opted-in long-form readers like File Preview and
-					Auto Run. Terminals, logs, and chat input stay unchanged.
+					Visual options that adapt the interface for color vision deficiencies and long-form
+					reading.
 				</p>
+
 				<div
+					data-setting-id="display-colorblind-mode"
+					className="p-3 rounded border space-y-3 mb-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setColorBlindMode(!colorBlindMode)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setColorBlindMode(!colorBlindMode);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Eye className="w-4 h-4" />
+								<span>Color Blind Mode</span>
+							</div>
+							<p className="text-xs opacity-60 mt-1" style={{ color: theme.colors.textDim }}>
+								Swap red/green/yellow semantics for Wong&apos;s colorblind-safe palette across agent
+								status dots, diff add/remove, git status, the activity graph, Usage Dashboard
+								charts, and file extension badges.
+							</p>
+						</div>
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setColorBlindMode(!colorBlindMode);
+							}}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+							style={{
+								backgroundColor: colorBlindMode ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={colorBlindMode}
+							aria-label="Color blind mode"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									colorBlindMode ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+
+				<div
+					data-setting-id="display-bionify-reading-mode"
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>

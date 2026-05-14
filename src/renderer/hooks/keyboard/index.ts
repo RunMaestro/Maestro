@@ -28,3 +28,6 @@ export type { UseListNavigationOptions, UseListNavigationReturn } from './useLis
 
 // Cmd/Ctrl+S save shortcut
 export { useSaveShortcut } from './useSaveShortcut';
+
+// Cmd/Ctrl+Z / Shift+Z text-input undo fallback
+export { useTextEditorUndo } from './useTextEditorUndo';

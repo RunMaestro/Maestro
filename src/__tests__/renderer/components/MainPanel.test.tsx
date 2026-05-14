@@ -2517,9 +2517,10 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
 		});
 
-		it('should handle gitDiff with no content gracefully', async () => {
+		it('should flash a notification when gitDiff has no content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValue({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
 
 			const setGitDiffPreview = vi.fn();
 			const session = createSession({ isGitRepo: true });
@@ -2535,8 +2536,10 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('view-diff-btn'));
 
 			await waitFor(() => {
-				// Should not call setGitDiffPreview with empty diff
+				// Should not open the diff modal with empty content
 				expect(setGitDiffPreview).not.toHaveBeenCalled();
+				// Should flash an informational message instead
+				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
 			});
 		});
 	});

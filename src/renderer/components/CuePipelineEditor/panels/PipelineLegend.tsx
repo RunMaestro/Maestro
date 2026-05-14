@@ -7,9 +7,10 @@
  * on every node drag because it lived inline in PipelineCanvas.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import type { Theme } from '../../../types';
 import type { CuePipeline } from '../../../../shared/cue-pipeline-types';
+import { compareNamesIgnoringEmojis } from '../../../../shared/emojiUtils';
 
 export interface PipelineLegendProps {
 	pipelines: CuePipeline[];
@@ -24,6 +25,10 @@ function PipelineLegendInner({
 	selectPipeline,
 	theme,
 }: PipelineLegendProps) {
+	const sortedPipelines = useMemo(
+		() => [...pipelines].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
+		[pipelines]
+	);
 	if (selectedPipelineId !== null || pipelines.length === 0) return null;
 	return (
 		<div
@@ -42,7 +47,7 @@ function PipelineLegendInner({
 				borderRadius: 6,
 			}}
 		>
-			{pipelines.map((p) => (
+			{sortedPipelines.map((p) => (
 				<button
 					key={p.id}
 					onClick={() => selectPipeline(p.id)}

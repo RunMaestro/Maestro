@@ -11,6 +11,8 @@
  */
 
 import { useEffect } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import type {
 	LLMProvider,
 	ThemeId,
@@ -33,6 +35,7 @@ import {
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
+import type { SettingsStore } from '../../stores/settingsStore';
 import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
@@ -400,8 +403,18 @@ export interface UseSettingsReturn {
 	setSpellCheck: (value: boolean) => void;
 }
 
+// PERF: Identity selector reused across renders so the hook doesn't allocate a new
+// selector function each call (Zustand's useStoreWithEqualityFn would otherwise see
+// a fresh selector and recompute every render).
+const selectAllSettings = (s: SettingsStore): SettingsStore => s;
+
 export function useSettings(): UseSettingsReturn {
-	const store = useSettingsStore();
+	// PERF: Subscribe with shallow equality on the top-level state so a `set()` call that
+	// only flips one field doesn't re-render every consumer of useSettings. Critically,
+	// when an action calls `set({ x: value })` where `x === value` already, the resulting
+	// state object has a new reference but identical fields — shallow equality stops the
+	// re-render cascade through MaestroConsoleInner → GitStatusProvider → workspace tree.
+	const store = useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 
 	// Load settings on mount

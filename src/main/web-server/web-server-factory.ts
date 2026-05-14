@@ -4,23 +4,69 @@
  */
 
 import { randomUUID } from 'crypto';
-import { BrowserWindow, ipcMain } from 'electron';
+import { app as electronApp, BrowserWindow, ipcMain } from 'electron';
 import { WebServer } from './WebServer';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
-import type { Group } from '../../shared/types';
+import type { Group, SshRemoteConfig } from '../../shared/types';
+import { execGit } from '../utils/remote-git';
+import { getSshRemoteById } from '../stores';
+import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook } from './types';
+import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
+import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import {
+	getMarketplaceManifest,
+	refreshMarketplaceManifest,
+	getMarketplaceDocument,
+	getMarketplaceReadme,
+	importMarketplacePlaybook,
+} from '../services/marketplace-service';
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
+ *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
+ *  human-readable string so day-pinned schedules don't show up as
+ *  `undefined` in the CLI:
+ *
+ *  - `schedule_times: ['07:00']`                              → `"07:00"`
+ *  - `schedule_times: ['07:00']`, `schedule_days: ['mon','wed']` → `"07:00 (Mon, Wed)"`
+ *  - `interval_minutes: 5`                                    → `"every 5m"`
+ *  - `schedule_days: ['mon','wed']` (no times, no interval)   → `"days: Mon, Wed"`
+ *  - none of the above                                        → `undefined`
+ */
+function formatCueSchedule(sub: {
+	schedule_times?: string[];
+	schedule_days?: string[];
+	interval_minutes?: number;
+}): string | undefined {
+	const days =
+		Array.isArray(sub.schedule_days) && sub.schedule_days.length > 0
+			? sub.schedule_days.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')
+			: null;
+	if (Array.isArray(sub.schedule_times) && sub.schedule_times.length > 0) {
+		const base = sub.schedule_times.join(', ');
+		return days ? `${base} (${days})` : base;
+	}
+	if (typeof sub.interval_minutes === 'number') {
+		return `every ${sub.interval_minutes}m`;
+	}
+	if (days) {
+		return `days: ${days}`;
+	}
+	return undefined;
+}
 
 /** Store interface for sessions */
 interface SessionsStore {
@@ -50,6 +96,25 @@ export interface WebServerFactoryDependencies {
 		prompt?: string,
 		sourceAgentId?: string
 	) => boolean;
+	/** Direct CUE graph-data snapshot — bypasses renderer IPC round-trip.
+	 *  Required by `setGetCueSubscriptionsCallback` to answer the CLI's
+	 *  `get_cue_subscriptions` message in-process instead of forwarding it
+	 *  to the renderer (which never registered a listener, so every CLI
+	 *  `cue list` call timed out). */
+	getCueGraphData?: () => CueGraphSession[];
+	/** Direct toggle for a single subscription's `enabled` flag in YAML.
+	 *  `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
+	 *  emitted by `getCueGraphData` flattening (via `composeCueSubscriptionId`)
+	 *  — same dead-bridge fix as `getCueGraphData`. Returns `false` when the
+	 *  id can't be resolved, the YAML can't be parsed, or the named
+	 *  subscription isn't present. Async because the engine serialises
+	 *  per-`projectRoot` writes via a promise chain to keep concurrent
+	 *  toggles from clobbering each other. */
+	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+	/** Direct CUE activity-log snapshot — bypasses renderer IPC round-trip.
+	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
+	 *  Same dead-bridge fix as `getCueGraphData`. */
+	getCueActivityLog?: () => CueRunResult[];
 }
 
 /**
@@ -172,6 +237,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					// Worktree subagent support
 					parentSessionId: s.parentSessionId || null,
 					worktreeBranch: s.worktreeBranch || null,
+					isGitRepo: s.isGitRepo ?? false,
+					worktreeBasePath: s.worktreeConfig?.basePath || null,
 					// Auto Run folder — exposes the session's configured `.maestro/`
 					// playbook folder to web clients so the folder picker can show
 					// the current selection.
@@ -1181,7 +1248,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				autoScroll: true,
 				notificationsEnabled: settingsStore.get('osNotificationsEnabled', true) as boolean,
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
-				colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
+				colorBlindMode: settingsStore.get('colorBlindMode', 'none') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
 				// Infinity is JSON-serialized as null — web client maps null back to Infinity.
 				maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
@@ -1570,6 +1637,131 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					resolve({ diff: '', files: [] });
 				}, 10000);
 			});
+		});
+
+		// Resolve a session's effective git execution context (local cwd + optional
+		// SSH remote). Used by both Run-in-Worktree callbacks below. When SSH is
+		// enabled but the configured remote can't be resolved we fail loudly —
+		// silently falling back to local git would return wrong branch/worktree
+		// data for an SSH-backed session and leak the run to the wrong machine.
+		const resolveSessionGitContext = (
+			session: StoredSession
+		): { sshRemote: ReturnType<typeof getSshRemoteById>; remoteCwd: string | undefined } => {
+			if (!session.sessionSshRemoteConfig?.enabled) {
+				return { sshRemote: undefined, remoteCwd: undefined };
+			}
+			const sshRemoteId = session.sessionSshRemoteConfig.remoteId;
+			if (!sshRemoteId) {
+				throw new Error(`SSH remote is enabled but remoteId is missing for session ${session.id}`);
+			}
+			const sshRemote = getSshRemoteById(sshRemoteId);
+			if (!sshRemote) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			}
+			return { sshRemote, remoteCwd: session.cwd };
+		};
+
+		// Set up callback for web server to enumerate branches for the Run-in-Worktree
+		// base-branch picker on mobile. Executes git directly in the main process
+		// (no renderer round-trip needed because cwd + SSH config live in sessionsStore).
+		// Unexpected exec/SSH failures are rethrown so callers (and Sentry) see the
+		// real error instead of a silently empty branch list.
+		server.setGetGitBranchesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
+
+			const [branchesResult, currentBranchResult] = await Promise.all([
+				execGit(['branch', '-a', '--format=%(refname:short)'], session.cwd, sshRemote, remoteCwd),
+				execGit(['rev-parse', '--abbrev-ref', 'HEAD'], session.cwd, sshRemote, remoteCwd),
+			]);
+
+			// `execGit` returns `exitCode: number | string`. A string exit code (e.g.
+			// 'ENOENT', 'EPERM') means git never even ran — that's a real failure we
+			// want surfaced to Sentry, not a fake "empty repo" result. A numeric
+			// non-zero exit code is a legitimate "not a git repo" / "no branches"
+			// signal and maps to empty results.
+			if (typeof branchesResult.exitCode !== 'number') {
+				throw new Error(
+					branchesResult.stderr || `git branch failed: ${String(branchesResult.exitCode)}`
+				);
+			}
+			if (typeof currentBranchResult.exitCode !== 'number') {
+				throw new Error(
+					currentBranchResult.stderr ||
+						`git rev-parse failed: ${String(currentBranchResult.exitCode)}`
+				);
+			}
+
+			const branches = branchesResult.exitCode === 0 ? parseGitBranches(branchesResult.stdout) : [];
+			const currentBranch =
+				currentBranchResult.exitCode === 0
+					? currentBranchResult.stdout.trim() || undefined
+					: undefined;
+
+			return { branches, currentBranch };
+		});
+
+		// List existing worktrees for a session — used by mobile Run-in-Worktree
+		// to offer "use existing" alongside "create new". Same error-propagation
+		// contract as getGitBranchesForSession above.
+		server.setListWorktreesForSessionCallback(async (sessionId: string) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			const { sshRemote, remoteCwd } = resolveSessionGitContext(session);
+
+			const result = await execGit(
+				['worktree', 'list', '--porcelain'],
+				session.cwd,
+				sshRemote,
+				remoteCwd
+			);
+			// String exitCode = git never ran (ENOENT/EPERM/etc.) — surface to Sentry.
+			if (typeof result.exitCode !== 'number') {
+				throw new Error(result.stderr || `git worktree list failed: ${String(result.exitCode)}`);
+			}
+			if (result.exitCode !== 0) {
+				// Numeric non-zero: not a git repo or worktrees unsupported — empty
+				// list is the right answer here.
+				return { worktrees: [] };
+			}
+
+			const worktrees: Array<{ path: string; branch: string | null; isBare: boolean }> = [];
+			let current: { path?: string; branch?: string | null; isBare?: boolean } = {};
+			for (const line of result.stdout.split('\n')) {
+				if (line.startsWith('worktree ')) {
+					current.path = line.substring(9);
+				} else if (line.startsWith('branch ')) {
+					current.branch = line.substring(7).replace('refs/heads/', '');
+				} else if (line === 'bare') {
+					current.isBare = true;
+				} else if (line === 'detached') {
+					current.branch = null;
+				} else if (line === '' && current.path) {
+					worktrees.push({
+						path: current.path,
+						branch: current.branch ?? null,
+						isBare: current.isBare || false,
+					});
+					current = {};
+				}
+			}
+			if (current.path) {
+				worktrees.push({
+					path: current.path,
+					branch: current.branch ?? null,
+					isBare: current.isBare || false,
+				});
+			}
+			return { worktrees };
 		});
 
 		// Set up callback for web server to stop Auto Run
@@ -2125,131 +2317,122 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Cue Automation Callbacks ============
 
-		// Get Cue subscriptions — uses IPC request-response pattern
+		// Get Cue subscriptions — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:getCueSubscriptions` to
+		// the renderer and waited 30 s for a response, but no renderer code
+		// ever registered a handler for that channel. The CLI's 10 s timeout
+		// fired every time, surfacing as `cue list` hanging with
+		// `Command timed out waiting for cue_subscriptions`. Mirrors the same
+		// pattern as `triggerCueSubscription` below — the engine lives in
+		// main process anyway, so the IPC bounce was never needed.
 		server.setGetCueSubscriptionsCallback(async (sessionId?: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueSubscriptions', 'WebServer');
+			if (!deps.getCueGraphData) {
+				logger.warn('getCueGraphData dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueSubscriptions:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueSubscriptions', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
+			const graph = deps.getCueGraphData();
+			const filtered =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? graph.filter((gs) => gs.sessionId === sessionId)
+					: graph;
+			const subs: CueSubscriptionInfo[] = [];
+			for (const session of filtered) {
+				for (const sub of session.subscriptions) {
+					subs.push({
+						// No stable per-subscription id in YAML; compose one from
+						// session + pipeline + name. Names are unique within a
+						// pipeline (validator contract), so the pipeline
+						// discriminator is what guarantees the id stays unique
+						// when two pipelines under the same session each define
+						// a sub with the same name. Without it, downstream
+						// resolvers (e.g. `setSubscriptionEnabled` in the
+						// follow-up PR) would match by name only and silently
+						// toggle the wrong row.
+						id: composeCueSubscriptionId(session.sessionId, sub),
+						name: sub.name,
+						eventType: sub.event,
+						pattern: typeof sub.watch === 'string' ? sub.watch : undefined,
+						schedule: formatCueSchedule(sub),
+						sessionId: session.sessionId,
+						sessionName: session.sessionName,
+						enabled: sub.enabled !== false,
+						// Per-subscription last-triggered / count are not yet
+						// tracked by the engine (only per-session). Leave the
+						// numeric fields zero so the CLI renders "never triggered"
+						// rather than fabricating a value.
+						triggerCount: 0,
+					});
 				}
-				mainWindow.webContents.send('remote:getCueSubscriptions', sessionId, responseChannel);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueSubscriptions callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			}
+			return subs;
 		});
 
-		// Toggle Cue subscription — uses IPC request-response pattern
+		// Toggle Cue subscription — calls engine directly in the main process.
+		// Previous implementation forwarded `remote:toggleCueSubscription` to
+		// the renderer and waited 10 s for a response, but no renderer code
+		// ever registered a handler for that channel. Every web-UI toggle
+		// silently became a no-op after a 10 s stall. Same dead-bridge fix as
+		// `setGetCueSubscriptionsCallback` and `setTriggerCueSubscriptionCallback`.
 		server.setToggleCueSubscriptionCallback(async (subscriptionId: string, enabled: boolean) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for toggleCueSubscription', 'WebServer');
+			if (!deps.setCueSubscriptionEnabled) {
+				logger.warn('setCueSubscriptionEnabled dependency not available', 'WebServer');
 				return false;
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:toggleCueSubscription:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? false);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for toggleCueSubscription', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(false);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:toggleCueSubscription',
-					subscriptionId,
-					enabled,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`toggleCueSubscription callback timed out for ${subscriptionId}`,
-						'WebServer'
-					);
-					resolve(false);
-				}, 10000);
-			});
+			return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
 		});
 
-		// Get Cue activity log — uses IPC request-response pattern
+		// Get Cue activity log — calls engine directly in the main process.
+		// Previously forwarded to the renderer with no listener registered —
+		// the 30 s timeout fired every time and the web UI's activity tab
+		// always rendered empty. Maps `CueRunResult[]` from the engine into
+		// the web-facing `CueActivityEntry[]` shape and applies the same
+		// optional `sessionId` filter the IPC bounce used to apply renderer-side.
 		server.setGetCueActivityCallback(async (sessionId?: string, limit?: number) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for getCueActivity', 'WebServer');
+			if (!deps.getCueActivityLog) {
+				logger.warn('getCueActivityLog dependency not available', 'WebServer');
 				return [];
 			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:getCueActivity:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result ?? []);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for getCueActivity', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve([]);
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:getCueActivity',
-					sessionId,
-					limit ?? 50,
-					responseChannel
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn('getCueActivity callback timed out', 'WebServer');
-					resolve([]);
-				}, 30000);
-			});
+			const runs = deps.getCueActivityLog();
+			const filteredBySession =
+				typeof sessionId === 'string' && sessionId.length > 0
+					? runs.filter((r) => r.sessionId === sessionId)
+					: runs;
+			// `limit` is applied after sessionId filtering so the caller gets
+			// `N` matching entries rather than `N` total of which some may be
+			// filtered out — mirroring how `cueEngine.getActivityLog(limit)`
+			// would behave without the per-session filter.
+			const limited =
+				typeof limit === 'number' && limit > 0
+					? filteredBySession.slice(0, limit)
+					: filteredBySession;
+			const entries: CueActivityEntry[] = limited.map((r) => ({
+				id: r.runId,
+				// Same identity contract as the subscriptions list — the
+				// pipeline discriminator falls back to base-name stripping
+				// when the run record has no `pipelineName`, matching how
+				// `getCueGraphData`'s flatten emits ids.
+				subscriptionId: composeCueSubscriptionId(r.sessionId, {
+					name: r.subscriptionName,
+					pipeline_name: r.pipelineName,
+				}),
+				subscriptionName: r.subscriptionName,
+				eventType: r.event.type,
+				sessionId: r.sessionId,
+				timestamp: Date.parse(r.startedAt) || 0,
+				// Map engine-side status (`timeout` / `stopped` are terminal
+				// failure variants) onto the web-facing four-state enum.
+				status:
+					r.status === 'completed'
+						? 'completed'
+						: r.status === 'running'
+							? 'running'
+							: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+								? 'failed'
+								: 'triggered',
+				result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+				duration: r.durationMs,
+			}));
+			return entries;
 		});
 
 		// Trigger a Cue subscription by name — calls engine directly in the main process.
@@ -2525,6 +2708,122 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 			}
 		);
+
+		// =====================================================================
+		// Marketplace (Playbook Exchange) callbacks — main-process pure ops,
+		// no renderer round-trip. Mirrors the desktop IPC handlers in
+		// src/main/ipc/handlers/marketplace.ts.
+		// =====================================================================
+
+		/**
+		 * Resolve a session's effective SSH remote config.
+		 *
+		 * Returns `undefined` only when the session has no SSH configured at
+		 * all. When SSH IS configured but the remote can't be resolved (the
+		 * remoteId is missing, points at no entry in `sshRemotes`, or the
+		 * matching entry is disabled), this throws so callers fail loudly
+		 * instead of silently downgrading to a local import — mirrors the
+		 * desktop IPC marketplace handler and the SSH-spawn pattern in
+		 * CLAUDE.md.
+		 *
+		 * `sessionSshRemoteConfig.enabled` is the source of truth for the
+		 * newer config shape; the legacy top-level `sshRemoteId` field
+		 * implies enabled when present.
+		 */
+		const resolveSessionSshConfig = (session: StoredSession): SshRemoteConfig | undefined => {
+			const newConfig = session.sessionSshRemoteConfig;
+			const newConfigEnabled = newConfig?.enabled === true;
+			const legacyId: string | undefined = session.sshRemoteId;
+
+			if (!newConfigEnabled && !legacyId) {
+				return undefined;
+			}
+
+			const remoteId: string | null | undefined =
+				legacyId ?? (newConfigEnabled ? newConfig?.remoteId : undefined);
+			if (!remoteId) {
+				throw new Error('SSH remote not found or disabled');
+			}
+
+			const sshRemotes = settingsStore.get<SshRemoteConfig[]>('sshRemotes', []);
+			const found = sshRemotes.find((r) => r.id === remoteId && r.enabled);
+			if (!found) {
+				throw new Error('SSH remote not found or disabled');
+			}
+			return found;
+		};
+
+		server.setGetMarketplaceManifestCallback(async (options) => {
+			if (options?.refresh) {
+				return refreshMarketplaceManifest(electronApp);
+			}
+			return getMarketplaceManifest(electronApp);
+		});
+
+		server.setGetMarketplaceDocumentCallback(async (playbookPath, filename) => {
+			return getMarketplaceDocument(playbookPath, filename);
+		});
+
+		server.setGetMarketplaceReadmeCallback(async (playbookPath) => {
+			return getMarketplaceReadme(playbookPath);
+		});
+
+		server.setImportMarketplacePlaybookCallback(async (sessionId, playbookId, targetFolderName) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				return { success: false, error: `Session not found: ${sessionId}` };
+			}
+			const autoRunFolderPath: string | undefined = session.autoRunFolderPath;
+			if (!autoRunFolderPath) {
+				return {
+					success: false,
+					error: 'Session has no Auto Run folder configured',
+				};
+			}
+			// Resolve SSH up front so an unresolvable remote on an SSH-enabled
+			// session returns a typed failure instead of silently importing
+			// locally. Errors here aren't exceptional bugs — they're user
+			// misconfiguration — so we don't route them through the
+			// captureException catch below.
+			let sshConfig: SshRemoteConfig | undefined;
+			try {
+				sshConfig = resolveSessionSshConfig(session);
+			} catch (err) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : 'SSH remote not found or disabled',
+				};
+			}
+			try {
+				const result = await importMarketplacePlaybook({
+					app: electronApp,
+					playbookId,
+					targetFolderName,
+					autoRunFolderPath,
+					sessionId,
+					sshConfig,
+				});
+				return {
+					success: true,
+					playbook: result.playbook,
+					importedDocs: result.importedDocs,
+					importedAssets: result.importedAssets,
+				};
+			} catch (err) {
+				const errorMsg = err instanceof Error ? err.message : String(err);
+				captureException(err instanceof Error ? err : new Error(errorMsg), {
+					extra: {
+						operation: 'webServerFactory:importMarketplacePlaybook',
+						sessionId,
+						playbookId,
+						targetFolderName,
+					},
+				});
+				logger.error(`Marketplace import failed for ${playbookId}: ${errorMsg}`, 'WebServer');
+				return { success: false, error: errorMsg };
+			}
+		});
 
 		return server;
 	};

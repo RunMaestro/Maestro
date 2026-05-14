@@ -45,6 +45,7 @@ import { AutoRunIndicator } from './AutoRunIndicator';
 import { AutoRunPanel } from './AutoRunPanel';
 import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
 import { AutoRunSetupSheet } from './AutoRunSetupSheet';
+import { MarketplaceSheet } from './MarketplaceSheet';
 import { FolderPickerSheet } from './FolderPickerSheet';
 import { NotificationSettingsSheet } from './NotificationSettingsSheet';
 import { SettingsPanel } from './SettingsPanel';
@@ -246,9 +247,17 @@ function MobileHeader({
 	// Get active tab for per-tab data (agentSessionId, usageStats)
 	const activeTab = getActiveTabFromSession(activeSession);
 
-	// Session status and usage - prefer tab-level data
-	const sessionState = activeTab?.state || activeSession?.state || 'idle';
-	const isThinking = sessionState === 'busy';
+	// Session status and usage - prefer tab-level data, except for `connecting`
+	// (the optimistic state set during an Auto Run launch lives on the session
+	// rather than the tab; without this precedence the header would still show
+	// the tab's stale `idle` while the launching agent is spawning).
+	const sessionState =
+		activeSession?.state === 'connecting'
+			? 'connecting'
+			: activeTab?.state || activeSession?.state || 'idle';
+	// Animate the header dot for both `busy` and `connecting` so the launching
+	// agent's pulsing-orange indicator actually pulses.
+	const isThinking = sessionState === 'busy' || sessionState === 'connecting';
 
 	// Responsive: detect wider screens for showing more icons
 	const [isWide, setIsWide] = useState(() => window.innerWidth > 768);
@@ -1149,6 +1158,7 @@ export default function MobileApp() {
 	const [showAutoRunPanel, setShowAutoRunPanel] = useState(false);
 	const [autoRunViewingDoc, setAutoRunViewingDoc] = useState<string | null>(null);
 	const [showAutoRunSetup, setShowAutoRunSetup] = useState(false);
+	const [showMarketplaceSheet, setShowMarketplaceSheet] = useState(false);
 
 	// Notification settings sheet state
 	const [showNotificationSettings, setShowNotificationSettings] = useState(false);
@@ -1478,10 +1488,24 @@ export default function MobileApp() {
 		documents: autoRunDocuments,
 		loadDocuments: loadAutoRunDocuments,
 		launchAutoRun,
+		loadGitBranches: loadAutoRunGitBranches,
+		listWorktrees: listAutoRunWorktrees,
 		resumeAutoRunError,
 		skipAutoRunDocument,
 		abortAutoRunError,
 	} = useAutoRun(sendRequest, send, currentAutoRunState);
+
+	// Loaders bound to the active session so the worktree section can lazily
+	// fetch branches / worktrees without prop drilling sessionId.
+	const handleLoadAutoRunBranches = useCallback(async () => {
+		if (!activeSessionId) return { branches: [] };
+		return loadAutoRunGitBranches(activeSessionId);
+	}, [activeSessionId, loadAutoRunGitBranches]);
+
+	const handleListAutoRunWorktrees = useCallback(async () => {
+		if (!activeSessionId) return [];
+		return listAutoRunWorktrees(activeSessionId);
+	}, [activeSessionId, listAutoRunWorktrees]);
 
 	// Bind error-recovery handlers to the active session so the AutoRunIndicator
 	// can call them with no arguments. Memoized so the indicator doesn't see a
@@ -1511,6 +1535,7 @@ export default function MobileApp() {
 		setShowAutoRunPanel(false);
 		setAutoRunViewingDoc(null);
 		setShowAutoRunSetup(false);
+		setShowMarketplaceSheet(false);
 	}, []);
 
 	const handleAutoRunOpenDocument = useCallback((filename: string) => {
@@ -1532,6 +1557,25 @@ export default function MobileApp() {
 	const handleAutoRunCloseSetup = useCallback(() => {
 		setShowAutoRunSetup(false);
 	}, []);
+
+	// Playbook Exchange (marketplace) handlers
+	const handleOpenMarketplaceSheet = useCallback(() => {
+		setShowMarketplaceSheet(true);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseMarketplaceSheet = useCallback(() => {
+		setShowMarketplaceSheet(false);
+	}, []);
+
+	const handleMarketplaceImported = useCallback(() => {
+		// Refresh AutoRun document list so newly imported docs appear in the
+		// setup sheet's selector. The MarketplaceSheet has already closed
+		// itself by the time this fires.
+		if (activeSessionId) {
+			loadAutoRunDocuments(activeSessionId);
+		}
+	}, [activeSessionId, loadAutoRunDocuments]);
 
 	const handleAutoRunOpenFolderPicker = useCallback(() => {
 		setShowFolderPicker(true);
@@ -1583,13 +1627,59 @@ export default function MobileApp() {
 	}, []);
 
 	const handleAutoRunLaunch = useCallback(
-		(config: LaunchConfig) => {
+		async (config: LaunchConfig) => {
 			if (!activeSessionId) return;
-			launchAutoRun(activeSessionId, config);
+			const sessionId = activeSessionId;
+
+			// Read the pre-launch state from the current sessions snapshot before
+			// scheduling the optimistic update. Don't do this inside the
+			// `setSessions` updater — React 18 Concurrent Mode is allowed to call
+			// updater functions multiple times for speculative/interrupted renders,
+			// so a side effect there is non-deterministic.
+			const previousState = sessions.find((s) => s.id === sessionId)?.state;
+
+			// Optimistically flip the launching session to `connecting` (pulsing
+			// orange) so the user gets immediate visual feedback while the
+			// worktree spawn / initial dispatch occurs; the server's
+			// `session_state_change` broadcasts overwrite this once the agent
+			// actually transitions to busy.
+			if (previousState !== 'connecting') {
+				setSessions((prev) =>
+					prev.map((s) => (s.id === sessionId ? { ...s, state: 'connecting' } : s))
+				);
+			}
+
 			setShowAutoRunSetup(false);
 			triggerHaptic(HAPTIC_PATTERNS.success);
+
+			const revertOptimisticState = () => {
+				const fallback = previousState ?? 'idle';
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId && s.state === 'connecting' ? { ...s, state: fallback } : s
+					)
+				);
+			};
+
+			try {
+				const result = await launchAutoRun(sessionId, config);
+				if (!result.success) {
+					revertOptimisticState();
+					webLogger.warn(
+						`Auto Run launch failed for session ${sessionId}: ${result.error ?? 'unknown error'}`,
+						'Mobile'
+					);
+				}
+			} catch (error) {
+				// Unexpected throw (non-transport error) — revert the optimistic
+				// indicator and re-throw so the rejection surfaces to global
+				// handlers (browser unhandled-rejection / Sentry if/when the web
+				// bundle ever wires it up) instead of being silently swallowed.
+				revertOptimisticState();
+				throw error;
+			}
 		},
-		[activeSessionId, launchAutoRun]
+		[activeSessionId, launchAutoRun, sessions, setSessions]
 	);
 
 	// Connect on mount - use empty dependency array to only connect once
@@ -3239,6 +3329,7 @@ export default function MobileApp() {
 					onResumeAfterError={handleAutoRunResume}
 					onSkipAfterError={handleAutoRunSkipDocument}
 					onAbortAfterError={handleAutoRunAbort}
+					onOpenMarketplace={handleOpenMarketplaceSheet}
 				/>
 			)}
 
@@ -3260,9 +3351,24 @@ export default function MobileApp() {
 					documents={autoRunDocuments}
 					onLaunch={handleAutoRunLaunch}
 					onClose={handleAutoRunCloseSetup}
+					isGitRepo={activeSession?.isGitRepo ?? false}
+					worktreeBasePath={activeSession?.worktreeBasePath ?? null}
+					loadGitBranches={handleLoadAutoRunBranches}
+					loadWorktrees={handleListAutoRunWorktrees}
 					sendRequest={sendRequest}
 					send={send}
 					currentDocument={autoRunSelectedDoc}
+					onOpenMarketplace={handleOpenMarketplaceSheet}
+				/>
+			)}
+
+			{/* Playbook Exchange (marketplace) sheet - sits above AutoRun setup */}
+			{activeSessionId && showMarketplaceSheet && (
+				<MarketplaceSheet
+					sessionId={activeSessionId}
+					sendRequest={sendRequest}
+					onImported={handleMarketplaceImported}
+					onClose={handleCloseMarketplaceSheet}
 				/>
 			)}
 
@@ -3462,6 +3568,7 @@ export default function MobileApp() {
 						onAutoRunOpenDocument={handleAutoRunOpenDocument}
 						onAutoRunOpenSetup={handleAutoRunOpenSetup}
 						onAutoRunOpenFolderPicker={handleAutoRunOpenFolderPicker}
+						onAutoRunOpenMarketplace={handleOpenMarketplaceSheet}
 						onAutoRunSelectedDocumentChange={setAutoRunSelectedDoc}
 						sendRequest={sendRequest}
 						send={send}

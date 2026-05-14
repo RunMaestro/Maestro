@@ -112,6 +112,7 @@ subscriptions:
   - name: relay
     event: agent.completed
     source_session: researcher
+    source_sub: researcher-step
     action: command
     command:
       mode: cli
@@ -125,6 +126,7 @@ subscriptions:
 			expect(result).not.toBeNull();
 			const sub = result!.subscriptions[0];
 			expect(sub.action).toBe('command');
+			expect(sub.source_sub).toBe('researcher-step');
 			expect(sub.command).toEqual({
 				mode: 'cli',
 				cli: {
@@ -757,6 +759,148 @@ subscriptions:
 			);
 		});
 
+		it('requires source_sub for agent.completed command subscriptions', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'cmd-chain',
+						event: 'agent.completed',
+						source_session: 'Builder',
+						action: 'command',
+						command: { mode: 'shell', shell: 'echo ok' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('source_sub')])
+			);
+		});
+
+		it('rejects source_sub/source_session array length mismatch', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in',
+						event: 'agent.completed',
+						source_session: ['A', 'B'],
+						source_sub: ['fan-in-chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining('source_sub" length (1) must match "source_session" length (2)'),
+				])
+			);
+		});
+
+		it('rejects source_sub array when source_session is a string', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in-invalid-shape',
+						event: 'agent.completed',
+						source_session: 'A',
+						source_sub: ['chain-a', 'chain-b'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
+		it('rejects source_sub string when source_session is an array', () => {
+			// Symmetric to the previous test — guards the opposite shape-mismatch
+			// branch (`source_session` is an array but `source_sub` is a plain
+			// string) so the error message stays specific.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-in-invalid-shape-2',
+						event: 'agent.completed',
+						source_session: ['A', 'B'],
+						source_sub: 'chain-a',
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be an array when "source_session" is an array'
+					),
+				])
+			);
+		});
+
+		it('does not emit a misleading source_sub/source_session shape error when source_session is missing', () => {
+			// Regression: the type-shape consistency check used to fire
+			// "source_sub must be a string when source_session is a string" even
+			// though source_session was undefined (the required-field check above
+			// already errored). Verify that only the required-field error is
+			// surfaced for the missing source_session, not the shape error.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'missing-source-session',
+						event: 'agent.completed',
+						source_sub: ['chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"source_session" is required')])
+			);
+			expect(result.errors).not.toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
+		it('does not emit a misleading source_sub/source_session shape error when source_session is explicitly null', () => {
+			// YAML `source_session: ~` parses to null. The shape-check guard
+			// must treat null the same as undefined so a `~` value doesn't
+			// produce both a required-field error AND a misleading shape error.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'null-source-session',
+						event: 'agent.completed',
+						source_session: null,
+						source_sub: ['chain-a'],
+						prompt: '{{CUE_SOURCE_OUTPUT}}',
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"source_session" is required')])
+			);
+			expect(result.errors).not.toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"source_sub" must be a string when "source_session" is a string'
+					),
+				])
+			);
+		});
+
 		it('accepts prompt_file as alternative to prompt', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -1244,6 +1388,7 @@ subscriptions:
 							name: 'forward',
 							event: 'agent.completed',
 							source_session: 'researcher',
+							source_sub: 'researcher-step',
 							action: 'command',
 							command: {
 								mode: 'cli',

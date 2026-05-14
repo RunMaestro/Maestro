@@ -16,59 +16,90 @@ import type {
 } from '../../../../shared/cue-pipeline-types';
 
 /**
- * A semantic key for a node that stays stable across save → reload. UI-created
+ * Semantic keys for a node that stay stable across save → reload. UI-created
  * nodes use timestamp-based ids (`trigger-1741234567890`, `agent-s1-1741234567900`)
  * while `yamlToPipeline` regenerates ids from a deterministic scheme on reload
  * (`trigger-0`, `agent-${sessionName}-${size}`). If we looked up positions by
  * node.id alone, first-save positions — keyed by the UI timestamp id —
  * would miss every lookup on the next open and every node would snap back to
- * the auto-layout default. Keying by content (event type + trigger index
- * within the pipeline, sessionId, command subscription name, error identity)
- * instead survives the id regeneration.
+ * the auto-layout default.
  *
- * The `triggerIndex` for trigger nodes comes from the node's position among
- * other triggers in `allNodes` — both UI-created pipelines and reloaded
- * pipelines iterate triggers in `pipeline.nodes` insertion order, so the
- * index matches across the round-trip.
+ * Returns an array of keys in priority order. The first key is the most
+ * stable identifier available; subsequent keys are fallbacks for layouts
+ * written before that identifier was persisted on the node. When matching,
+ * both sides write under EVERY key they produce; lookup tries each live key
+ * in priority order against the saved index and uses the first hit.
+ *
+ * Stable identifiers used (in priority order):
+ *   - trigger: `subscriptionName` (unique within the pipeline; written to
+ *     YAML as the subscription `name` and re-stamped on every load).
+ *   - agent:   `nodeKey` (UUID; round-trips through YAML via
+ *     `target_node_key` / `fan_out_node_keys`).
+ *   - command: `nodeKey` (UUID; same round-trip as agents).
+ *
+ * Legacy fallbacks (kept so old saved layouts without these fields still
+ * resolve):
+ *   - trigger: `eventType + index_among_all_triggers` — fragile to YAML
+ *     reordering (e.g. the topo-sort introduced in #981 swaps trigger
+ *     positions), which is why the subscriptionName key above was added.
+ *   - agent:   `sessionKey + index_among_same_session_agents` — fragile to
+ *     same-session-multiple-instance reordering across reload.
  */
-function semanticNodeKey(node: PipelineNode, allNodes: PipelineNode[]): string | null {
+function semanticNodeKeys(node: PipelineNode, allNodes: PipelineNode[]): string[] {
 	switch (node.type) {
 		case 'trigger': {
+			const data = node.data as TriggerNodeData;
+			const keys: string[] = [];
+			if (data.subscriptionName) {
+				keys.push(`trigger:sub:${data.subscriptionName}`);
+			}
 			const triggers = allNodes.filter((n) => n.type === 'trigger');
 			const idx = triggers.findIndex((n) => n.id === node.id);
-			const data = node.data as TriggerNodeData;
-			// Fall back to label when eventType is absent (shouldn't happen
-			// for well-formed nodes, but defensive against malformed saves).
-			return `trigger:${data.eventType ?? data.label ?? 'unknown'}:${idx}`;
+			// Legacy fallback: eventType + index among all triggers.
+			keys.push(`trigger:${data.eventType ?? data.label ?? 'unknown'}:${idx}`);
+			return keys;
 		}
 		case 'agent': {
 			const data = node.data as AgentNodeData;
+			const keys: string[] = [];
+			if (data.nodeKey) {
+				keys.push(`agent:key:${data.nodeKey}`);
+			}
 			const sessionKey = data.sessionId || data.sessionName;
-			if (!sessionKey) return null;
-			// Disambiguate when the same session appears in the pipeline more
-			// than once (e.g. chain A → B → A uses `forceNew` in yamlToPipeline).
-			const sameSession = allNodes.filter(
-				(n) =>
-					n.type === 'agent' &&
-					((n.data as AgentNodeData).sessionId || (n.data as AgentNodeData).sessionName) ===
-						sessionKey
-			);
-			const idx = sameSession.findIndex((n) => n.id === node.id);
-			return `agent:${sessionKey}:${idx}`;
+			if (sessionKey) {
+				// Legacy fallback: sessionKey + index among same-session agents.
+				const sameSession = allNodes.filter(
+					(n) =>
+						n.type === 'agent' &&
+						((n.data as AgentNodeData).sessionId || (n.data as AgentNodeData).sessionName) ===
+							sessionKey
+				);
+				const idx = sameSession.findIndex((n) => n.id === node.id);
+				keys.push(`agent:${sessionKey}:${idx}`);
+			}
+			return keys;
 		}
 		case 'command': {
 			const data = node.data as CommandNodeData;
+			const keys: string[] = [];
+			if (data.nodeKey) {
+				keys.push(`command:key:${data.nodeKey}`);
+			}
 			// Subscription name is unique within the owning project's cue.yaml,
 			// which makes it a stable content-derived key that survives id
-			// regeneration across save/reload.
-			return data.name ? `command:${data.name}` : null;
+			// regeneration for legacy layouts written before `nodeKey` was
+			// persisted on command nodes.
+			if (data.name) {
+				keys.push(`command:${data.name}`);
+			}
+			return keys;
 		}
 		case 'error': {
 			const data = node.data as ErrorNodeData;
-			return `error:${data.subscriptionName}:${data.reason}`;
+			return [`error:${data.subscriptionName}:${data.reason}`];
 		}
 		default:
-			return null;
+			return [];
 	}
 }
 
@@ -124,14 +155,24 @@ export function mergePipelinesWithSavedLayout(
 
 		// Build per-pipeline position lookup maps from the matched saved
 		// pipeline. Two indices are maintained so both old (id-based) and
-		// new (semantic) layouts resolve.
+		// new (semantic) layouts resolve. Each saved node contributes to
+		// EVERY semantic key it produces, so a live node looking up via a
+		// stable key (e.g. nodeKey-based) hits even when the saved layout
+		// only had the legacy fallback key (older saves).
 		const positionsByNodeId = new Map<string, { x: number; y: number }>();
 		const positionsBySemantic = new Map<string, { x: number; y: number }>();
 		if (savedMatch) {
 			for (const savedNode of savedMatch.nodes) {
 				positionsByNodeId.set(savedNode.id, savedNode.position);
-				const semKey = semanticNodeKey(savedNode, savedMatch.nodes);
-				if (semKey) positionsBySemantic.set(semKey, savedNode.position);
+				const semKeys = semanticNodeKeys(savedNode, savedMatch.nodes);
+				for (const k of semKeys) {
+					// First wins — earlier keys are more stable identifiers,
+					// so a stable-key save shouldn't be overwritten by a
+					// fallback key produced by another saved node.
+					if (!positionsBySemantic.has(k)) {
+						positionsBySemantic.set(k, savedNode.position);
+					}
+				}
 			}
 		}
 
@@ -146,10 +187,20 @@ export function mergePipelinesWithSavedLayout(
 			nodes: pipeline.nodes.map((node) => {
 				// Prefer semantic lookup so first-save positions (keyed
 				// under UI timestamp ids on disk) still apply after reload
-				// regenerates node ids. Fall back to id-based lookup for
-				// layouts written when both sides happened to share ids.
-				const semKey = semanticNodeKey(node, pipeline.nodes);
-				const bySemantic = semKey ? positionsBySemantic.get(semKey) : undefined;
+				// regenerates node ids. Try keys in priority order: the
+				// most stable identifier (subscriptionName / nodeKey) wins
+				// over index-based fallbacks, so a YAML reorder (e.g. the
+				// chain-sub topo-sort in #981) can't shuffle positions
+				// onto the wrong nodes.
+				const semKeys = semanticNodeKeys(node, pipeline.nodes);
+				let bySemantic: { x: number; y: number } | undefined;
+				for (const k of semKeys) {
+					const hit = positionsBySemantic.get(k);
+					if (hit) {
+						bySemantic = hit;
+						break;
+					}
+				}
 				const byId = positionsByNodeId.get(node.id);
 				const savedPos = bySemantic ?? byId;
 				return savedPos ? { ...node, position: savedPos } : node;

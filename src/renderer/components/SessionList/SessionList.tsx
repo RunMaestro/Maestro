@@ -33,9 +33,13 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { WizardIndicator } from './WizardIndicator';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -118,7 +122,15 @@ interface SessionListProps {
 
 function SessionListInner(props: SessionListProps) {
 	// Store subscriptions
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Equality fn skips re-renders driven purely by streaming log/usage
+	// updates. The sidebar only reads name/state/bookmarked/groupId/aiTabs.hasUnread,
+	// so the 200ms batched flush no longer cascades a sidebar re-render unless a
+	// sidebar-relevant field actually changed. See sessionEquality.ts.
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		sidebarSessionEquality
+	);
 	const groups = useSessionStore((s) => s.groups);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
@@ -144,6 +156,44 @@ function SessionListInner(props: SessionListProps) {
 	);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
+	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
+	// render the wand glyph on agent rows AND on the group header / Bookmarks
+	// header for the group(s) those agents live in.
+	const { wizardActiveSessions } = useInlineWizardContext();
+
+	// Roll wizard activity up to the container level (group + bookmarks). For
+	// each session running the wizard, resolve to its parent if it's a worktree
+	// child (worktree children inherit groupId/bookmarked but are filtered out
+	// of `sortedGroupSessionsById` / `bookmarkedSessions`), then bucket by group
+	// and bookmark flag. `null` groupId = ungrouped.
+	const wizardRollup = useMemo(() => {
+		const groups = new Map<string | null, { isGeneratingDocs: boolean }>();
+		let bookmarkActive = false;
+		let bookmarkGenerating = false;
+		if (wizardActiveSessions.size === 0) {
+			return { groups, bookmarkActive, bookmarkGenerating };
+		}
+		const sessionById = new Map(sessions.map((s) => [s.id, s] as const));
+		for (const [sessionId, info] of wizardActiveSessions) {
+			let s = sessionById.get(sessionId);
+			if (!s) continue;
+			if (s.parentSessionId) {
+				const parent = sessionById.get(s.parentSessionId);
+				if (parent) s = parent;
+			}
+			const key = s.groupId ?? null;
+			const existing = groups.get(key);
+			groups.set(key, {
+				isGeneratingDocs: (existing?.isGeneratingDocs ?? false) || info.isGeneratingDocs,
+			});
+			if (s.bookmarked) {
+				bookmarkActive = true;
+				if (info.isGeneratingDocs) bookmarkGenerating = true;
+			}
+		}
+		return { groups, bookmarkActive, bookmarkGenerating };
+	}, [wizardActiveSessions, sessions]);
+
 	// Cue session status map: sessionId → { count, active }
 	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
@@ -166,7 +216,18 @@ function SessionListInner(props: SessionListProps) {
 						});
 					}
 				}
-				setCueSessionMap(map);
+				// Preserve referential identity when nothing changed — the map is fed
+				// to every SessionItem as a prop, and a fresh reference busts memo even
+				// when contents are equal. With cue activity ticks coming in at ~1Hz this
+				// would otherwise re-render all sidebar rows on every tick.
+				setCueSessionMap((prev) => {
+					if (prev.size !== map.size) return map;
+					for (const [id, next] of map) {
+						const cur = prev.get(id);
+						if (!cur || cur.count !== next.count || cur.active !== next.active) return map;
+					}
+					return prev;
+				});
 			} catch (err: unknown) {
 				// "Cue engine not initialized" is the expected pre-init case;
 				// treat anything else as a real failure and surface it. Note
@@ -464,48 +525,59 @@ function SessionListInner(props: SessionListProps) {
 		activeSessionId
 	);
 
-	// PERF: Cached callback maps to prevent SessionItem re-renders
-	// These Maps store stable function references keyed by session/editing ID
-	// The callbacks themselves are memoized, so the Map values remain stable
+	// PERF: Cached callback maps to prevent SessionItem re-renders.
+	// These Maps store stable function references keyed by session id. They only
+	// depend on the *set of session ids* — not on per-session field changes — so
+	// rebuilding them on every sidebar field change (state/name/etc.) was
+	// wasted work that broke SessionItem's React.memo bail-out (5 × N closures
+	// per flush). Key off a derived id signature instead.
+	const sessionIdsKey = useMemo(() => sessions.map((s) => s.id).join('|'), [sessions]);
+
+	// Read sessions through a ref inside the memos so the deps stay tied to the
+	// id-set (sessionIdsKey) rather than the array reference. The handlers care
+	// only about the *set of session ids*, not about per-session field changes.
+	const sessionsRef = useRef(sessions);
+	sessionsRef.current = sessions;
+
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => setActiveSessionId(s.id));
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessionIdsKey, setActiveSessionId]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => handleDragStart(s.id));
 		});
 		return map;
-	}, [sessions, handleDragStart]);
+	}, [sessionIdsKey, handleDragStart]);
 
 	const contextMenuHandlers = useMemo(() => {
 		const map = new Map<string, (e: React.MouseEvent) => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, (e: React.MouseEvent) => handleContextMenu(e, s.id));
 		});
 		return map;
-	}, [sessions, handleContextMenu]);
+	}, [sessionIdsKey, handleContextMenu]);
 
 	const finishRenameHandlers = useMemo(() => {
 		const map = new Map<string, (newName: string) => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, (newName: string) => finishRenamingSession(s.id, newName));
 		});
 		return map;
-	}, [sessions, finishRenamingSession]);
+	}, [sessionIdsKey, finishRenamingSession]);
 
 	const toggleBookmarkHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
+		sessionsRef.current.forEach((s) => {
 			map.set(s.id, () => toggleBookmark(s.id));
 		});
 		return map;
-	}, [sessions, toggleBookmark]);
+	}, [sessionIdsKey, toggleBookmark]);
 
 	// Helper: compute navIndexMap key for a session based on render context
 	const getNavKey = (variant: string, session: Session, groupId?: string): string => {
@@ -576,6 +648,8 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					wizardActive={wizardActiveSessions.has(session.id)}
+					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
@@ -627,6 +701,8 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
+										wizardActive={wizardActiveSessions.has(child.id)}
+										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -937,6 +1013,10 @@ function SessionListInner(props: SessionListProps) {
 									)}
 									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
 									<span>Bookmarks</span>
+									<WizardIndicator
+										active={wizardRollup.bookmarkActive}
+										generatingDocs={wizardRollup.bookmarkGenerating}
+									/>
 								</div>
 							</button>
 
@@ -1036,6 +1116,10 @@ function SessionListInner(props: SessionListProps) {
 										) : (
 											<span onDoubleClick={() => startRenamingGroup(group.id)}>{group.name}</span>
 										)}
+										<WizardIndicator
+											active={wizardRollup.groups.has(group.id)}
+											generatingDocs={!!wizardRollup.groups.get(group.id)?.isGeneratingDocs}
+										/>
 									</div>
 									{/* Delete button for empty groups */}
 									{groupSessions.length === 0 && (
@@ -1159,6 +1243,10 @@ function SessionListInner(props: SessionListProps) {
 									)}
 									<Folder className="w-3.5 h-3.5" />
 									<span>Ungrouped Agents</span>
+									<WizardIndicator
+										active={wizardRollup.groups.has(null)}
+										generatingDocs={!!wizardRollup.groups.get(null)?.isGeneratingDocs}
+									/>
 								</div>
 								{!showUnreadAgentsOnly && (
 									<button

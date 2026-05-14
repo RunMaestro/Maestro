@@ -10,18 +10,18 @@ Open Settings with `Cmd+,` / `Ctrl+,` or via **Quick Actions** (`Cmd+K` / `Ctrl+
 
 Settings are organized into tabs:
 
-| Tab                             | Contents                                                                                                                                                                                             |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **General**                     | About Me (conductor profile), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
-| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings                                                          |
-| **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                        |
-| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                           |
-| **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                          |
-| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                   |
-| **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                     |
-| **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                             |
-| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                        |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                         |
+| Tab                             | Contents                                                                                                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **General**                     | About Me (conductor profile), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location                      |
+| **Display**                     | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis) |
+| **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                             |
+| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                |
+| **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                                               |
+| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                        |
+| **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                          |
+| **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                  |
+| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                             |
+| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                              |
 
 ## Maestro Prompts
 
@@ -41,6 +41,38 @@ Click **Reset to Default** to restore the bundled version. This also takes effec
 Customizations are stored separately from bundled prompts and survive app updates. You can also access the four most common prompts directly from **Quick Actions** (`Cmd+K` / `Ctrl+K`): Maestro System Prompt, Auto Run Default, Commit Command, and Group Chat Moderator.
 
 For template variables, the `{{INCLUDE:name}}` and `{{REF:name}}` directives, creating reusable prompt fragments, and more, see the full [Prompt Customization](/prompt-customization) guide.
+
+## Accessibility
+
+The **Display** tab includes an **Accessibility** section that groups visual aids for color vision deficiencies and long-form reading. Open it via **Settings** (`Cmd+,` / `Ctrl+,`) → **Display** → scroll to **Accessibility**.
+
+### Color Blind Mode
+
+Toggle **Color Blind Mode** to swap Maestro's default red / green / yellow semantics for [Wong's colorblind-safe palette](https://www.nature.com/articles/nmeth.1618) (_Nature Methods_, 2011). The palette uses distinct hue **and** luminance steps so the signal survives protanopia, deuteranopia, tritanopia, and grayscale displays.
+
+The toggle applies across the desktop app:
+
+| Surface                                     | Default                     | Color Blind Mode           |
+| ------------------------------------------- | --------------------------- | -------------------------- |
+| Agent status dot — Ready                    | Theme green                 | Teal (`#009988`)           |
+| Agent status dot — Thinking                 | Theme yellow                | Orange (`#EE7733`)         |
+| Agent status dot — Error                    | Theme red                   | Vermillion (`#CC3311`)     |
+| Agent status dot — Connecting               | Orange `#ff8800`            | Strong Blue (`#0077BB`)    |
+| Diff viewer add / remove rows               | Green / red tints           | Teal / vermillion tints    |
+| Diff viewer add / remove counts             | `text-green-500/-red-500`   | Teal / vermillion          |
+| File explorer git status icons              | Theme success/error/warning | Teal / vermillion / orange |
+| History activity graph (Auto bar)           | Theme yellow                | Orange                     |
+| [Usage Dashboard](./usage-dashboard) charts | Theme accents               | Wong agent / line palette  |
+| File extension badges                       | Theme accent                | Per-language Wong colors   |
+
+Surfaces that aren't recolored: theme accent itself, file extension labels in plain text, terminal ANSI output (controlled by your terminal theme), the "Waiting for input" pulsing dot (uses theme accent), and the Cue activity bar (already uses a colorblind-safe cyan).
+
+### Bionify Emphasis (Reading Mode)
+
+Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers — File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+
+- **Intensity** — Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
+- **Algorithm** — Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1–4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
 
 ## Conductor Profile
 

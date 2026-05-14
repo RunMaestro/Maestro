@@ -8,6 +8,8 @@ import {
 	generateAutoRunProseStyles,
 	createMarkdownComponents,
 } from '../../utils/markdownConfig';
+import remarkFrontmatter from 'remark-frontmatter';
+import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
@@ -152,7 +154,7 @@ export function useAutoRunMarkdown({
 
 	// 8. Memoize remarkPlugins - include remarkFileLinks when we have file tree
 	const remarkPlugins = useMemo(() => {
-		const plugins: any[] = [...REMARK_GFM_PLUGINS];
+		const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
 		if (fileTree.length > 0 || homeDir) {
 			// cwd is empty since we're at the root of the Auto Run folder
 			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '', homeDir }]);

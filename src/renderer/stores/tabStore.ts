@@ -231,10 +231,18 @@ export interface TabStoreActions {
 	renameTerminalTab: (tabId: string, name: string) => void;
 
 	/**
-	 * Configure the startup command (and optional cwd override) for a terminal tab.
+	 * Configure the startup command (and optional cwd override) for a terminal tab
+	 * in a specific session. Pinned to sessionId rather than the active session so
+	 * the save lands correctly even if the user switches agents while the modal
+	 * is open.
 	 * Empty `command` clears the configuration.
 	 */
-	setTerminalTabStartupCommand: (tabId: string, command: string, cwd: string) => void;
+	setTerminalTabStartupCommand: (
+		sessionId: string,
+		tabId: string,
+		command: string,
+		cwd: string
+	) => void;
 
 	// === File tab content operations ===
 
@@ -257,6 +265,20 @@ export interface TabStoreActions {
 	 * Toggle edit mode on a file preview tab.
 	 */
 	toggleFileTabEditMode: (tabId: string) => void;
+
+	/**
+	 * Set or clear the preview tier override on a file preview tab.
+	 * Pass `undefined` to clear and fall back to the auto-tier from
+	 * `pickPreviewTier`. Pass a concrete tier to force it.
+	 */
+	setFileTabPreviewTier: (tabId: string, tier: 'rich' | 'fast' | 'giant' | undefined) => void;
+
+	/**
+	 * Toggle whether an HTML file preview tab renders the document in an
+	 * iframe (true) or shows source (false). No-op for non-HTML files since
+	 * the Globe button is only surfaced for `.html` / `.htm`.
+	 */
+	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -554,12 +576,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateActiveSession(updatedSession);
 	},
 
-	setTerminalTabStartupCommand: (tabId, command, cwd) => {
-		const session = getActiveSession();
-		if (!session) return;
-		const updatedSession = setTerminalTabStartupCommandHelper(session, tabId, command, cwd);
-		if (updatedSession === session) return;
-		updateActiveSession(updatedSession);
+	setTerminalTabStartupCommand: (sessionId, tabId, command, cwd) => {
+		useSessionStore.getState().setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const updated = setTerminalTabStartupCommandHelper(s, tabId, command, cwd);
+				return updated;
+			})
+		);
 	},
 
 	// File tab content operations
@@ -574,4 +598,8 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!tab) return;
 		updateFileTab(tabId, { editMode: !tab.editMode });
 	},
+
+	setFileTabPreviewTier: (tabId, tier) => updateFileTab(tabId, { previewTierOverride: tier }),
+
+	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
 }));

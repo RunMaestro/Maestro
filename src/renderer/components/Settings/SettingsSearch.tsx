@@ -149,16 +149,36 @@ export function SettingsSearchInput({
 				className="w-4 h-4 flex-shrink-0"
 				style={{ color: isActive ? theme.colors.accent : theme.colors.textDim }}
 			/>
-			<input
-				ref={inputRef}
-				type="text"
-				value={query}
-				onChange={(e) => setQuery(e.target.value)}
-				placeholder="Search settings..."
-				className="flex-1 bg-transparent outline-none text-sm"
-				style={{ color: theme.colors.textMain }}
-				aria-label="Search settings"
-			/>
+			<div className="relative flex-1 flex items-center">
+				<input
+					ref={inputRef}
+					type="text"
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					placeholder="Search settings..."
+					className="w-full bg-transparent outline-none text-sm"
+					style={{ color: theme.colors.textMain }}
+					aria-label="Search settings"
+				/>
+				{!isActive && (
+					<span
+						className="pointer-events-none absolute inset-y-0 left-0 flex items-center gap-2 text-sm"
+						aria-hidden="true"
+					>
+						{/* Phantom placeholder text positions the kbd hint right after where the real placeholder ends. */}
+						<span style={{ color: 'transparent' }}>Search settings...</span>
+						<kbd
+							className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-40"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
+								? '⌘'
+								: 'Ctrl+'}
+							F
+						</kbd>
+					</span>
+				)}
+			</div>
 			{isActive && (
 				<>
 					<span
@@ -174,14 +194,6 @@ export function SettingsSearchInput({
 						<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					</GhostIconButton>
 				</>
-			)}
-			{!isActive && (
-				<kbd
-					className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-40"
-					style={{ backgroundColor: theme.colors.bgActivity }}
-				>
-					{typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl+'}F
-				</kbd>
 			)}
 		</div>
 	);

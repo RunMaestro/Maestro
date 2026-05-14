@@ -186,8 +186,6 @@ function makeStateHook() {
 		validationErrors: [],
 		cueSettings: stableCueSettings,
 		setCueSettings: vi.fn(),
-		showSettings: false,
-		setShowSettings: vi.fn(),
 		runningPipelineIds: stableRunningPipelineIds,
 		persistLayout: mockPersistLayout,
 		pendingSavedViewportRef: { current: null as null | { x: number; y: number; zoom: number } },

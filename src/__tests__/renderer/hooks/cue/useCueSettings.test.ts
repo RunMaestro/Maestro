@@ -24,11 +24,10 @@ describe('useCueSettings', () => {
 		vi.clearAllMocks();
 	});
 
-	it('initial state: default settings, showSettings=false, settingsLoaded=false', () => {
+	it('initial state: default settings, settingsLoaded=false', () => {
 		mockGetSettings.mockReturnValue(new Promise(() => {})); // never resolves
 		const { result } = renderHook(() => useCueSettings());
 		expect(result.current.cueSettings).toEqual(DEFAULT_CUE_SETTINGS);
-		expect(result.current.showSettings).toBe(false);
 		expect(result.current.settingsLoaded).toBe(false);
 	});
 
@@ -46,15 +45,6 @@ describe('useCueSettings', () => {
 		const { result } = renderHook(() => useCueSettings());
 		await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
 		expect(result.current.cueSettings).toEqual(DEFAULT_CUE_SETTINGS);
-	});
-
-	it('setShowSettings(true) updates the flag', () => {
-		mockGetSettings.mockReturnValue(new Promise(() => {}));
-		const { result } = renderHook(() => useCueSettings());
-		act(() => {
-			result.current.setShowSettings(true);
-		});
-		expect(result.current.showSettings).toBe(true);
 	});
 
 	it('setCueSettings updates settings in place', async () => {

@@ -1162,18 +1162,6 @@ describe('usePipelineState', () => {
 		expect(result.current.pipelineState.selectedPipelineId).toBe('restored');
 	});
 
-	it('showSettings defaults to false and can be toggled', () => {
-		const { result } = renderHook(() => usePipelineState(createDefaultParams()));
-
-		expect(result.current.showSettings).toBe(false);
-
-		act(() => {
-			result.current.setShowSettings(true);
-		});
-
-		expect(result.current.showSettings).toBe(true);
-	});
-
 	it('pushes isDirty into cueDirtyStore.pipelineDirty when isDirty changes', () => {
 		const { result } = renderHook(() => usePipelineState(createDefaultParams()));
 

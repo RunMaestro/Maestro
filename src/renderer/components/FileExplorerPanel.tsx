@@ -509,6 +509,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
@@ -1140,7 +1141,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					<span className="flex-shrink-0">
 						{isFolder
 							? getExplorerFolderIcon(node.name, isExpanded, theme, fileExplorerIconTheme)
-							: getExplorerFileIcon(node.name, theme, change?.type, fileExplorerIconTheme)}
+							: getExplorerFileIcon(
+									node.name,
+									theme,
+									change?.type,
+									fileExplorerIconTheme,
+									colorBlindMode
+								)}
 					</span>
 					<span
 						className={`truncate min-w-0 flex-1 ${change ? 'font-medium' : ''}`}

@@ -33,7 +33,6 @@ import type {
 	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
-import type { CueSettings } from '../../../shared/cue';
 import { Hand, MousePointer2 } from 'lucide-react';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
 import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
@@ -45,7 +44,6 @@ import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
 import { NodeConfigPanel, type IncomingTriggerEdgeInfo } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
-import { CueSettingsPanel } from './panels/CueSettingsPanel';
 import { PipelineLegend } from './panels/PipelineLegend';
 import { PipelineEmptyState } from './panels/PipelineEmptyState';
 import { EVENT_COLORS } from './cueEventConstants';
@@ -141,12 +139,6 @@ export interface PipelineCanvasProps {
 	selectedPipelineId: string | null;
 	pipelines: CuePipeline[];
 	selectPipeline: (id: string | null) => void;
-	// Settings panel
-	showSettings: boolean;
-	cueSettings: CueSettings;
-	setCueSettings: React.Dispatch<React.SetStateAction<CueSettings>>;
-	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
-	setIsDirty: React.Dispatch<React.SetStateAction<boolean>>;
 	// Config panels
 	selectedNode: PipelineNode | null;
 	selectedEdge: PipelineEdgeType | null;
@@ -218,11 +210,6 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	selectedPipelineId,
 	pipelines,
 	selectPipeline,
-	showSettings,
-	cueSettings,
-	setCueSettings,
-	setShowSettings,
-	setIsDirty,
 	selectedNode,
 	selectedEdge,
 	selectedNodeHasOutgoingEdge,
@@ -249,16 +236,6 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	interactionMode,
 	setInteractionMode,
 }: PipelineCanvasProps) {
-	const handleCueSettingsChange = React.useCallback(
-		(s: CueSettings) => {
-			setCueSettings(s);
-			setIsDirty(true);
-		},
-		[setCueSettings, setIsDirty]
-	);
-
-	const handleCloseCueSettings = React.useCallback(() => setShowSettings(false), [setShowSettings]);
-
 	// Stabilize ReactFlow child props on `theme`. PipelineCanvas re-renders on
 	// every node drag / pan / zoom (it owns `nodes` and `edges`), so inline
 	// objects/functions here would bust the memoization on MiniMap, Controls,
@@ -485,16 +462,6 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 					);
 				})}
 			</div>
-
-			{/* Cue settings panel */}
-			{showSettings && (
-				<CueSettingsPanel
-					settings={cueSettings}
-					onChange={handleCueSettingsChange}
-					onClose={handleCloseCueSettings}
-					theme={theme}
-				/>
-			)}
 
 			{/* Config panels — suppressed in read-only (All Pipelines) view so
 			    any selection carried over from a previous single-pipeline view

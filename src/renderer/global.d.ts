@@ -3213,6 +3213,7 @@ interface MaestroAPI {
 	// Cue API (event-driven automation)
 	cue: {
 		getSettings: () => Promise<CueSettings>;
+		saveSettings: (settings: CueSettings) => Promise<{ writtenRoots: string[] }>;
 		getStatus: () => Promise<CueSessionStatus[]>;
 		getGraphData: () => Promise<CueGraphSession[]>;
 		getActiveRuns: () => Promise<CueRunResult[]>;

@@ -47,6 +47,8 @@ export interface DocumentGenerationViewProps {
 	streamingContent?: string;
 	/** Called when generation completes and user clicks Done */
 	onComplete: () => void;
+	/** Called when user wants to complete the wizard AND immediately start the Batch Runner for the generated docs */
+	onCompleteAndStartAutoRun?: () => void;
 	/** Called when user selects a different document */
 	onDocumentSelect: (index: number) => void;
 	/** Folder path for Auto Run docs */
@@ -63,6 +65,8 @@ export interface DocumentGenerationViewProps {
 	onCancel?: () => void;
 	/** Subfolder name where documents are saved (for completion message) */
 	subfolderName?: string;
+	/** Wall-clock timestamp (ms) when generation started; used so elapsed time survives unmount/remount when switching tabs */
+	startedAt?: number;
 }
 
 /**
@@ -1031,6 +1035,7 @@ export function DocumentGenerationView({
 	isGenerating,
 	streamingContent: _streamingContent,
 	onComplete,
+	onCompleteAndStartAutoRun,
 	onDocumentSelect: _onDocumentSelect,
 	folderPath: _folderPath,
 	onContentChange: _onContentChange,
@@ -1039,23 +1044,24 @@ export function DocumentGenerationView({
 	totalDocuments: _totalDocuments,
 	onCancel,
 	subfolderName,
+	startedAt,
 }: DocumentGenerationViewProps): JSX.Element {
 	// Calculate total tasks
 	const totalTasks = documents.reduce((sum, doc) => sum + countTasks(doc.content), 0);
 
-	// Track elapsed time for generation
-	const [startTime] = useState(() => Date.now());
-	const [elapsedMs, setElapsedMs] = useState(0);
+	// Persisted start timestamp survives tab switches; fall back to a local
+	// instant so the counter still works if the caller doesn't pass one.
+	const fallbackStartRef = useRef<number>(Date.now());
+	const startTime = startedAt ?? fallbackStartRef.current;
+	const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startTime));
 
 	useEffect(() => {
 		if (!isGenerating) return;
 
-		// Update immediately
-		setElapsedMs(Date.now() - startTime);
+		setElapsedMs(Math.max(0, Date.now() - startTime));
 
-		// Update every second
 		const interval = setInterval(() => {
-			setElapsedMs(Date.now() - startTime);
+			setElapsedMs(Math.max(0, Date.now() - startTime));
 		}, 1000);
 
 		return () => clearInterval(interval);
@@ -1182,18 +1188,33 @@ export function DocumentGenerationView({
 				{/* Created files list */}
 				<CreatedFilesList documents={documents} theme={theme} />
 
-				{/* Bottom section: Austin Facts during generation, Exit Wizard button when done */}
+				{/* Bottom section: Austin Facts during generation, action buttons when done */}
 				{isComplete ? (
-					<button
-						onClick={onComplete}
-						className="mt-8 px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
-						style={{
-							backgroundColor: theme.colors.success,
-							color: 'white',
-						}}
-					>
-						Exit Wizard
-					</button>
+					<div className="mt-8 flex items-center gap-3">
+						<button
+							onClick={onComplete}
+							className="px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							Exit Wizard
+						</button>
+						{onCompleteAndStartAutoRun && documents.length > 0 && (
+							<button
+								onClick={onCompleteAndStartAutoRun}
+								className="px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
+								style={{
+									backgroundColor: theme.colors.success,
+									color: 'white',
+								}}
+							>
+								Start Auto Run
+							</button>
+						)}
+					</div>
 				) : (
 					<>
 						{/* Cancel button */}

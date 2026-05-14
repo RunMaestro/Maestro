@@ -7,7 +7,8 @@
  * fires the "Copied annotated image to clipboard" Center Flash when `onCopy`
  * resolves so the success ack stays attached to the actual user click.
  *
- * Cmd/Ctrl+Z is bound at the window level so undo works regardless of which
+ * Cmd/Ctrl+Z (undo), Cmd/Ctrl+S (save+exit), and Cmd/Ctrl+C (copy annotated
+ * image) are bound at the window level so they work regardless of which
  * subtree of the modal currently owns focus.
  */
 
@@ -72,6 +73,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	undoRef.current = undo;
 	const onSaveRef = useRef(onSave);
 	onSaveRef.current = onSave;
+	const handleCopyRef = useRef<() => Promise<void>>(() => Promise.resolve());
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (
@@ -92,6 +94,13 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				event.preventDefault();
 				event.stopImmediatePropagation();
 				void onSaveRef.current();
+			} else if (key === 'c') {
+				// In annotation mode there's no selectable text to copy, so we
+				// hijack Cmd/Ctrl+C to copy the annotated composite — matching
+				// what the toolbar's copy button does (including success flash).
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				void handleCopyRef.current();
 			}
 		};
 		window.addEventListener('keydown', onKeyDown, { capture: true });
@@ -126,6 +135,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			// Parent surfaces explicit copy errors; toolbar only confirms success.
 		}
 	}, [onCopy]);
+	handleCopyRef.current = handleCopy;
 
 	const handleSave = useCallback(() => {
 		void onSave();

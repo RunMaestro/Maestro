@@ -113,6 +113,13 @@ export interface SessionData {
 	activeTabId?: string;
 	/** Whether session is bookmarked (shows in Bookmarks group) */
 	bookmarked?: boolean;
+	/** Worktree subagent support */
+	parentSessionId?: string | null;
+	worktreeBranch?: string | null;
+	/** Whether the session's cwd is a git repo (controls Run-in-Worktree visibility on mobile). */
+	isGitRepo?: boolean;
+	/** Base path where worktrees are stored, when configured on the parent session. */
+	worktreeBasePath?: string | null;
 }
 
 /**
@@ -153,6 +160,10 @@ export interface SessionBroadcastData {
 	/** Worktree subagent support */
 	parentSessionId?: string | null;
 	worktreeBranch?: string | null;
+	/** Whether the session's cwd is a git repo (controls Run-in-Worktree visibility on mobile). */
+	isGitRepo?: boolean;
+	/** Base path where worktrees are stored, when configured on the parent session. */
+	worktreeBasePath?: string | null;
 	/** The session's configured Auto Run folder; null when not set yet. */
 	autoRunFolderPath?: string | null;
 }
@@ -795,6 +806,33 @@ export type GetFileContentCallback = (
 export type GetGitStatusCallback = (sessionId: string) => Promise<GitStatusResult>;
 export type GetGitDiffCallback = (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 
+/**
+ * Result for the `get_git_branches` WebSocket message — used by mobile Run-in-Worktree
+ * picker to populate the base-branch dropdown.
+ */
+export interface GitBranchesResult {
+	branches: string[];
+	/** Currently checked-out branch (used to default the selection in the picker). */
+	currentBranch?: string;
+}
+
+export type GetGitBranchesForSessionCallback = (sessionId: string) => Promise<GitBranchesResult>;
+
+/**
+ * One entry returned by the `list_worktrees` WebSocket message.
+ */
+export interface WorktreeEntry {
+	path: string;
+	branch: string | null;
+	isBare: boolean;
+}
+
+export interface ListWorktreesResult {
+	worktrees: WorktreeEntry[];
+}
+
+export type ListWorktreesForSessionCallback = (sessionId: string) => Promise<ListWorktreesResult>;
+
 // =============================================================================
 // Group Chat Types
 // =============================================================================
@@ -969,3 +1007,56 @@ export type GenerateDirectorNotesSynopsisCallback = (
 	lookbackDays: number,
 	provider: string
 ) => Promise<DirectorNotesSynopsisResult>;
+
+// =============================================================================
+// Marketplace (Playbook Exchange) Types
+// =============================================================================
+
+import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+
+/** Re-export for convenience so handlers don't pull from two places. */
+export type { MarketplaceManifest, MarketplacePlaybook };
+
+/** Result from the marketplace get-manifest callback. */
+export interface MarketplaceManifestResult {
+	manifest: MarketplaceManifest;
+	fromCache: boolean;
+	cacheAge?: number;
+}
+
+/** Result from the marketplace import callback. */
+export interface MarketplaceImportResult {
+	success: boolean;
+	error?: string;
+	playbook?: {
+		id: string;
+		name: string;
+		createdAt: number;
+		updatedAt: number;
+		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	};
+	importedDocs?: string[];
+	importedAssets?: string[];
+}
+
+export type GetMarketplaceManifestCallback = (options?: {
+	refresh?: boolean;
+}) => Promise<MarketplaceManifestResult>;
+
+export type GetMarketplaceDocumentCallback = (
+	playbookPath: string,
+	filename: string
+) => Promise<{ content: string }>;
+
+export type GetMarketplaceReadmeCallback = (
+	playbookPath: string
+) => Promise<{ content: string | null }>;
+
+export type ImportMarketplacePlaybookCallback = (
+	sessionId: string,
+	playbookId: string,
+	targetFolderName: string
+) => Promise<MarketplaceImportResult>;

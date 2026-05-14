@@ -94,8 +94,6 @@ function makeStateHook() {
 		validationErrors: [],
 		cueSettings: stableCueSettings,
 		setCueSettings: vi.fn(),
-		showSettings: false,
-		setShowSettings: vi.fn(),
 		runningPipelineIds: new Set<string>(),
 		runningAgentsByPipeline: new Map<string, Set<string>>(),
 		runningSubscriptionsByPipeline: new Map<string, Set<string>>(),

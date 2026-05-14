@@ -18,7 +18,7 @@ import {
 	HistoryFilterToggle,
 	HistoryStatsBar,
 	ESTIMATED_ROW_HEIGHT,
-	ESTIMATED_ROW_HEIGHT_SIMPLE,
+	estimateHistoryRowHeight,
 	LOOKBACK_OPTIONS,
 } from '../History';
 import type { GraphBucket } from '../History/ActivityGraph';
@@ -82,11 +82,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const { directorNotesSettings } = useSettings();
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
-			? ['AUTO', 'USER', 'CUE']
-			: ['AUTO', 'USER'];
+			? ['USER', 'AUTO', 'CUE']
+			: ['USER', 'AUTO'];
 
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
@@ -373,15 +373,14 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			});
 		}, []);
 
-		// Virtualization
+		// Virtualization. Use the worst-case-aware estimate so the initial
+		// paint never positions a row higher than its content needs —
+		// adjacent rows would otherwise overlap until ResizeObserver caught up.
 		const estimateSize = useCallback(
 			(index: number) => {
 				const entry = filteredEntries[index];
 				if (!entry) return ESTIMATED_ROW_HEIGHT;
-				const hasFooter =
-					entry.elapsedTimeMs !== undefined ||
-					(entry.usageStats && entry.usageStats.totalCostUsd > 0);
-				return hasFooter ? ESTIMATED_ROW_HEIGHT : ESTIMATED_ROW_HEIGHT_SIMPLE;
+				return estimateHistoryRowHeight(entry);
 			},
 			[filteredEntries]
 		);

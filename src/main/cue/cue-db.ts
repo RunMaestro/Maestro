@@ -398,15 +398,20 @@ export function countCueEvents(): number {
 
 /**
  * Retrieve recent Cue events created after a given timestamp.
+ *
+ * Returns `[]` if the DB hasn't been initialized yet. Mirrors the tolerance of
+ * `countCueEvents`: read paths can be hit from IPC (stats UI, activity panel)
+ * before/after the engine's start/stop lifecycle has touched the DB, e.g. when
+ * boot-time `initCueDb()` failed but the user's encore flags are still on. The
+ * UI renders empty results instead of crashing.
  */
 export function getRecentCueEvents(since: number, limit?: number): CueEventRecord[] {
+	if (!db) return [];
 	const sql = limit
 		? `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`
 		: `SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC`;
 
-	const rows = (
-		limit ? getDb().prepare(sql).all(since, limit) : getDb().prepare(sql).all(since)
-	) as Array<{
+	const rows = (limit ? db.prepare(sql).all(since, limit) : db.prepare(sql).all(since)) as Array<{
 		id: string;
 		type: string;
 		trigger_name: string;

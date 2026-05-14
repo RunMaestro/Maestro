@@ -137,8 +137,6 @@ function buildStateHookReturn(pipelines: any[], overrides: Record<string, unknow
 			queue_size: 10,
 		},
 		setCueSettings: vi.fn(),
-		showSettings: false,
-		setShowSettings: vi.fn(),
 		runningPipelineIds: new Set<string>(),
 		runningAgentsByPipeline: new Map(),
 		runningSubscriptionsByPipeline: new Map(),

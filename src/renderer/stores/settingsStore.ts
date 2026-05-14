@@ -1432,16 +1432,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 				),
 				maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
 			};
-			// Only persist if any value actually changed
+			// PERF: Skip both the persist AND the in-memory set when nothing changed.
+			// updateUsageStats fires from useAutoRunAchievements on every `sessions` ref flip
+			// (i.e., every ~200ms streaming flush). Calling `set` with a fresh object identity
+			// each time triggers every consumer of useSettingsStore() to re-render, which
+			// cascades through MaestroConsoleInner → GitStatusProvider → entire workspace tree.
 			if (
-				updated.maxAgents !== prev.maxAgents ||
-				updated.maxDefinedAgents !== prev.maxDefinedAgents ||
-				updated.maxSimultaneousAutoRuns !== prev.maxSimultaneousAutoRuns ||
-				updated.maxSimultaneousQueries !== prev.maxSimultaneousQueries ||
-				updated.maxQueueDepth !== prev.maxQueueDepth
+				updated.maxAgents === prev.maxAgents &&
+				updated.maxDefinedAgents === prev.maxDefinedAgents &&
+				updated.maxSimultaneousAutoRuns === prev.maxSimultaneousAutoRuns &&
+				updated.maxSimultaneousQueries === prev.maxSimultaneousQueries &&
+				updated.maxQueueDepth === prev.maxQueueDepth
 			) {
-				window.maestro.settings.set('usageStats', updated);
+				return;
 			}
+			window.maestro.settings.set('usageStats', updated);
 			set({ usageStats: updated });
 		},
 
@@ -2198,8 +2203,19 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['webInterfaceCustomPort'] !== undefined)
 			patch.webInterfaceCustomPort = allSettings['webInterfaceCustomPort'] as number;
 
-		if (allSettings['colorBlindMode'] !== undefined)
-			patch.colorBlindMode = allSettings['colorBlindMode'] as boolean;
+		if (allSettings['colorBlindMode'] !== undefined) {
+			// Legacy installs and the mobile/web client persist this as a
+			// string ('none', 'enabled', 'deuteranopia', 'protanopia',
+			// 'tritanopia', or the literal 'false'). A bare `as boolean` cast
+			// leaves any non-empty string truthy, so 'none' silently forced
+			// every Usage Dashboard chart onto the colorblind palette and
+			// hid the active theme's accent. Coerce explicitly: any string
+			// other than 'none'/'false'/'' is treated as "on".
+			const raw = allSettings['colorBlindMode'];
+			patch.colorBlindMode =
+				raw === true ||
+				(typeof raw === 'string' && raw !== 'none' && raw !== 'false' && raw !== '');
+		}
 
 		if (allSettings['showStarredInUnreadFilter'] !== undefined)
 			patch.showStarredInUnreadFilter = allSettings['showStarredInUnreadFilter'] as boolean;

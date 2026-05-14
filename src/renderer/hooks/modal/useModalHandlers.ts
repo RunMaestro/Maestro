@@ -33,6 +33,7 @@ import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -945,6 +946,8 @@ export function useModalHandlers(
 
 		if (diff.diff) {
 			getModalActions().setGitDiffPreview(diff.diff);
+		} else {
+			notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
 		}
 	}, [activeSession]);
 

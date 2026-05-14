@@ -10,6 +10,32 @@ import { useState, useCallback } from 'react';
 import type { UseWebSocketReturn, AutoRunState } from './useWebSocket';
 
 /**
+ * Default `sendRequest` timeout for `configure_auto_run` (matches the platform
+ * default of 10s for ordinary launches).
+ */
+const LAUNCH_TIMEOUT_MS = 10_000;
+/**
+ * Worktree launches block on `git worktree add` and an upstream
+ * `getBranches` round-trip on the server before the result is returned, which
+ * can be slow on large repos or over SSH. Use a longer ceiling so legitimately
+ * successful launches don't surface as `Request timed out`.
+ */
+const LAUNCH_WORKTREE_TIMEOUT_MS = 60_000;
+
+/**
+ * Known transport-level rejections from `useWebSocket.sendRequest`. These are
+ * expected/recoverable (the user can retry once the connection is back), so
+ * `launchAutoRun` resolves with `{ success: false, error }` for them and lets
+ * the caller revert the optimistic UI. Anything else is treated as unexpected
+ * and re-thrown so unhandled-rejection handlers (and Sentry, if/when wired up
+ * for the web bundle) can capture it instead of having it silently swallowed.
+ */
+const KNOWN_TRANSPORT_ERRORS: ReadonlySet<string> = new Set([
+	'Request timed out',
+	'WebSocket not connected',
+]);
+
+/**
  * Auto Run document metadata (mirrors server-side AutoRunDocument).
  */
 export interface AutoRunDocument {
@@ -27,6 +53,20 @@ export interface AutoRunDocument {
 export interface SelectedDocument {
 	filename: string;
 	content: string;
+}
+
+/**
+ * Optional worktree dispatch config — when set, the desktop creates a git
+ * worktree, runs the Auto Run inside it, and (if requested) opens a PR on
+ * completion. Mirrors the `worktree` field accepted by the
+ * `configure_auto_run` WebSocket handler.
+ */
+export interface LaunchWorktreeConfig {
+	enabled: boolean;
+	path: string;
+	branchName: string;
+	createPROnCompletion: boolean;
+	prTargetBranch: string;
 }
 
 /**
@@ -59,6 +99,16 @@ export interface LaunchConfig {
 	prompt?: string;
 	loopEnabled?: boolean;
 	maxLoops?: number;
+	worktree?: LaunchWorktreeConfig;
+}
+
+/**
+ * Worktree summary returned by `list_worktrees`.
+ */
+export interface WorktreeSummary {
+	path: string;
+	branch: string | null;
+	isBare: boolean;
 }
 
 /**
@@ -70,6 +120,14 @@ export interface PlaybookDraft {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+}
+
+/**
+ * Result of an Auto Run launch attempt.
+ */
+export interface LaunchAutoRunResult {
+	success: boolean;
+	error?: string;
 }
 
 /**
@@ -86,8 +144,10 @@ export interface UseAutoRunReturn {
 	loadDocumentContent: (sessionId: string, filename: string) => Promise<void>;
 	saveDocumentContent: (sessionId: string, filename: string, content: string) => Promise<boolean>;
 	resetDocumentTasks: (sessionId: string, filename: string) => Promise<boolean>;
-	launchAutoRun: (sessionId: string, config: LaunchConfig) => boolean;
+	launchAutoRun: (sessionId: string, config: LaunchConfig) => Promise<LaunchAutoRunResult>;
 	stopAutoRun: (sessionId: string) => Promise<boolean>;
+	loadGitBranches: (sessionId: string) => Promise<{ branches: string[]; currentBranch?: string }>;
+	listWorktrees: (sessionId: string) => Promise<WorktreeSummary[]>;
 	resumeAutoRunError: (sessionId: string) => Promise<boolean>;
 	skipAutoRunDocument: (sessionId: string) => Promise<boolean>;
 	abortAutoRunError: (sessionId: string) => Promise<boolean>;
@@ -105,11 +165,13 @@ export interface UseAutoRunReturn {
  * Hook for managing Auto Run state and operations.
  *
  * @param sendRequest - WebSocket sendRequest function for request-response operations
- * @param send - WebSocket send function for fire-and-forget messages
+ * @param _send - Reserved for fire-and-forget messages (currently unused; kept
+ *   in the signature for caller compatibility while every operation flows
+ *   through `sendRequest` so callers can await responses)
  */
 export function useAutoRun(
 	sendRequest: UseWebSocketReturn['sendRequest'],
-	send: UseWebSocketReturn['send'],
+	_send: UseWebSocketReturn['send'],
 	autoRunState: AutoRunState | null = null
 ): UseAutoRunReturn {
 	const [documents, setDocuments] = useState<AutoRunDocument[]>([]);
@@ -185,18 +247,72 @@ export function useAutoRun(
 	);
 
 	const launchAutoRun = useCallback(
-		(sessionId: string, config: LaunchConfig): boolean => {
-			return send({
-				type: 'configure_auto_run',
-				sessionId,
-				documents: config.documents,
-				prompt: config.prompt,
-				loopEnabled: config.loopEnabled,
-				maxLoops: config.maxLoops,
-				launch: true,
-			});
+		async (sessionId: string, config: LaunchConfig): Promise<LaunchAutoRunResult> => {
+			const useWorktreeTimeout = Boolean(config.worktree && config.worktree.enabled);
+			const timeoutMs = useWorktreeTimeout ? LAUNCH_WORKTREE_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
+			let response: { success?: boolean; error?: string };
+			try {
+				response = await sendRequest<{ success?: boolean; error?: string }>(
+					'configure_auto_run',
+					{
+						sessionId,
+						documents: config.documents,
+						prompt: config.prompt,
+						loopEnabled: config.loopEnabled,
+						maxLoops: config.maxLoops,
+						launch: true,
+						...(config.worktree && config.worktree.enabled ? { worktree: config.worktree } : {}),
+					},
+					timeoutMs
+				);
+			} catch (error) {
+				// Handle known transport failures gracefully so the caller can
+				// revert the optimistic indicator without a thrown exception.
+				const message = error instanceof Error ? error.message : String(error);
+				if (KNOWN_TRANSPORT_ERRORS.has(message)) {
+					return { success: false, error: message };
+				}
+				// Anything else is unexpected — re-throw so it bubbles to the
+				// caller's catch (which still reverts the optimistic UI) and to
+				// any global unhandled-rejection / Sentry handler. Per
+				// `CLAUDE.md` → Error Handling & Sentry, only known/recoverable
+				// errors should be swallowed.
+				throw error;
+			}
+			return {
+				success: response.success ?? false,
+				error: response.error,
+			};
 		},
-		[send]
+		[sendRequest]
+	);
+
+	const loadGitBranches = useCallback(
+		async (sessionId: string): Promise<{ branches: string[]; currentBranch?: string }> => {
+			// Let transport/backend failures propagate so callers can render a real
+			// error state instead of an indistinguishable empty list.
+			const response = await sendRequest<{ branches?: string[]; currentBranch?: string }>(
+				'get_git_branches',
+				{ sessionId }
+			);
+			return {
+				branches: response.branches ?? [],
+				currentBranch: response.currentBranch,
+			};
+		},
+		[sendRequest]
+	);
+
+	const listWorktrees = useCallback(
+		async (sessionId: string): Promise<WorktreeSummary[]> => {
+			// Let transport/backend failures propagate; a silent `[]` would mask
+			// SSH/exec regressions as "no worktrees" in the mobile UI.
+			const response = await sendRequest<{ worktrees?: WorktreeSummary[] }>('list_worktrees', {
+				sessionId,
+			});
+			return response.worktrees ?? [];
+		},
+		[sendRequest]
 	);
 
 	const stopAutoRun = useCallback(
@@ -351,6 +467,8 @@ export function useAutoRun(
 		resetDocumentTasks,
 		launchAutoRun,
 		stopAutoRun,
+		loadGitBranches,
+		listWorktrees,
 		resumeAutoRunError,
 		skipAutoRunDocument,
 		abortAutoRunError,

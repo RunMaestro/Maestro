@@ -111,6 +111,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		renameSession: vi.fn().mockResolvedValue(true),
 		getGitStatus: vi.fn().mockResolvedValue({ files: [], branch: 'main' }),
 		getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
+		getGitBranchesForSession: vi
+			.fn()
+			.mockResolvedValue({ branches: ['main', 'feature/x'], currentBranch: 'main' }),
+		listWorktreesForSession: vi.fn().mockResolvedValue({ worktrees: [] }),
 		getGroupChats: vi.fn().mockResolvedValue([]),
 		startGroupChat: vi.fn().mockResolvedValue({ chatId: 'chat-1' }),
 		getGroupChatState: vi.fn().mockResolvedValue(null),
@@ -161,6 +165,26 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		deletePlaybook: vi.fn().mockResolvedValue(true),
 		notifyToast: vi.fn().mockResolvedValue(true),
 		notifyCenterFlash: vi.fn().mockResolvedValue(true),
+		getMarketplaceManifest: vi.fn().mockResolvedValue({
+			manifest: { lastUpdated: '2026-01-01', playbooks: [] },
+			fromCache: false,
+		}),
+		getMarketplaceDocument: vi.fn().mockResolvedValue({ content: '# doc' }),
+		getMarketplaceReadme: vi.fn().mockResolvedValue({ content: '# readme' }),
+		importMarketplacePlaybook: vi.fn().mockResolvedValue({
+			success: true,
+			playbook: {
+				id: 'p1',
+				name: 'Sample',
+				createdAt: 0,
+				updatedAt: 0,
+				documents: [],
+				loopEnabled: false,
+				prompt: '',
+			},
+			importedDocs: [],
+			importedAssets: [],
+		}),
 		listDesktopSessions: vi.fn().mockReturnValue([]),
 		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
@@ -1555,6 +1579,85 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Run-in-Worktree git APIs (Web → Desktop)', () => {
+		it('should reject get_git_branches without sessionId', () => {
+			handler.handleMessage(client, { type: 'get_git_branches' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+		});
+
+		it('should forward get_git_branches and emit branches list', async () => {
+			handler.handleMessage(client, {
+				type: 'get_git_branches',
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getGitBranchesForSession).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('git_branches');
+			expect(response.branches).toEqual(['main', 'feature/x']);
+			expect(response.currentBranch).toBe('main');
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('should reject list_worktrees without sessionId', () => {
+			handler.handleMessage(client, { type: 'list_worktrees' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+		});
+
+		it('should forward list_worktrees and emit worktrees list', async () => {
+			(callbacks.listWorktreesForSession as any).mockResolvedValueOnce({
+				worktrees: [{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }],
+			});
+
+			handler.handleMessage(client, {
+				type: 'list_worktrees',
+				sessionId: 'session-1',
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.listWorktreesForSession).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('worktrees_list');
+			expect(response.worktrees).toEqual([{ path: '/repo/wt-1', branch: 'feat/x', isBare: false }]);
+			expect(response.requestId).toBe('req-2');
+		});
+
+		it('should error when get_git_branches callback is not configured', () => {
+			const handlerNoCb = new WebSocketMessageHandler();
+			handlerNoCb.setCallbacks({});
+			handlerNoCb.handleMessage(client, {
+				type: 'get_git_branches',
+				sessionId: 'session-1',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+
+		it('should error when list_worktrees callback is not configured', () => {
+			const handlerNoCb = new WebSocketMessageHandler();
+			handlerNoCb.setCallbacks({});
+			handlerNoCb.handleMessage(client, {
+				type: 'list_worktrees',
+				sessionId: 'session-1',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+	});
+
 	describe('Select Session with Focus (Web → Desktop)', () => {
 		it('should forward session selection with focus flag', async () => {
 			handler.handleMessage(client, {
@@ -2210,6 +2313,200 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('not configured');
+		});
+	});
+
+	describe('Marketplace (Playbook Exchange)', () => {
+		it('returns the manifest payload on marketplace_get_manifest', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_manifest',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getMarketplaceManifest).toHaveBeenCalledWith({ refresh: false });
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_manifest_result');
+			expect(response.success).toBe(true);
+			expect(response.manifest).toBeDefined();
+			expect(response.requestId).toBe('req-1');
+		});
+
+		it('forwards refresh:true when requested', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_manifest',
+				refresh: true,
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getMarketplaceManifest).toHaveBeenCalledWith({ refresh: true });
+			});
+		});
+
+		it('rejects marketplace_get_document with traversal in filename via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath: 'category/sample',
+				filename: '../../etc/passwd',
+				requestId: 'req-3',
+			});
+
+			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			// Validation failures use the request-scoped result type so a CLI
+			// waiting on `marketplace_get_document_result` doesn't time out
+			// (coderabbit feedback).
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid filename');
+			expect(response.requestId).toBe('req-3');
+		});
+
+		// Coderabbit feedback: defensive validation must reject any traversal
+		// segment / backslash in playbookPath at the entry point, not just
+		// absolute / tilde / Windows-drive prefixes — downstream resolvers
+		// have other guards but shouldn't be relied on in isolation.
+		it.each([
+			['../../etc/passwd', 'parent traversal'],
+			['./foo', 'leading dot segment'],
+			['foo/./bar', 'embedded dot segment'],
+			['foo/../bar', 'embedded parent traversal'],
+			['foo\\bar', 'embedded backslash'],
+		])('rejects marketplace_get_document playbookPath with %s (%s)', (playbookPath) => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath,
+				filename: 'README',
+				requestId: 'req-traversal',
+			});
+
+			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Local filesystem paths are not allowed');
+		});
+
+		it('rejects marketplace_get_document for absolute playbookPath via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath: '/etc/passwd',
+				filename: 'README',
+				requestId: 'req-3b',
+			});
+
+			expect(callbacks.getMarketplaceDocument).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Local filesystem paths are not allowed');
+		});
+
+		it('returns document content on marketplace_get_document', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_document',
+				playbookPath: 'category/sample',
+				filename: 'STEP_1',
+				requestId: 'req-4',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getMarketplaceDocument).toHaveBeenCalledWith('category/sample', 'STEP_1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_document_result');
+			expect(response.success).toBe(true);
+			expect(response.content).toBe('# doc');
+		});
+
+		it('returns README content on marketplace_get_readme', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_get_readme',
+				playbookPath: 'category/sample',
+				requestId: 'req-5',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.getMarketplaceReadme).toHaveBeenCalledWith('category/sample');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_readme_result');
+			expect(response.success).toBe(true);
+			expect(response.content).toBe('# readme');
+		});
+
+		it('imports a playbook on marketplace_import_playbook', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				targetFolderName: 'my-folder',
+				requestId: 'req-6',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
+					'session-1',
+					'pb-1',
+					'my-folder'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('rejects marketplace_import_playbook missing required fields via typed result', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				requestId: 'req-7',
+			});
+
+			expect(callbacks.importMarketplacePlaybook).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('targetFolderName');
+		});
+
+		it('rejects marketplace_import_playbook with separators in targetFolderName', () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				targetFolderName: '../escape',
+				requestId: 'req-7b',
+			});
+
+			expect(callbacks.importMarketplacePlaybook).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('separators');
+		});
+
+		it('replies with marketplace_get_manifest_result when callback unconfigured', () => {
+			callbacks.getMarketplaceManifest = undefined;
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, {
+				type: 'marketplace_get_manifest',
+				requestId: 'req-8',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_get_manifest_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not configured');
 		});

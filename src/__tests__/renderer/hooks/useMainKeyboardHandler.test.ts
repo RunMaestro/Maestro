@@ -804,10 +804,11 @@ describe('useMainKeyboardHandler', () => {
 	});
 
 	describe('wizard tab restrictions', () => {
-		it('should disable toggleMode (Cmd+J) for wizard tabs', () => {
+		it('should allow toggleMode (Cmd+J) for wizard tabs to open a new terminal tab', () => {
+			vi.useFakeTimers();
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockToggleInputMode = vi.fn();
+			const mockHandleOpenTerminalTab = vi.fn();
 			const wizardTab = {
 				id: 'tab-1',
 				name: 'Wizard',
@@ -824,7 +825,7 @@ describe('useMainKeyboardHandler', () => {
 					inputMode: 'ai',
 				},
 				activeSessionId: 'session-1',
-				toggleInputMode: mockToggleInputMode,
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
 			});
 
 			act(() => {
@@ -837,8 +838,9 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			// toggleInputMode should NOT be called for wizard tabs
-			expect(mockToggleInputMode).not.toHaveBeenCalled();
+			// Cmd+J opens a new terminal tab — safe in wizard tabs since it doesn't
+			// touch the wizard tab's input/state.
+			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
 		});
 
 		it('should allow toggleMode (Cmd+J) for regular tabs', () => {

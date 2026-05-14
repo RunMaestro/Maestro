@@ -149,6 +149,10 @@
 
 		<div id="root"></div>
 
+		<!-- Polyfill `process` for vendor libs that touch it at runtime (must load
+			 before the ES-module entry below). See MAESTRO-K8. -->
+		<script src="./process-shim.js"></script>
+
 		<!-- Splash screen progress animation (external for CSP compliance) -->
 		<script src="./splash.js"></script>
 

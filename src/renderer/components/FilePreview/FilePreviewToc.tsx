@@ -14,6 +14,13 @@ interface FilePreviewTocProps {
 	tocOverlayRef: RefObject<HTMLDivElement>;
 	isMarkdown: boolean;
 	markdownEditMode: boolean;
+	/**
+	 * Optional scroll-by-slug callback. Used by the Fast tier where headings
+	 * are virtualized and most aren't in the DOM (so a plain querySelector
+	 * fails). Should return true when the scroll was handled; false falls
+	 * back to the default querySelector + scrollIntoView path.
+	 */
+	onSelectHeading?: (slug: string) => boolean;
 }
 
 export const FilePreviewToc = React.memo(function FilePreviewToc({
@@ -28,6 +35,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 	tocOverlayRef,
 	isMarkdown,
 	markdownEditMode,
+	onSelectHeading,
 }: FilePreviewTocProps) {
 	if (!isMarkdown || markdownEditMode || tocEntries.length === 0) {
 		return null;
@@ -118,7 +126,13 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 								<button
 									key={`${entry.slug}-${index}`}
 									onClick={() => {
-										// Find and scroll to the heading
+										// Fast tier path: callback owns the scroll (virtuoso scrollToIndex).
+										// Returns true when handled; false falls through to DOM lookup.
+										if (onSelectHeading?.(entry.slug)) {
+											return;
+										}
+										// Default (Rich tier) path: heading id is present in the DOM via
+										// rehype-slug, so a plain querySelector + scrollIntoView works.
 										const targetElement = markdownContainerRef.current?.querySelector(
 											`#${CSS.escape(entry.slug)}`
 										);

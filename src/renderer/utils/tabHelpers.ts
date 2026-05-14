@@ -1774,13 +1774,15 @@ export function navigateToUnifiedTabByIndex(
 		const aiTab = session.aiTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!aiTab) return null;
 
-		// If already active, no file/terminal tab selected, and in AI mode, return current state.
-		// The activeTerminalTabId check is critical: without it, a stale terminal selection
+		// If already active, no file/terminal/browser tab selected, and in AI mode, return current state.
+		// The other-ID checks are critical: without them, a stale browser/file/terminal selection
 		// causes the early return to fire and skip the clearing update below, leaving
-		// getCurrentUnifiedTabIndex pointing at the wrong tab.
+		// findActiveUnifiedTabIndex pointing at the wrong tab — the higher-priority ID wins
+		// visually and the user-perceived "current tab" never changes (Cmd+Shift+[ no-ops).
 		if (
 			session.activeTabId === targetTabRef.id &&
 			session.activeFileTabId === null &&
+			session.activeBrowserTabId === null &&
 			session.activeTerminalTabId === null &&
 			session.inputMode === 'ai'
 		) {
@@ -1812,8 +1814,16 @@ export function navigateToUnifiedTabByIndex(
 		const fileTab = session.filePreviewTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!fileTab) return null;
 
-		// If already active and in AI mode, return current state (with repair if needed)
-		if (session.activeFileTabId === targetTabRef.id && session.inputMode === 'ai') {
+		// If already active, no browser/terminal tab selected, and in AI mode, return current state.
+		// The other-ID checks prevent a stale browser/terminal selection from masking this no-op:
+		// without them, findActiveUnifiedTabIndex would prioritize the stale higher-priority ID
+		// and the user-perceived "current tab" would never change.
+		if (
+			session.activeFileTabId === targetTabRef.id &&
+			session.activeBrowserTabId === null &&
+			session.activeTerminalTabId === null &&
+			session.inputMode === 'ai'
+		) {
 			return {
 				type: 'file',
 				id: targetTabRef.id,
@@ -1839,7 +1849,16 @@ export function navigateToUnifiedTabByIndex(
 		const browserTab = (session.browserTabs || []).find((tab) => tab.id === targetTabRef.id);
 		if (!browserTab) return null;
 
-		if (session.activeBrowserTabId === targetTabRef.id && session.inputMode === 'ai') {
+		// If already active, no file/terminal tab selected, and in AI mode, return current state.
+		// The other-ID checks prevent a stale file/terminal selection from masking this no-op:
+		// without them, findActiveUnifiedTabIndex would prioritize the stale higher-priority ID
+		// and the user-perceived "current tab" would never change.
+		if (
+			session.activeBrowserTabId === targetTabRef.id &&
+			session.activeFileTabId === null &&
+			session.activeTerminalTabId === null &&
+			session.inputMode === 'ai'
+		) {
 			return {
 				type: 'browser',
 				id: targetTabRef.id,

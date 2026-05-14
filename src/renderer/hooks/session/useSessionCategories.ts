@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
 
 export interface SessionCategories {
@@ -26,7 +28,14 @@ export function useSessionCategories(
 	showUnreadAgentsOnly = false,
 	activeSessionId?: string | null
 ): SessionCategories {
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
+	// recompute on every streaming flush — only when a sidebar-relevant field
+	// (state, name, group/bookmark/parent membership, AI tab unread/state) shifts.
+	const sessions = useStoreWithEqualityFn(
+		useSessionStore,
+		(s) => s.sessions,
+		sidebarSessionEquality
+	);
 	const groups = useSessionStore((s) => s.groups);
 
 	// PR-A 1.3: collapse what used to be four chained `useMemo`s

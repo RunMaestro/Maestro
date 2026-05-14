@@ -12,6 +12,7 @@ import type { CueSessionStatus } from '../../hooks/useCue';
 import type { CuePipeline, CueGraphSession } from '../../../shared/cue-pipeline-types';
 import type { CueRunResult } from '../../../shared/cue/contracts';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SessionsTable } from './SessionsTable';
 import { ActiveRunsList } from './ActiveRunsList';
 import { CueDashboardStats } from './CueDashboardStats';
@@ -85,12 +86,13 @@ export function CueDashboard({
 	// debugging shared-cwd ownership.
 	const [showWarningSessions, setShowWarningSessions] = useState(false);
 
-	// Sort alphabetically (locale-aware so emoji-prefixed names sort sensibly)
-	// then optionally drop ownership-warning rows. Done in one memo so a sort
-	// + filter swap doesn't re-render twice.
+	// Sort alphabetically (ignoring leading emojis so 🧠 Substrate sorts as
+	// "Substrate", not by emoji codepoint) then optionally drop ownership-
+	// warning rows. Done in one memo so a sort + filter swap doesn't re-render
+	// twice.
 	const visibleSessions = useMemo(() => {
 		const sorted = [...sessions].sort((a, b) =>
-			a.sessionName.localeCompare(b.sessionName, undefined, { sensitivity: 'base' })
+			compareNamesIgnoringEmojis(a.sessionName, b.sessionName)
 		);
 		return showWarningSessions ? sorted : sorted.filter((s) => !s.ownershipWarning);
 	}, [sessions, showWarningSessions]);

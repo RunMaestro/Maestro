@@ -139,6 +139,8 @@ export interface UseWizardHandlersReturn {
 	isWizardActiveForCurrentTab: boolean;
 	/** Converts wizard tab to normal session with context */
 	handleWizardComplete: () => void;
+	/** Converts wizard tab to normal session AND opens the Batch Runner for the generated docs */
+	handleWizardCompleteAndStartAutoRun: () => void;
 	/** Generates documents for active tab */
 	handleWizardLetsGo: () => void;
 	/** Toggles thinking display on wizard tab */
@@ -185,9 +187,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		endWizard: endInlineWizard,
 		generateDocuments: generateInlineWizardDocuments,
 		sendMessage: sendInlineWizardMessage,
-		isWizardActive: inlineWizardActive,
-		wizardTabId: inlineWizardTabId,
 		getStateForTab: getInlineWizardStateForTab,
+		isWizardActiveForTab: isInlineWizardActiveForTab,
+		selectWizardTab: selectInlineWizardTab,
 	} = inlineWizardContext;
 
 	// --- Onboarding wizard context ---
@@ -383,6 +385,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					},
 					error: tabWizardState.error,
 					isGeneratingDocs: tabWizardState.isGeneratingDocs,
+					docGenerationStartedAt: tabWizardState.docGenerationStartedAt,
 					generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
 						filename: doc.filename,
 						content: doc.content,
@@ -448,74 +451,82 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const sessionId = currentSession.id;
 			const tabId = activeTab?.id;
 
-			await sendInlineWizardMessage(content, images, {
-				onThinkingChunk: (chunk) => {
-					if (!sessionId || !tabId) return;
+			// Pass the active tab id explicitly so the message lands on the wizard the user is
+			// looking at — useInlineWizard's currentTabId fallback can point at a stale tab when
+			// multiple wizards (e.g. council seats) are open concurrently.
+			await sendInlineWizardMessage(
+				content,
+				images,
+				{
+					onThinkingChunk: (chunk) => {
+						if (!sessionId || !tabId) return;
 
-					const trimmed = chunk.trim();
-					if (
-						trimmed.startsWith('{"') &&
-						(trimmed.includes('"confidence"') || trimmed.includes('"message"'))
-					) {
-						return;
-					}
+						const trimmed = chunk.trim();
+						if (
+							trimmed.startsWith('{"') &&
+							(trimmed.includes('"confidence"') || trimmed.includes('"message"'))
+						) {
+							return;
+						}
 
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find((t) => t.id === tabId);
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const tab = s.aiTabs.find((t) => t.id === tabId);
 
-							if (!tab?.wizardState?.showWizardThinking) {
-								return s;
-							}
+								if (!tab?.wizardState?.showWizardThinking) {
+									return s;
+								}
 
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) => {
-									if (t.id !== tabId) return t;
-									if (!t.wizardState) return t;
-									return {
-										...t,
-										wizardState: {
-											...t.wizardState,
-											thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
-										},
-									};
-								}),
-							};
-						})
-					);
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((t) => {
+										if (t.id !== tabId) return t;
+										if (!t.wizardState) return t;
+										return {
+											...t,
+											wizardState: {
+												...t.wizardState,
+												thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
+											},
+										};
+									}),
+								};
+							})
+						);
+					},
+					onToolExecution: (toolEvent) => {
+						if (!sessionId || !tabId) return;
+
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								const tab = s.aiTabs.find((t) => t.id === tabId);
+
+								if (!tab?.wizardState?.showWizardThinking) {
+									return s;
+								}
+
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((t) => {
+										if (t.id !== tabId) return t;
+										if (!t.wizardState) return t;
+										return {
+											...t,
+											wizardState: {
+												...t.wizardState,
+												toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
+											},
+										};
+									}),
+								};
+							})
+						);
+					},
 				},
-				onToolExecution: (toolEvent) => {
-					if (!sessionId || !tabId) return;
-
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find((t) => t.id === tabId);
-
-							if (!tab?.wizardState?.showWizardThinking) {
-								return s;
-							}
-
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((t) => {
-									if (t.id !== tabId) return t;
-									if (!t.wizardState) return t;
-									return {
-										...t,
-										wizardState: {
-											...t.wizardState,
-											toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
-										},
-									};
-								}),
-							};
-						})
-					);
-				},
-			});
+				tabId
+			);
 		},
 		[activeSession?.id, sendInlineWizardMessage, setSessions]
 	);
@@ -957,78 +968,142 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// isWizardActiveForCurrentTab — derived value
 	// ========================================================================
 	const isWizardActiveForCurrentTab = useMemo(() => {
-		if (!activeSession || !inlineWizardActive) return false;
+		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
-		return activeTab?.id === inlineWizardTabId;
-	}, [activeSession, activeSession?.activeTabId, inlineWizardActive, inlineWizardTabId]);
+		if (!activeTab) return false;
+		// Use the per-tab primitive instead of the hook's singleton currentTabId — the latter only
+		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
+		return isInlineWizardActiveForTab(activeTab.id);
+	}, [activeSession, activeSession?.activeTabId, isInlineWizardActiveForTab]);
+
+	// Keep useInlineWizard's internal currentTabId pointed at whatever tab the user is currently on,
+	// so that sendMessage/setMode/setGoal/etc. (which fall back to currentTabId) route to the right
+	// wizard when multiple are active concurrently.
+	useEffect(() => {
+		if (!activeSession) return;
+		const activeTab = getActiveTab(activeSession);
+		if (!activeTab) return;
+		if (isInlineWizardActiveForTab(activeTab.id)) {
+			selectInlineWizardTab(activeTab.id);
+		}
+	}, [
+		activeSession,
+		activeSession?.activeTabId,
+		isInlineWizardActiveForTab,
+		selectInlineWizardTab,
+	]);
 
 	// ========================================================================
-	// handleWizardComplete — converts wizard tab to normal session
+	// completeWizardImpl — shared logic for wizard completion
+	// Converts the wizard tab to a normal session. When `startAutoRun` is true,
+	// also points the session's Auto Run folder at the freshly generated
+	// subfolder and opens the Batch Runner modal so the user can kick off the
+	// generated playbook in one click.
 	// ========================================================================
-	const handleWizardComplete = useCallback(() => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) return;
-		const activeTabLocal = getActiveTab(currentSession);
-		const wizState = activeTabLocal?.wizardState;
-		if (!wizState) return;
+	const completeWizardImpl = useCallback(
+		(opts: { startAutoRun: boolean }) => {
+			const currentSession = selectActiveSession(useSessionStore.getState());
+			if (!currentSession) return;
+			const activeTabLocal = getActiveTab(currentSession);
+			const wizState = activeTabLocal?.wizardState;
+			if (!wizState) return;
 
-		const wizardLogEntries: LogEntry[] = wizState.conversationHistory.map((msg) => ({
-			id: `wizard-${msg.id}`,
-			timestamp: msg.timestamp,
-			source: msg.role === 'user' ? 'user' : 'ai',
-			text: msg.content,
-			images: msg.images,
-			delivered: true,
-		}));
+			const wizardLogEntries: LogEntry[] = wizState.conversationHistory.map((msg) => ({
+				id: `wizard-${msg.id}`,
+				timestamp: msg.timestamp,
+				source: msg.role === 'user' ? 'user' : 'ai',
+				text: msg.content,
+				images: msg.images,
+				delivered: true,
+			}));
 
-		const generatedDocs = wizState.generatedDocuments || [];
-		const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
-		const docNames = generatedDocs.map((d) => d.filename).join(', ');
+			const generatedDocs = wizState.generatedDocuments || [];
+			const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
+			const docNames = generatedDocs.map((d) => d.filename).join(', ');
 
-		const summaryMessage: LogEntry = {
-			id: `wizard-summary-${Date.now()}`,
-			timestamp: Date.now(),
-			source: 'ai',
-			text:
-				`## Wizard Complete\n\n` +
-				`Created ${generatedDocs.length} document${
-					generatedDocs.length !== 1 ? 's' : ''
-				} with ${totalTasks} task${totalTasks !== 1 ? 's' : ''}:\n` +
-				`${docNames}\n\n` +
-				`**Next steps:**\n` +
-				`1. Open the **Auto Run** tab in the right panel to view your playbook\n` +
-				`2. Review and edit tasks as needed\n` +
-				`3. Click **Run** to start executing tasks automatically\n\n` +
-				`You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
-			delivered: true,
-		};
+			const summaryMessage: LogEntry = {
+				id: `wizard-summary-${Date.now()}`,
+				timestamp: Date.now(),
+				source: 'ai',
+				text:
+					`## Wizard Complete\n\n` +
+					`Created ${generatedDocs.length} document${
+						generatedDocs.length !== 1 ? 's' : ''
+					} with ${totalTasks} task${totalTasks !== 1 ? 's' : ''}:\n` +
+					`${docNames}\n\n` +
+					`**Next steps:**\n` +
+					`1. Open the **Auto Run** tab in the right panel to view your playbook\n` +
+					`2. Review and edit tasks as needed\n` +
+					`3. Click **Run** to start executing tasks automatically\n\n` +
+					`You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
+				delivered: true,
+			};
 
-		const subfolderName = wizState.subfolderName || '';
-		const tabName = subfolderName || 'Wizard';
-		const wizardAgentSessionId = wizState.agentSessionId;
-		const activeTabId = activeTabLocal.id;
+			const subfolderName = wizState.subfolderName || '';
+			const tabName = subfolderName || 'Wizard';
+			const wizardAgentSessionId = wizState.agentSessionId;
+			const activeTabId = activeTabLocal.id;
 
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const updatedTabs = s.aiTabs.map((tab) => {
-					if (tab.id !== activeTabId) return tab;
+			// When starting Auto Run, point the session at the generated subfolder
+			// so the Batch Runner modal lists the freshly created docs.
+			const subfolderPath = wizState.subfolderPath;
+			const shouldPointAutoRun = opts.startAutoRun && !!subfolderPath;
+			const firstDocBase = generatedDocs[0]?.filename.replace(/\.md$/i, '');
+
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== currentSession.id) return s;
+					const updatedTabs = s.aiTabs.map((tab) => {
+						if (tab.id !== activeTabId) return tab;
+						return {
+							...tab,
+							logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
+							agentSessionId: wizardAgentSessionId || tab.agentSessionId,
+							name: tabName,
+							wizardState: undefined,
+						};
+					});
 					return {
-						...tab,
-						logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
-						agentSessionId: wizardAgentSessionId || tab.agentSessionId,
-						name: tabName,
-						wizardState: undefined,
+						...s,
+						aiTabs: updatedTabs,
+						...(shouldPointAutoRun
+							? {
+									autoRunFolderPath: subfolderPath!,
+									autoRunSelectedFile: firstDocBase,
+									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+								}
+							: {}),
 					};
-				});
-				return { ...s, aiTabs: updatedTabs };
-			})
-		);
+				})
+			);
 
-		endInlineWizard();
-		handleAutoRunRefreshRef.current?.();
-		setInputValueRef.current?.('');
-	}, [activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]);
+			endInlineWizard();
+			handleAutoRunRefreshRef.current?.();
+			setInputValueRef.current?.('');
+
+			if (opts.startAutoRun) {
+				// Pre-seed the Batch Runner with EVERY generated doc (filenames
+				// without `.md`) so the user doesn't have to add them by hand.
+				// Defer one tick so the session update commits before the modal
+				// reads activeSession.autoRunFolderPath.
+				const presetDocuments = generatedDocs.map((d) => d.filename.replace(/\.md$/i, ''));
+				setTimeout(() => {
+					getModalActions().openBatchRunnerWithPresets(presetDocuments);
+				}, 0);
+			}
+		},
+		[activeSession?.id, setSessions, endInlineWizard, handleAutoRunRefreshRef, setInputValueRef]
+	);
+
+	const handleWizardComplete = useCallback(
+		() => completeWizardImpl({ startAutoRun: false }),
+		[completeWizardImpl]
+	);
+
+	const handleWizardCompleteAndStartAutoRun = useCallback(
+		() => completeWizardImpl({ startAutoRun: true }),
+		[completeWizardImpl]
+	);
 
 	// ========================================================================
 	// handleWizardLetsGo — generates documents for active tab
@@ -1353,6 +1428,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		handleLaunchWizardTab,
 		isWizardActiveForCurrentTab,
 		handleWizardComplete,
+		handleWizardCompleteAndStartAutoRun,
 		handleWizardLetsGo,
 		handleToggleWizardShowThinking,
 		handleWizardLaunchSession,

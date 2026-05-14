@@ -31,6 +31,7 @@ import {
 	INLINE_CODE_CLICK_STYLE,
 	buildInlineCodeHandlers,
 } from './inlineCodeCopy';
+import { COLORBLIND_DIFF_COLORS } from '../constants/colorblindPalettes';
 
 // ============================================================================
 // Types
@@ -960,8 +961,19 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
  * @param theme Theme object with color values
  * @returns CSS string to be injected via <style> tag
  */
-export function generateDiffViewStyles(theme: Theme): string {
+export function generateDiffViewStyles(theme: Theme, colorBlindMode: boolean = false): string {
 	const c = theme.colors;
+
+	const insertGutter = colorBlindMode
+		? COLORBLIND_DIFF_COLORS.insertGutter
+		: 'rgba(34, 197, 94, 0.1)';
+	const insertCode = colorBlindMode ? COLORBLIND_DIFF_COLORS.insertCode : 'rgba(34, 197, 94, 0.15)';
+	const insertEdit = colorBlindMode ? 'rgba(0, 153, 136, 0.4)' : 'rgba(34, 197, 94, 0.3)';
+	const deleteGutter = colorBlindMode
+		? COLORBLIND_DIFF_COLORS.deleteGutter
+		: 'rgba(239, 68, 68, 0.1)';
+	const deleteCode = colorBlindMode ? COLORBLIND_DIFF_COLORS.deleteCode : 'rgba(239, 68, 68, 0.15)';
+	const deleteEdit = colorBlindMode ? 'rgba(204, 51, 17, 0.4)' : 'rgba(239, 68, 68, 0.3)';
 
 	return `
     .diff-gutter {
@@ -974,24 +986,24 @@ export function generateDiffViewStyles(theme: Theme): string {
       color: ${c.textMain} !important;
     }
     .diff-gutter-insert {
-      background-color: rgba(34, 197, 94, 0.1) !important;
+      background-color: ${insertGutter} !important;
     }
     .diff-code-insert {
-      background-color: rgba(34, 197, 94, 0.15) !important;
+      background-color: ${insertCode} !important;
       color: ${c.textMain} !important;
     }
     .diff-gutter-delete {
-      background-color: rgba(239, 68, 68, 0.1) !important;
+      background-color: ${deleteGutter} !important;
     }
     .diff-code-delete {
-      background-color: rgba(239, 68, 68, 0.15) !important;
+      background-color: ${deleteCode} !important;
       color: ${c.textMain} !important;
     }
     .diff-code-insert .diff-code-edit {
-      background-color: rgba(34, 197, 94, 0.3) !important;
+      background-color: ${insertEdit} !important;
     }
     .diff-code-delete .diff-code-edit {
-      background-color: rgba(239, 68, 68, 0.3) !important;
+      background-color: ${deleteEdit} !important;
     }
     .diff-hunk-header {
       background-color: ${c.bgActivity} !important;

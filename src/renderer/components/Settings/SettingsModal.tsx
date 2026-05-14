@@ -167,29 +167,56 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const jumpAccentRef = useRef(theme.colors.accent);
 	jumpAccentRef.current = theme.colors.accent;
 
+	// Pending scroll target — set when the user picks a search result, consumed
+	// by the effect below once the content panel is actually visible and the
+	// target tab has rendered. Doing this via state-driven effect (not RAF
+	// chains) avoids a race where scrollIntoView fires while the content div
+	// still has `hidden` / display:none from search mode, silently no-opping.
+	const pendingScrollIdRef = useRef<string | null>(null);
+
 	const handleSearchNavigate = useCallback((tab: SearchableSetting['tab'], settingId: string) => {
+		pendingScrollIdRef.current = settingId;
 		setQueryRef.current('');
 		setActiveTab(tab);
-		// Double-RAF to ensure DOM has rendered the new tab content before scrolling
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				const el = contentRef.current?.querySelector<HTMLElement>(
-					`[data-setting-id="${settingId}"]`
-				);
-				if (el) {
-					el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-					// Themed arrow indicator + outline flash; duration must match the
-					// 3s animations in .settings-search-highlight / ::before.
-					el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
-					el.classList.add('settings-search-highlight');
-					setTimeout(() => {
-						el.classList.remove('settings-search-highlight');
-						el.style.removeProperty('--settings-search-jump-color');
-					}, 3000);
-				}
-			});
-		});
 	}, []);
+
+	useEffect(() => {
+		const targetId = pendingScrollIdRef.current;
+		if (!targetId || searchActive) return;
+
+		let cancelled = false;
+		let attempts = 0;
+		const MAX_ATTEMPTS = 30; // ~500ms at 60fps — enough for tab content + lazy renders
+
+		const tryScroll = () => {
+			if (cancelled) return;
+			const el = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`);
+			// offsetParent is null while any ancestor is display:none — the most
+			// common reason scroll fails right after exiting search mode.
+			if (el && el.offsetParent !== null) {
+				pendingScrollIdRef.current = null;
+				el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				// Themed arrow indicator + outline flash; duration must match the
+				// 3s animations in .settings-search-highlight / ::before.
+				el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
+				el.classList.add('settings-search-highlight');
+				setTimeout(() => {
+					el.classList.remove('settings-search-highlight');
+					el.style.removeProperty('--settings-search-jump-color');
+				}, 3000);
+				return;
+			}
+			if (attempts++ < MAX_ATTEMPTS) {
+				requestAnimationFrame(tryScroll);
+			} else {
+				pendingScrollIdRef.current = null;
+			}
+		};
+		requestAnimationFrame(tryScroll);
+		return () => {
+			cancelled = true;
+		};
+	}, [searchActive, activeTab]);
 
 	const search = useSettingsSearch({
 		isOpen,

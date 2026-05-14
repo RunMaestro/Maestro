@@ -42,9 +42,6 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/panels/NodeConfigPane
 vi.mock('../../../../renderer/components/CuePipelineEditor/panels/EdgeConfigPanel', () => ({
 	EdgeConfigPanel: () => <div data-testid="edge-config-panel" />,
 }));
-vi.mock('../../../../renderer/components/CuePipelineEditor/panels/CueSettingsPanel', () => ({
-	CueSettingsPanel: () => <div data-testid="cue-settings-panel" />,
-}));
 
 function buildProps(overrides: Partial<PipelineCanvasProps> = {}): PipelineCanvasProps {
 	return {
@@ -73,16 +70,6 @@ function buildProps(overrides: Partial<PipelineCanvasProps> = {}): PipelineCanva
 		selectedPipelineId: 'p1',
 		pipelines: [],
 		selectPipeline: vi.fn(),
-		showSettings: false,
-		cueSettings: {
-			timeout_minutes: 30,
-			timeout_on_fail: 'break',
-			max_concurrent: 3,
-			queue_size: 10,
-		},
-		setCueSettings: vi.fn(),
-		setShowSettings: vi.fn(),
-		setIsDirty: vi.fn(),
 		selectedNode: null,
 		selectedEdge: null,
 		selectedNodeHasOutgoingEdge: false,
@@ -155,11 +142,6 @@ describe('PipelineCanvas', () => {
 		expect(screen.getByText('Beta')).toBeInTheDocument();
 		expect(screen.getByText('(1)')).toBeInTheDocument();
 		expect(screen.getByText('(0)')).toBeInTheDocument();
-	});
-
-	it('shows CueSettingsPanel when showSettings is true', () => {
-		render(<PipelineCanvas {...buildProps({ showSettings: true })} />);
-		expect(screen.getByTestId('cue-settings-panel')).toBeInTheDocument();
 	});
 
 	it('shows NodeConfigPanel when selectedNode is set and selectedEdge is null', () => {

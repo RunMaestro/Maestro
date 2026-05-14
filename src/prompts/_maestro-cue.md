@@ -12,6 +12,8 @@ When you need to find an existing config, check `.maestro/cue.yaml` first, then 
 
 Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `prompt` (with template variables), and event-specific fields.
 
+**One cue.yaml per agent project root.** Each agent's engine looks for the canonical `<projectRoot>/.maestro/cue.yaml` (falling back to the legacy `<projectRoot>/maestro-cue.yaml` as described in the canonical-first + legacy-fallback rule above), **scoped strictly to that agent's own project root** — there is no parent-directory walk, no ancestor fallback into a workspace-wide config, and no implicit aggregation across roots. If your fleet has agents at three different project roots, you maintain three cue.yaml files (one per root, canonical or legacy per the rule above). See **Multi-Root Pipelines** below before authoring a pipeline that spans more than one project root.
+
 ### Event Types
 
 | Event                 | Fires when…                                     | Key config fields                                     |
@@ -248,13 +250,44 @@ Pass `--source-agent-id {{AGENT_ID}}` so a subscription with `cli_output` can ro
 
 When a user asks you to add, modify, or debug a Cue subscription:
 
-1. Read the existing config first to understand current subscriptions, pipelines, and naming conventions. Check `.maestro/cue.yaml` (canonical) first, then `maestro-cue.yaml` at the project root (legacy fallback).
+1. Read the existing config first to understand current subscriptions, pipelines, and naming conventions. Check `.maestro/cue.yaml` (canonical) first, then `maestro-cue.yaml` at the project root (legacy fallback). **If the pipeline involves agents at more than one project root, you must read every participating agent's cue.yaml — there is no single aggregated file.** See **Multi-Root Pipelines** above.
 2. Keep subscription `name` values unique within the file — the engine keys on them.
 3. **Group related chains under one pipeline.** Before adding a new subscription, check whether it belongs in an existing pipeline (matching theme, agent set, or domain) — if so, reuse that `pipeline_name` instead of creating a new pipeline. If the user describes several related automations in one request, emit them as multiple subscriptions sharing a single `pipeline_name`, not as separate pipelines.
 4. **Within a pipeline, give each subscription its own `target_node_key`** (any UUID) so the Pipeline Editor renders the chains as separate visual lines instead of collapsing them onto one fan-in agent node. This applies whether the chains share an `agent_id` or not. Only reuse a `target_node_key` across subscriptions when you actually want a real fan-in node (multiple triggers/upstreams converging onto one shared agent node). If two chains genuinely need isolated context/models/project-roots, also give them distinct `agent_id`s (create with `{{MAESTRO_CLI_PATH}} create-agent <name> --cwd <project>` if needed); otherwise reusing one `agent_id` is fine and often preferred.
 5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** — see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
-6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration, https://docs.runmaestro.ai/maestro-cue-events, https://docs.runmaestro.ai/maestro-cue-advanced, https://docs.runmaestro.ai/maestro-cue-examples. Don't guess field names.
+6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` — the engine reloads automatically when the file changes.
+
+### Multi-Root Pipelines (agents in different project roots)
+
+A pipeline that spans agents living in **different** project roots is NOT a single-file authoring task. The engine never aggregates yaml files across roots — each agent's runtime only sees `<its-own-projectRoot>/.maestro/cue.yaml`. A pipeline split across N agents at N different roots is physically N separate yaml files; the visual Pipeline Editor manages this for you by writing one file per participating agent's cwd on every save.
+
+**When authoring multi-root pipelines by hand, the rule is:**
+
+- **Each subscription lives in its owning agent's local `.maestro/cue.yaml`.** "Owning agent" = the agent whose `agent_id` matches the subscription's `agent_id` field. Put the subscription in that agent's project root, not anywhere else.
+- **Cross-agent chains stitch at runtime via the standard `source_session` / `fan_out` fields, with `_ids` companions for rename stability.** For `agent.completed` chains, `source_session` (the upstream agent's display name, or an array of names for fan-in) is **required** by the validator — supply `source_session_ids: [<upstream-agent-uuid>]` **alongside** it so the dispatcher can resolve the chain even if the upstream is renamed (ids are preferred at lookup time, names are the fallback). Same shape for fan-out: `fan_out: [<target-name>, ...]` is the canonical field, plus `fan_out_ids: [<uuid>, ...]` for rename safety. The downstream subscription itself lives in the _downstream_ (consuming) agent's cue.yaml — the agent whose `agent_id` it carries.
+- **Fan-in / synthesis / orchestration subscriptions live with their target agent.** If "agent X waits for A, B, C to complete and summarizes," that fan-in subscription is in agent X's cue.yaml (not in A's, B's, or C's). When agent X is an orchestrator sitting at the workspace root and the workers are in subdirectories, that fan-in naturally lands in the root workspace's `.maestro/cue.yaml` — but the rule is "owning agent's cwd," not "root cwd."
+- **A single root cue.yaml is NOT a reliable pattern for a multi-root fleet.** Subscriptions placed at the root that name workers in subdirectories will never reach those workers — the workers' engines never read the root file. If the visual editor previously emitted a single root yaml that "worked," that pipeline only had subs whose `agent_id` resolved to the root agent.
+
+**Where to author what:**
+
+| Subscription role                                                       | Lives in cue.yaml under...                                                        |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Trigger consumed by agent A (e.g. `file.changed` that prompts agent A)  | Agent A's project root                                                            |
+| Fan-out from A to [B, C, D]                                             | Agent A's project root (set `fan_out` + `fan_out_ids`)                            |
+| `agent.completed` chain step where downstream is agent Y, upstream is X | Agent Y's project root (set `source_session` + `source_session_ids` to X)         |
+| Fan-in synthesis where downstream is Z, upstreams are A, B, C           | Agent Z's project root (set `source_session` + `source_session_ids` to [A, B, C]) |
+| Command node (`action: command`) attached to agent W's session          | Agent W's project root (it shares W's session/cwd)                                |
+
+**Discovery / writing checklist for hand-edited multi-root pipelines:**
+
+1. List the participating agents and their project roots: `{{MAESTRO_CLI_PATH}} list agents` (note each agent's `id` and `cwd`).
+2. For each agent that owns one or more subscriptions in the pipeline, open / create `<that-agent-cwd>/.maestro/cue.yaml`.
+3. Write each subscription under the cue.yaml of its `agent_id` owner. Use the same `pipeline_name` value across all files so the dashboard groups them under one pipeline card.
+4. For cross-agent references, always set `source_session` / `fan_out` (the validator requires `source_session` on every `agent.completed` sub) and **additionally** set the parallel `source_session_ids` / `fan_out_ids` UUID arrays so the dispatcher survives an upstream rename. The dispatcher prefers ids at lookup time; names are the fallback. Omitting the ids works but breaks silently when an agent gets renamed.
+5. Validate from any agent's workspace with `{{MAESTRO_CLI_PATH}} cue list` — the command reports every agent's parsed config, so a missing or misplaced sub is immediately visible.
+
+**Single-root pipelines** (all subs target one agent, or all participating agents share one project root) live in exactly one cue.yaml under that one root — the multi-root rules above don't apply. The "Shared Workspaces" section below covers the related case where >1 agent is registered against the _same_ project root.
 
 ### Shared Workspaces: `settings.owner_agent_id`
 

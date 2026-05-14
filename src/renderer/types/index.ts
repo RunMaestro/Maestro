@@ -144,6 +144,8 @@ export interface SessionWizardState {
 	// Document generation state
 	/** Whether documents are currently being generated (triggers takeover view) */
 	isGeneratingDocs?: boolean;
+	/** Wall-clock timestamp when generation began (ms). Persisted so the elapsed counter survives tab switches. */
+	docGenerationStartedAt?: number;
 	/** Generated documents */
 	generatedDocuments?: WizardGeneratedDocument[];
 	/** Currently selected document index */
@@ -495,6 +497,15 @@ export interface FilePreviewTab {
 	// Navigation history for breadcrumb navigation (per-tab)
 	navigationHistory?: FilePreviewHistoryEntry[]; // Stack of visited files
 	navigationIndex?: number; // Current position in history (-1 or undefined = at end)
+	// Preview tier override (per-tab). When set, forces the FilePreview to use
+	// this tier regardless of file size. Cleared on tab close. Used by the
+	// PreviewTierChip in the header so users can escalate (Rich → Fast for
+	// performance) or de-escalate (Fast → Rich for full features) at will.
+	previewTierOverride?: 'rich' | 'fast' | 'giant';
+	// HTML render mode (per-tab). When true on a .html/.htm file, the preview
+	// renders the document in a sandboxed iframe instead of showing source.
+	// Toggled via the Globe icon in the FilePreview header.
+	htmlRenderMode?: boolean;
 }
 
 /**

@@ -47,6 +47,13 @@ export function createCueApi() {
 		// Get global Cue settings (timeout, concurrency, queue)
 		getSettings: (): Promise<CueSettings> => ipcRenderer.invoke('cue:getSettings'),
 
+		// Persist global Cue settings to every known cue.yaml on disk +
+		// refresh engine in-memory state. Returns the list of project roots
+		// that were actually written so callers can detect the "no sessions
+		// registered" case and warn the user.
+		saveSettings: (settings: CueSettings): Promise<{ writtenRoots: string[] }> =>
+			ipcRenderer.invoke('cue:saveSettings', { settings }),
+
 		// Get status of all Cue-enabled sessions
 		getStatus: (): Promise<CueSessionStatus[]> => ipcRenderer.invoke('cue:getStatus'),
 

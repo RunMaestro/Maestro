@@ -19,7 +19,6 @@ import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import { CueHelpContent } from '../CueHelpModal';
 import { CuePipelineEditor } from '../CuePipelineEditor';
-import { getPipelineColorForAgent } from '../CuePipelineEditor/pipelineColors';
 import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
 import { getModalActions, useModalStore, selectModalData } from '../../stores/modalStore';
@@ -155,9 +154,18 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	const handleViewInPipeline = useCallback(
 		(session: CueSessionStatus) => {
-			const colors = getPipelineColorForAgent(session.sessionId, dashboardPipelines);
-			const pipeline =
-				colors.length > 0 ? dashboardPipelines.find((p) => p.color === colors[0]) : undefined;
+			// Find the pipeline by session-membership, not by color. Multiple
+			// pipelines can share a color (e.g. two orange pipelines), so the
+			// older color-based lookup would jump to whichever orange pipeline
+			// appeared first in the array regardless of which agent was clicked.
+			const pipeline = dashboardPipelines.find((p) =>
+				p.nodes.some(
+					(node) =>
+						node.type === 'agent' &&
+						'sessionId' in node.data &&
+						node.data.sessionId === session.sessionId
+				)
+			);
 			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
 			setActiveTab('pipeline');
 		},

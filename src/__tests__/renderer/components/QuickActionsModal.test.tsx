@@ -6,6 +6,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { mockTheme } from '../../helpers/mockTheme';
 // Add missing window.maestro.devtools and debug mocks
@@ -1489,6 +1490,7 @@ describe('QuickActionsModal', () => {
 		it('handles git diff with no diff content', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getDiff).mockResolvedValueOnce({ diff: '' });
+			useCenterFlashStore.getState().setActive(null);
 
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -1498,6 +1500,7 @@ describe('QuickActionsModal', () => {
 			await waitFor(() => {
 				expect(props.setGitDiffPreview).not.toHaveBeenCalled();
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useCenterFlashStore.getState().active?.message).toBe('No diff to examine');
 			});
 		});
 

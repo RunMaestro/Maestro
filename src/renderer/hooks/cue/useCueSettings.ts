@@ -1,5 +1,5 @@
 /**
- * useCueSettings — Global Cue engine settings loader and UI toggle.
+ * useCueSettings — Global Cue engine settings loader.
  *
  * Fetches cue settings from the engine on mount. Exposes a `settingsLoaded`
  * flag that flips to true after the mount fetch resolves (success OR failure)
@@ -18,14 +18,11 @@ export interface UseCueSettingsReturn {
 	setCueSettings: React.Dispatch<React.SetStateAction<CueSettings>>;
 	/** True once the mount fetch has resolved (regardless of outcome). */
 	settingsLoaded: boolean;
-	showSettings: boolean;
-	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export function useCueSettings(): UseCueSettingsReturn {
 	const [cueSettings, setCueSettings] = useState<CueSettings>({ ...DEFAULT_CUE_SETTINGS });
 	const [settingsLoaded, setSettingsLoaded] = useState(false);
-	const [showSettings, setShowSettings] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -47,5 +44,5 @@ export function useCueSettings(): UseCueSettingsReturn {
 		};
 	}, []);
 
-	return { cueSettings, setCueSettings, settingsLoaded, showSettings, setShowSettings };
+	return { cueSettings, setCueSettings, settingsLoaded };
 }

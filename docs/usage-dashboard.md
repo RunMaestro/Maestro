@@ -176,11 +176,9 @@ Disabling collection stops new data from being recorded but preserves existing d
 
 ## Accessibility
 
-The Usage Dashboard supports colorblind-friendly chart palettes using high-contrast colors from the Wong palette. This mode is enabled programmatically via the `colorBlindMode` setting.
+The Usage Dashboard adopts Maestro's colorblind-friendly chart palette (Wong, _Nature Methods_ 2011) when **Color Blind Mode** is enabled in **Settings → Display → Accessibility**. Agent and source distinctions switch to a high-contrast set tested against protanopia, deuteranopia, and tritanopia.
 
-<Note>
-The colorblind mode setting is available in the application configuration but not yet exposed in the Settings UI. It will use accessible colors automatically when enabled.
-</Note>
+See [Configuration → Accessibility](./configuration#accessibility) for everything the toggle changes across the rest of the app.
 
 ## Additional Features
 

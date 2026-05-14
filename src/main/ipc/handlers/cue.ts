@@ -81,6 +81,18 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
+	// Persist global Cue settings to every known cue.yaml on disk + refresh
+	// engine in-memory state. Used by Settings → Encore Features → Maestro Cue.
+	ipcMain.handle(
+		'cue:saveSettings',
+		withIpcErrorLogging(
+			handlerOpts('saveSettings'),
+			async (options: { settings: CueSettings }): Promise<{ writtenRoots: string[] }> => {
+				return requireEngine().saveSettings(options.settings);
+			}
+		)
+	);
+
 	// Get status of all Cue-enabled sessions
 	ipcMain.handle(
 		'cue:getStatus',

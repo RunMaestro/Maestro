@@ -97,8 +97,6 @@ const stableStateHook = {
 		queue_size: 10,
 	},
 	setCueSettings: vi.fn(),
-	showSettings: false,
-	setShowSettings: vi.fn(),
 	runningPipelineIds: new Set<string>(),
 	persistLayout: mockPersistLayout,
 	pendingSavedViewportRef: { current: null },

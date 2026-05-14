@@ -12,7 +12,7 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 
 - **Website:** https://maestro.sh
 - **GitHub:** https://github.com/RunMaestro/Maestro
-- **Documentation:** https://docs.runmaestro.ai
+- **Documentation:** https://docs.runmaestro.ai/llms.txt
 
 ## Reference Index (progressive disclosure)
 
