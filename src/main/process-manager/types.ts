@@ -44,6 +44,13 @@ export interface ProcessConfig {
 export interface ManagedProcess {
 	sessionId: string;
 	toolType: string;
+	/**
+	 * Agent-native session id reported by the underlying CLI (e.g. Claude's
+	 * `session_id` UUID). Populated when the `'session-id'` event fires and
+	 * used by ExternalSessionCoordinator to de-dup file-watcher activity
+	 * against Maestro-spawned sessions.
+	 */
+	agentSessionId?: string;
 	ptyProcess?: IPty;
 	childProcess?: ChildProcess;
 	cwd: string;

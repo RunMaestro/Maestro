@@ -43,6 +43,14 @@ export class ProcessManager extends EventEmitter {
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
+
+		// Mirror the agent-native session id onto the managed process so
+		// external-session de-dup can look it up without re-implementing the
+		// session-id extraction logic that lives inside the output parsers.
+		this.on('session-id', (sessionId: string, agentSessionId: string) => {
+			const proc = this.processes.get(sessionId);
+			if (proc) proc.agentSessionId = agentSessionId;
+		});
 	}
 
 	/**
@@ -283,6 +291,19 @@ export class ProcessManager extends EventEmitter {
 	 */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
+	}
+
+	/**
+	 * Look up a managed process by the agent-native session id (e.g. Claude's
+	 * `session_id`). Used by ExternalSessionCoordinator to decide whether
+	 * filesystem-observed activity comes from a Maestro-spawned session
+	 * (`source: 'local'`) or from one we did not spawn (`source: 'external'`).
+	 */
+	findByAgentSessionId(agentSessionId: string): ManagedProcess | undefined {
+		for (const proc of this.processes.values()) {
+			if (proc.agentSessionId === agentSessionId) return proc;
+		}
+		return undefined;
 	}
 
 	/**
