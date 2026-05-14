@@ -372,20 +372,21 @@ const PROVIDERS: ProviderConfig[] = [
 		 */
 		buildInitialArgs: (prompt: string, options?: { images?: string[] }) => {
 			// Codex arg order from process.ts IPC handler:
-			// 1. batchModePrefix: ['exec']
-			// 2. base args: [] (empty for Codex)
-			// 3. batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check']
-			// 4. jsonOutputArgs: ['--json']
-			// 5. workingDirArgs: ['-C', dir]
+			// 1. workingDirArgs: ['-C', dir] (must precede the `exec` subcommand
+			//    because Codex treats `-C` as a root-level global flag — see #959)
+			// 2. batchModePrefix: ['exec']
+			// 3. base args: [] (empty for Codex)
+			// 4. batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check']
+			// 5. jsonOutputArgs: ['--json']
 			// 6. prompt via '--' separator (process-manager.ts)
 
 			const args = [
+				'-C',
+				TEST_CWD,
 				'exec',
 				'--dangerously-bypass-approvals-and-sandbox',
 				'--skip-git-repo-check',
 				'--json',
-				'-C',
-				TEST_CWD,
 			];
 
 			// IMPORTANT: This mirrors process-manager.ts logic
@@ -404,12 +405,12 @@ const PROVIDERS: ProviderConfig[] = [
 			return [...args, '--', prompt];
 		},
 		buildResumeArgs: (sessionId: string, prompt: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'resume',
 			sessionId,
 			'--',
@@ -420,20 +421,20 @@ const PROVIDERS: ProviderConfig[] = [
 		 * Codex uses file-based image args (-i) - images decoded on remote via script.
 		 */
 		buildSshArgs: () => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 		],
 		buildSshResumeArgs: (sessionId: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'resume',
 			sessionId,
 		],
@@ -487,12 +488,12 @@ const PROVIDERS: ProviderConfig[] = [
 		 * Mirrors agent-detector.ts: imageArgs: (imagePath) => ['-i', imagePath]
 		 */
 		buildImageArgs: (prompt: string, imagePath: string) => [
+			'-C',
+			TEST_CWD,
 			'exec',
 			'--dangerously-bypass-approvals-and-sandbox',
 			'--skip-git-repo-check',
 			'--json',
-			'-C',
-			TEST_CWD,
 			'-i',
 			imagePath,
 			'--',
