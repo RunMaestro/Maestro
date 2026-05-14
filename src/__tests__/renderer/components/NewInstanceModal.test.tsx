@@ -728,7 +728,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -774,7 +775,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -820,7 +822,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 	});
@@ -867,7 +870,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1366,7 +1370,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -1512,7 +1517,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null }
+				{ enabled: false, remoteId: null },
+				undefined
 			);
 		});
 
@@ -2488,7 +2494,8 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: true, remoteId: 'remote-1' }
+				{ enabled: true, remoteId: 'remote-1' },
+				undefined
 			);
 		});
 
