@@ -53,6 +53,7 @@ import {
 	registerTabNamingHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
+	registerExternalSessionsHandlers,
 	registerWakatimeHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
@@ -80,6 +81,10 @@ import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
+import { ExternalSessionCoordinator } from './storage/external-session-coordinator';
+import { getAllSessionStorages } from './agents';
+import type { AgentSessionStorage } from './agents';
+import type { ToolType } from '../shared/types';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -265,6 +270,7 @@ let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
+let externalSessionCoordinator: ExternalSessionCoordinator | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -472,6 +478,7 @@ const quitHandler = createQuitHandler({
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
 	stopSessionCleanup,
+	stopExternalSessionCoordinator: () => externalSessionCoordinator?.stop(),
 });
 quitHandler.setup();
 
@@ -571,6 +578,26 @@ function setupIpcHandlers() {
 	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
 	initializeSessionStorages({ claudeSessionOriginsStore });
 	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
+
+	// Wire up the external session coordinator: watches on-disk session files
+	// for activity from agents driven outside Maestro (remote SSH, other shells)
+	// and surfaces them to the renderer via the storage:* IPC handlers.
+	if (processManager) {
+		const storageRegistry: Partial<Record<ToolType, AgentSessionStorage>> = {};
+		for (const storage of getAllSessionStorages()) {
+			storageRegistry[storage.agentId] = storage;
+		}
+		externalSessionCoordinator = new ExternalSessionCoordinator({
+			processManager,
+			storageRegistry,
+		});
+		externalSessionCoordinator.start().catch((err) => {
+			logger.error(`Failed to start ExternalSessionCoordinator: ${err}`, 'Startup');
+		});
+	}
+	registerExternalSessionsHandlers({
+		getCoordinator: () => externalSessionCoordinator,
+	});
 
 	// Helper to get agent config values (custom args/env vars, model, etc.)
 	const getAgentConfigForAgent = (agentId: string): Record<string, any> => {
