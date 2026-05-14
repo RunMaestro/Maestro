@@ -55,3 +55,6 @@ export type { UseSessionCrudDeps, UseSessionCrudReturn } from './useSessionCrud'
 // Session cycling (Cmd+Shift+[/])
 export { useCycleSession } from './useCycleSession';
 export type { UseCycleSessionDeps, UseCycleSessionReturn } from './useCycleSession';
+
+// External (filesystem-watched) session activity feed
+export { useExternalSessionActivity } from './useExternalSessionActivity';

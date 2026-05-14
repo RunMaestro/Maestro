@@ -494,6 +494,10 @@ const mockMaestro = {
 		recordSessionClosed: vi.fn().mockResolvedValue(true),
 		getSessionLifecycle: vi.fn().mockResolvedValue([]),
 	},
+	storage: {
+		listExternalSessions: vi.fn().mockResolvedValue([]),
+		onExternalActivity: vi.fn().mockReturnValue(() => {}),
+	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
 		getDefaultId: vi.fn().mockResolvedValue({ success: true, id: null }),
