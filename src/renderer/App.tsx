@@ -135,6 +135,8 @@ import {
 	useQuickActionsHandlers,
 	// Session cycling (Cmd+Shift+[/])
 	useCycleSession,
+	// External (filesystem-watched) session activity
+	useExternalSessionActivity,
 	// Input mode toggle (Tier 3A)
 	useInputMode,
 	// Live mode management (Tier 3B)
@@ -166,6 +168,7 @@ import { ToastContainer } from './components/Toast';
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import { isActive as isExternalSessionActive } from '../shared/sessionActivity';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
@@ -1177,6 +1180,11 @@ function MaestroConsoleInner() {
 		onNavigateToGroupChat: handleOpenGroupChat,
 	});
 
+	// External (filesystem-watched) session activity — sessions discovered by
+	// watching agent storage directories, not spawned by Maestro. Appended into
+	// thinkingItems below so externally-driven agents light the pill too.
+	const externalSessionActivity = useExternalSessionActivity();
+
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
 	// Flat list of (session, tab) pairs — one entry per busy tab across all sessions.
@@ -1196,8 +1204,40 @@ function MaestroConsoleInner() {
 				items.push({ session, tab: null });
 			}
 		}
+
+		// v1: external sessions rendered identically to local. To distinguish, branch here on event.source.
+		// Collect agent-native session IDs already represented by a local thinking item; an external
+		// event with a matching sessionId is the *same* session, just observed via the file watcher.
+		const localAgentSessionIds = new Set<string>();
+		for (const item of items) {
+			const id = item.tab?.agentSessionId || item.session.agentSessionId;
+			if (id) localAgentSessionIds.add(id);
+		}
+		for (const event of externalSessionActivity) {
+			if (!isExternalSessionActive(event)) continue;
+			if (localAgentSessionIds.has(event.sessionId)) continue;
+
+			// Display name: last path segment of the project, fall back to the session UUID octet.
+			const pathSegments = event.projectPath
+				? event.projectPath.split(/[\\/]/).filter(Boolean)
+				: [];
+			const displayName =
+				pathSegments[pathSegments.length - 1] ?? event.sessionId.substring(0, 8).toUpperCase();
+			// Synthesize the minimal Session-shaped object the pill renderer consumes
+			// (id, name, agentSessionId, thinkingStartTime, currentCycleTokens). Other Session
+			// fields are unused on this code path, so we narrow-cast through `unknown`.
+			const syntheticSession = {
+				id: `external:${event.agentId}:${event.sessionId}`,
+				name: displayName,
+				agentSessionId: event.sessionId,
+				thinkingStartTime: event.lastActivityAt,
+				currentCycleTokens: 0,
+			} as unknown as Session;
+			items.push({ session: syntheticSession, tab: null, event });
+		}
+
 		return items;
-	}, [sessions]);
+	}, [sessions, externalSessionActivity]);
 
 	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 

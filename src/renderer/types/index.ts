@@ -27,6 +27,11 @@ export type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
+// Re-export session activity types for use in this file and consumers
+export type { SessionActivityEvent, SessionActivitySource } from '../../shared/sessionActivity';
+// Import for extension in this file
+import type { SessionActivityEvent } from '../../shared/sessionActivity';
+
 // Import for extension in this file
 import type {
 	WorktreeConfig as BaseWorktreeConfig,
@@ -432,6 +437,9 @@ export interface AITab {
 export interface ThinkingItem {
 	session: Session;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
+	// Present only for externally-watched sessions (not spawned by Maestro).
+	// v1 renders these identically to local items; future versions can branch on event.source.
+	event?: SessionActivityEvent;
 }
 
 // Closed tab entry for undo functionality (Cmd+Shift+T)
