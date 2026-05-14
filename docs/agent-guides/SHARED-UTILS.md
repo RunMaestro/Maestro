@@ -86,6 +86,13 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | ---------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `stripAnsiCodes(text)` | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases. |
 
+## JSON Utilities (`src/shared/jsonUtils.ts` - Both)
+
+| Function           | Signature                         | Purpose                                                                   |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------------- |
+| `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
+| `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
+
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
 | Function         | Signature            | Purpose                                                                            |

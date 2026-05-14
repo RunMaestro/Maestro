@@ -5,14 +5,18 @@ import type { Theme } from '../../constants/themes';
 
 // Both layers MUST render identical text metrics or the visible caret drifts
 // off the highlighted glyphs. Changing anything here requires changing both.
+//
+// `whitespace: pre` + textarea `wrap="off"` matches how Sublime, VS Code, and
+// every other code editor renders source: long lines extend horizontally and
+// scroll, rather than wrapping. The previous `pre-wrap` + `break-word` combo
+// fragmented markdown table rows around the `|` delimiters because break-word
+// is allowed to split inside a "word" when wrap is enabled.
 const SHARED_STYLE: React.CSSProperties = {
 	fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
 	fontSize: '13px',
 	lineHeight: '1.6',
 	tabSize: 4,
-	whiteSpace: 'pre-wrap',
-	wordBreak: 'break-word',
-	overflowWrap: 'break-word',
+	whiteSpace: 'pre',
 	boxSizing: 'border-box',
 };
 
@@ -111,6 +115,7 @@ export const HighlightedCodeEditor = forwardRef<HTMLTextAreaElement, Highlighted
 					onScroll={handleScroll}
 					onKeyDown={onKeyDown}
 					spellCheck={spellCheck}
+					wrap="off"
 					className="w-full h-full resize-none outline-none"
 					style={{
 						...SHARED_STYLE,

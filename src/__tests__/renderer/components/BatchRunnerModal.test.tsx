@@ -868,9 +868,48 @@ describe('BatchRunnerModal', () => {
 
 			render(<BatchRunnerModal {...createDefaultProps()} />);
 
-			await waitFor(() => screen.getByText('Load Playbook'));
-			fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+			// Import Playbook is a top-level button — no need to open the
+			// Load Playbook dropdown first.
+			await waitFor(() => screen.getByRole('button', { name: 'Import Playbook' }));
 			fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
+
+			await waitFor(() => {
+				expect(mockImport).toHaveBeenCalledWith('session-123', '/path/to/folder');
+			});
+		});
+
+		// Regression test for the bug where Import Playbook was buried inside
+		// the Load Playbook dropdown — which only renders when
+		// `playbooks.length > 0 || loadedPlaybook`. First-time users (fresh
+		// worktree, never created a playbook) had no entry point to import a
+		// .maestro-playbook.zip and the button appeared to do nothing because
+		// it wasn't rendered. Import must always be reachable.
+		it('renders Import Playbook button with zero existing playbooks', async () => {
+			const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Import cancelled' });
+			(window.maestro as Record<string, unknown>).playbooks = {
+				list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
+				create: vi.fn(),
+				update: vi.fn(),
+				delete: vi.fn(),
+				export: vi.fn(),
+				import: mockImport,
+			};
+
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+
+			// Wait for the initial playbooks list fetch to settle (loading -> empty).
+			await waitFor(() => {
+				expect(window.maestro.playbooks.list).toHaveBeenCalled();
+			});
+
+			// The Load Playbook dropdown should NOT render (no playbooks exist),
+			// but Import Playbook must still be visible and clickable.
+			expect(screen.queryByRole('button', { name: 'Load Playbook' })).not.toBeInTheDocument();
+
+			const importBtn = screen.getByRole('button', { name: 'Import Playbook' });
+			expect(importBtn).toBeInTheDocument();
+
+			fireEvent.click(importBtn);
 
 			await waitFor(() => {
 				expect(mockImport).toHaveBeenCalledWith('session-123', '/path/to/folder');
@@ -1855,8 +1894,7 @@ describe('Import Playbook Edge Cases', () => {
 
 		render(<BatchRunnerModal {...createDefaultProps()} />);
 
-		await waitFor(() => screen.getByText('Load Playbook'));
-		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+		await waitFor(() => screen.getByRole('button', { name: 'Import Playbook' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
 
 		await waitFor(() => {
@@ -1886,8 +1924,7 @@ describe('Import Playbook Edge Cases', () => {
 
 		render(<BatchRunnerModal {...createDefaultProps()} />);
 
-		await waitFor(() => screen.getByText('Load Playbook'));
-		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+		await waitFor(() => screen.getByRole('button', { name: 'Import Playbook' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
 
 		await waitFor(() => {
@@ -1916,8 +1953,7 @@ describe('Import Playbook Edge Cases', () => {
 
 		render(<BatchRunnerModal {...createDefaultProps()} />);
 
-		await waitFor(() => screen.getByText('Load Playbook'));
-		fireEvent.click(screen.getByRole('button', { name: 'Load Playbook' }));
+		await waitFor(() => screen.getByRole('button', { name: 'Import Playbook' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
 
 		await waitFor(() => {
@@ -1957,8 +1993,10 @@ describe('Click Outside Dropdown Handlers', () => {
 		fireEvent.mouseDown(document.body);
 
 		await waitFor(() => {
-			// Dropdown should be closed - only the "Load Playbook" button remains
-			expect(screen.queryByText('Import Playbook')).not.toBeInTheDocument();
+			// Dropdown should be closed — the playbook list item disappears.
+			// (Import Playbook is now a top-level button outside the
+			// dropdown, so it remains visible regardless of dropdown state.)
+			expect(screen.queryByText('Test Playbook')).not.toBeInTheDocument();
 		});
 	});
 

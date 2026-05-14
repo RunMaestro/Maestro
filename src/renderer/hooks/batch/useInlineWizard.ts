@@ -251,8 +251,14 @@ export interface UseInlineWizardReturn {
 			customModel?: string;
 		}
 	) => Promise<void>;
-	/** End the wizard and restore previous UI state */
-	endWizard: () => Promise<PreviousUIState | null>;
+	/**
+	 * End the wizard and restore previous UI state.
+	 * @param explicitTabId - Optional tab ID to end. Pass when the caller knows which tab to evict —
+	 *   the hook's internal currentTabId only tracks the last-touched wizard, so closing a non-active
+	 *   wizard tab (e.g. via the tab strip's X button) without this leaves a stale tabStates entry
+	 *   that keeps the Left Bar wand indicator stuck on.
+	 */
+	endWizard: (explicitTabId?: string) => Promise<PreviousUIState | null>;
 	/**
 	 * Send a message to the wizard conversation.
 	 * @param content - Message content
@@ -733,43 +739,47 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	 * End the wizard and return the previous UI state for restoration.
 	 * Uses the current tab ID to determine which wizard to end.
 	 */
-	const endWizard = useCallback(async (): Promise<PreviousUIState | null> => {
-		// Get the tab ID from the current state
-		const tabId = currentTabId || 'default';
+	const endWizard = useCallback(
+		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
+			// Prefer an explicit tab id from the caller — currentTabId tracks the last-touched wizard
+			// and can point at the wrong tab when a non-active wizard is being closed (tab strip X).
+			const tabId = explicitTabId || currentTabId || 'default';
 
-		// Get previous UI state for this tab
-		const previousState = previousUIStateRefsMap.current.get(tabId) || null;
-		previousUIStateRefsMap.current.delete(tabId);
+			// Get previous UI state for this tab
+			const previousState = previousUIStateRefsMap.current.get(tabId) || null;
+			previousUIStateRefsMap.current.delete(tabId);
 
-		// Drop the wizard state synchronously BEFORE awaiting any async cleanup.
-		// The wizard sync effect in useWizardHandlers re-runs after the caller
-		// clears `tab.wizardState`; if this delete is delayed past an await, the
-		// effect sees `isActive: true` here and resurrects the cleared state,
-		// trapping the user on the completion screen.
-		setTabStates((prevMap) => {
-			if (!prevMap.has(tabId)) return prevMap;
-			const newMap = new Map(prevMap);
-			newMap.delete(tabId);
-			return newMap;
-		});
+			// Drop the wizard state synchronously BEFORE awaiting any async cleanup.
+			// The wizard sync effect in useWizardHandlers re-runs after the caller
+			// clears `tab.wizardState`; if this delete is delayed past an await, the
+			// effect sees `isActive: true` here and resurrects the cleared state,
+			// trapping the user on the completion screen.
+			setTabStates((prevMap) => {
+				if (!prevMap.has(tabId)) return prevMap;
+				const newMap = new Map(prevMap);
+				newMap.delete(tabId);
+				return newMap;
+			});
 
-		// Clean up conversation session for this tab (async — kills underlying process)
-		const session = conversationSessionsMap.current.get(tabId);
-		if (session) {
-			try {
-				await endInlineWizardConversation(session);
-				logger.info(`Wizard conversation ended`, '[InlineWizard]', {
-					tabId,
-					sessionId: session.sessionId,
-				});
-			} catch (error) {
-				logger.warn('[useInlineWizard] Failed to end conversation session:', undefined, error);
+			// Clean up conversation session for this tab (async — kills underlying process)
+			const session = conversationSessionsMap.current.get(tabId);
+			if (session) {
+				try {
+					await endInlineWizardConversation(session);
+					logger.info(`Wizard conversation ended`, '[InlineWizard]', {
+						tabId,
+						sessionId: session.sessionId,
+					});
+				} catch (error) {
+					logger.warn('[useInlineWizard] Failed to end conversation session:', undefined, error);
+				}
+				conversationSessionsMap.current.delete(tabId);
 			}
-			conversationSessionsMap.current.delete(tabId);
-		}
 
-		return previousState;
-	}, [currentTabId]);
+			return previousState;
+		},
+		[currentTabId]
+	);
 
 	/**
 	 * Send a user message to the wizard conversation.

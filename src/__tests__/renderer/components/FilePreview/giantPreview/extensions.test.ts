@@ -53,4 +53,20 @@ describe('buildBaseExtensions', () => {
 			})
 		).not.toThrow();
 	});
+
+	it('handles a pathologically long single line without throwing', () => {
+		// Regression: `edge-one-huge-line.txt` (500 KB of 'A's, no newlines)
+		// would freeze the renderer because lineWrapping alone (white-space:
+		// pre-wrap) doesn't break a no-whitespace line, leaving the browser
+		// to render one multi-million-pixel-wide DOM element. The base
+		// extensions now pair lineWrapping with overflow-wrap: anywhere so
+		// the browser can break at character boundaries.
+		const huge = 'A'.repeat(500_000);
+		expect(() =>
+			EditorState.create({
+				doc: huge,
+				extensions: buildBaseExtensions(),
+			})
+		).not.toThrow();
+	});
 });

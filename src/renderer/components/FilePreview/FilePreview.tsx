@@ -64,11 +64,11 @@ import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
 import { remarkHighlight } from './remarkHighlight';
 import { useFilePreviewSearch } from '../../hooks/file';
+import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
 import { HighlightedCodeEditor } from './HighlightedCodeEditor';
-import { PreviewTierChip } from './PreviewTierChip';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -125,6 +125,8 @@ export const FilePreview = React.memo(
 			onReloadFile,
 			previewTierOverride,
 			onPreviewTierChange,
+			htmlRenderMode = false,
+			onHtmlRenderModeChange,
 		},
 		ref
 	) {
@@ -233,6 +235,7 @@ export const FilePreview = React.memo(
 		// Compute derived values - must be before any early returns but after hooks
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
+		const isHtml = file ? /\.html?$/i.test(file.name) : false;
 		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const isJsonl = language === 'jsonl';
@@ -302,25 +305,23 @@ export const FilePreview = React.memo(
 		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
 		//   Fast text/code → textFast handle (page-virtualized hit map)
 		//   Giant any kind → GiantPreview handle (CM6 owns the search panel)
-		const searchAdapter = useMemo(() => {
+		const searchAdapter = useMemo<FilePreviewSearchAdapter | undefined>(() => {
 			if (previewTier === 'fast' && isMarkdown) {
 				return {
-					findHits: (q: string) => markdownFastRef.current?.findInContent(q) ?? [],
-					scrollToMatch: (m: { blockIndex: number }) => markdownFastRef.current?.scrollToMatch(m),
+					findHits: (q) => markdownFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => markdownFastRef.current?.scrollToMatch(hit),
 				};
 			}
 			if (previewTier === 'fast' && !markdownEditMode && !isImage && !isBinary) {
 				return {
-					findHits: (q: string) => textFastRef.current?.findInContent(q) ?? [],
-					scrollToMatch: (m: { blockIndex: number }) => textFastRef.current?.scrollToMatch(m),
+					findHits: (q) => textFastRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => textFastRef.current?.scrollToMatch(hit),
 				};
 			}
 			if (previewTier === 'giant' && !markdownEditMode && !isImage && !isBinary) {
 				return {
-					findHits: () => [],
-					scrollToMatch: () => {
-						/* CM6 owns scrolling */
-					},
+					findHits: (q) => giantRef.current?.findInContent(q) ?? [],
+					scrollToMatch: (hit) => giantRef.current?.scrollToMatch(hit),
 				};
 			}
 			return undefined;
@@ -939,14 +940,9 @@ export const FilePreview = React.memo(
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				e.stopPropagation();
-				// Giant tier: hand off to CodeMirror's native search panel.
-				// CM6 owns its own panel UI; layering the in-app search bar on
-				// top would just duplicate the count display while CM6 does the
-				// real work.
-				if (previewTier === 'giant' && giantRef.current) {
-					giantRef.current.openSearch();
-					return;
-				}
+				// All three tiers (Rich / Fast / Giant) now share the same search
+				// bar. Giant tier exposes findInContent/scrollToMatch through its
+				// adapter so the count + navigation flow through the same UI.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
 			} else if (e.key === 's' && (e.metaKey || e.ctrlKey) && isEditableText && markdownEditMode) {
@@ -1106,31 +1102,21 @@ export const FilePreview = React.memo(
 					copyPathToClipboard={copyPathToClipboard}
 					headerBtnClass={headerBtnClass}
 					headerIconClass={headerIconClass}
+					isHtml={isHtml}
+					htmlRenderMode={htmlRenderMode}
+					setHtmlRenderMode={(v) => onHtmlRenderModeChange?.(v)}
+					showTierChip={
+						!markdownEditMode &&
+						!isImage &&
+						!isBinary &&
+						!(isHtml && htmlRenderMode) &&
+						(isMarkdown || isReadableText || isCodeFile(language)) &&
+						!!file
+					}
+					autoTier={autoTier}
+					previewTierOverride={previewTierOverride}
+					onPreviewTierChange={onPreviewTierChange}
 				/>
-
-				{/* Tier override chip — visible for any text-like preview (markdown,
-				    readable text, or code). Hidden during edit, on images, and
-				    on binary files. */}
-				{!markdownEditMode &&
-					!isImage &&
-					!isBinary &&
-					(isMarkdown || isReadableText || isCodeFile(language)) &&
-					file && (
-						<div
-							className="flex items-center justify-end gap-2 px-6 py-1.5 border-b shrink-0"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-							}}
-						>
-							<PreviewTierChip
-								theme={theme}
-								autoTier={autoTier}
-								override={previewTierOverride}
-								onSelect={(tier) => onPreviewTierChange?.(tier)}
-							/>
-						</div>
-					)}
 
 				{/* File changed on disk banner */}
 				{fileChangedOnDisk && (
@@ -1511,6 +1497,26 @@ export const FilePreview = React.memo(
 									// Scroll to show the cursor
 									textarea.scrollTop += textarea.clientHeight;
 								}
+							}}
+						/>
+					) : isHtml && htmlRenderMode && !markdownEditMode ? (
+						// Rendered HTML preview. Feeds file.content into an iframe via
+						// srcDoc so local and SSH-remote files work the same way — the
+						// bytes are already in memory. Sandbox lets scripts/popups/forms
+						// run but withholds same-origin so the page cannot reach the host
+						// renderer.
+						<iframe
+							title={file.name}
+							srcDoc={file.content}
+							sandbox="allow-scripts allow-popups allow-forms"
+							referrerPolicy="no-referrer"
+							data-testid="html-render-iframe"
+							style={{
+								width: '100%',
+								height: '100%',
+								minHeight: '60vh',
+								border: 'none',
+								backgroundColor: '#fff',
 							}}
 						/>
 					) : isCsv && !markdownEditMode ? (

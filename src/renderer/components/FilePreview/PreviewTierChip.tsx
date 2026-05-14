@@ -13,6 +13,16 @@ export interface PreviewTierChipProps {
 	theme: Theme;
 	/** Hidden when false (e.g. while a file is loading). */
 	visible?: boolean;
+	/**
+	 * When true, render a compact icon-only trigger that matches the header
+	 * toolbar styling. The popover is unchanged. Use inside the file preview
+	 * header button cluster.
+	 */
+	iconOnly?: boolean;
+	/** Header button class string (only used when `iconOnly`). */
+	headerBtnClass?: string;
+	/** Header icon class string (only used when `iconOnly`). */
+	headerIconClass?: string;
 }
 
 const TIER_META: Record<
@@ -44,6 +54,9 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 	onSelect,
 	theme,
 	visible = true,
+	iconOnly = false,
+	headerBtnClass,
+	headerIconClass,
 }) => {
 	const [open, setOpen] = useState(false);
 	const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -81,33 +94,48 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 		setOpen(false);
 	};
 
-	const buttonStyle: React.CSSProperties = {
+	const chipButtonStyle: React.CSSProperties = {
 		backgroundColor: override ? theme.colors.accent + '20' : 'transparent',
 		borderColor: override ? theme.colors.accent + '60' : theme.colors.border,
 		color: override ? theme.colors.accent : theme.colors.textDim,
 	};
 
+	const triggerTitle = override
+		? `Forced ${TIER_META[effective].label} preview · click to change`
+		: `Auto · ${TIER_META[effective].label} preview · click to change`;
+
 	return (
 		<div ref={wrapperRef} className="relative" data-testid="preview-tier-chip">
-			<button
-				type="button"
-				onClick={() => setOpen((v) => !v)}
-				className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border transition-colors hover:brightness-125"
-				style={buttonStyle}
-				aria-haspopup="menu"
-				aria-expanded={open}
-				data-testid="preview-tier-chip-button"
-				title={
-					override
-						? `Forced ${TIER_META[effective].label} preview · click to change`
-						: `Auto · ${TIER_META[effective].label} preview · click to change`
-				}
-			>
-				<Icon className="w-3 h-3" />
-				<span>{TIER_META[effective].label}</span>
-				{!override && <span style={{ color: theme.colors.textDim, opacity: 0.7 }}>· auto</span>}
-				<ChevronDown className="w-3 h-3 opacity-70" />
-			</button>
+			{iconOnly ? (
+				<button
+					type="button"
+					onClick={() => setOpen((v) => !v)}
+					className={headerBtnClass}
+					style={{ color: override ? theme.colors.accent : theme.colors.textDim }}
+					aria-haspopup="menu"
+					aria-expanded={open}
+					data-testid="preview-tier-chip-button"
+					title={triggerTitle}
+				>
+					<Icon className={headerIconClass} />
+				</button>
+			) : (
+				<button
+					type="button"
+					onClick={() => setOpen((v) => !v)}
+					className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border transition-colors hover:brightness-125"
+					style={chipButtonStyle}
+					aria-haspopup="menu"
+					aria-expanded={open}
+					data-testid="preview-tier-chip-button"
+					title={triggerTitle}
+				>
+					<Icon className="w-3 h-3" />
+					<span>{TIER_META[effective].label}</span>
+					{!override && <span style={{ color: theme.colors.textDim, opacity: 0.7 }}>· auto</span>}
+					<ChevronDown className="w-3 h-3 opacity-70" />
+				</button>
+			)}
 
 			{open && (
 				<div
@@ -178,9 +206,15 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		role="menuitem"
 		onClick={onClick}
 		aria-current={active ? 'true' : undefined}
-		className="w-full text-left px-3 py-2 flex items-start gap-2 transition-colors"
+		// Inactive rows get the standard hover-bg from Tailwind. Active rows
+		// keep the accent-tinted background via inline style — leaving that off
+		// when inactive lets `:hover` win (an inline `background: transparent`
+		// would otherwise override the hover class).
+		className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${
+			active ? '' : 'hover:bg-white/10'
+		}`}
 		style={{
-			backgroundColor: active ? theme.colors.accent + '20' : 'transparent',
+			backgroundColor: active ? theme.colors.accent + '20' : undefined,
 			color: active ? theme.colors.accent : theme.colors.textMain,
 		}}
 	>

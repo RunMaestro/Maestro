@@ -1559,4 +1559,82 @@ print("world")
 			expect(screen.queryByTestId('csv-table-renderer')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('HTML render mode', () => {
+		const htmlFile = {
+			name: 'page.html',
+			content: '<!doctype html><body><h1>hello</h1></body>',
+			path: '/test/page.html',
+		};
+
+		it('shows the HTML render toggle for .html files', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} />);
+			expect(screen.getByTestId('html-render-toggle')).toBeInTheDocument();
+		});
+
+		it('shows the HTML render toggle for .htm files', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ ...htmlFile, name: 'legacy.htm', path: '/test/legacy.htm' }}
+				/>
+			);
+			expect(screen.getByTestId('html-render-toggle')).toBeInTheDocument();
+		});
+
+		it('does not show the HTML render toggle for non-HTML files', () => {
+			render(<FilePreview {...defaultProps} />);
+			expect(screen.queryByTestId('html-render-toggle')).not.toBeInTheDocument();
+		});
+
+		it('does not show the HTML render toggle while in edit mode', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} markdownEditMode={true} />);
+			expect(screen.queryByTestId('html-render-toggle')).not.toBeInTheDocument();
+		});
+
+		it('does not render the iframe when htmlRenderMode is false', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} htmlRenderMode={false} />);
+			expect(screen.queryByTestId('html-render-iframe')).not.toBeInTheDocument();
+		});
+
+		it('renders a sandboxed iframe when htmlRenderMode is true', () => {
+			render(<FilePreview {...defaultProps} file={htmlFile} htmlRenderMode={true} />);
+			const iframe = screen.getByTestId('html-render-iframe') as HTMLIFrameElement;
+			expect(iframe).toBeInTheDocument();
+			// Security-critical: scripts may run but the iframe must not be
+			// same-origin (no `allow-same-origin`), so the rendered page can't
+			// reach the host renderer.
+			const sandbox = iframe.getAttribute('sandbox') ?? '';
+			expect(sandbox).toContain('allow-scripts');
+			expect(sandbox).not.toContain('allow-same-origin');
+			expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
+			expect(iframe.getAttribute('srcdoc')).toBe(htmlFile.content);
+		});
+
+		it('does not render the iframe while in edit mode even if htmlRenderMode is true', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={htmlFile}
+					htmlRenderMode={true}
+					markdownEditMode={true}
+				/>
+			);
+			expect(screen.queryByTestId('html-render-iframe')).not.toBeInTheDocument();
+		});
+
+		it('calls onHtmlRenderModeChange when the toggle is clicked', () => {
+			const onHtmlRenderModeChange = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={htmlFile}
+					htmlRenderMode={false}
+					onHtmlRenderModeChange={onHtmlRenderModeChange}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('html-render-toggle'));
+			expect(onHtmlRenderModeChange).toHaveBeenCalledWith(true);
+		});
+	});
 });

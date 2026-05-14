@@ -225,4 +225,56 @@ describe('PreviewTierChip', () => {
 			expect(rows[3].getAttribute('aria-current')).toBeNull();
 		});
 	});
+
+	describe('iconOnly mode', () => {
+		it('renders an icon-only trigger without the label or "auto" text', () => {
+			render(
+				<PreviewTierChip
+					theme={mockTheme}
+					autoTier="fast"
+					override={undefined}
+					onSelect={vi.fn()}
+					iconOnly
+					headerBtnClass="header-btn"
+					headerIconClass="header-icon"
+				/>
+			);
+			const btn = screen.getByTestId('preview-tier-chip-button');
+			expect(btn.textContent).not.toContain('Fast');
+			expect(btn.textContent).not.toContain('auto');
+			expect(btn.className).toBe('header-btn');
+		});
+
+		it('opens the same popover menu in iconOnly mode', () => {
+			render(
+				<PreviewTierChip
+					theme={mockTheme}
+					autoTier="fast"
+					override={undefined}
+					onSelect={vi.fn()}
+					iconOnly
+					headerBtnClass="header-btn"
+					headerIconClass="header-icon"
+				/>
+			);
+			fireEvent.click(screen.getByTestId('preview-tier-chip-button'));
+			expect(screen.getByTestId('preview-tier-chip-menu')).toBeTruthy();
+		});
+
+		it('preserves the same tooltip wording as the labeled chip', () => {
+			render(
+				<PreviewTierChip
+					theme={mockTheme}
+					autoTier="fast"
+					override="rich"
+					onSelect={vi.fn()}
+					iconOnly
+					headerBtnClass="header-btn"
+					headerIconClass="header-icon"
+				/>
+			);
+			const btn = screen.getByTestId('preview-tier-chip-button');
+			expect(btn.getAttribute('title')).toContain('Forced');
+		});
+	});
 });

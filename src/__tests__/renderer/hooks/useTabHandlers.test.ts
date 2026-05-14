@@ -24,6 +24,14 @@ import { setLiveDraft, clearLiveDraft, getLiveDraft } from '../../../renderer/ut
 // We just override specific return values needed by our tests in beforeEach.
 // ============================================================================
 
+// Mock InlineWizardContext so useTabHandlers can call useInlineWizardContext()
+// outside of an InlineWizardProvider. Only `endWizard` is consumed by the hook.
+vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
+	useInlineWizardContext: () => ({
+		endWizard: vi.fn(async () => null),
+	}),
+}));
+
 // ============================================================================
 // Test Helpers
 // ============================================================================

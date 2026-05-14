@@ -569,27 +569,25 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 													</div>
 												))}
 											</div>
-											{/* Import playbook button */}
-											<div
-												className="border-t px-3 py-2"
-												style={{ borderColor: theme.colors.border }}
-											>
-												<button
-													onClick={(e) => {
-														e.stopPropagation();
-														handleImportPlaybook();
-													}}
-													className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-white/5 transition-colors text-sm"
-													style={{ color: theme.colors.accent }}
-												>
-													<Upload className="w-3.5 h-3.5" />
-													Import Playbook
-												</button>
-											</div>
 										</div>
 									)}
 								</div>
 							)}
+
+							{/* Import Playbook — always visible so users with zero existing
+							    playbooks can still import a .maestro-playbook.zip. Previously
+							    lived inside the Load Playbook dropdown, which only renders when
+							    at least one playbook exists — making the entry point unreachable
+							    on fresh worktrees / first-time users. */}
+							<button
+								onClick={handleImportPlaybook}
+								className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-white/5 transition-colors"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title="Import a playbook from a .maestro-playbook.zip file"
+							>
+								<Upload className="w-4 h-4" style={{ color: theme.colors.accent }} />
+								<span className="text-sm">Import Playbook</span>
+							</button>
 
 							{/* Playbook Exchange button */}
 							{onOpenMarketplace && (

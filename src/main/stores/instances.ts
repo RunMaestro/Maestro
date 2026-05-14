@@ -12,6 +12,7 @@
 
 import { app } from 'electron';
 import Store from 'electron-store';
+import { parseJsonWithBom } from '../../shared/jsonUtils';
 
 import type {
 	BootstrapSettings,
@@ -35,6 +36,10 @@ import {
 } from './defaults';
 
 import { getCustomSyncPath } from './utils';
+
+function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
+	return parseJsonWithBom<T>(value);
+}
 
 // ============================================================================
 // Store Instance Variables
@@ -80,6 +85,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-bootstrap',
 		cwd: app.getPath('userData'),
 		defaults: {},
+		deserialize: deserializeStoreJson,
 	});
 
 	// 2. Determine sync path
@@ -95,18 +101,21 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-settings',
 		cwd: _syncPath,
 		defaults: SETTINGS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	_sessionsStore = new Store<SessionsData>({
 		name: 'maestro-sessions',
 		cwd: _syncPath,
 		defaults: SESSIONS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	_groupsStore = new Store<GroupsData>({
 		name: 'maestro-groups',
 		cwd: _syncPath,
 		defaults: GROUPS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
@@ -115,12 +124,14 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-configs',
 		cwd: _productionDataPath,
 		defaults: AGENT_CONFIGS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Window state is intentionally NOT synced - it's per-device
 	_windowStateStore = new Store<WindowState>({
 		name: 'maestro-window-state',
 		defaults: WINDOW_STATE_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Claude session origins - tracks which sessions were created by Maestro
@@ -128,6 +139,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-claude-session-origins',
 		cwd: _syncPath,
 		defaults: CLAUDE_SESSION_ORIGINS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	// Generic agent session origins - supports all agents (Codex, OpenCode, etc.)
@@ -135,6 +147,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-session-origins',
 		cwd: _syncPath,
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
+		deserialize: deserializeStoreJson,
 	});
 
 	return {

@@ -502,6 +502,10 @@ export interface FilePreviewTab {
 	// PreviewTierChip in the header so users can escalate (Rich → Fast for
 	// performance) or de-escalate (Fast → Rich for full features) at will.
 	previewTierOverride?: 'rich' | 'fast' | 'giant';
+	// HTML render mode (per-tab). When true on a .html/.htm file, the preview
+	// renders the document in a sandboxed iframe instead of showing source.
+	// Toggled via the Globe icon in the FilePreview header.
+	htmlRenderMode?: boolean;
 }
 
 /**

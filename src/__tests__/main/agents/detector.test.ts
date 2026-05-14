@@ -1621,6 +1621,34 @@ describe('agent-detector', () => {
 			// Hidden model's levels should not be excluded (they share the same platform levels)
 		});
 
+		it('falls back to static Codex reasoning levels when models_cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (_cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+			_readFileSync.mockImplementation(() => {
+				const error = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+				error.code = 'ENOENT';
+				throw error;
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('codex', 'reasoningEffort');
+			expect(options).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'Could not read Codex models_cache.json for config option discovery',
+				'AgentDetector'
+			);
+		});
+
 		it('should fall back to static options for select config options without dynamic discovery', async () => {
 			// Copilot-CLI's reasoningEffort is declared with a static `options` array
 			// and no dynamic discovery branch. Without the static fallback the

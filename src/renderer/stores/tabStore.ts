@@ -272,6 +272,13 @@ export interface TabStoreActions {
 	 * `pickPreviewTier`. Pass a concrete tier to force it.
 	 */
 	setFileTabPreviewTier: (tabId: string, tier: 'rich' | 'fast' | 'giant' | undefined) => void;
+
+	/**
+	 * Toggle whether an HTML file preview tab renders the document in an
+	 * iframe (true) or shows source (false). No-op for non-HTML files since
+	 * the Globe button is only surfaced for `.html` / `.htm`.
+	 */
+	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -593,4 +600,6 @@ export const useTabStore = create<TabStore>()((set) => ({
 	},
 
 	setFileTabPreviewTier: (tabId, tier) => updateFileTab(tabId, { previewTierOverride: tier }),
+
+	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
 }));

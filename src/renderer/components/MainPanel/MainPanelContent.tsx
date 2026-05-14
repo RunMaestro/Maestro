@@ -497,6 +497,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onPreviewTierChange={(tier) =>
 							useTabStore.getState().setFileTabPreviewTier(activeFileTabId, tier)
 						}
+						// HTML render mode (per-tab, persists across tab switches).
+						htmlRenderMode={activeFileTab.htmlRenderMode}
+						onHtmlRenderModeChange={(value) =>
+							useTabStore.getState().setFileTabHtmlRenderMode(activeFileTabId, value)
+						}
 					/>
 				</div>
 			) : (

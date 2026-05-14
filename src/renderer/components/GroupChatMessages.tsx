@@ -454,7 +454,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 											color: theme.colors.textDim,
 											transition: 'opacity 0.15s ease-in-out',
 										}}
-										title="Jump to top of this message"
+										title={`Jump to top of this message (${formatShortcutKeys(['Shift', 'ArrowUp'])} for previous)`}
 										aria-label="Jump to top of this message"
 									>
 										<ArrowUp className="w-3.5 h-3.5" />

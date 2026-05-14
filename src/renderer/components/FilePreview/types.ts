@@ -82,6 +82,13 @@ export interface FilePreviewProps {
 	 * Passing `undefined` returns the file to auto-tier mode.
 	 */
 	onPreviewTierChange?: (tier: 'rich' | 'fast' | 'giant' | undefined) => void;
+	/**
+	 * For HTML files only: when true, FilePreview swaps the source view for an
+	 * embedded iframe rendering of the HTML. Defaults to false (source view).
+	 */
+	htmlRenderMode?: boolean;
+	/** Setter for the HTML render toggle. Persisted per-tab via the tab store. */
+	onHtmlRenderModeChange?: (value: boolean) => void;
 }
 
 export interface FilePreviewHandle {
