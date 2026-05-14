@@ -1,7 +1,63 @@
-import { describe, it, expect } from 'vitest';
-import { getRevealLabel, getOpenInLabel } from '../../../renderer/utils/platformUtils';
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+	getRevealLabel,
+	getOpenInLabel,
+	isWindowsPlatform,
+	isMacOSPlatform,
+	isLinuxPlatform,
+} from '../../../renderer/utils/platformUtils';
 
 describe('platformUtils', () => {
+	afterEach(() => {
+		(window as any).maestro = { platform: 'darwin' };
+	});
+
+	describe('isWindowsPlatform', () => {
+		it('returns true for win32', () => {
+			(window as any).maestro = { platform: 'win32' };
+			expect(isWindowsPlatform()).toBe(true);
+		});
+
+		it('returns false for darwin', () => {
+			(window as any).maestro = { platform: 'darwin' };
+			expect(isWindowsPlatform()).toBe(false);
+		});
+
+		it('returns false when maestro is undefined', () => {
+			(window as any).maestro = undefined;
+			expect(isWindowsPlatform()).toBe(false);
+		});
+	});
+
+	describe('isMacOSPlatform', () => {
+		it('returns true for darwin', () => {
+			(window as any).maestro = { platform: 'darwin' };
+			expect(isMacOSPlatform()).toBe(true);
+		});
+
+		it('returns false for win32', () => {
+			(window as any).maestro = { platform: 'win32' };
+			expect(isMacOSPlatform()).toBe(false);
+		});
+
+		it('returns false for linux', () => {
+			(window as any).maestro = { platform: 'linux' };
+			expect(isMacOSPlatform()).toBe(false);
+		});
+	});
+
+	describe('isLinuxPlatform', () => {
+		it('returns true for linux', () => {
+			(window as any).maestro = { platform: 'linux' };
+			expect(isLinuxPlatform()).toBe(true);
+		});
+
+		it('returns false for darwin', () => {
+			(window as any).maestro = { platform: 'darwin' };
+			expect(isLinuxPlatform()).toBe(false);
+		});
+	});
+
 	describe('getRevealLabel', () => {
 		it('returns "Reveal in Finder" for darwin', () => {
 			expect(getRevealLabel('darwin')).toBe('Reveal in Finder');

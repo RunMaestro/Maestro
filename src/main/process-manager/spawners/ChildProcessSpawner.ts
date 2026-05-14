@@ -16,6 +16,7 @@ import { buildChildProcessEnv } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
+import { isWindows } from '../../../shared/platformDetection';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -69,7 +70,6 @@ export class ChildProcessSpawner {
 			sendPromptViaStdinRaw,
 		} = config;
 
-		const isWindows = process.platform === 'win32';
 		const hasImages = images && images.length > 0;
 		const capabilities = getAgentCapabilities(toolType);
 
@@ -183,7 +183,7 @@ export class ChildProcessSpawner {
 		}
 
 		// Log spawn config
-		const spawnConfigLogFn = isWindows ? logger.info.bind(logger) : logger.debug.bind(logger);
+		const spawnConfigLogFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
 		spawnConfigLogFn('[ProcessManager] spawn() config', 'ProcessManager', {
 			sessionId,
 			toolType,
@@ -191,7 +191,7 @@ export class ChildProcessSpawner {
 			hasPrompt: !!prompt,
 			promptLength: prompt?.length,
 			promptPreview:
-				prompt && isWindows
+				prompt && isWindows()
 					? {
 							first100: prompt.substring(0, 100),
 							last100: prompt.substring(Math.max(0, prompt.length - 100)),
@@ -244,7 +244,7 @@ export class ChildProcessSpawner {
 			// Auto-enable shell for Windows when command is a bare .exe (no path)
 			const commandHasPath = /\\|\//.test(spawnCommand);
 			const commandExt = path.extname(spawnCommand).toLowerCase();
-			if (isWindows && !useShell && !commandHasPath && commandExt === '.exe') {
+			if (isWindows() && !useShell && !commandHasPath && commandExt === '.exe') {
 				useShell = true;
 				logger.info(
 					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
@@ -255,7 +255,7 @@ export class ChildProcessSpawner {
 
 			// Auto-enable shell for Windows when command is a shell script (extensionless with shebang)
 			// This handles tools like OpenCode installed via npm with shell scripts
-			if (isWindows && !useShell && !commandExt && commandHasPath) {
+			if (isWindows() && !useShell && !commandExt && commandHasPath) {
 				try {
 					const fileContent = fs.readFileSync(spawnCommand, 'utf8');
 					if (fileContent.startsWith('#!')) {
@@ -271,7 +271,7 @@ export class ChildProcessSpawner {
 				}
 			}
 
-			if (isWindows && useShell) {
+			if (isWindows() && useShell) {
 				logger.debug(
 					'[ProcessManager] Forcing shell=true for agent spawn on Windows (runInShell or auto)',
 					'ProcessManager',
@@ -301,13 +301,13 @@ export class ChildProcessSpawner {
 			}
 
 			// Log spawn details
-			const spawnLogFn = isWindows ? logger.info.bind(logger) : logger.debug.bind(logger);
+			const spawnLogFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
 			spawnLogFn('[ProcessManager] About to spawn with shell option', 'ProcessManager', {
 				sessionId,
 				spawnCommand,
 				// show the actual shell value passed to spawn (boolean or shell path)
 				spawnShell: typeof spawnShell === 'string' ? spawnShell : !!spawnShell,
-				isWindows,
+				isWindows: isWindows(),
 				argsCount: spawnArgs.length,
 				promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
 				fullCommandPreview: `${spawnCommand} ${spawnArgs.join(' ')}`,
@@ -429,6 +429,16 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
 					const output = data.toString();
+					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
+					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
+					try {
+						this.emitter.emit('raw-stdout', sessionId, output);
+					} catch (err) {
+						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
+							sessionId,
+							error: String(err),
+						});
+					}
 					this.stdoutHandler.handleData(sessionId, output);
 				});
 			} else {

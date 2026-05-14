@@ -4,7 +4,8 @@
 import { getSessionById } from '../services/storage';
 import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
-import { detectClaude, detectCodex } from '../services/agent-spawner';
+import { detectAgent } from '../services/agent-spawner';
+import { getAgentDefinition } from '../../main/agents/definitions';
 import { emitError } from '../output/jsonl';
 import {
 	formatRunEvent,
@@ -68,6 +69,7 @@ interface RunPlaybookOptions {
 	json?: boolean;
 	debug?: boolean;
 	verbose?: boolean;
+	synopsis?: boolean; // commander uses --no-synopsis which becomes synopsis: false
 	wait?: boolean;
 }
 
@@ -148,30 +150,23 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 		const agent = getSessionById(agentId)!;
 
 		// Check if agent CLI is available
-		if (agent.toolType === 'codex') {
-			const codex = await detectCodex();
-			if (!codex.available) {
-				if (useJson) {
-					emitError('Codex CLI not found. Please install codex CLI.', 'CODEX_NOT_FOUND');
-				} else {
-					console.error(formatError('Codex CLI not found. Please install codex CLI.'));
-				}
-				process.exit(1);
-			}
-		} else if (agent.toolType === 'claude-code') {
-			const claude = await detectClaude();
-			if (!claude.available) {
-				if (useJson) {
-					emitError('Claude Code not found. Please install claude-code CLI.', 'CLAUDE_NOT_FOUND');
-				} else {
-					console.error(formatError('Claude Code not found. Please install claude-code CLI.'));
-				}
-				process.exit(1);
-			}
-		} else {
+		const def = getAgentDefinition(agent.toolType);
+		if (!def) {
 			const message = `Agent type "${agent.toolType}" is not supported in CLI batch mode yet.`;
 			if (useJson) {
 				emitError(message, 'AGENT_UNSUPPORTED');
+			} else {
+				console.error(formatError(message));
+			}
+			process.exit(1);
+		}
+
+		const detection = await detectAgent(agent.toolType);
+		if (!detection.available) {
+			const errorCode = `${agent.toolType.toUpperCase().replace(/-/g, '_')}_NOT_FOUND`;
+			const message = `${def.name} CLI not found. Please install ${def.name}.`;
+			if (useJson) {
+				emitError(message, errorCode);
 			} else {
 				console.error(formatError(message));
 			}
@@ -265,6 +260,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			writeHistory: options.history !== false, // --no-history sets history to false
 			debug: options.debug,
 			verbose: options.verbose,
+			skipSynopsis: options.synopsis === false, // --no-synopsis sets synopsis to false
 		});
 
 		for await (const event of generator) {

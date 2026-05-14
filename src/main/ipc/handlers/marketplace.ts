@@ -563,6 +563,12 @@ function setupLocalManifestWatcher(app: App): void {
 			}, WATCHER_DEBOUNCE_MS);
 		});
 
+		// Prevent runtime errors (e.g. Windows UNKNOWN, file removed) from
+		// becoming unhandled rejections.
+		localManifestWatcher.on('error', (error) => {
+			logger.warn(`Local manifest watcher error: ${error.message}`, LOG_CONTEXT);
+		});
+
 		logger.debug('Local manifest file watcher initialized', LOG_CONTEXT);
 	} catch (error) {
 		// File might not exist yet - this is normal

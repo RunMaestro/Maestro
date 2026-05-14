@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.15.1",
+	"version": "0.15.3",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -37,7 +37,7 @@
 		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
-		"prepare": "husky || true",
+		"prepare": "node scripts/setup-git-hooks.mjs",
 		"postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
 		"lint:eslint": "eslint src/",
@@ -45,6 +45,7 @@
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
 		"format:check:all": "prettier --check .",
+		"validate:push": "npm run build:prompts && npm run format:check:all && npm run lint && npm run lint:eslint && npm run test",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
@@ -86,20 +87,8 @@
 			"entitlements": "build/entitlements.mac.plist",
 			"entitlementsInherit": "build/entitlements.mac.plist",
 			"target": [
-				{
-					"target": "dmg",
-					"arch": [
-						"x64",
-						"arm64"
-					]
-				},
-				{
-					"target": "zip",
-					"arch": [
-						"x64",
-						"arm64"
-					]
-				}
+				"dmg",
+				"zip"
 			],
 			"artifactName": "${name}-${version}-${arch}-mac.${ext}",
 			"icon": "build/icon.icns",
@@ -314,7 +303,7 @@
 	},
 	"lint-staged": {
 		"*": [
-			"prettier --write"
+			"prettier --write --ignore-unknown"
 		],
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"

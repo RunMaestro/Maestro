@@ -5,7 +5,7 @@
  * These packages contain sanitized diagnostic information for bug analysis.
  */
 
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import path from 'path';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
@@ -78,7 +78,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			// Show save dialog
 			const result = await dialog.showSaveDialog(mainWindow, {
 				title: 'Save Debug Package',
-				defaultPath: defaultFilename,
+				defaultPath: path.join(app.getPath('desktop'), defaultFilename),
 				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
 			});
 

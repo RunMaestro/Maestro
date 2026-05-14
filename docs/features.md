@@ -1,6 +1,6 @@
 ---
 title: Features
-description: Explore Maestro's power features including Git Worktrees, Auto Run, Group Chat, and Remote Access.
+description: Explore Maestro's power features including Git Worktrees, Auto Run, Group Chat, and Remote Control.
 icon: sparkles
 ---
 
@@ -11,9 +11,9 @@ icon: sparkles
 - 🏪 **[Playbook Exchange](./playbook-exchange)** - Browse and import community-contributed playbooks directly into your Auto Run folder. Categories, search, and one-click import get you started with proven workflows for security audits, code reviews, documentation, and more.
 - 🎵 **[Maestro Symphony](./symphony)** - Contribute to open source by donating AI tokens. Browse registered projects, select GitHub issues, and let Maestro clone, process Auto Run docs, and create PRs automatically. Distributed computing for AI-assisted development.
 - 💬 **[Group Chat](./group-chat)** - Coordinate multiple AI agents in a single conversation. A moderator AI orchestrates discussions, routing questions to the right agents and synthesizing their responses for cross-project questions and architecture discussions.
-- 🌐 **[Remote Access](./remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
+- 🌐 **[Remote Control](./remote-control)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 🔗 **[SSH Remote Execution](./ssh-remote-execution)** - Run AI agents on remote hosts via SSH. Leverage powerful cloud VMs, access tools not installed locally, or work with projects requiring specific environments — all while controlling everything from your local Maestro instance.
-- 💻 **[Command Line Interface](./cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
+- 💻 **[Command Line Interface](./cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks, manage settings and agent configs — all from the command line. Settings changes take effect instantly in the running app.
 - 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
 - 🔐 **[Global Environment Variables](./configuration#global-environment-variables)** - Configure environment variables once in Settings and they apply to all agent processes and terminal sessions. Perfect for API keys, proxy settings, and tool paths.

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -65,15 +66,18 @@ import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
 	setGetAgentConfigCallback,
+	setGetModeratorSettingsCallback,
 	setSshStore,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
 	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
 	respawnParticipantWithRecovery,
+	clearActiveParticipantTaskSession,
 } from './group-chat/group-chat-router';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
+import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
@@ -106,6 +110,7 @@ import { createWebServerFactory } from './web-server/web-server-factory';
 import {
 	setupGlobalErrorHandlers,
 	createCliWatcher,
+	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
 } from './app-lifecycle';
@@ -203,6 +208,20 @@ if (crashReportingEnabled && !isDevelopment) {
 				tracesSampleRate: 0,
 				// Filter out sensitive data
 				beforeSend(event) {
+					// Drop unfixable Windows drive-root noise: EBUSY/EPERM on always-locked
+					// system files (pagefile.sys, hiberfil.sys, DumpStack.log.tmp, ...) that
+					// show up when users point watchers at C:\ or similar. See MAESTRO-G5/G6.
+					const firstException = event.exception?.values?.[0];
+					const exceptionValue = firstException?.value ?? '';
+					if (
+						/^(EBUSY|EPERM): [^,]+, lstat /i.test(exceptionValue) &&
+						/(pagefile\.sys|hiberfil\.sys|swapfile\.sys|DumpStack\.log|System Volume Information)/i.test(
+							exceptionValue
+						)
+					) {
+						return null;
+					}
+
 					// Remove any potential sensitive data from the event
 					if (event.user) {
 						delete event.user.ip_address;
@@ -213,6 +232,10 @@ if (crashReportingEnabled && !isDevelopment) {
 			});
 			// Add installation ID to Sentry for error correlation across installations
 			setTag('installationId', installationId);
+			// Tag release channel (rc vs stable) based on version string
+			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
+			const version = app.getVersion();
+			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 500MB heap
@@ -250,6 +273,13 @@ const safeSend = createSafeSend(() => mainWindow);
 const cliWatcher = createCliWatcher({
 	getMainWindow: () => mainWindow,
 	getUserDataPath: () => app.getPath('userData'),
+});
+
+// Create settings file watcher for external changes (e.g., from maestro-cli)
+const settingsWatcher = createSettingsWatcher({
+	getMainWindow: () => mainWindow,
+	getSettingsPath: () => syncPath,
+	getAgentConfigsPath: () => productionDataPath,
 });
 
 const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
@@ -375,7 +405,7 @@ app.whenReady().then(async () => {
 	// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
 	// menu items into the default Window menu. Without this, those keyboard
 	// events are intercepted at the NSMenu level and never reach the renderer.
-	if (process.platform === 'darwin') {
+	if (isMacOS()) {
 		const template: Electron.MenuItemConstructorOptions[] = [
 			{ role: 'appMenu' },
 			{ role: 'editMenu' },
@@ -400,6 +430,9 @@ app.whenReady().then(async () => {
 	// Start CLI activity watcher (Phase 4 refactoring)
 	cliWatcher.start();
 
+	// Start settings file watcher for external changes (e.g., maestro-cli settings set)
+	settingsWatcher.start();
+
 	// Note: Web server is not auto-started - it starts when user enables web interface
 	// via live:startServer IPC call from the renderer
 
@@ -420,7 +453,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') {
+	if (!isMacOS()) {
 		app.quit();
 	}
 });
@@ -436,6 +469,9 @@ const quitHandler = createQuitHandler({
 	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => cliWatcher.stop(),
+	stopSettingsWatcher: () => settingsWatcher.stop(),
+	powerManager,
+	stopSessionCleanup,
 });
 quitHandler.setup();
 
@@ -451,6 +487,7 @@ function setupIpcHandlers() {
 			webServer = server;
 		},
 		createWebServer,
+		settingsStore: store,
 	});
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
@@ -481,6 +518,7 @@ function setupIpcHandlers() {
 	registerDirectorNotesHandlers({
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
@@ -577,6 +615,7 @@ function setupIpcHandlers() {
 		getMainWindow: () => mainWindow,
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
@@ -623,6 +662,8 @@ function setupIpcHandlers() {
 				sshRemoteName,
 				// Pass full SSH config for remote execution support
 				sshRemoteConfig: s.sessionSshRemoteConfig,
+				autoRunFolderPath: s.autoRunFolderPath,
+				worktreeBasePath: s.worktreeConfig?.basePath,
 			};
 		});
 	});
@@ -630,6 +671,12 @@ function setupIpcHandlers() {
 	// Set up callback for group chat router to lookup custom env vars for agents
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
+
+	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	setGetModeratorSettingsCallback(() => ({
+		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
+		conductorProfile: (store.get('conductorProfile', '') as string) || '',
+	}));
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
@@ -702,6 +749,7 @@ function setupProcessListeners() {
 				spawnModeratorSynthesis,
 				getGroupChatReadOnlyState,
 				respawnParticipantWithRecovery,
+				clearActiveParticipantTaskSession,
 			},
 			groupChatStorage: {
 				loadGroupChat,

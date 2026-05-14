@@ -70,6 +70,18 @@ export interface AgentCapabilities {
 	/** Agent can export its context for transfer to other sessions/agents */
 	supportsContextExport: boolean;
 
+	/** Agent supports inline wizard structured output conversations */
+	supportsWizard: boolean;
+
+	/** Agent can serve as a group chat moderator */
+	supportsGroupChatModeration: boolean;
+
+	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
+	usesJsonLineOutput: boolean;
+
+	/** Agent uses a combined input+output context window (vs separate limits) */
+	usesCombinedContextWindow: boolean;
+
 	/** How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed). */
@@ -100,6 +112,10 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
+	supportsWizard: false,
+	supportsGroupChatModeration: false,
+	usesJsonLineOutput: false,
+	usesCombinedContextWindow: false,
 };
 
 /**
@@ -138,6 +154,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits streaming assistant messages
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Supports inline wizard structured output
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: false, // Uses stream-json, not JSONL
+		usesCombinedContextWindow: false, // Claude has separate input/output limits
 	},
 
 	/**
@@ -164,6 +184,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Terminal is not an AI agent
 		supportsContextMerge: false, // Terminal is not an AI agent
 		supportsContextExport: false, // Terminal has no AI context
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
 	},
 
 	/**
@@ -193,6 +217,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Supports inline wizard structured output
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: true, // Uses JSONL output format
+		usesCombinedContextWindow: true, // OpenAI models use combined context window
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -222,6 +250,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
+		supportsWizard: false, // PLACEHOLDER
+		supportsGroupChatModeration: false, // PLACEHOLDER
+		usesJsonLineOutput: false, // PLACEHOLDER
+		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
 
 	/**
@@ -250,6 +282,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
+		supportsWizard: false, // PLACEHOLDER
+		supportsGroupChatModeration: false, // PLACEHOLDER
+		usesJsonLineOutput: false, // PLACEHOLDER
+		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
 
 	/**
@@ -279,6 +315,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits streaming text chunks
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Supports inline wizard structured output
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: true, // Uses JSONL output format
+		usesCombinedContextWindow: false, // Depends on model provider
 	},
 
 	/**
@@ -307,6 +347,43 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits thinking content in messages - Verified
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
+		supportsWizard: false, // Not yet integrated with wizard
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: true, // Uses JSONL output format
+		usesCombinedContextWindow: false, // Depends on model provider
+	},
+
+	/**
+	 * Aider - Open source AI pair programming tool
+	 * https://github.com/paul-gauthier/aider
+	 *
+	 * PLACEHOLDER: Most capabilities set to false until Aider integration is
+	 * implemented and tested. Update this configuration when integrating.
+	 */
+	aider: {
+		supportsResume: false,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: false,
+		supportsImageInput: false,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: false,
+		requiresPromptToStart: false,
+		supportsStreaming: true, // Likely streams
+		supportsResultMessages: false,
+		supportsModelSelection: false,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: false,
+		supportsContextMerge: false,
+		supportsContextExport: false,
+		supportsWizard: false, // PLACEHOLDER
+		supportsGroupChatModeration: false, // PLACEHOLDER
+		usesJsonLineOutput: false, // PLACEHOLDER
+		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
 };
 

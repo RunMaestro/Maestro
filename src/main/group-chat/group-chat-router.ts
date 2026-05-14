@@ -30,7 +30,11 @@ import {
 	getModeratorSystemPrompt,
 	getModeratorSynthesisPrompt,
 } from './group-chat-moderator';
-import { addParticipant } from './group-chat-agent';
+import {
+	addParticipant,
+	setActiveParticipantSession,
+	clearActiveParticipantSession,
+} from './group-chat-agent';
 import { AgentDetector } from '../agents';
 import { powerManager } from '../power-manager';
 import { logger } from '../utils/logger';
@@ -44,6 +48,7 @@ import { groupChatParticipantRequestPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
+import { getSettingsStore } from '../stores/getters';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -52,6 +57,29 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
+
+/**
+ * Read global shell env vars from Settings → Shell Configuration.
+ * Mirrors the individual-chat path in `ipc/handlers/process.ts` so that
+ * group-chat moderator / participant / synthesis / recovery spawns receive
+ * the same merged environment.
+ */
+function getGlobalShellEnvVars(): Record<string, string> {
+	return getSettingsStore().get('shellEnvVars', {}) as Record<string, string>;
+}
+
+/**
+ * Merge global shell env vars with per-agent custom env vars, with per-agent
+ * taking precedence. Used before calling `wrapSpawnWithSsh()` so that the
+ * global vars are embedded into the remote SSH stdin script — otherwise they
+ * would only land on the local ssh client process and never reach the remote
+ * agent. Mirrors `ipc/handlers/process.ts:437`.
+ */
+function mergeGlobalShellWithCustomEnv(
+	customEnvVars: Record<string, string> | undefined
+): Record<string, string> {
+	return { ...getGlobalShellEnvVars(), ...(customEnvVars || {}) };
+}
 
 /**
  * Session info for matching @mentions to available Maestro sessions.
@@ -72,6 +100,8 @@ export interface SessionInfo {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Auto Run folder path for this session */
+	autoRunFolderPath?: string;
 }
 
 /**
@@ -84,6 +114,10 @@ export type GetSessionsCallback = () => SessionInfo[];
  */
 export type GetCustomEnvVarsCallback = (agentId: string) => Record<string, string> | undefined;
 export type GetAgentConfigCallback = (agentId: string) => Record<string, any> | undefined;
+export type GetModeratorSettingsCallback = () => {
+	standingInstructions: string;
+	conductorProfile: string;
+};
 
 // Module-level callback for session lookup
 let getSessionsCallback: GetSessionsCallback | null = null;
@@ -91,6 +125,9 @@ let getSessionsCallback: GetSessionsCallback | null = null;
 // Module-level callback for custom env vars lookup
 let getCustomEnvVarsCallback: GetCustomEnvVarsCallback | null = null;
 let getAgentConfigCallback: GetAgentConfigCallback | null = null;
+
+// Module-level callback for moderator settings (standing instructions + conductor profile)
+let getModeratorSettingsCallback: GetModeratorSettingsCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
@@ -101,6 +138,130 @@ let sshStore: SshRemoteSettingsStore | null = null;
  * Maps groupChatId -> Set<participantName>
  */
 const pendingParticipantResponses = new Map<string, Set<string>>();
+
+/**
+ * Tracks which participants in each group chat were triggered via !autorun directives.
+ * Used to gate emitAutoRunBatchComplete so it only fires for autorun participants,
+ * not for normal @mention participants sharing the same timeout path.
+ * Maps groupChatId -> Set<participantName>
+ */
+const autoRunParticipantTracker = new Map<string, Set<string>>();
+
+/**
+ * Tracks per-participant response timeout handles.
+ * Maps `${groupChatId}:${participantName}` -> NodeJS.Timeout
+ * Timeouts fire if a participant never responds (hung process, lost IPC, etc.)
+ */
+const participantTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** How long to wait for a participant before treating them as timed-out (10 minutes). */
+const PARTICIPANT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
+
+function getParticipantTimeoutKey(groupChatId: string, participantName: string): string {
+	return `${groupChatId}:${participantName}`;
+}
+
+/**
+ * Registers a response timeout for a participant.
+ * If the participant doesn't respond in PARTICIPANT_RESPONSE_TIMEOUT_MS, they are
+ * force-marked as responded so synthesis can proceed and the chat doesn't hang forever.
+ */
+function setParticipantResponseTimeout(
+	groupChatId: string,
+	participantName: string,
+	processManager: IProcessManager | undefined,
+	agentDetector: AgentDetector | undefined
+): void {
+	const key = getParticipantTimeoutKey(groupChatId, participantName);
+	// Clear any existing timeout for this participant
+	const existing = participantTimeouts.get(key);
+	if (existing) clearTimeout(existing);
+
+	const handle = setTimeout(async () => {
+		participantTimeouts.delete(key);
+		const pending = pendingParticipantResponses.get(groupChatId);
+		if (!pending?.has(participantName)) return; // Already responded
+
+		console.warn(
+			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s — force-completing`
+		);
+		groupChatEmitters.emitMessage?.(groupChatId, {
+			timestamp: new Date().toISOString(),
+			from: 'system',
+			content: `⚠️ @${participantName} did not respond within ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes and has been marked as timed out.`,
+		});
+
+		// Log a timeout response so the moderator knows what happened
+		try {
+			const { loadGroupChat } = await import('./group-chat-storage');
+			const { appendToLog } = await import('./group-chat-log');
+			const chat = await loadGroupChat(groupChatId);
+			if (chat) {
+				await appendToLog(
+					chat.logPath,
+					participantName,
+					`[Timed out — no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
+				);
+			}
+		} catch (err) {
+			// Non-critical — synthesize anyway, but log and report so we can diagnose
+			logger.error('Failed to log timeout response', LOG_CONTEXT, {
+				groupChatId,
+				participantName,
+				error: err,
+			});
+			captureException(err, {
+				operation: 'groupChat:logTimeoutResponse',
+				groupChatId,
+				participantName,
+			});
+		}
+
+		// Reset participant state and force-complete the batch so the AUTO badge
+		// and progress bar clear immediately — the batch loop may still be awaiting
+		// a process exit that will never come.
+		groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
+		// Only emit batch-complete for participants triggered via !autorun, not normal @mentions
+		const autoRunSet = autoRunParticipantTracker.get(groupChatId);
+		if (autoRunSet?.has(participantName)) {
+			groupChatEmitters.emitAutoRunBatchComplete?.(groupChatId, participantName);
+			autoRunSet.delete(participantName);
+			if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
+		}
+
+		const isLast = markParticipantResponded(groupChatId, participantName);
+		if (isLast && processManager && agentDetector) {
+			spawnModeratorSynthesis(groupChatId, processManager, agentDetector).catch((err) => {
+				logger.error('Failed to spawn moderator synthesis after participant timeout', LOG_CONTEXT, {
+					error: err,
+					groupChatId,
+					participantName,
+				});
+				captureException(err, {
+					operation: 'groupChat:spawnSynthesisAfterTimeout',
+					groupChatId,
+					participantName,
+				});
+				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+			});
+		}
+	}, PARTICIPANT_RESPONSE_TIMEOUT_MS);
+
+	participantTimeouts.set(key, handle);
+}
+
+/**
+ * Cancels the response timeout for a participant (called when they do respond).
+ */
+function clearParticipantResponseTimeout(groupChatId: string, participantName: string): void {
+	const key = getParticipantTimeoutKey(groupChatId, participantName);
+	const handle = participantTimeouts.get(key);
+	if (handle) {
+		clearTimeout(handle);
+		participantTimeouts.delete(key);
+	}
+}
 
 /**
  * Tracks read-only mode state for each group chat.
@@ -131,17 +292,43 @@ export function getPendingParticipants(groupChatId: string): Set<string> {
 }
 
 /**
- * Clears all pending participants for a group chat.
+ * Clears all pending participants for a group chat (and their timeouts).
  */
 export function clearPendingParticipants(groupChatId: string): void {
+	// Cancel all timeouts for this chat before clearing
+	const pending = pendingParticipantResponses.get(groupChatId);
+	if (pending) {
+		for (const name of pending) {
+			clearParticipantResponseTimeout(groupChatId, name);
+		}
+	}
 	pendingParticipantResponses.delete(groupChatId);
+	autoRunParticipantTracker.delete(groupChatId);
 }
 
 /**
- * Marks a participant as having responded (removes from pending).
+ * Clears the active task session tracked for a participant.
+ */
+export function clearActiveParticipantTaskSession(
+	groupChatId: string,
+	participantName: string
+): void {
+	clearActiveParticipantSession(groupChatId, participantName);
+}
+
+/**
+ * Marks a participant as having responded (removes from pending, cancels timeout).
  * Returns true if this was the last pending participant.
  */
 export function markParticipantResponded(groupChatId: string, participantName: string): boolean {
+	clearParticipantResponseTimeout(groupChatId, participantName);
+
+	// Clean up autorun tracking for this participant
+	const autoRunSet = autoRunParticipantTracker.get(groupChatId);
+	if (autoRunSet?.delete(participantName) && autoRunSet.size === 0) {
+		autoRunParticipantTracker.delete(groupChatId);
+	}
+
 	const pending = pendingParticipantResponses.get(groupChatId);
 	if (!pending) return false;
 
@@ -175,6 +362,14 @@ export function setGetAgentConfigCallback(callback: GetAgentConfigCallback): voi
 }
 
 /**
+ * Sets the callback for getting moderator settings (standing instructions + conductor profile).
+ * Called from index.ts during initialization.
+ */
+export function setGetModeratorSettingsCallback(callback: GetModeratorSettingsCallback): void {
+	getModeratorSettingsCallback = callback;
+}
+
+/**
  * Sets the SSH store for remote execution support.
  * Called from index.ts during initialization.
  */
@@ -183,8 +378,19 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
 }
 
 /**
+ * Strips leading/trailing markdown formatting characters from a mention name.
+ * AI moderators often wrap mentions in bold/italic/code/strikethrough markdown
+ * (e.g. `**@name**`, `_@name_`, `` `@name` ``), which leaves formatting chars
+ * attached to the extracted name and breaks participant matching.
+ */
+function stripMarkdownFormatting(name: string): string {
+	return name.replace(/^[*_`~]+|[*_`~]+$/g, '');
+}
+
+/**
  * Extracts @mentions from text that match known participants.
  * Supports hyphenated names matching participants with spaces.
+ * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
  *
  * @param text - The text to search for mentions
  * @param participants - List of valid participants
@@ -202,7 +408,8 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 	let match;
 
 	while ((match = mentionPattern.exec(text)) !== null) {
-		const mentionedName = match[1];
+		const mentionedName = stripMarkdownFormatting(match[1]);
+		if (!mentionedName) continue;
 		// Find participant that matches (either exact or normalized)
 		const matchingParticipant = participants.find((p) => mentionMatches(mentionedName, p.name));
 		if (matchingParticipant && !mentions.includes(matchingParticipant.name)) {
@@ -215,6 +422,7 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 
 /**
  * Extracts ALL @mentions from text (regardless of whether they're participants).
+ * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
  *
  * @param text - The text to search for mentions
  * @returns Array of unique names that were mentioned (without @ prefix)
@@ -231,13 +439,61 @@ export function extractAllMentions(text: string): string[] {
 	let match;
 
 	while ((match = mentionPattern.exec(text)) !== null) {
-		const name = match[1];
+		const name = stripMarkdownFormatting(match[1]);
+		if (!name) continue;
 		if (!mentions.includes(name)) {
 			mentions.push(name);
 		}
 	}
 
 	return mentions;
+}
+
+/**
+ * Extracts !autorun directives from moderator output.
+ * Matches `!autorun @AgentName` patterns.
+ *
+ * @param text - The moderator's message text
+ * @returns Object with autorun participant names and cleaned message text
+ */
+export interface AutoRunDirective {
+	participantName: string;
+	/** Specific filename to run, if specified (e.g. `!autorun @Agent:plan.md`). When present,
+	 *  only that document is executed instead of all docs in the folder. */
+	filename?: string;
+}
+
+export function extractAutoRunDirectives(text: string): {
+	autoRunDirectives: AutoRunDirective[];
+	/** @deprecated use autoRunDirectives */
+	autoRunParticipants: string[];
+	cleanedText: string;
+} {
+	const autoRunDirectives: AutoRunDirective[] = [];
+	// Matches: !autorun @AgentName  OR  !autorun @AgentName:filename.md
+	const autoRunPattern = /!autorun\s+@([^\s@:,;!?()\[\]{}'"<>]+)(?::([^\s,;!?()\[\]{}'"<>]+))?/g;
+	let match;
+
+	while ((match = autoRunPattern.exec(text)) !== null) {
+		const participantName = stripMarkdownFormatting(match[1]);
+		if (!participantName) continue;
+		const filename = match[2]; // undefined when no :filename suffix
+		if (!autoRunDirectives.some((d) => d.participantName === participantName)) {
+			autoRunDirectives.push({ participantName, filename });
+		}
+	}
+
+	// Remove !autorun lines from the message for display
+	const cleanedText = text
+		.replace(/^.*!autorun\s+@[^\s@:,;!?()\[\]{}'"<>]+.*$/gm, '')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+
+	return {
+		autoRunDirectives,
+		autoRunParticipants: autoRunDirectives.map((d) => d.participantName),
+		cleanedText,
+	};
 }
 
 /**
@@ -414,7 +670,9 @@ export async function routeUserMessage(
 			const participantContext =
 				chat.participants.length > 0
 					? chat.participants
-							.map((p) => `- @${normalizeMentionName(p.name)} (${p.agentId} session)`)
+							.map((p) => {
+								return `- @${normalizeMentionName(p.name)} (${p.agentId} session)`;
+							})
 							.join('\n')
 					: '(No agents currently in this group chat)';
 
@@ -444,7 +702,24 @@ export async function routeUserMessage(
 				.map((m) => `[${m.from}]: ${m.content}`)
 				.join('\n');
 
-			const fullPrompt = `${getModeratorSystemPrompt()}
+			// Get moderator settings for prompt customization
+			const moderatorSettings = getModeratorSettingsCallback?.() ?? {
+				standingInstructions: '',
+				conductorProfile: '',
+			};
+
+			// Substitute {{CONDUCTOR_PROFILE}} template variable
+			const baseSystemPrompt = getModeratorSystemPrompt().replace(
+				'{{CONDUCTOR_PROFILE}}',
+				moderatorSettings.conductorProfile || '(No conductor profile set)'
+			);
+
+			// Build standing instructions section if configured
+			const standingInstructionsSection = moderatorSettings.standingInstructions
+				? `\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${moderatorSettings.standingInstructions}`
+				: '';
+
+			const fullPrompt = `${baseSystemPrompt}${standingInstructionsSection}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -473,7 +748,15 @@ ${message}`;
 				sessionCustomArgs: chat.moderatorConfig?.customArgs,
 				sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 			});
-			const finalArgs = configResolution.args;
+
+			// For Gemini CLI: only disable workspace sandbox when read-only mode is
+			// CLI-enforced. Without hard read-only enforcement, removing the sandbox
+			// would give the moderator unsandboxed write capability.
+			// The CWD is already set to the group chat folder to avoid "path not in workspace" errors.
+			const geminiCanBeUnsandboxed =
+				chat.moderatorAgentId === 'gemini-cli' && !!agent.readOnlyCliEnforced;
+			const geminiNoSandbox = geminiCanBeUnsandboxed ? ['--no-sandbox'] : [];
+			const finalArgs = [...configResolution.args, ...geminiNoSandbox];
 			console.log(`[GroupChat:Debug] Args: ${JSON.stringify(finalArgs)}`);
 
 			console.log(`[GroupChat:Debug] Full prompt length: ${fullPrompt.length} chars`);
@@ -513,9 +796,7 @@ ${message}`;
 							args: finalArgs,
 							cwd: os.homedir(),
 							prompt: fullPrompt,
-							customEnvVars:
-								configResolution.effectiveCustomEnvVars ??
-								getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+							customEnvVars: mergeGlobalShellWithCustomEnv(spawnEnvVars),
 							promptArgs: agent.promptArgs,
 							noPromptSeparator: agent.noPromptSeparator,
 							agentBinaryName: agent.binaryName,
@@ -554,6 +835,7 @@ ${message}`;
 					prompt: spawnPrompt,
 					contextWindow: getContextWindowValue(agent, agentConfigValues),
 					customEnvVars: spawnEnvVars,
+					shellEnvVars: getGlobalShellEnvVars(),
 					promptArgs: agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
 					shell: spawnShell,
@@ -625,40 +907,59 @@ export async function routeModeratorResponse(
 
 	console.log(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
 
-	// Log the message as coming from moderator
-	await appendToLog(chat.logPath, 'moderator', message);
-	console.log(`[GroupChat:Debug] Message appended to log`);
+	// Strip internal !autorun directives from the message before logging/display.
+	// These are machine-to-machine commands; storing them in the chat log causes
+	// the synthesis moderator to see them in history and potentially re-trigger them.
+	const {
+		autoRunDirectives,
+		autoRunParticipants,
+		cleanedText: displayMessage,
+	} = extractAutoRunDirectives(message);
 
-	// Emit message event to renderer so it shows immediately
-	const moderatorMessage: GroupChatMessage = {
-		timestamp: new Date().toISOString(),
-		from: 'moderator',
-		content: message,
-	};
-	groupChatEmitters.emitMessage?.(groupChatId, moderatorMessage);
-	console.log(`[GroupChat:Debug] Emitted moderator message to renderer`);
+	// Only persist/emit the moderator message if it has visible content after stripping directives
+	const shouldPersistModeratorMessage = displayMessage.trim().length > 0;
+
+	if (shouldPersistModeratorMessage) {
+		// Log the message as coming from moderator (cleaned of !autorun directives)
+		await appendToLog(chat.logPath, 'moderator', displayMessage);
+		console.log(`[GroupChat:Debug] Message appended to log`);
+
+		// Emit message event to renderer so it shows immediately
+		const moderatorMessage: GroupChatMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'moderator',
+			content: displayMessage,
+		};
+		groupChatEmitters.emitMessage?.(groupChatId, moderatorMessage);
+		console.log(`[GroupChat:Debug] Emitted moderator message to renderer`);
+	}
 
 	// Add history entry for moderator response
-	try {
-		const summary = extractFirstSentence(message);
-		const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
-			timestamp: Date.now(),
-			summary,
-			participantName: 'Moderator',
-			participantColor: '#808080', // Gray for moderator
-			type: 'response',
-			fullResponse: message,
-		});
+	if (shouldPersistModeratorMessage) {
+		try {
+			const summary = extractFirstSentence(displayMessage);
+			const historyEntry = await addGroupChatHistoryEntry(groupChatId, {
+				timestamp: Date.now(),
+				summary,
+				participantName: 'Moderator',
+				participantColor: '#808080', // Gray for moderator
+				type: 'response',
+				fullResponse: displayMessage,
+			});
 
-		// Emit history entry event to renderer
-		groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
-		console.log(
-			`[GroupChatRouter] Added history entry for Moderator: ${summary.substring(0, 50)}...`
-		);
-	} catch (error) {
-		logger.error('Failed to add history entry for Moderator', LOG_CONTEXT, { error, groupChatId });
-		captureException(error, { operation: 'groupChat:addModeratorHistory', groupChatId });
-		// Don't throw - history logging failure shouldn't break the message flow
+			// Emit history entry event to renderer
+			groupChatEmitters.emitHistoryEntry?.(groupChatId, historyEntry);
+			console.log(
+				`[GroupChatRouter] Added history entry for Moderator: ${summary.substring(0, 50)}...`
+			);
+		} catch (error) {
+			logger.error('Failed to add history entry for Moderator', LOG_CONTEXT, {
+				error,
+				groupChatId,
+			});
+			captureException(error, { operation: 'groupChat:addModeratorHistory', groupChatId });
+			// Don't throw - history logging failure shouldn't break the message flow
+		}
 	}
 
 	// Extract ALL mentions from the message
@@ -763,10 +1064,92 @@ export async function routeModeratorResponse(
 	// Track participants that will need to respond for synthesis round
 	const participantsToRespond = new Set<string>();
 
-	// Spawn batch processes for each mentioned participant
-	if (processManager && agentDetector && mentions.length > 0) {
+	// Use the !autorun directives already extracted above (same `message` input)
+	if (autoRunDirectives.length > 0) {
+		console.log(
+			`[GroupChat:Debug] Found !autorun directives for: ${autoRunDirectives.map((d) => (d.filename ? `${d.participantName}:${d.filename}` : d.participantName)).join(', ')}`
+		);
+	}
+
+	// Trigger Auto Run for participants via the renderer's batch processor
+	// This delegates to the renderer so the full useBatchProcessor pipeline runs:
+	// progress indicators, multi-document sequencing, task checking, achievements, etc.
+	if (autoRunDirectives.length > 0) {
+		console.log(`[GroupChat:Debug] ========== TRIGGERING AUTORUN VIA RENDERER ==========`);
+		const sessions = getSessionsCallback?.() || [];
+
+		for (const directive of autoRunDirectives) {
+			const { participantName: autoRunName, filename: targetFilename } = directive;
+			const participant = updatedChat.participants.find((p) => mentionMatches(autoRunName, p.name));
+			if (!participant) {
+				console.warn(
+					`[GroupChat:Debug] Autorun participant ${autoRunName} not found in chat - skipping`
+				);
+				groupChatEmitters.emitMessage?.(groupChatId, {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ Could not find participant @${autoRunName} for !autorun. Make sure the agent is added to the group chat.`,
+				});
+				continue;
+			}
+
+			const matchingSession = sessions.find(
+				(s) => mentionMatches(s.name, participant.name) || s.name === participant.name
+			);
+
+			if (!matchingSession?.autoRunFolderPath) {
+				console.warn(
+					`[GroupChat:Debug] No autoRunFolderPath configured for ${participant.name} - skipping`
+				);
+				groupChatEmitters.emitMessage?.(groupChatId, {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ No Auto Run folder configured for @${participant.name}. Open the agent in Maestro, go to the Auto Run tab, and configure a folder first.`,
+				});
+				continue;
+			}
+
+			// Emit event to renderer — the renderer will call startBatchRun via useBatchProcessor.
+			// When the batch completes, the renderer calls groupChat:reportAutoRunComplete which
+			// invokes routeAgentResponse to trigger the synthesis round.
+			groupChatEmitters.emitParticipantState?.(groupChatId, participant.name, 'working');
+			// Register in the global pending map BEFORE emitting the trigger event to the renderer.
+			// The renderer's batch processor could complete and call reportAutoRunComplete
+			// before the post-loop registration — this prevents that race.
+			participantsToRespond.add(participant.name);
+			pendingParticipantResponses.set(groupChatId, participantsToRespond);
+			setParticipantResponseTimeout(
+				groupChatId,
+				participant.name,
+				processManager ?? undefined,
+				agentDetector ?? undefined
+			);
+			// Track as autorun so timeout path only emits batch-complete for autorun participants
+			if (!autoRunParticipantTracker.has(groupChatId)) {
+				autoRunParticipantTracker.set(groupChatId, new Set());
+			}
+			autoRunParticipantTracker.get(groupChatId)!.add(participant.name);
+			// Emit 'agent-working' on first participant so UI indicators activate immediately
+			if (participantsToRespond.size === 1) {
+				groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
+				console.log(`[GroupChat:Debug] Emitted state change: agent-working`);
+			}
+			// Now emit the trigger — renderer will start the batch run
+			groupChatEmitters.emitAutoRunTriggered?.(groupChatId, participant.name, targetFilename);
+			console.log(
+				`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
+			);
+		}
+		console.log(`[GroupChat:Debug] =================================================`);
+	}
+
+	// Spawn batch processes for each mentioned participant (exclude autorun participants)
+	const mentionsToSpawn = mentions.filter(
+		(name) => !autoRunParticipants.some((arName) => mentionMatches(arName, name))
+	);
+	if (processManager && agentDetector && mentionsToSpawn.length > 0) {
 		console.log(`[GroupChat:Debug] ========== SPAWNING PARTICIPANT AGENTS ==========`);
-		console.log(`[GroupChat:Debug] Will spawn ${mentions.length} participant agent(s)`);
+		console.log(`[GroupChat:Debug] Will spawn ${mentionsToSpawn.length} participant agent(s)`);
 
 		// Get available sessions for cwd lookup
 		const sessions = getSessionsCallback?.() || [];
@@ -780,7 +1163,7 @@ export async function routeModeratorResponse(
 			)
 			.join('\n');
 
-		for (const participantName of mentions) {
+		for (const participantName of mentionsToSpawn) {
 			console.log(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
 
 			// Find the participant info
@@ -901,9 +1284,7 @@ export async function routeModeratorResponse(
 							args: spawnArgs,
 							cwd,
 							prompt: participantPrompt,
-							customEnvVars:
-								configResolution.effectiveCustomEnvVars ??
-								getCustomEnvVarsCallback?.(participant.agentId),
+							customEnvVars: mergeGlobalShellWithCustomEnv(finalSpawnEnvVars),
 							promptArgs: agent.promptArgs,
 							noPromptSeparator: agent.noPromptSeparator,
 							agentBinaryName: agent.binaryName,
@@ -944,6 +1325,7 @@ export async function routeModeratorResponse(
 					prompt: finalSpawnPrompt,
 					contextWindow: getContextWindowValue(agent, agentConfigValues),
 					customEnvVars: finalSpawnEnvVars,
+					shellEnvVars: getGlobalShellEnvVars(),
 					promptArgs: agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
 					shell: finalSpawnShell,
@@ -957,9 +1339,25 @@ export async function routeModeratorResponse(
 				);
 				console.log(`[GroupChat:Debug] promptArgs: ${agent.promptArgs ? 'defined' : 'undefined'}`);
 				console.log(`[GroupChat:Debug] noPromptSeparator: ${agent.noPromptSeparator ?? false}`);
+				setActiveParticipantSession(groupChatId, participantName, sessionId);
 
-				// Track this participant as pending response
+				// Register this participant in the global pending map IMMEDIATELY after spawn.
+				// This prevents a race condition where the process exits before the post-loop
+				// registration (the exit listener would call markParticipantResponded which checks
+				// this map — if the participant isn't registered yet, synthesis never triggers).
 				participantsToRespond.add(participantName);
+				pendingParticipantResponses.set(groupChatId, participantsToRespond);
+				setParticipantResponseTimeout(
+					groupChatId,
+					participantName,
+					processManager ?? undefined,
+					agentDetector ?? undefined
+				);
+				// Emit 'agent-working' on first spawn so sidebar and chat indicators update immediately
+				if (participantsToRespond.size === 1) {
+					groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
+					console.log(`[GroupChat:Debug] Emitted state change: agent-working`);
+				}
 				console.log(
 					`[GroupChat:Debug] Spawned batch process for participant @${participantName} (session ${sessionId}, readOnly=${readOnly ?? false})`
 				);
@@ -977,24 +1375,37 @@ export async function routeModeratorResponse(
 			}
 		}
 		console.log(`[GroupChat:Debug] =================================================`);
-	} else if (mentions.length === 0) {
-		console.log(`[GroupChat:Debug] No participant @mentions found - moderator response is final`);
-		// Set state back to idle since no agents are being spawned
+	}
+
+	// If no actionable participant work was started (all directives invalid/skipped, no mentions),
+	// clean up lifecycle state so power blocks don't leak.
+	if (participantsToRespond.size === 0) {
+		console.log(
+			`[GroupChat:Debug] No actionable participant work started - moderator response is final`
+		);
+
+		// Unknown @tokens should be treated as plain text, not as a system error.
+		// Only emit a system warning here when explicit !autorun directives were present
+		// but none could be activated.
+		if (autoRunDirectives.length > 0 && mentions.length === 0) {
+			groupChatEmitters.emitMessage?.(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'system',
+				content:
+					'⚠️ The moderator included !autorun directives but none could be activated. You may need to send another message to retry.',
+			});
+		}
+
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		console.log(`[GroupChat:Debug] Emitted state change: idle`);
-		// Remove power block reason since round is complete
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 	}
 
-	// Store pending participants for synthesis tracking
+	// Log final pending state (registration now happens incrementally per-participant above)
 	if (participantsToRespond.size > 0) {
-		pendingParticipantResponses.set(groupChatId, participantsToRespond);
 		console.log(
 			`[GroupChat:Debug] Waiting for ${participantsToRespond.size} participant(s) to respond: ${[...participantsToRespond].join(', ')}`
 		);
-		// Set state to show agents are working
-		groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
-		console.log(`[GroupChat:Debug] Emitted state change: agent-working`);
 	}
 	console.log(`[GroupChat:Debug] ===================================================`);
 }
@@ -1209,11 +1620,26 @@ export async function spawnModeratorSynthesis(
 	const participantContext =
 		chat.participants.length > 0
 			? chat.participants
-					.map((p) => `- @${normalizeMentionName(p.name)} (${p.agentId} session)`)
+					.map((p) => {
+						return `- @${normalizeMentionName(p.name)} (${p.agentId} session)`;
+					})
 					.join('\n')
 			: '(No agents currently in this group chat)';
 
-	const synthesisPrompt = `${getModeratorSystemPrompt()}
+	// Get moderator settings for prompt customization
+	const synthModeratorSettings = getModeratorSettingsCallback?.() ?? {
+		standingInstructions: '',
+		conductorProfile: '',
+	};
+	const synthBasePrompt = getModeratorSystemPrompt().replace(
+		'{{CONDUCTOR_PROFILE}}',
+		synthModeratorSettings.conductorProfile || '(No conductor profile set)'
+	);
+	const synthStandingInstructions = synthModeratorSettings.standingInstructions
+		? `\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${synthModeratorSettings.standingInstructions}`
+		: '';
+
+	const synthesisPrompt = `${synthBasePrompt}${synthStandingInstructions}
 
 ${getModeratorSynthesisPrompt()}
 
@@ -1225,8 +1651,10 @@ ${historyContext}
 
 ## Your Task:
 Review the agent responses above. Either:
-1. Synthesize into a final answer for the user (NO @mentions) if the question is fully answered
-2. @mention specific agents for follow-up if you need more information`;
+1. Synthesize into a final answer for the user (NO @mentions, NO !autorun) if the question is fully answered
+2. @mention specific agents for follow-up if you need more information
+
+**IMPORTANT: Do NOT include any !autorun directives in this synthesis response.**`;
 
 	const agentConfigValues = getAgentConfigCallback?.(chat.moderatorAgentId) || {};
 	const baseArgs = buildAgentArgs(agent, {
@@ -1241,7 +1669,13 @@ Review the agent responses above. Either:
 		sessionCustomArgs: chat.moderatorConfig?.customArgs,
 		sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 	});
-	const finalArgs = configResolution.args;
+
+	// For Gemini CLI: only disable workspace sandbox when read-only mode is
+	// CLI-enforced (same rationale as moderator spawn above)
+	const geminiCanBeUnsandboxed =
+		chat.moderatorAgentId === 'gemini-cli' && !!agent.readOnlyCliEnforced;
+	const geminiSynthNoSandbox = geminiCanBeUnsandboxed ? ['--no-sandbox'] : [];
+	const finalArgs = [...configResolution.args, ...geminiSynthNoSandbox];
 	console.log(`[GroupChat:Debug] Args: ${JSON.stringify(finalArgs)}`);
 
 	console.log(`[GroupChat:Debug] Synthesis prompt length: ${synthesisPrompt.length} chars`);
@@ -1252,6 +1686,43 @@ Review the agent responses above. Either:
 		// Emit state change to show moderator is thinking (synthesizing)
 		groupChatEmitters.emitStateChange?.(groupChatId, 'moderator-thinking');
 		console.log(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
+
+		// Prepare spawn config variables (may be overridden by SSH wrapping)
+		let spawnCommand = command;
+		let spawnArgs = finalArgs;
+		let spawnCwd = os.homedir();
+		let spawnPrompt: string | undefined = synthesisPrompt;
+		let spawnEnvVars =
+			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(chat.moderatorAgentId);
+
+		// Apply SSH wrapping if configured
+		if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
+			console.log(`[GroupChat:Debug] Applying SSH wrapping for synthesis moderator...`);
+			const sshWrapped = await wrapSpawnWithSsh(
+				{
+					command,
+					args: finalArgs,
+					cwd: os.homedir(),
+					prompt: synthesisPrompt,
+					customEnvVars: mergeGlobalShellWithCustomEnv(spawnEnvVars),
+					promptArgs: agent.promptArgs,
+					noPromptSeparator: agent.noPromptSeparator,
+					agentBinaryName: agent.binaryName,
+				},
+				chat.moderatorConfig.sshRemoteConfig,
+				sshStore
+			);
+			spawnCommand = sshWrapped.command;
+			spawnArgs = sshWrapped.args;
+			spawnCwd = sshWrapped.cwd;
+			spawnPrompt = sshWrapped.prompt;
+			spawnEnvVars = sshWrapped.customEnvVars;
+			if (sshWrapped.sshRemoteUsed) {
+				console.log(
+					`[GroupChat:Debug] SSH remote used for synthesis: ${sshWrapped.sshRemoteUsed.name}`
+				);
+			}
+		}
 
 		// Get Windows-specific spawn config (shell, stdin mode) - handles SSH exclusion
 		const winConfig = getWindowsSpawnConfig(
@@ -1265,15 +1736,14 @@ Review the agent responses above. Either:
 		const spawnResult = processManager.spawn({
 			sessionId,
 			toolType: chat.moderatorAgentId,
-			cwd: os.homedir(),
-			command,
-			args: finalArgs,
+			cwd: spawnCwd,
+			command: spawnCommand,
+			args: spawnArgs,
 			readOnlyMode: true,
-			prompt: synthesisPrompt,
+			prompt: spawnPrompt,
 			contextWindow: getContextWindowValue(agent, agentConfigValues),
-			customEnvVars:
-				configResolution.effectiveCustomEnvVars ??
-				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+			customEnvVars: spawnEnvVars,
+			shellEnvVars: getGlobalShellEnvVars(),
 			promptArgs: agent.promptArgs,
 			noPromptSeparator: agent.noPromptSeparator,
 			shell: winConfig.shell,
@@ -1434,7 +1904,7 @@ export async function respawnParticipantWithRecovery(
 				args: finalSpawnArgs,
 				cwd,
 				prompt: fullPrompt,
-				customEnvVars: finalSpawnEnvVars,
+				customEnvVars: mergeGlobalShellWithCustomEnv(finalSpawnEnvVars),
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				agentBinaryName: agent.binaryName,
@@ -1472,6 +1942,7 @@ export async function respawnParticipantWithRecovery(
 		prompt: finalSpawnPrompt,
 		contextWindow: getContextWindowValue(agent, agentConfigValues),
 		customEnvVars: finalSpawnEnvVars,
+		shellEnvVars: getGlobalShellEnvVars(),
 		promptArgs: agent.promptArgs,
 		noPromptSeparator: agent.noPromptSeparator,
 		shell: finalSpawnShell,
@@ -1482,5 +1953,6 @@ export async function respawnParticipantWithRecovery(
 
 	console.log(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);
 	console.log(`[GroupChat:Debug] promptArgs: ${agent.promptArgs ? 'defined' : 'undefined'}`);
+	setActiveParticipantSession(groupChatId, participantName, sessionId);
 	console.log(`[GroupChat:Debug] =============================================`);
 }

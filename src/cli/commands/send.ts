@@ -1,9 +1,10 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
-import { spawnAgent, detectClaude, detectCodex, type AgentResult } from '../services/agent-spawner';
+import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
+import { getAgentDefinition } from '../../main/agents/definitions';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -88,34 +89,21 @@ export async function send(
 	}
 
 	// Validate agent type is supported for CLI spawning
-	const supportedTypes: ToolType[] = ['claude-code', 'codex'];
-	if (!supportedTypes.includes(agent.toolType)) {
+	const def = getAgentDefinition(agent.toolType);
+	if (!def) {
 		emitErrorJson(
-			`Agent type "${agent.toolType}" is not supported for send mode. Supported: ${supportedTypes.join(', ')}`,
+			`Agent type "${agent.toolType}" is not supported for send mode.`,
 			'AGENT_UNSUPPORTED'
 		);
 		process.exit(1);
 	}
 
 	// Verify agent CLI is available
-	if (agent.toolType === 'claude-code') {
-		const claude = await detectClaude();
-		if (!claude.available) {
-			emitErrorJson(
-				'Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code',
-				'CLAUDE_NOT_FOUND'
-			);
-			process.exit(1);
-		}
-	} else if (agent.toolType === 'codex') {
-		const codex = await detectCodex();
-		if (!codex.available) {
-			emitErrorJson(
-				'Codex CLI not found. Install with: npm install -g @openai/codex',
-				'CODEX_NOT_FOUND'
-			);
-			process.exit(1);
-		}
+	const detection = await detectAgent(agent.toolType);
+	if (!detection.available) {
+		const errorCode = `${agent.toolType.toUpperCase().replace(/-/g, '_')}_NOT_FOUND`;
+		emitErrorJson(`${def.name} CLI not found. Please install ${def.name}.`, errorCode);
+		process.exit(1);
 	}
 
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally

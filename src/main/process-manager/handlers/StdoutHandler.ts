@@ -2,9 +2,11 @@
 
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
+import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
+import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -117,18 +119,24 @@ export class StdoutHandler {
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) return;
 
+		// Strip ANSI/control sequences before parsing. Applied unconditionally —
+		// control codes are never useful on the child-process stdout path regardless
+		// of transport (local or SSH).
+		const cleanedOutput = stripAllAnsiCodes(output);
+		if (!cleanedOutput) return;
+
 		const { isStreamJsonMode, isBatchMode } = managedProcess;
 
 		if (isStreamJsonMode) {
-			this.handleStreamJsonData(sessionId, managedProcess, output);
+			this.handleStreamJsonData(sessionId, managedProcess, cleanedOutput);
 		} else if (isBatchMode) {
-			managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + output;
+			managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + cleanedOutput;
 			logger.debug('[ProcessManager] Accumulated JSON buffer', 'ProcessManager', {
 				sessionId,
 				bufferLength: managedProcess.jsonBuffer.length,
 			});
 		} else {
-			this.bufferManager.emitDataBuffered(sessionId, output);
+			this.bufferManager.emitDataBuffered(sessionId, cleanedOutput);
 		}
 	}
 
@@ -154,9 +162,24 @@ export class StdoutHandler {
 	private processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
 		const { outputParser, toolType } = managedProcess;
 
-		// Error detection from parser
+		// ── Single JSON parse for the entire line ──
+		// Previously JSON.parse was called up to 3× per line (detectErrorFromLine,
+		// outer parse, parseJsonLine). Now we parse once and pass the object downstream.
+		let parsed: unknown = null;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			// Not valid JSON — handled in the else branch below
+		}
+
+		// ── Error detection from parser ──
 		if (outputParser && !managedProcess.errorEmitted) {
-			const agentError = outputParser.detectErrorFromLine(line);
+			// Use pre-parsed object when available; fall back to line-based detection
+			// for non-JSON lines (e.g., Claude embedded JSON in stderr)
+			const agentError =
+				parsed !== null
+					? outputParser.detectErrorFromParsed(parsed)
+					: outputParser.detectErrorFromLine(line);
 			if (agentError) {
 				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
@@ -176,7 +199,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// SSH error detection
+		// ── SSH error detection (line-based — SSH patterns are plain text) ──
 		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
@@ -200,16 +223,14 @@ export class StdoutHandler {
 			}
 		}
 
-		// Parse JSON line
-		try {
-			const msg = JSON.parse(line);
-
+		// ── Process parsed data ──
+		if (parsed !== null) {
 			if (outputParser) {
-				this.handleParsedEvent(sessionId, managedProcess, line, outputParser);
+				this.handleParsedEvent(sessionId, managedProcess, parsed, outputParser);
 			} else {
-				this.handleLegacyMessage(sessionId, managedProcess, msg);
+				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
-		} catch {
+		} else {
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 	}
@@ -217,10 +238,10 @@ export class StdoutHandler {
 	private handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		line: string,
+		parsed: unknown,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonLine(line);
+		const event = outputParser.parseJsonObject(parsed);
 
 		logger.debug('[ProcessManager] Parsed event from output parser', 'ProcessManager', {
 			sessionId,
@@ -233,6 +254,14 @@ export class StdoutHandler {
 		});
 
 		if (!event) return;
+
+		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
+		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
+		// Reset resultEmitted on each new step so the last text event wins instead of the first.
+		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+			managedProcess.resultEmitted = false;
+			managedProcess.streamedText = '';
+		}
 
 		// Extract usage
 		const usage = outputParser.extractUsage(event);
@@ -479,7 +508,7 @@ export class StdoutHandler {
 			totalCostUsd: usage.costUsd || 0,
 			// Prioritize Claude Code's reported contextWindow over spawn config
 			// This ensures we use the actual model's context limit, not a stale config value
-			contextWindow: usage.contextWindow || managedProcess.contextWindow || 200000,
+			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
 	}

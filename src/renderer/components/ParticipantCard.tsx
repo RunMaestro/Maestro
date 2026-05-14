@@ -5,8 +5,18 @@
  * session ID, context usage, stats, and cost.
  */
 
-import { MessageSquare, Copy, Check, DollarSign, RotateCcw, Server } from 'lucide-react';
-import { useState, useCallback } from 'react';
+import {
+	MessageSquare,
+	Copy,
+	Check,
+	DollarSign,
+	RotateCcw,
+	Server,
+	UserMinus,
+	Eye,
+	EyeOff,
+} from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Theme, GroupChatParticipant, SessionState } from '../types';
 import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
@@ -19,6 +29,8 @@ interface ParticipantCardProps {
 	color?: string;
 	groupChatId?: string;
 	onContextReset?: (participantName: string) => void;
+	onRemove?: (participantName: string) => void;
+	liveOutput?: string;
 }
 
 /**
@@ -39,9 +51,22 @@ export function ParticipantCard({
 	color,
 	groupChatId,
 	onContextReset,
+	onRemove,
+	liveOutput,
 }: ParticipantCardProps): JSX.Element {
 	const [copied, setCopied] = useState(false);
 	const [isResetting, setIsResetting] = useState(false);
+	const [isRemoving, setIsRemoving] = useState(false);
+	const [confirmRemove, setConfirmRemove] = useState(false);
+	const [peekOpen, setPeekOpen] = useState(false);
+	const peekRef = useRef<HTMLPreElement>(null);
+
+	// Auto-scroll peek output to bottom
+	useEffect(() => {
+		if (peekOpen && peekRef.current) {
+			peekRef.current.scrollTop = peekRef.current.scrollHeight;
+		}
+	}, [peekOpen, liveOutput]);
 
 	// Use agent's session ID (clean GUID) when available, otherwise show pending
 	const agentSessionId = participant.agentSessionId;
@@ -86,6 +111,19 @@ export function ParticipantCard({
 			setIsResetting(false);
 		}
 	}, [onContextReset, groupChatId, participant.name]);
+
+	const handleRemove = useCallback(async () => {
+		if (!onRemove || !groupChatId) return;
+		setIsRemoving(true);
+		try {
+			await onRemove(participant.name);
+		} finally {
+			setIsRemoving(false);
+			setConfirmRemove(false);
+		}
+	}, [onRemove, groupChatId, participant.name]);
+
+	const showRemoveButton = onRemove && groupChatId && !isRemoving;
 
 	return (
 		<div
@@ -236,7 +274,96 @@ export function ParticipantCard({
 						Resetting...
 					</span>
 				)}
+				{/* Remove button */}
+				{showRemoveButton && !confirmRemove && (
+					<button
+						onClick={() => setConfirmRemove(true)}
+						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						style={{
+							backgroundColor: `${theme.colors.error}20`,
+							color: theme.colors.error,
+							border: `1px solid ${theme.colors.error}40`,
+						}}
+						title="Remove participant from group chat"
+					>
+						<UserMinus className="w-3 h-3" />
+						Remove
+					</button>
+				)}
+				{/* Remove confirmation */}
+				{confirmRemove && !isRemoving && (
+					<span className="flex items-center gap-1 text-[10px] shrink-0">
+						<button
+							onClick={handleRemove}
+							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+							style={{
+								backgroundColor: `${theme.colors.error}30`,
+								color: theme.colors.error,
+								border: `1px solid ${theme.colors.error}60`,
+							}}
+						>
+							Confirm
+						</button>
+						<button
+							onClick={() => setConfirmRemove(false)}
+							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+							style={{
+								backgroundColor: `${theme.colors.textDim}20`,
+								color: theme.colors.textDim,
+							}}
+						>
+							Cancel
+						</button>
+					</span>
+				)}
+				{/* Remove in progress indicator */}
+				{isRemoving && (
+					<span
+						className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						style={{
+							backgroundColor: `${theme.colors.error}20`,
+							color: theme.colors.error,
+						}}
+					>
+						<UserMinus className="w-3 h-3" />
+						Removing...
+					</span>
+				)}
+				{/* Peek button - always visible */}
+				<button
+					onClick={() => setPeekOpen((v) => !v)}
+					className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+					style={{
+						backgroundColor: peekOpen ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
+						color: peekOpen ? theme.colors.accent : theme.colors.textDim,
+						border: `1px solid ${peekOpen ? theme.colors.accent + '60' : theme.colors.border}`,
+					}}
+					title="Peek at live output"
+				>
+					{peekOpen ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+					Peek
+				</button>
 			</div>
+
+			{/* Live output peek panel */}
+			{peekOpen && (
+				<pre
+					ref={peekRef}
+					className="mt-2 text-[10px] leading-tight rounded p-2 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono"
+					style={{
+						maxHeight: '200px',
+						backgroundColor: `${theme.colors.bgMain}80`,
+						color: theme.colors.textDim,
+						border: `1px solid ${theme.colors.border}`,
+					}}
+				>
+					{liveOutput
+						? liveOutput.length > 4096
+							? liveOutput.slice(-4096)
+							: liveOutput
+						: '(no live output yet)'}
+				</pre>
+			)}
 		</div>
 	);
 }

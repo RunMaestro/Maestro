@@ -68,6 +68,18 @@ export interface AgentCapabilities {
 
 	/** Agent can export its context for transfer to other sessions/agents */
 	supportsContextExport: boolean;
+
+	/** Agent supports inline wizard structured output conversations */
+	supportsWizard: boolean;
+
+	/** Agent can serve as a group chat moderator */
+	supportsGroupChatModeration: boolean;
+
+	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
+	usesJsonLineOutput: boolean;
+
+	/** Agent uses a combined input+output context window (vs separate limits) */
+	usesCombinedContextWindow: boolean;
 }
 
 /**
@@ -94,6 +106,10 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
+	supportsWizard: false,
+	supportsGroupChatModeration: false,
+	usesJsonLineOutput: false,
+	usesCombinedContextWindow: false,
 };
 
 /**
@@ -203,6 +219,21 @@ export function useAgentCapabilities(
 		refresh: () => fetchCapabilities(true),
 		hasCapability,
 	};
+}
+
+/**
+ * Synchronous capability check using cached data.
+ * Safe to call outside React components (e.g., in callbacks, event handlers).
+ * Returns false for uncached agents (conservative default).
+ *
+ * @param agentId - The agent identifier
+ * @param capability - The capability key to check
+ * @returns true if the agent is cached and supports the capability
+ */
+export function hasCapabilityCached(agentId: string, capability: keyof AgentCapabilities): boolean {
+	const cached = capabilitiesCache.get(agentId);
+	if (!cached) return DEFAULT_CAPABILITIES[capability] as boolean;
+	return !!cached[capability];
 }
 
 /**

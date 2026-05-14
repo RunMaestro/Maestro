@@ -1,4 +1,5 @@
 import type { Session, ToolType } from '../types';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 export interface SessionValidationResult {
 	valid: boolean;
@@ -16,18 +17,21 @@ export interface SessionValidationResult {
  *
  * Rules:
  * 1. Session names must be unique across all sessions (hard error)
- * 2. Home directories (projectRoot) shared with any existing agent produce a warning
+ * 2. Home directories (projectRoot) shared with any existing agent on the same host produce a warning
  *    - Users can acknowledge the risk and proceed
  *    - Multiple agents in the same directory may clobber each other's work
+ *    - Agents on different hosts (local vs SSH, or different SSH remotes) are not considered conflicting
  */
 export function validateNewSession(
 	name: string,
 	directory: string,
 	_toolType: ToolType,
-	existingSessions: Session[]
+	existingSessions: Session[],
+	sshRemoteId?: string | null
 ): SessionValidationResult {
 	const trimmedName = name.trim();
 	const normalizedDir = normalizeDirectory(directory);
+	const newRemoteId = sshRemoteId || null;
 
 	// Check for duplicate name (hard error - cannot proceed)
 	const duplicateName = existingSessions.find(
@@ -41,10 +45,13 @@ export function validateNewSession(
 		};
 	}
 
-	// Check for duplicate directory with ANY existing agent (warning - user can acknowledge)
+	// Check for duplicate directory with existing agents on the SAME host (warning - user can acknowledge)
+	// Agents on different hosts (local vs SSH, or different SSH remotes) are not considered conflicting
 	const conflictingAgents = existingSessions.filter((session) => {
 		const sessionDir = normalizeDirectory(session.projectRoot || session.cwd);
-		return sessionDir === normalizedDir;
+		if (sessionDir !== normalizedDir) return false;
+		const existingRemoteId = getSessionSshRemoteId(session);
+		return existingRemoteId === newRemoteId;
 	});
 
 	if (conflictingAgents.length > 0) {
@@ -92,6 +99,19 @@ export function validateEditSession(
 }
 
 /**
+ * Resolve the SSH remote ID from a session, checking all possible locations.
+ * Returns null for local sessions.
+ */
+function getSessionSshRemoteId(session: Session): string | null {
+	// sessionSshRemoteConfig is the canonical per-session SSH config
+	if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
+		return session.sessionSshRemoteConfig.remoteId;
+	}
+	// Fallback to flattened fields set during session lifecycle
+	return session.sshRemoteId || session.sshRemote?.id || null;
+}
+
+/**
  * Normalize directory path for comparison.
  * Removes trailing slashes and resolves common variations.
  */
@@ -108,12 +128,5 @@ function normalizeDirectory(dir: string): string {
  * Get a human-readable display name for a provider/tool type.
  */
 export function getProviderDisplayName(toolType: ToolType): string {
-	const displayNames: Record<ToolType, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		codex: 'Codex',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return displayNames[toolType] || toolType;
+	return getAgentDisplayName(toolType);
 }

@@ -29,9 +29,26 @@ import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadg
 import { getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useBatchProcessor } from './useBatchProcessor';
+import { useBatchStore } from '../../stores/batchStore';
+import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+
+/**
+ * Find the session that is actually paused on error.
+ * Prefer the active session when it is paused; otherwise pick the first errorPaused session.
+ * Returns undefined when nothing is error-paused — callers bail via the existing guard.
+ */
+function resolveBatchSessionIdForPausedError(
+	batchRunStates: Record<string, BatchRunState>,
+	activeSessionId: string | undefined
+): string | undefined {
+	if (activeSessionId && batchRunStates[activeSessionId]?.errorPaused) {
+		return activeSessionId;
+	}
+	return Object.keys(batchRunStates).find((id) => batchRunStates[id]?.errorPaused);
+}
 
 // ============================================================================
 // Dependencies interface
@@ -462,6 +479,27 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					}
 				}, 2000);
 			}
+
+			// Group chat !autorun completion: notify the main process so the synthesis round fires.
+			// This MUST succeed for the moderator to receive the result and continue the conversation.
+			const gcAutoRun = consumeGroupChatAutoRun(info.sessionId);
+			if (gcAutoRun) {
+				const summary = info.wasStopped
+					? `Auto Run stopped: completed ${info.completedTasks} of ${info.totalTasks} tasks across ${info.documentsProcessed} document(s).`
+					: `Auto Run complete: ${info.completedTasks}/${info.totalTasks} tasks finished across ${info.documentsProcessed} document(s).`;
+				window.maestro.groupChat
+					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
+					.catch((err) => {
+						console.error('[GroupChat] Failed to report auto run complete:', err);
+						// Surface the failure so the user knows synthesis will not trigger automatically.
+						notifyToast({
+							type: 'error',
+							title: 'Group Chat Auto Run',
+							message: `Failed to notify the group chat that Auto Run finished for ${gcAutoRun.participantName}. The moderator may not receive the results automatically.`,
+							duration: 8000,
+						});
+					});
+			}
 		},
 		onPRResult: (info) => {
 			// Read from stores at call time
@@ -618,28 +656,37 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 	);
 
 	const handleSkipCurrentDocument = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		// Reads batchRunStates imperatively at call time
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id
+		);
 		if (!sessionId) return;
 		skipCurrentDocument(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeBatchSessionIds, activeSession, skipCurrentDocument, handleClearAgentError]);
+	}, [activeSession, skipCurrentDocument, handleClearAgentError]);
 
 	const handleResumeAfterError = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		// Reads batchRunStates imperatively at call time
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id
+		);
 		if (!sessionId) return;
 		resumeAfterError(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeBatchSessionIds, activeSession, resumeAfterError, handleClearAgentError]);
+	}, [activeSession, resumeAfterError, handleClearAgentError]);
 
 	const handleAbortBatchOnError = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		// Reads batchRunStates imperatively at call time
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id
+		);
 		if (!sessionId) return;
 		abortBatchOnError(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeBatchSessionIds, activeSession, abortBatchOnError, handleClearAgentError]);
+	}, [activeSession, abortBatchOnError, handleClearAgentError]);
 
 	// ====================================================================
 	// Sync auto-run stats from server

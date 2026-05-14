@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import * as path from 'path';
+import { isWindows } from '../../shared/platformDetection';
 
 let cachedPath: string | null = null;
 let cachedPathPromise: Promise<string> | null = null;
@@ -16,7 +17,7 @@ export async function refreshShellPath(): Promise<string> {
 	cachedPathPromise = (async () => {
 		// On Windows, there's no reliable POSIX login shell to probe — fall back to
 		// the current process env PATH so callers still receive something useful.
-		if (process.platform === 'win32') {
+		if (isWindows()) {
 			const p = process.env.PATH || '';
 			cachedPath = p;
 			return p;

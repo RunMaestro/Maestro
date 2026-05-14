@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'path';
 import { setupWakaTimeListener } from '../wakatime-listener';
 import type { ProcessManager } from '../../process-manager';
 import type { WakaTimeManager } from '../../wakatime-manager';
@@ -494,7 +495,7 @@ describe('WakaTime Listener', () => {
 			} as QueryCompleteData);
 
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
-				[{ filePath: '/home/user/project/src/utils.ts', timestamp: 1000 }],
+				[{ filePath: path.resolve('/home/user/project', 'src/utils.ts'), timestamp: 1000 }],
 				'project',
 				'/home/user/project',
 				'user'
@@ -873,7 +874,7 @@ describe('WakaTime Listener', () => {
 			vi.advanceTimersByTime(500);
 
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
-				[{ filePath: '/home/user/project/src/utils.ts', timestamp: 1000 }],
+				[{ filePath: path.resolve('/home/user/project', 'src/utils.ts'), timestamp: 1000 }],
 				'project',
 				'/home/user/project',
 				undefined
@@ -900,7 +901,7 @@ describe('WakaTime Listener', () => {
 			vi.advanceTimersByTime(500);
 
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
-				[{ filePath: '/home/user/fallback/src/utils.ts', timestamp: 1000 }],
+				[{ filePath: path.resolve('/home/user/fallback', 'src/utils.ts'), timestamp: 1000 }],
 				'fallback',
 				'/home/user/fallback',
 				undefined

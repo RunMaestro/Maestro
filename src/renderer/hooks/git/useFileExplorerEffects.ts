@@ -107,6 +107,10 @@ export function useFileExplorerEffects(
 		() => useFileExplorerStore.getState().setSelectedFileIndex,
 		[]
 	);
+	const setFilteredFileTree = useMemo(
+		() => useFileExplorerStore.getState().setFilteredFileTree,
+		[]
+	);
 	const setFlatFileList = useMemo(() => useFileExplorerStore.getState().setFlatFileList, []);
 
 	const { hasOpenModal } = useLayerStack();
@@ -199,6 +203,7 @@ export function useFileExplorerEffects(
 
 	useEffect(() => {
 		if (!activeSession || !activeSession.fileExplorerExpanded) {
+			setFilteredFileTree([]);
 			setFlatFileList([]);
 			return;
 		}
@@ -208,7 +213,7 @@ export function useFileExplorerEffects(
 		const filterHiddenFiles = (nodes: FileNode[]): FileNode[] => {
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter((node) => !node.name.startsWith('.'))
+				.filter((node) => !node.name.startsWith('.') || node.name === '.maestro')
 				.map((node) => ({
 					...node,
 					children: node.children ? filterHiddenFiles(node.children) : undefined,
@@ -230,6 +235,7 @@ export function useFileExplorerEffects(
 			}
 		}
 
+		setFilteredFileTree(filteredFileTree);
 		setFlatFileList(newFlatList);
 	}, [activeSession?.fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
 

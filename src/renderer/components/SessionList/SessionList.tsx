@@ -114,6 +114,7 @@ function SessionListInner(props: SessionListProps) {
 	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
+	const persistentWebLink = useSettingsStore((s) => s.persistentWebLink);
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
@@ -148,6 +149,7 @@ function SessionListInner(props: SessionListProps) {
 	);
 	const setSessions = useSessionStore.getState().setSessions;
 	const setGroups = useSessionStore.getState().setGroups;
+	const setPersistentWebLink = useSettingsStore.getState().setPersistentWebLink;
 	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
 	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
 	const setUngroupedCollapsed = useSettingsStore.getState().setUngroupedCollapsed;
@@ -629,7 +631,7 @@ function SessionListInner(props: SessionListProps) {
 
 			{/* Branding Header */}
 			<div
-				className="p-4 border-b flex items-center justify-between h-16 shrink-0"
+				className="p-4 border-b flex items-center justify-between h-16 shrink-0 relative z-20"
 				style={{ borderColor: theme.colors.border }}
 			>
 				{leftSidebarOpen ? (
@@ -660,7 +662,7 @@ function SessionListInner(props: SessionListProps) {
 								</button>
 							)}
 							{/* Global LIVE Toggle */}
-							<div className="ml-2 relative" ref={liveOverlayRef} data-tour="remote-control">
+							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
 								<button
 									onClick={() => {
 										if (!isLiveMode) {
@@ -701,6 +703,8 @@ function SessionListInner(props: SessionListProps) {
 										copyFlash={copyFlash}
 										setCopyFlash={setCopyFlash}
 										handleTunnelToggle={handleTunnelToggle}
+										persistentWebLink={persistentWebLink}
+										setPersistentWebLink={setPersistentWebLink}
 										webInterfaceUseCustomPort={webInterfaceUseCustomPort}
 										webInterfaceCustomPort={webInterfaceCustomPort}
 										setWebInterfaceUseCustomPort={setWebInterfaceUseCustomPort}
@@ -714,7 +718,7 @@ function SessionListInner(props: SessionListProps) {
 							</div>
 						</div>
 						{/* Hamburger Menu */}
-						<div className="relative" ref={menuRef} data-tour="hamburger-menu">
+						<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
 							<button
 								onClick={() => setMenuOpen(!menuOpen)}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -726,12 +730,12 @@ function SessionListInner(props: SessionListProps) {
 							{/* Menu Overlay */}
 							{menuOpen && (
 								<div
-									className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+									className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 									data-tour="hamburger-menu-contents"
 									style={{
 										backgroundColor: theme.colors.bgSidebar,
 										border: `1px solid ${theme.colors.border}`,
-										maxHeight: 'calc(100vh - 90px)',
+										maxHeight: 'calc(100vh - 120px)',
 									}}
 								>
 									<HamburgerMenuContent
@@ -746,7 +750,7 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					<div className="w-full flex flex-col items-center gap-2 relative" ref={menuRef}>
+					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<button
 							onClick={() => setMenuOpen(!menuOpen)}
 							className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -760,11 +764,11 @@ function SessionListInner(props: SessionListProps) {
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div
-								className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+								className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
-									maxHeight: 'calc(100vh - 90px)',
+									maxHeight: 'calc(100vh - 120px)',
 								}}
 							>
 								<HamburgerMenuContent
@@ -872,6 +876,7 @@ function SessionListInner(props: SessionListProps) {
 					{/* GROUPS */}
 					{sortedGroups.map((group) => {
 						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
+						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
 						return (
 							<div key={group.id} className="mb-1">
 								<div
@@ -972,31 +977,29 @@ function SessionListInner(props: SessionListProps) {
 											})
 										)}
 									</div>
-								) : (
+								) : groupCollapsedPills.length > 0 ? (
 									/* Collapsed Group Palette - uses subdivided pills for worktrees */
 									<div
 										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
 										onClick={() => toggleGroup(group.id)}
 									>
-										{groupSessions
-											.filter((s) => !s.parentSessionId)
-											.map((s) => (
-												<CollapsedSessionPill
-													key={`group-collapsed-${group.id}-${s.id}`}
-													session={s}
-													keyPrefix={`group-collapsed-${group.id}`}
-													theme={theme}
-													activeBatchSessionIds={activeBatchSessionIds}
-													leftSidebarWidth={leftSidebarWidthState}
-													contextWarningYellowThreshold={contextWarningYellowThreshold}
-													contextWarningRedThreshold={contextWarningRedThreshold}
-													getFileCount={getFileCount}
-													getWorktreeChildren={getWorktreeChildren}
-													setActiveSessionId={setActiveSessionId}
-												/>
-											))}
+										{groupCollapsedPills.map((s) => (
+											<CollapsedSessionPill
+												key={`group-collapsed-${group.id}-${s.id}`}
+												session={s}
+												keyPrefix={`group-collapsed-${group.id}`}
+												theme={theme}
+												activeBatchSessionIds={activeBatchSessionIds}
+												leftSidebarWidth={leftSidebarWidthState}
+												contextWarningYellowThreshold={contextWarningYellowThreshold}
+												contextWarningRedThreshold={contextWarningRedThreshold}
+												getFileCount={getFileCount}
+												getWorktreeChildren={getWorktreeChildren}
+												setActiveSessionId={setActiveSessionId}
+											/>
+										))}
 									</div>
-								)}
+								) : null}
 							</div>
 						);
 					})}

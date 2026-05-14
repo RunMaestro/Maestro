@@ -497,6 +497,47 @@ describe('fileExplorer utils', () => {
 			expect(result[0].children).toHaveLength(1);
 			expect(result[0].children![0].name).toBe('guide.md');
 		});
+
+		it('deduplicates NFD/NFC normalized entries', async () => {
+			const nfcName = 'caf\u00e9'.normalize('NFC');
+			const nfdName = 'caf\u00e9'.normalize('NFD');
+
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+				{ name: nfcName, isFile: true, isDirectory: false },
+				{ name: nfdName, isFile: true, isDirectory: false }, // same visual name, different Unicode form
+			]);
+
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const result = await loadFileTree('/project');
+
+			expect(consoleSpy).toHaveBeenCalled();
+			consoleSpy.mockRestore();
+
+			expect(result).toHaveLength(1);
+			expect(result[0].name.normalize('NFC')).toBe(nfcName);
+		});
+
+		it('deduplicates NFD/NFC entries in nested directories', async () => {
+			const nfcName = 'r\u00e9sum\u00e9.md'.normalize('NFC');
+			const nfdName = 'r\u00e9sum\u00e9.md'.normalize('NFD');
+
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([{ name: 'docs', isFile: false, isDirectory: true }])
+				.mockResolvedValueOnce([
+					{ name: nfcName, isFile: true, isDirectory: false },
+					{ name: nfdName, isFile: true, isDirectory: false }, // NFD duplicate in child
+				]);
+
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const result = await loadFileTree('/project');
+
+			expect(consoleSpy).toHaveBeenCalled();
+			consoleSpy.mockRestore();
+
+			expect(result).toHaveLength(1);
+			expect(result[0].children).toHaveLength(1);
+			expect(result[0].children![0].name.normalize('NFC')).toBe(nfcName);
+		});
 	});
 
 	// ============================================================================

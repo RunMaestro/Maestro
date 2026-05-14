@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 import {
 	Search,
 	Clock,
@@ -546,6 +547,11 @@ export function AgentSessionsBrowser({
 		};
 	}, [aggregateStats]);
 
+	const sessionSinceDate =
+		typeof activeSession?.createdAt === 'number' && activeSession.createdAt > 0
+			? new Date(activeSession.createdAt)
+			: stats.oldestSession;
+
 	// Keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
@@ -592,7 +598,7 @@ export function AgentSessionsBrowser({
 			cacheReadInputTokens: 0,
 			cacheCreationInputTokens: 0,
 			totalCostUsd: session.costUsd || 0,
-			contextWindow: 200000, // Default Claude context window
+			contextWindow: FALLBACK_CONTEXT_WINDOW, // Default Claude context window
 		};
 	}, []);
 
@@ -989,7 +995,8 @@ export function AgentSessionsBrowser({
 											style={{
 												color: (() => {
 													const usagePercent =
-														((viewingSession.inputTokens + viewingSession.outputTokens) / 200000) *
+														((viewingSession.inputTokens + viewingSession.outputTokens) /
+															FALLBACK_CONTEXT_WINDOW) *
 														100;
 													if (usagePercent >= 90) return theme.colors.error;
 													if (usagePercent >= 70) return theme.colors.warning;
@@ -999,7 +1006,9 @@ export function AgentSessionsBrowser({
 										>
 											{Math.min(
 												100,
-												((viewingSession.inputTokens + viewingSession.outputTokens) / 200000) * 100
+												((viewingSession.inputTokens + viewingSession.outputTokens) /
+													FALLBACK_CONTEXT_WINDOW) *
+													100
 											).toFixed(1)}
 											%
 										</span>
@@ -1238,11 +1247,11 @@ export function AgentSessionsBrowser({
 									</span>
 								</div>
 							)}
-							{stats.oldestSession && (
+							{sessionSinceDate && (
 								<div className="flex items-center gap-2">
 									<Clock className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 									<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-										Since {stats.oldestSession.toLocaleDateString()}
+										Since {sessionSinceDate.toLocaleDateString()}
 									</span>
 								</div>
 							)}

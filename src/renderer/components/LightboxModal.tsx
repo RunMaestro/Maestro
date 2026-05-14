@@ -5,7 +5,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ConfirmModal } from './ConfirmModal';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { safeClipboardWriteImage } from '../utils/clipboard';
 
 interface LightboxModalProps {
 	image: string;
@@ -37,23 +37,12 @@ export function LightboxModal({
 
 	const copyImageToClipboard = async () => {
 		try {
-			// Convert data URL to blob
-			const response = await fetch(image);
-			const blob = await response.blob();
-
-			// Write to clipboard
-			const ok = await safeClipboardWriteBlob([
-				new ClipboardItem({
-					[blob.type]: blob,
-				}),
-			]);
-
+			const ok = await safeClipboardWriteImage(image);
 			if (ok) {
 				setCopied(true);
 				setTimeout(() => setCopied(false), 2000);
 			}
 		} catch (err) {
-			// Fetch/blob conversion errors — not clipboard
 			console.error('Failed to copy image to clipboard:', err);
 		}
 	};

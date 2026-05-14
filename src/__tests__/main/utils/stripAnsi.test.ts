@@ -12,6 +12,11 @@ describe('stripAnsi', () => {
 		expect(stripAnsi('\x1b[1;32mbold green\x1b[0m')).toBe('bold green');
 	});
 
+	it('strips DEC private-mode and keypad control sequences', () => {
+		const input = '\x1b[?1h\x1b=\x1b[?2004hready\x1b[?2004l\x1b>';
+		expect(stripAnsi(input)).toBe('ready');
+	});
+
 	it('strips iTerm2 shell integration OSC sequences - real world example', () => {
 		// Real-world example from SSH with interactive shell
 		// The sequences are: ]1337;RemoteHost=..., ]1337;CurrentDir=..., ]1337;ShellIntegrationVersion=...;shell=zsh

@@ -62,6 +62,9 @@ const TEXTAREA_VERTICAL_PADDING = 28; // 14px top + 14px bottom
 /** Maximum height for textarea based on max lines */
 const MAX_TEXTAREA_HEIGHT = LINE_HEIGHT * MAX_LINES + TEXTAREA_VERTICAL_PADDING;
 
+/** Maximum collapsed height for phone AI drafts before the full editor is needed */
+const MOBILE_COLLAPSED_MAX_HEIGHT = LINE_HEIGHT * 3 + TEXTAREA_VERTICAL_PADDING;
+
 /** Mobile breakpoint - phones only, not tablets */
 const MOBILE_MAX_WIDTH = 480;
 
@@ -70,16 +73,15 @@ const MOBILE_EXPANDED_HEIGHT_VH = 50;
 
 /**
  * Detect if the device is a mobile phone (not tablet/desktop)
- * Based on screen width and touch capability
+ * Based on screen width so narrow remote/mobile layouts get the phone treatment
+ * even when touch capability is not exposed to the browser.
  */
 function useIsMobilePhone(): boolean {
 	const [isMobile, setIsMobile] = useState(false);
 
 	useEffect(() => {
 		const checkMobile = () => {
-			const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-			const isSmallScreen = window.innerWidth <= MOBILE_MAX_WIDTH;
-			setIsMobile(isTouchDevice && isSmallScreen);
+			setIsMobile(window.innerWidth <= MOBILE_MAX_WIDTH);
 		};
 
 		checkMobile();
@@ -477,6 +479,12 @@ export function CommandInputBar({
 	);
 
 	// Calculate textarea height for mobile expanded mode
+	const shouldCompressPhoneActions = isMobilePhone && inputMode === 'ai' && value.trim().length > 0;
+	const collapsedMobileTextareaHeight = Math.min(textareaHeight, MOBILE_COLLAPSED_MAX_HEIGHT);
+	const shouldStackPhoneComposer =
+		isMobilePhone &&
+		inputMode === 'ai' &&
+		collapsedMobileTextareaHeight >= MOBILE_COLLAPSED_MAX_HEIGHT;
 	const mobileExpandedHeight =
 		isMobilePhone && inputMode === 'ai' && isExpanded
 			? `${MOBILE_EXPANDED_HEIGHT_VH}vh`
@@ -637,8 +645,9 @@ export function CommandInputBar({
 					onSubmit={handleMobileSubmit}
 					style={{
 						display: 'flex',
+						flexDirection: shouldStackPhoneComposer ? 'column' : 'row',
 						gap: '8px',
-						alignItems: 'flex-end', // Align to bottom for multi-line textarea
+						alignItems: shouldStackPhoneComposer ? 'stretch' : 'flex-end',
 						paddingLeft: '16px',
 						paddingRight: '16px',
 						// Ensure form doesn't overflow screen width
@@ -646,195 +655,253 @@ export function CommandInputBar({
 						overflow: 'hidden',
 					}}
 				>
-					{/* Mode toggle button - AI / Terminal */}
-					{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
-					<InputModeToggleButton
-						inputMode={inputMode}
-						onModeToggle={handleModeToggle}
-						disabled={externalDisabled || isOffline || !isConnected}
-					/>
-
-					{/* Voice input button - only shown if speech recognition is supported */}
-					{voiceSupported && (
-						<VoiceInputButton
-							isListening={isListening}
-							onToggle={handleVoiceToggle}
-							disabled={isDisabled}
-						/>
-					)}
-
-					{/* Slash command button - only shown in AI mode */}
-					{inputMode === 'ai' && (
-						<SlashCommandButton
-							isOpen={slashCommandOpen}
-							onOpen={openSlashCommandAutocomplete}
-							disabled={isDisabled}
-						/>
-					)}
-
 					{/* Terminal mode: $ prefix + input in a container - single line, tight height */}
 					{inputMode === 'terminal' ? (
-						<div
-							style={{
-								flex: 1,
-								// minWidth: 0 is critical for flex items to shrink below content size
-								minWidth: 0,
-								display: 'flex',
-								alignItems: 'center',
-								borderRadius: '12px',
-								backgroundColor: colors.bgMain,
-								border: `2px solid ${colors.border}`,
-								// Tight padding to match button height (48px total with border)
-								padding: '0 14px',
-								height: `${MIN_INPUT_HEIGHT}px`,
-								gap: '6px',
-								opacity: isDisabled ? 0.5 : 1,
-							}}
-						>
-							{/* $ prompt */}
-							<span
+						<>
+							{/* Mode toggle button - AI / Terminal */}
+							{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
+							<InputModeToggleButton
+								inputMode={inputMode}
+								onModeToggle={handleModeToggle}
+								disabled={externalDisabled || isOffline || !isConnected}
+							/>
+							<div
 								style={{
-									color: colors.accent,
-									fontSize: '17px',
-									fontFamily: 'ui-monospace, monospace',
-									fontWeight: 600,
-									flexShrink: 0,
+									flex: 1,
+									// minWidth: 0 is critical for flex items to shrink below content size
+									minWidth: 0,
+									display: 'flex',
+									alignItems: 'center',
+									borderRadius: '12px',
+									backgroundColor: colors.bgMain,
+									border: `2px solid ${colors.border}`,
+									// Tight padding to match button height (48px total with border)
+									padding: '0 14px',
+									height: `${MIN_INPUT_HEIGHT}px`,
+									gap: '6px',
+									opacity: isDisabled ? 0.5 : 1,
 								}}
 							>
-								$
-							</span>
-							<input
-								ref={textareaRef as unknown as React.RefObject<HTMLInputElement>}
-								type="text"
-								value={value}
-								onChange={(e) =>
-									handleChange(e as unknown as React.ChangeEvent<HTMLTextAreaElement>)
-								}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter') {
-										e.preventDefault();
-										handleSubmit(e as unknown as React.FormEvent);
+								{/* $ prompt */}
+								<span
+									style={{
+										color: colors.accent,
+										fontSize: '17px',
+										fontFamily: 'ui-monospace, monospace',
+										fontWeight: 600,
+										flexShrink: 0,
+									}}
+								>
+									$
+								</span>
+								<input
+									ref={textareaRef as unknown as React.RefObject<HTMLInputElement>}
+									type="text"
+									value={value}
+									onChange={(e) =>
+										handleChange(e as unknown as React.ChangeEvent<HTMLTextAreaElement>)
 									}
-								}}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											handleSubmit(e as unknown as React.FormEvent);
+										}
+									}}
+									placeholder={getPlaceholder()}
+									disabled={isDisabled}
+									autoComplete="off"
+									autoCorrect="off"
+									autoCapitalize="off"
+									spellCheck={false}
+									enterKeyHint="send"
+									style={{
+										flex: 1,
+										padding: 0,
+										border: 'none',
+										backgroundColor: 'transparent',
+										color: isDisabled ? colors.textDim : colors.textMain,
+										fontSize: '17px',
+										fontFamily: 'ui-monospace, monospace',
+										outline: 'none',
+										width: '100%',
+									}}
+									onFocus={(e) => {
+										const container = e.currentTarget.parentElement;
+										if (container) container.style.borderColor = colors.accent;
+										onInputFocus?.();
+									}}
+									onBlur={(e) => {
+										const container = e.currentTarget.parentElement;
+										if (container) container.style.borderColor = colors.border;
+										onInputBlur?.();
+									}}
+									aria-label="Shell command input"
+								/>
+							</div>
+							<SendInterruptButton
+								isInterruptMode={false}
+								isSendDisabled={isDisabled || !value.trim()}
+								onInterrupt={handleInterrupt}
+								sendButtonRef={sendButtonRef}
+								onTouchStart={handleSendButtonTouchStart}
+								onTouchEnd={handleSendButtonTouchEnd}
+								onTouchMove={handleSendButtonTouchMove}
+							/>
+						</>
+					) : (
+						<>
+							{!shouldStackPhoneComposer && (
+								<>
+									{/* Mode toggle button - AI / Terminal */}
+									{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
+									<InputModeToggleButton
+										inputMode={inputMode}
+										onModeToggle={handleModeToggle}
+										disabled={externalDisabled || isOffline || !isConnected}
+									/>
+
+									{/* Voice input button - only shown if speech recognition is supported */}
+									{voiceSupported && !shouldCompressPhoneActions && (
+										<VoiceInputButton
+											isListening={isListening}
+											onToggle={handleVoiceToggle}
+											disabled={isDisabled}
+										/>
+									)}
+
+									{/* Slash command button - only shown in AI mode */}
+									{!shouldCompressPhoneActions && (
+										<SlashCommandButton
+											isOpen={slashCommandOpen}
+											onOpen={openSlashCommandAutocomplete}
+											disabled={isDisabled}
+										/>
+									)}
+								</>
+							)}
+
+							{/* AI mode: regular textarea - on mobile phone, focus triggers expanded mode */}
+							{/* On mobile, collapsed state shows single-line height matching buttons */}
+							<textarea
+								ref={textareaRef}
+								value={value}
+								onChange={handleChange}
+								onKeyDown={handleKeyDown}
 								placeholder={getPlaceholder()}
 								disabled={isDisabled}
 								autoComplete="off"
 								autoCorrect="off"
 								autoCapitalize="off"
 								spellCheck={false}
-								enterKeyHint="send"
+								enterKeyHint="enter"
+								rows={1}
 								style={{
-									flex: 1,
-									padding: 0,
-									border: 'none',
-									backgroundColor: 'transparent',
-									color: isDisabled ? colors.textDim : colors.textMain,
+									flex: shouldStackPhoneComposer ? 'none' : 1,
+									width: shouldStackPhoneComposer ? '100%' : undefined,
+									alignSelf: shouldStackPhoneComposer ? 'stretch' : undefined,
+									// minWidth: 0 is critical for flex items to shrink below content size
+									minWidth: 0,
+									// On mobile collapsed state: tighter padding to match button height (48px)
+									// height = padding-top + line-height + padding-bottom + border = 11 + 22 + 11 + 4 = 48
+									// On desktop/tablet: use original larger padding for comfort
+									padding: isMobilePhone ? '11px 14px' : '14px 18px',
+									borderRadius: '12px',
+									backgroundColor: colors.bgMain,
+									border: `2px solid ${colors.border}`,
+									// Never ghost out the input - user can always type
+									color: colors.textMain,
+									// 16px minimum prevents iOS zoom on focus, 17px for better readability
 									fontSize: '17px',
-									fontFamily: 'ui-monospace, monospace',
+									fontFamily: 'inherit',
+									lineHeight: `${LINE_HEIGHT}px`,
 									outline: 'none',
-									width: '100%',
+									// Phones stay compact when empty, but expand enough to keep drafts readable.
+									height: isMobilePhone
+										? `${value.trim() ? collapsedMobileTextareaHeight : MIN_INPUT_HEIGHT}px`
+										: `${textareaHeight}px`,
+									// Large minimum height for easy touch targeting
+									minHeight: `${MIN_INPUT_HEIGHT}px`,
+									maxHeight: isMobilePhone
+										? `${MOBILE_COLLAPSED_MAX_HEIGHT}px`
+										: `${MAX_TEXTAREA_HEIGHT}px`,
+									// Reset appearance for consistent styling
+									WebkitAppearance: 'none',
+									appearance: 'none',
+									// Remove default textarea resize handle
+									resize: 'none',
+									// Smooth height transitions for auto-expansion
+									transition:
+										'height 100ms ease-out, border-color 150ms ease, box-shadow 150ms ease',
+									// Better text rendering on mobile
+									WebkitFontSmoothing: 'antialiased',
+									MozOsxFontSmoothing: 'grayscale',
+									// On mobile collapsed: hide overflow (single line)
+									// On desktop: enable scrolling when content exceeds max height
+									overflowY: isMobilePhone
+										? collapsedMobileTextareaHeight >= MOBILE_COLLAPSED_MAX_HEIGHT
+											? 'auto'
+											: 'hidden'
+										: textareaHeight >= MAX_TEXTAREA_HEIGHT
+											? 'auto'
+											: 'hidden',
+									overflowX: 'hidden',
+									wordWrap: 'break-word',
 								}}
 								onFocus={(e) => {
-									const container = e.currentTarget.parentElement;
-									if (container) container.style.borderColor = colors.accent;
-									onInputFocus?.();
+									// Add focus ring for accessibility
+									e.currentTarget.style.borderColor = colors.accent;
+									e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}33`;
+									handleMobileAIFocus();
 								}}
 								onBlur={(e) => {
-									const container = e.currentTarget.parentElement;
-									if (container) container.style.borderColor = colors.border;
+									// Remove focus ring
+									e.currentTarget.style.borderColor = colors.border;
+									e.currentTarget.style.boxShadow = 'none';
 									onInputBlur?.();
 								}}
-								aria-label="Shell command input"
+								aria-label="AI message input. Press the send button to submit."
+								aria-multiline="true"
 							/>
-						</div>
-					) : (
-						/* AI mode: regular textarea - on mobile phone, focus triggers expanded mode */
-						/* On mobile, collapsed state shows single-line height matching buttons */
-						<textarea
-							ref={textareaRef}
-							value={value}
-							onChange={handleChange}
-							onKeyDown={handleKeyDown}
-							placeholder={getPlaceholder()}
-							disabled={isDisabled}
-							autoComplete="off"
-							autoCorrect="off"
-							autoCapitalize="off"
-							spellCheck={false}
-							enterKeyHint="enter"
-							rows={1}
-							style={{
-								flex: 1,
-								// minWidth: 0 is critical for flex items to shrink below content size
-								minWidth: 0,
-								// On mobile collapsed state: tighter padding to match button height (48px)
-								// height = padding-top + line-height + padding-bottom + border = 11 + 22 + 11 + 4 = 48
-								// On desktop/tablet: use original larger padding for comfort
-								padding: isMobilePhone ? '11px 14px' : '14px 18px',
-								borderRadius: '12px',
-								backgroundColor: colors.bgMain,
-								border: `2px solid ${colors.border}`,
-								// Never ghost out the input - user can always type
-								color: colors.textMain,
-								// 16px minimum prevents iOS zoom on focus, 17px for better readability
-								fontSize: '17px',
-								fontFamily: 'inherit',
-								lineHeight: `${LINE_HEIGHT}px`,
-								outline: 'none',
-								// On mobile: force single-line height to match buttons (48px)
-								// On desktop: use auto-expanding height
-								height: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${textareaHeight}px`,
-								// Large minimum height for easy touch targeting
-								minHeight: `${MIN_INPUT_HEIGHT}px`,
-								maxHeight: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${MAX_TEXTAREA_HEIGHT}px`,
-								// Reset appearance for consistent styling
-								WebkitAppearance: 'none',
-								appearance: 'none',
-								// Remove default textarea resize handle
-								resize: 'none',
-								// Smooth height transitions for auto-expansion
-								transition: 'height 100ms ease-out, border-color 150ms ease, box-shadow 150ms ease',
-								// Better text rendering on mobile
-								WebkitFontSmoothing: 'antialiased',
-								MozOsxFontSmoothing: 'grayscale',
-								// On mobile collapsed: hide overflow (single line)
-								// On desktop: enable scrolling when content exceeds max height
-								overflowY: isMobilePhone
-									? 'hidden'
-									: textareaHeight >= MAX_TEXTAREA_HEIGHT
-										? 'auto'
-										: 'hidden',
-								overflowX: 'hidden',
-								wordWrap: 'break-word',
-							}}
-							onFocus={(e) => {
-								// Add focus ring for accessibility
-								e.currentTarget.style.borderColor = colors.accent;
-								e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}33`;
-								handleMobileAIFocus();
-							}}
-							onBlur={(e) => {
-								// Remove focus ring
-								e.currentTarget.style.borderColor = colors.border;
-								e.currentTarget.style.boxShadow = 'none';
-								onInputBlur?.();
-							}}
-							aria-label="AI message input. Press the send button to submit."
-							aria-multiline="true"
-						/>
-					)}
 
-					{/* Action button - shows either Interrupt (Red X) when AI is busy, or Send button otherwise */}
-					{/* The X button only shows in AI mode when busy - terminal mode always shows Send */}
-					<SendInterruptButton
-						isInterruptMode={inputMode === 'ai' && isSessionBusy}
-						isSendDisabled={isDisabled || !value.trim()}
-						onInterrupt={handleInterrupt}
-						sendButtonRef={sendButtonRef}
-						onTouchStart={handleSendButtonTouchStart}
-						onTouchEnd={handleSendButtonTouchEnd}
-						onTouchMove={handleSendButtonTouchMove}
-					/>
+							{shouldStackPhoneComposer ? (
+								<div
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: '8px',
+										width: '100%',
+									}}
+								>
+									<InputModeToggleButton
+										inputMode={inputMode}
+										onModeToggle={handleModeToggle}
+										disabled={externalDisabled || isOffline || !isConnected}
+									/>
+									<div style={{ marginLeft: 'auto' }}>
+										<SendInterruptButton
+											isInterruptMode={inputMode === 'ai' && isSessionBusy}
+											isSendDisabled={isDisabled || !value.trim()}
+											onInterrupt={handleInterrupt}
+											sendButtonRef={sendButtonRef}
+											onTouchStart={handleSendButtonTouchStart}
+											onTouchEnd={handleSendButtonTouchEnd}
+											onTouchMove={handleSendButtonTouchMove}
+										/>
+									</div>
+								</div>
+							) : (
+								<SendInterruptButton
+									isInterruptMode={inputMode === 'ai' && isSessionBusy}
+									isSendDisabled={isDisabled || !value.trim()}
+									onInterrupt={handleInterrupt}
+									sendButtonRef={sendButtonRef}
+									onTouchStart={handleSendButtonTouchStart}
+									onTouchEnd={handleSendButtonTouchEnd}
+									onTouchMove={handleSendButtonTouchMove}
+								/>
+							)}
+						</>
+					)}
 				</form>
 			)}
 

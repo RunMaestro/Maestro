@@ -1171,6 +1171,189 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
+	// handleTabClose — draft confirmation
+	// ========================================================================
+
+	describe('handleTabClose draft confirmation', () => {
+		it('shows confirmation modal when tab has unsent draft text', () => {
+			const draftTab = createMockAITab({ id: 'draft-1', inputValue: 'unsent message' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([draftTab, tab2], [], 'draft-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('draft-1');
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			const modal = useModalStore.getState().modals.get('confirm');
+			expect((modal?.data as any)?.message).toContain('unsent draft');
+		});
+
+		it('shows confirmation modal when tab has staged images', () => {
+			const draftTab = createMockAITab({
+				id: 'draft-1',
+				inputValue: '',
+				stagedImages: ['data:image/png;base64,abc'],
+			});
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([draftTab, tab2], [], 'draft-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('draft-1');
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+
+		it('closes directly when tab has no draft', () => {
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: '' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('tab-1');
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+		});
+
+		it('closes tab after confirming draft modal', () => {
+			const draftTab = createMockAITab({ id: 'draft-1', inputValue: 'unsent message' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([draftTab, tab2], [], 'draft-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('draft-1');
+			});
+
+			// Confirm the modal
+			const modal = useModalStore.getState().modals.get('confirm');
+			act(() => {
+				(modal?.data as any)?.onConfirm();
+			});
+
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+			expect(session.aiTabs[0].id).toBe('tab-2');
+		});
+	});
+
+	// ========================================================================
+	// handleCloseAllTabs — draft confirmation
+	// ========================================================================
+
+	describe('handleCloseAllTabs draft confirmation', () => {
+		it('shows confirmation modal when any tab has a draft', () => {
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'draft text' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseAllTabs();
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+			const modal = useModalStore.getState().modals.get('confirm');
+			expect((modal?.data as any)?.message).toContain('unsent drafts');
+		});
+
+		it('closes all tabs directly when none have drafts', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseAllTabs();
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			const session = getSession();
+			expect(session.aiTabs.length).toBe(1);
+			expect(['tab-1', 'tab-2']).not.toContain(session.aiTabs[0].id);
+		});
+	});
+
+	// ========================================================================
+	// handleCloseOtherTabs — draft confirmation
+	// ========================================================================
+
+	describe('handleCloseOtherTabs draft confirmation', () => {
+		it('shows confirmation modal when other tabs have drafts', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2', inputValue: 'draft text' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs();
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+
+		it('does not show modal when active tab has draft but others do not', () => {
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'my draft' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs();
+			});
+
+			// Active tab's draft doesn't matter — it's not being closed
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+			expect(session.aiTabs[0].id).toBe('tab-1');
+		});
+	});
+
+	// ========================================================================
+	// handleCloseTabsLeft/Right — draft confirmation
+	// ========================================================================
+
+	describe('handleCloseTabsLeft draft confirmation', () => {
+		it('shows confirmation modal when left tabs have drafts', () => {
+			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'draft' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const tab3 = createMockAITab({ id: 'tab-3' });
+			setupSessionWithTabs([tab1, tab2, tab3], [], 'tab-2');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsLeft();
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+	});
+
+	describe('handleCloseTabsRight draft confirmation', () => {
+		it('shows confirmation modal when right tabs have drafts', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const tab3 = createMockAITab({ id: 'tab-3', inputValue: 'draft' });
+			setupSessionWithTabs([tab1, tab2, tab3], [], 'tab-2');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsRight();
+			});
+
+			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+		});
+	});
+
+	// ========================================================================
 	// handleToggleTabShowThinking — clears logs on off
 	// ========================================================================
 

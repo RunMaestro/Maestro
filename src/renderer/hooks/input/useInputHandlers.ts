@@ -459,12 +459,26 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 	const handleReplayMessage = useCallback(
 		(text: string, images?: string[]) => {
+			// Preserve draft input so replay doesn't clobber what the user was typing
+			const draftInput = aiInputValueLocalRef.current;
+			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
+
 			if (images && images.length > 0) {
 				setStagedImages(images);
 			}
-			setTimeout(() => processInputRef.current(text), 0);
+			setTimeout(() => {
+				processInputRef.current(text);
+				// Restore draft input after processInput clears it
+				if (draftInput) {
+					setInputValue(draftInput);
+					syncAiInputToSession(draftInput);
+				}
+				if (draftImages.length > 0) {
+					setStagedImages(draftImages);
+				}
+			}, 0);
 		},
-		[setStagedImages]
+		[setStagedImages, setInputValue, syncAiInputToSession, activeTab?.stagedImages]
 	);
 
 	const handlePaste = useCallback(

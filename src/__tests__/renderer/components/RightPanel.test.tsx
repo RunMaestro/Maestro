@@ -74,6 +74,16 @@ vi.mock('lucide-react', () => ({
 			AlertTriangle
 		</span>
 	),
+	Play: ({ className }: { className?: string }) => (
+		<span data-testid="play" className={className}>
+			Play
+		</span>
+	),
+	XCircle: ({ className }: { className?: string }) => (
+		<span data-testid="x-circle" className={className}>
+			XCircle
+		</span>
+	),
 }));
 
 describe('RightPanel', () => {
@@ -323,7 +333,12 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
+			// FileExplorerPanel stays mounted (for auto-refresh timer) but is visible only on files tab
+			const fileExplorer = screen.getByTestId('file-explorer-panel');
+			expect(fileExplorer).toBeInTheDocument();
+			expect(fileExplorer.closest('[data-tour="files-panel"]')).not.toHaveStyle({
+				display: 'none',
+			});
 			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
 		});
@@ -333,7 +348,9 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
+			// FileExplorerPanel stays mounted but hidden (for auto-refresh timer persistence)
+			const fileExplorer = screen.getByTestId('file-explorer-panel');
+			expect(fileExplorer.closest('[data-tour="files-panel"]')).toHaveStyle({ display: 'none' });
 			expect(screen.getByTestId('history-panel')).toBeInTheDocument();
 			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
 		});
@@ -343,7 +360,9 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
+			// FileExplorerPanel stays mounted but hidden (for auto-refresh timer persistence)
+			const fileExplorer = screen.getByTestId('file-explorer-panel');
+			expect(fileExplorer.closest('[data-tour="files-panel"]')).toHaveStyle({ display: 'none' });
 			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
 		});
@@ -890,6 +909,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
@@ -922,6 +944,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
@@ -953,11 +978,134 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
 			render(<RightPanel {...props} />);
 
 			fireEvent.click(screen.getByText('Auto Run Paused'));
 			expect(setActiveRightTab).toHaveBeenCalledWith('autorun');
+		});
+
+		it('should show Resume and Abort buttons when error-paused with recoverable error', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+				errorPaused: true,
+				error: {
+					type: 'auth_expired',
+					message: 'Authentication failed. Please run "claude login" to re-authenticate.',
+					recoverable: true,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
+			const props = createDefaultProps({
+				currentSessionBatchState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			render(<RightPanel {...props} />);
+
+			const resumeButton = screen.getByTitle('Resume Auto Run after re-authenticating');
+			expect(resumeButton).toBeInTheDocument();
+			fireEvent.click(resumeButton);
+			expect(onResumeAfterError).toHaveBeenCalledTimes(1);
+
+			const abortButton = screen.getByTitle('Stop Auto Run completely');
+			expect(abortButton).toBeInTheDocument();
+			fireEvent.click(abortButton);
+			expect(onAbortBatchOnError).toHaveBeenCalledTimes(1);
+		});
+
+		it('should hide Resume button when error is not recoverable', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+				errorPaused: true,
+				error: {
+					type: 'agent_crashed',
+					message: 'Agent process exited unexpectedly',
+					recoverable: false,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
+			const props = createDefaultProps({
+				currentSessionBatchState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.queryByTitle('Resume Auto Run after re-authenticating')
+			).not.toBeInTheDocument();
+			expect(screen.getByTitle('Stop Auto Run completely')).toBeInTheDocument();
+		});
+
+		it('should not show Resume/Abort buttons when not error-paused', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
+			const props = createDefaultProps({
+				currentSessionBatchState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			render(<RightPanel {...props} />);
+
+			expect(
+				screen.queryByTitle('Resume Auto Run after re-authenticating')
+			).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Stop Auto Run completely')).not.toBeInTheDocument();
 		});
 
 		it('should show "View history" link when on autorun tab during batch run', () => {
@@ -1303,6 +1451,9 @@ describe('RightPanel', () => {
 				loopEnabled: false,
 				loopIteration: 0,
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			const { container } = render(<RightPanel {...props} />);
 

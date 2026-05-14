@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
+import { WebReadingContent } from './WebReadingContent';
 
 /** Threshold for character-based truncation */
 const CHAR_TRUNCATE_THRESHOLD = 500;
@@ -36,6 +36,8 @@ export interface MessageHistoryProps {
 	maxHeight?: string;
 	/** Callback when user taps a message */
 	onMessageTap?: (entry: LogEntry) => void;
+	/** Whether to apply Bionify reading mode to long-form AI output */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -67,6 +69,7 @@ export function MessageHistory({
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
+	enableBionifyReadingMode = false,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -251,6 +254,7 @@ export function MessageHistory({
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
+					const isStdoutBionify = enableBionifyReadingMode && source === 'stdout';
 
 					return (
 						<div
@@ -347,8 +351,16 @@ export function MessageHistory({
 										{displayText}
 									</div>
 								) : (
-									// AI responses: render as formatted markdown
-									<MobileMarkdownRenderer content={displayText} />
+									// There is no dedicated browser-tab reader in the web client yet.
+									// Message history is one of the nearest real browser-adjacent readers,
+									// so route mixed AI output through the shared adapter used by the
+									// full response viewer to avoid double-transforming raw text.
+									<WebReadingContent
+										content={displayText}
+										enableBionifyReadingMode={isStdoutBionify}
+										fontSize={13}
+										gap="8px"
+									/>
 								)}
 								{/* Show truncation indicator at end of text */}
 								{isTruncatable && !isExpanded && (

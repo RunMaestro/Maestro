@@ -97,10 +97,9 @@ import { AutoRunSetupModal } from './AutoRunSetupModal';
 import { LightboxModal } from './LightboxModal';
 
 // Group Chat Modal Components
-import { NewGroupChatModal } from './NewGroupChatModal';
+import { GroupChatModal } from './GroupChatModal';
 import { DeleteGroupChatModal } from './DeleteGroupChatModal';
 import { RenameGroupChatModal } from './RenameGroupChatModal';
-import { EditGroupChatModal } from './EditGroupChatModal';
 import { GroupChatInfoOverlay } from './GroupChatInfoOverlay';
 
 // Agent/Transfer Modal Components
@@ -946,6 +945,7 @@ export interface AppUtilityModalsProps {
 	onPromptToggleTabSaveToHistory?: () => void;
 	promptTabReadOnlyMode: boolean;
 	onPromptToggleTabReadOnlyMode: () => void;
+	promptComposerAgentId?: string;
 	promptTabShowThinking: ThinkingMode;
 	onPromptToggleTabShowThinking?: () => void;
 	promptSupportsThinking: boolean;
@@ -1124,6 +1124,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onPromptToggleTabSaveToHistory,
 	promptTabReadOnlyMode,
 	onPromptToggleTabReadOnlyMode,
+	promptComposerAgentId,
 	promptTabShowThinking,
 	onPromptToggleTabShowThinking,
 	promptSupportsThinking,
@@ -1358,11 +1359,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onToggleTabSaveToHistory={onPromptToggleTabSaveToHistory}
 					tabReadOnlyMode={promptTabReadOnlyMode}
 					onToggleTabReadOnlyMode={onPromptToggleTabReadOnlyMode}
+					agentId={promptComposerAgentId}
 					tabShowThinking={promptTabShowThinking}
 					onToggleTabShowThinking={onPromptToggleTabShowThinking}
 					supportsThinking={promptSupportsThinking}
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
+					sessions={activeGroupChatId ? sessions : undefined}
+					groups={activeGroupChatId ? groups : undefined}
 				/>
 			)}
 
@@ -1488,7 +1492,8 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 		<>
 			{/* --- NEW GROUP CHAT MODAL --- */}
 			{showNewGroupChatModal && (
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={theme}
 					isOpen={showNewGroupChatModal}
 					onClose={onCloseNewGroupChatModal}
@@ -1520,7 +1525,8 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 
 			{/* --- EDIT GROUP CHAT MODAL --- */}
 			{showEditGroupChatModal && (
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={theme}
 					isOpen={!!showEditGroupChatModal}
 					groupChat={editGroupChat || null}
@@ -2029,6 +2035,7 @@ export interface AppModalsProps {
 	onPromptToggleTabSaveToHistory?: () => void;
 	promptTabReadOnlyMode: boolean;
 	onPromptToggleTabReadOnlyMode: () => void;
+	promptComposerAgentId?: string;
 	promptTabShowThinking: ThinkingMode;
 	onPromptToggleTabShowThinking?: () => void;
 	promptSupportsThinking: boolean;
@@ -2387,6 +2394,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onPromptToggleTabSaveToHistory,
 		promptTabReadOnlyMode,
 		onPromptToggleTabReadOnlyMode,
+		promptComposerAgentId,
 		promptTabShowThinking,
 		onPromptToggleTabShowThinking,
 		promptSupportsThinking,
@@ -2696,6 +2704,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onPromptToggleTabSaveToHistory={onPromptToggleTabSaveToHistory}
 				promptTabReadOnlyMode={promptTabReadOnlyMode}
 				onPromptToggleTabReadOnlyMode={onPromptToggleTabReadOnlyMode}
+				promptComposerAgentId={promptComposerAgentId}
 				promptTabShowThinking={promptTabShowThinking}
 				onPromptToggleTabShowThinking={onPromptToggleTabShowThinking}
 				promptSupportsThinking={promptSupportsThinking}

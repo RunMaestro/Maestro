@@ -1547,6 +1547,8 @@ function TabBarInner({
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
+	const stickyLeftRef = useRef<HTMLDivElement>(null);
+	const stickyRightRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
@@ -1576,17 +1578,21 @@ function TabBarInner({
 					const containerRect = container.getBoundingClientRect();
 					const tabRect = tabElement.getBoundingClientRect();
 
-					// Check if right edge is clipped (most common issue with close button)
-					const rightOverflow = tabRect.right - containerRect.right;
+					// Account for sticky elements that overlay the scroll area
+					const stickyLeftWidth = stickyLeftRef.current?.offsetWidth ?? 0;
+					const stickyRightWidth = stickyRightRef.current?.offsetWidth ?? 0;
+
+					// Check if right edge is behind the sticky "+" button
+					const visibleRight = containerRect.right - stickyRightWidth;
+					const rightOverflow = tabRect.right - visibleRight;
 					if (rightOverflow > 0) {
-						// Scroll right to reveal the full tab including close button
-						container.scrollLeft += rightOverflow + 8; // +8px padding for breathing room
+						container.scrollLeft += rightOverflow + 8;
 					}
 
-					// Check if left edge is clipped
-					const leftOverflow = containerRect.left - tabRect.left;
+					// Check if left edge is behind the sticky search/filter buttons
+					const visibleLeft = containerRect.left + stickyLeftWidth;
+					const leftOverflow = visibleLeft - tabRect.left;
 					if (leftOverflow > 0) {
-						// Scroll left to reveal the tab
 						container.scrollLeft -= leftOverflow + 8;
 					}
 				}
@@ -1843,6 +1849,7 @@ function TabBarInner({
 		>
 			{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
 			<div
+				ref={stickyLeftRef}
 				className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
@@ -2121,6 +2128,7 @@ function TabBarInner({
 
 			{/* New Tab Button - sticky on right when tabs overflow, with full-height opaque background */}
 			<div
+				ref={stickyRightRef}
 				className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
 				style={{
 					backgroundColor: theme.colors.bgSidebar,

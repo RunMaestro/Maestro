@@ -46,6 +46,8 @@ export interface TaskCompleteEvent extends JsonlEvent {
 	fullResponse?: string;
 	elapsedMs: number;
 	usageStats?: UsageStats;
+	synopsisUsageStats?: UsageStats;
+	synopsisSkipped?: boolean;
 	agentSessionId?: string;
 }
 
@@ -106,6 +108,32 @@ export interface PlaybookEvent extends JsonlEvent {
 	maxLoops?: number | null;
 }
 
+// Settings command events
+export interface SettingEvent extends JsonlEvent {
+	type: 'setting';
+	key: string;
+	value: unknown;
+	valueType: string;
+	category: string;
+	description?: string;
+	defaultValue?: unknown;
+	isDefault?: boolean;
+}
+
+export interface SettingSetEvent extends JsonlEvent {
+	type: 'setting_set';
+	key: string;
+	oldValue: unknown;
+	newValue: unknown;
+}
+
+export interface SettingResetEvent extends JsonlEvent {
+	type: 'setting_reset';
+	key: string;
+	oldValue: unknown;
+	defaultValue: unknown;
+}
+
 // Union type of all events
 export type CliEvent =
 	| StartEvent
@@ -118,7 +146,10 @@ export type CliEvent =
 	| ErrorEvent
 	| GroupEvent
 	| AgentEvent
-	| PlaybookEvent;
+	| PlaybookEvent
+	| SettingEvent
+	| SettingSetEvent
+	| SettingResetEvent;
 
 /**
  * Emit a JSONL event to stdout

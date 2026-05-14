@@ -8,6 +8,7 @@
  */
 
 import path from 'path';
+import { isWindows, isLinux } from '../../shared/platformDetection';
 
 import Store from 'electron-store';
 import fsSync from 'fs';
@@ -52,14 +53,14 @@ function isValidSyncPath(customPath: string): boolean {
 
 	// Reject paths that are too short (likely system directories)
 	// Minimum reasonable path: /a/b (5 chars on Unix) or C:\a (4 chars on Windows)
-	const minPathLength = process.platform === 'win32' ? 4 : 5;
+	const minPathLength = isWindows() ? 4 : 5;
 	if (normalizedPath.length < minPathLength) {
 		console.error(`Custom sync path is too short: ${customPath}`);
 		return false;
 	}
 
 	// Check for Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-	if (process.platform === 'win32') {
+	if (isWindows()) {
 		const reservedNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 		const pathSegments = normalizedPath.split(/[/\\]/);
 		for (const segment of pathSegments) {
@@ -74,21 +75,20 @@ function isValidSyncPath(customPath: string): boolean {
 
 	// Reject known sensitive system directories
 	// For Windows, check common sensitive paths across all drive letters
-	const sensitiveRoots =
-		process.platform === 'win32'
-			? [
-					'\\Windows',
-					'\\Program Files',
-					'\\Program Files (x86)',
-					'\\System',
-					'\\System32',
-					'\\SysWOW64',
-				]
-			: ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/etc', '/var', '/tmp', '/dev', '/proc', '/sys'];
+	const sensitiveRoots = isWindows()
+		? [
+				'\\Windows',
+				'\\Program Files',
+				'\\Program Files (x86)',
+				'\\System',
+				'\\System32',
+				'\\SysWOW64',
+			]
+		: ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/etc', '/var', '/tmp', '/dev', '/proc', '/sys'];
 
 	const lowerPath = normalizedPath.toLowerCase();
 
-	if (process.platform === 'win32') {
+	if (isWindows()) {
 		// For Windows, check if any sensitive root appears after the drive letter
 		// e.g., C:\Windows, D:\Windows, etc.
 		for (const sensitive of sensitiveRoots) {
@@ -163,7 +163,7 @@ export function getCustomSyncPath(bootstrapStore: Store<BootstrapSettings>): str
  * The full isWsl() from wslDetector.ts can be used after app.ready.
  */
 function isWslEnvironment(): boolean {
-	if (process.platform !== 'linux') {
+	if (!isLinux()) {
 		return false;
 	}
 

@@ -19,6 +19,7 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../../shared/t
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
+import { isBetaAgent } from '../../../../shared/agentMetadata';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -322,6 +323,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const setCustomEnvVars = (val: Record<string, string>) =>
 		setWizardCustomEnvVars(Object.keys(val).length > 0 ? val : undefined);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
+	const agentConfigRef = useRef<Record<string, any>>({});
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -703,6 +705,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		async (agentId: string) => {
 			// Load agent config (model selection only - per-agent path/args/envVars are in wizard state)
 			const config = await window.maestro.agents.getConfig(agentId);
+			agentConfigRef.current = config || {};
 			setAgentConfig(config || {});
 			setConfiguringAgentId(agentId);
 
@@ -1014,10 +1017,16 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 							}}
 							agentConfig={agentConfig}
 							onConfigChange={(key, value) => {
-								setAgentConfig((prev) => ({ ...prev, [key]: value }));
+								const updatedConfig = { ...agentConfigRef.current, [key]: value };
+								agentConfigRef.current = updatedConfig;
+								setAgentConfig(updatedConfig);
 							}}
-							onConfigBlur={async () => {
-								await window.maestro.agents.setConfig(configuringAgentId!, agentConfig);
+							onConfigBlur={async (key, value) => {
+								if (!configuringAgentId) return;
+								const updatedConfig = { ...agentConfigRef.current, [key]: value };
+								agentConfigRef.current = updatedConfig;
+								setAgentConfig(updatedConfig);
+								await window.maestro.agents.setConfig(configuringAgentId, updatedConfig);
 							}}
 							availableModels={availableModels}
 							loadingModels={loadingModels}
@@ -1319,20 +1328,17 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 									)}
 
 									{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
-									{isSupported &&
-										(tile.id === 'codex' ||
-											tile.id === 'opencode' ||
-											tile.id === 'factory-droid') && (
-											<span
-												className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
-												style={{
-													backgroundColor: theme.colors.warning + '30',
-													color: theme.colors.warning,
-												}}
-											>
-												Beta
-											</span>
-										)}
+									{isSupported && isBetaAgent(tile.id) && (
+										<span
+											className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
+											style={{
+												backgroundColor: theme.colors.warning + '30',
+												color: theme.colors.warning,
+											}}
+										>
+											Beta
+										</span>
+									)}
 
 									{/* Customize button for supported agents (shown even if not detected, so user can set custom path) */}
 									{/* Note: Using div with role="button" to avoid nested button warning */}

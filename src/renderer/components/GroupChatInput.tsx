@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import { ArrowUp, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
 import type {
 	Theme,
@@ -113,6 +114,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	showFlashNotification,
 	shortcuts,
 }: GroupChatInputProps): JSX.Element {
+	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const [message, setMessage] = useState(draftMessage || '');
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
@@ -434,6 +436,14 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		setStagedImages((prev) => prev.filter((x) => x !== img));
 	}, []);
 
+	// Auto-resize textarea as content changes (matches InputArea behavior)
+	useEffect(() => {
+		if (inputRef.current) {
+			inputRef.current.style.height = 'auto';
+			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
+		}
+	}, [message]);
+
 	const isBusy = state !== 'idle';
 	const hasQueuedItems = executionQueue && executionQueue.length > 0;
 
@@ -557,11 +567,12 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						placeholder={
 							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
 						}
-						rows={2}
+						spellCheck={spellCheckEnabled}
+						rows={1}
 						className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
 						style={{
 							color: theme.colors.textMain,
-							maxHeight: '7rem',
+							maxHeight: '11rem',
 						}}
 					/>
 
@@ -610,10 +621,10 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 										? `1px solid ${theme.colors.warning}50`
 										: '1px solid transparent',
 								}}
-								title="Toggle read-only mode (agents won't modify files)"
+								title="Toggle Read-Only mode (agents won't modify files)"
 							>
 								<Eye className="w-3 h-3" />
-								<span>Read-only</span>
+								<span>Read-Only</span>
 							</button>
 
 							{/* Enter to send toggle */}

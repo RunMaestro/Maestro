@@ -217,8 +217,26 @@ export async function readDirRemote(
 	// -F: Append indicator (/ for dirs, @ for symlinks, * for executables)
 	// --color=never: Disable color codes in output
 	// We avoid -l because parsing long format is complex and locale-dependent
+	//
+	// A second command identifies symlinks whose targets are directories so
+	// that consumers can recurse into them.  The marker line __SYMDIR__
+	// separates the two outputs.
+	//
+	// Glob patterns used for the symlink scan:
+	//   /*          — non-dotfiles
+	//   /.[!.]*     — dotfiles (one leading dot), excluding the "." entry
+	//   /..?*       — names starting with ".." followed by more chars, excluding ".."
+	// We avoid a plain "/.*" because it matches "." and ".." on most shells.
+	// Unmatched globs are passed literally, but [ -L ] fails on them so nothing
+	// spurious is printed. Errors are redirected to /dev/null regardless.
 	const escapedPath = shellEscape(dirPath);
-	const remoteCommand = `ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"`;
+	const symlinkScan =
+		`for f in ${escapedPath}/* ${escapedPath}/.[!.]* ${escapedPath}/..?*; ` +
+		`do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null`;
+	const remoteCommand =
+		`ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"; ` +
+		`echo "__SYMDIR__"; ` +
+		symlinkScan;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
@@ -229,8 +247,13 @@ export async function readDirRemote(
 		};
 	}
 
+	// Split output at the marker to separate ls output from symlink-dir list
+	const parts = result.stdout.split('__SYMDIR__');
+	const lsOutput = parts[0].trim();
+	const symlinkDirNames = new Set((parts[1] || '').trim().split('\n').filter(Boolean));
+
 	// Check for our error marker
-	if (result.stdout.trim() === '__LS_ERROR__') {
+	if (lsOutput === '__LS_ERROR__') {
 		return {
 			success: false,
 			error: `Directory not found or not accessible: ${dirPath}`,
@@ -238,7 +261,7 @@ export async function readDirRemote(
 	}
 
 	const entries: RemoteDirEntry[] = [];
-	const lines = result.stdout.trim().split('\n').filter(Boolean);
+	const lines = lsOutput.split('\n').filter(Boolean);
 
 	for (const line of lines) {
 		if (!line || line === '__LS_ERROR__') continue;
@@ -254,6 +277,10 @@ export async function readDirRemote(
 		} else if (name.endsWith('@')) {
 			name = name.slice(0, -1);
 			isSymlink = true;
+			// Resolve symlink: if the target is a directory, mark it as such
+			if (symlinkDirNames.has(name)) {
+				isDirectory = true;
+			}
 		} else if (name.endsWith('*')) {
 			// Executable file - remove the indicator
 			name = name.slice(0, -1);

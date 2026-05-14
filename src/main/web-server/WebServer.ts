@@ -3,7 +3,7 @@
  *
  * Architecture:
  * - Single server on random port
- * - Security token (UUID) generated at startup, required in all URLs
+ * - Security token (UUID) per startup or persistent across restarts, required in all URLs
  * - Routes: /$TOKEN/ (dashboard), /$TOKEN/session/:id (session view)
  * - Live sessions: Only sessions marked as "live" appear in dashboard
  * - WebSocket: Real-time updates for session state, logs, theme
@@ -15,7 +15,7 @@
  *   http://localhost:PORT/$TOKEN/ws                → WebSocket
  *
  * Security:
- * - Token regenerated on each app restart
+ * - Token regenerated on each app restart (unless Persistent Web Link is enabled)
  * - Invalid/missing token redirects to website
  * - No access without knowing the token
  */
@@ -28,9 +28,10 @@ import fastifyStatic from '@fastify/static';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { getLocalIpAddressSync } from '../utils/networkUtils';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
 import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
@@ -63,6 +64,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	GetThemeCallback,
+	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
 } from './types';
@@ -86,7 +88,7 @@ export class WebServer {
 	private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
 	private webAssetsPath: string | null = null;
 
-	// Security token - regenerated on each app startup
+	// Security token - persistent or regenerated per startup
 	private securityToken: string;
 
 	// Local IP address for generating URLs (detected at startup)
@@ -107,7 +109,7 @@ export class WebServer {
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
-	constructor(port: number = 0) {
+	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
 		this.port = port;
 		this.server = Fastify({
@@ -116,9 +118,14 @@ export class WebServer {
 			},
 		});
 
-		// Generate a new security token (UUID v4)
-		this.securityToken = randomUUID();
-		logger.debug('Security token generated', LOG_CONTEXT);
+		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
+		if (securityToken) {
+			this.securityToken = securityToken;
+			logger.debug('Using persistent security token', LOG_CONTEXT);
+		} else {
+			this.securityToken = randomUUID();
+			logger.debug('Security token generated', LOG_CONTEXT);
+		}
 
 		// Determine web assets path (production vs development)
 		this.webAssetsPath = this.resolveWebAssetsPath();
@@ -160,16 +167,16 @@ export class WebServer {
 	private resolveWebAssetsPath(): string | null {
 		// Try multiple locations for the web assets
 		const possiblePaths = [
-			// Production: relative to the compiled main process
-			path.join(__dirname, '..', '..', 'web'),
 			// Development: from project root
 			path.join(process.cwd(), 'dist', 'web'),
+			// Production: relative to the compiled main process
+			path.join(__dirname, '..', '..', 'web'),
 			// Alternative: relative to __dirname going up to dist
 			path.join(__dirname, '..', 'web'),
 		];
 
 		for (const p of possiblePaths) {
-			if (existsSync(path.join(p, 'index.html'))) {
+			if (this.isServableWebAssetsPath(p)) {
 				logger.debug(`Web assets found at: ${p}`, LOG_CONTEXT);
 				return p;
 			}
@@ -180,6 +187,38 @@ export class WebServer {
 			LOG_CONTEXT
 		);
 		return null;
+	}
+
+	/**
+	 * Only serve built web assets. Source `src/web/index.html` references `/main.tsx`,
+	 * which the embedded Fastify server cannot compile or serve.
+	 */
+	private isServableWebAssetsPath(candidatePath: string): boolean {
+		const indexPath = path.join(candidatePath, 'index.html');
+		if (!existsSync(indexPath)) {
+			return false;
+		}
+
+		try {
+			const html = readFileSync(indexPath, 'utf-8');
+			const referencesDevEntrypoint =
+				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
+			return !referencesDevEntrypoint;
+		} catch (error) {
+			const err = error as NodeJS.ErrnoException;
+			if (err.code === 'ENOENT') {
+				logger.warn(`Web assets disappeared while inspecting ${candidatePath}`, LOG_CONTEXT);
+				return false;
+			}
+
+			logger.error(`Failed to inspect web assets at ${candidatePath}`, LOG_CONTEXT, error);
+			captureException(error, {
+				operation: 'webServer:isServableWebAssetsPath',
+				candidatePath,
+				indexPath,
+			});
+			throw error;
+		}
 	}
 
 	// ============ Live Session Management (Delegated to LiveSessionManager) ============
@@ -247,6 +286,10 @@ export class WebServer {
 
 	setGetThemeCallback(callback: GetThemeCallback): void {
 		this.callbackRegistry.setGetThemeCallback(callback);
+	}
+
+	setGetBionifyReadingModeCallback(callback: GetBionifyReadingModeCallback): void {
+		this.callbackRegistry.setGetBionifyReadingModeCallback(callback);
 	}
 
 	setGetCustomCommandsCallback(callback: GetCustomCommandsCallback): void {
@@ -399,6 +442,7 @@ export class WebServer {
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getTheme: () => this.callbackRegistry.getTheme(),
+			getBionifyReadingMode: () => this.callbackRegistry.getBionifyReadingMode(),
 			getCustomCommands: () => this.callbackRegistry.getCustomCommands(),
 			getAutoRunStates: () => this.liveSessionManager.getAutoRunStates(),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -504,6 +548,10 @@ export class WebServer {
 
 	broadcastThemeChange(theme: Theme): void {
 		this.broadcastService.broadcastThemeChange(theme);
+	}
+
+	broadcastBionifyReadingModeChange(enabled: boolean): void {
+		this.broadcastService.broadcastBionifyReadingModeChange(enabled);
 	}
 
 	broadcastCustomCommands(commands: CustomAICommand[]): void {

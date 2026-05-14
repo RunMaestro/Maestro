@@ -148,9 +148,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'remote-control',
 		title: 'Remote Control',
 		description:
-			'The LIVE/OFFLINE indicator controls a built-in web interface for remote access. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from the couch, the kitchen, or anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
+			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from the couch, the kitchen, or anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
 		descriptionGeneric:
-			'The LIVE/OFFLINE indicator controls a built-in web interface for remote access. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
+			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
 		wide: true,
 		selector: '[data-tour="remote-control"]',
 		position: 'right',

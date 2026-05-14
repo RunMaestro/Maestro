@@ -193,11 +193,11 @@ describe('AllSessionsView', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 
-			it('shows "OpenAI Codex" for openai-codex', () => {
-				const sessions = [createMockSession({ toolType: 'openai-codex' })];
+			it('shows "Codex" for codex', () => {
+				const sessions = [createMockSession({ toolType: 'codex' })];
 				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
 
-				expect(screen.getByText('OpenAI Codex')).toBeInTheDocument();
+				expect(screen.getByText('Codex')).toBeInTheDocument();
 			});
 
 			it('shows "Gemini CLI" for gemini-cli', () => {

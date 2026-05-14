@@ -228,6 +228,15 @@ export function truncatePath(path: string, maxLength: number = 35): string {
 }
 
 /**
+ * Get the parent directory of a path (cross-platform, works with / and \ separators).
+ * Returns the original path if already at root.
+ */
+export function getParentDir(path: string): string {
+	const parent = path.replace(/[/\\][^/\\]+$/, '');
+	return parent || path;
+}
+
+/**
  * Truncate command text for display.
  * Replaces newlines with spaces, trims whitespace, and adds ellipsis if truncated.
  *

@@ -14,6 +14,8 @@ import {
 	GitBranch,
 	Skull,
 	AlertTriangle,
+	Play,
+	XCircle,
 } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -127,12 +129,13 @@ export const RightPanel = memo(
 		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
 		const showHiddenFiles = useSettingsStore((s) => s.showHiddenFiles);
+		const fileExplorerIconTheme = useSettingsStore((s) => s.fileExplorerIconTheme);
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
-		const filteredFileTree = useFileExplorerStore((s) => s.flatFileList);
+		const filteredFileTree = useFileExplorerStore((s) => s.filteredFileTree);
 		const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
 		const lastGraphFocusFile = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 		const setFileTreeFilter = useFileExplorerStore((s) => s.setFileTreeFilter);
@@ -143,6 +146,16 @@ export const RightPanel = memo(
 		const autoRunDocumentTree = useBatchStore((s) => s.documentTree);
 		const autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
 		const autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
+
+		// Direct store subscription for error state — the prop chain passes error state
+		// through updateBatchStateAndBroadcast/UPDATE_PROGRESS which drops error fields.
+		const sessionId = session?.id;
+		const errorPaused = useBatchStore(
+			useCallback((s) => s.batchRunStates[sessionId ?? '']?.errorPaused ?? false, [sessionId])
+		);
+		const batchError = useBatchStore(
+			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
+		);
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -456,39 +469,43 @@ export const RightPanel = memo(
 						}
 					}}
 				>
-					{activeRightTab === 'files' && (
-						<div data-tour="files-panel" className="h-full">
-							<FileExplorerPanel
-								session={session}
-								theme={theme}
-								fileTreeFilter={fileTreeFilter}
-								setFileTreeFilter={setFileTreeFilter}
-								fileTreeFilterOpen={fileTreeFilterOpen}
-								setFileTreeFilterOpen={setFileTreeFilterOpen}
-								filteredFileTree={filteredFileTree}
-								selectedFileIndex={selectedFileIndex}
-								setSelectedFileIndex={setSelectedFileIndex}
-								activeFocus={activeFocus}
-								activeRightTab={activeRightTab}
-								setActiveFocus={setActiveFocus}
-								fileTreeFilterInputRef={fileTreeFilterInputRef}
-								toggleFolder={toggleFolder}
-								handleFileClick={handleFileClick}
-								expandAllFolders={expandAllFolders}
-								collapseAllFolders={collapseAllFolders}
-								updateSessionWorkingDirectory={updateSessionWorkingDirectory}
-								refreshFileTree={refreshFileTree}
-								setSessions={setSessions}
-								onAutoRefreshChange={onAutoRefreshChange}
-								onShowFlash={onShowFlash}
-								showHiddenFiles={showHiddenFiles}
-								setShowHiddenFiles={setShowHiddenFiles}
-								onFocusFileInGraph={onFocusFileInGraph}
-								lastGraphFocusFile={lastGraphFocusFile}
-								onOpenLastDocumentGraph={onOpenLastDocumentGraph}
-							/>
-						</div>
-					)}
+					{/* FileExplorerPanel stays mounted so auto-refresh timer persists across tab switches */}
+					<div
+						data-tour="files-panel"
+						className="h-full"
+						style={{ display: activeRightTab === 'files' ? undefined : 'none' }}
+					>
+						<FileExplorerPanel
+							session={session}
+							theme={theme}
+							fileTreeFilter={fileTreeFilter}
+							setFileTreeFilter={setFileTreeFilter}
+							fileTreeFilterOpen={fileTreeFilterOpen}
+							setFileTreeFilterOpen={setFileTreeFilterOpen}
+							filteredFileTree={filteredFileTree}
+							selectedFileIndex={selectedFileIndex}
+							setSelectedFileIndex={setSelectedFileIndex}
+							activeFocus={activeFocus}
+							activeRightTab={activeRightTab}
+							setActiveFocus={setActiveFocus}
+							fileTreeFilterInputRef={fileTreeFilterInputRef}
+							toggleFolder={toggleFolder}
+							handleFileClick={handleFileClick}
+							expandAllFolders={expandAllFolders}
+							collapseAllFolders={collapseAllFolders}
+							updateSessionWorkingDirectory={updateSessionWorkingDirectory}
+							refreshFileTree={refreshFileTree}
+							setSessions={setSessions}
+							onAutoRefreshChange={onAutoRefreshChange}
+							onShowFlash={onShowFlash}
+							showHiddenFiles={showHiddenFiles}
+							fileExplorerIconTheme={fileExplorerIconTheme}
+							setShowHiddenFiles={setShowHiddenFiles}
+							onFocusFileInGraph={onFocusFileInGraph}
+							lastGraphFocusFile={lastGraphFocusFile}
+							onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+						/>
+					</div>
 
 					{activeRightTab === 'history' && (
 						<div data-tour="history-panel" className="h-full">
@@ -523,18 +540,14 @@ export const RightPanel = memo(
 					<div
 						className="mx-4 mb-4 px-4 py-3 rounded border flex-shrink-0"
 						style={{
-							backgroundColor: currentSessionBatchState.errorPaused
-								? `${theme.colors.error}15`
-								: theme.colors.bgActivity,
-							borderColor: currentSessionBatchState.errorPaused
-								? theme.colors.error
-								: theme.colors.warning,
+							backgroundColor: errorPaused ? `${theme.colors.error}15` : theme.colors.bgActivity,
+							borderColor: errorPaused ? theme.colors.error : theme.colors.warning,
 						}}
 					>
 						{/* Header with status and elapsed time */}
 						<div className="flex items-center justify-between mb-2">
 							<div className="flex items-center gap-2">
-								{currentSessionBatchState.errorPaused ? (
+								{errorPaused ? (
 									<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.error }} />
 								) : (
 									<Loader2
@@ -542,7 +555,7 @@ export const RightPanel = memo(
 										style={{ color: theme.colors.warning }}
 									/>
 								)}
-								{currentSessionBatchState.errorPaused ? (
+								{errorPaused ? (
 									<button
 										onClick={() => setActiveRightTab('autorun')}
 										className="text-xs font-bold uppercase cursor-pointer hover:underline"
@@ -676,7 +689,7 @@ export const RightPanel = memo(
 												: 0
 									}%`,
 									backgroundColor:
-										currentSessionBatchState.isStopping || currentSessionBatchState.errorPaused
+										currentSessionBatchState.isStopping || errorPaused
 											? theme.colors.error
 											: theme.colors.warning,
 								}}
@@ -686,21 +699,52 @@ export const RightPanel = memo(
 						{/* Overall completed count with loop info */}
 						<div className="mt-2 flex items-start justify-between gap-2">
 							<span
-								className="text-[10px]"
+								className="text-[10px] min-w-0 flex-1 truncate"
 								style={{
-									color: currentSessionBatchState.errorPaused
-										? theme.colors.error
-										: theme.colors.textDim,
+									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
 							>
-								{currentSessionBatchState.errorPaused
-									? currentSessionBatchState.error?.message || 'Paused due to error'
+								{errorPaused
+									? batchError?.message || 'Paused due to error'
 									: currentSessionBatchState.isStopping
 										? 'Waiting for current task to complete before stopping...'
 										: currentSessionBatchState.totalTasksAcrossAllDocs > 0
 											? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
 											: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
 							</span>
+							{/* Resume/Abort buttons when error-paused */}
+							{errorPaused && (
+								<div className="flex items-center gap-1.5 shrink-0">
+									{batchError?.recoverable && onResumeAfterError && (
+										<button
+											onClick={onResumeAfterError}
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.accent,
+												color: theme.colors.accentForeground,
+											}}
+											title="Resume Auto Run after re-authenticating"
+										>
+											<Play className="w-3 h-3" />
+											Resume
+										</button>
+									)}
+									{onAbortBatchOnError && (
+										<button
+											onClick={onAbortBatchOnError}
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.error,
+												color: 'white',
+											}}
+											title="Stop Auto Run completely"
+										>
+											<XCircle className="w-3 h-3" />
+											Abort
+										</button>
+									)}
+								</div>
+							)}
 							<div className="flex items-center gap-2 shrink-0">
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (

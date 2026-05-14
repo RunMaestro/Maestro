@@ -20,6 +20,7 @@ import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
+import { isWindows } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -141,10 +142,9 @@ export class AgentDetector {
 		}
 
 		const availableAgents = agents.filter((a) => a.available);
-		const isWindows = process.platform === 'win32';
 
 		// On Windows, log detailed path info to help debug shell execution issues
-		if (isWindows) {
+		if (isWindows()) {
 			logger.info(`Agent detection complete (Windows)`, LOG_CONTEXT, {
 				platform: process.platform,
 				agents: availableAgents.map((a) => ({

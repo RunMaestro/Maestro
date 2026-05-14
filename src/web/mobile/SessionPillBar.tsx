@@ -20,6 +20,7 @@ import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, GroupInfo } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { truncatePath } from '../../shared/formatters';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 /** Duration in ms to trigger long-press */
 const LONG_PRESS_DURATION = 500;
@@ -275,13 +276,7 @@ function SessionInfoPopover({
 
 	// Get tool type display name
 	const getToolTypeLabel = (): string => {
-		const toolTypeMap: Record<string, string> = {
-			'claude-code': 'Claude Code',
-			'openai-codex': 'OpenAI Codex',
-			'gemini-cli': 'Gemini CLI',
-			'qwen3-coder': 'Qwen3 Coder',
-		};
-		return toolTypeMap[session.toolType] || session.toolType;
+		return getAgentDisplayName(session.toolType);
 	};
 
 	// Calculate position - show below the pill, centered

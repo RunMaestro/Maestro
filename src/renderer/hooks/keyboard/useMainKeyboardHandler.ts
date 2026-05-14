@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+
+// Font size keyboard shortcut constants
+const FONT_SIZE_STEP = 2;
+const FONT_SIZE_MIN = 10;
+const FONT_SIZE_MAX = 24;
+const FONT_SIZE_DEFAULT = 14;
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -22,6 +29,9 @@ import { useModalStore } from '../../stores/modalStore';
  * - recordShortcutUsage: Track shortcut usage for keyboard mastery gamification
  * - onKeyboardMasteryLevelUp: Callback when user levels up in keyboard mastery
  */
+
+/** Delay (ms) to allow React re-render before focusing the input element. */
+const FOCUS_AFTER_RENDER_DELAY_MS = 50;
 
 export type KeyboardHandlerContext = any;
 
@@ -137,22 +147,29 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 				// Allow toggleMode (Cmd+J) to switch to terminal view from file preview
 				const isToggleModeShortcut = ctx.isShortcut(e, 'toggleMode');
+				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
+				const isFontSizeShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					(e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0');
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
 					// BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump,
-					// jumpToBottom, and markdown toggle to work (these are benign viewing preferences)
+					// jumpToBottom, markdown toggle, and font size to work (these are benign viewing preferences)
 					if (
 						!isLayoutShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
-						!isMarkdownToggleShortcut
+						!isMarkdownToggleShortcut &&
+						!isFontSizeShortcut
 					) {
 						return;
 					}
-					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle shortcuts below
+					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle/font size shortcuts below
 				} else {
 					// Only OVERLAYS are open (file tabs, LogViewer, etc.)
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
@@ -169,7 +186,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isMarkdownToggleShortcut &&
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&
-						!isToggleModeShortcut
+						!isToggleModeShortcut &&
+						!isFontSizeShortcut
 					) {
 						return;
 					}
@@ -266,6 +284,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (activeTab?.wizardState?.isActive) return;
 				e.preventDefault();
 				ctx.toggleInputMode();
+				// Auto-focus the input so user can start typing immediately
+				ctx.setActiveFocus('main');
+				setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				trackShortcut('toggleMode');
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
@@ -476,6 +497,34 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
+			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+Shift+0 (reset)
+			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				if (e.key === '=' || e.key === '+') {
+					e.preventDefault();
+					const { fontSize, setFontSize } = useSettingsStore.getState();
+					const newSize = Math.min(fontSize + FONT_SIZE_STEP, FONT_SIZE_MAX);
+					if (newSize !== fontSize) setFontSize(newSize);
+					trackShortcut('fontSizeIncrease');
+					return;
+				}
+				if (e.key === '-') {
+					e.preventDefault();
+					const { fontSize, setFontSize } = useSettingsStore.getState();
+					const newSize = Math.max(fontSize - FONT_SIZE_STEP, FONT_SIZE_MIN);
+					if (newSize !== fontSize) setFontSize(newSize);
+					trackShortcut('fontSizeDecrease');
+					return;
+				}
+			}
+			// Cmd+Shift+0: Reset font size (Cmd+0 is reserved for "Go to Last Tab")
+			if (ctx.isShortcut(e, 'fontSizeReset')) {
+				e.preventDefault();
+				const { fontSize, setFontSize } = useSettingsStore.getState();
+				if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
+				trackShortcut('fontSizeReset');
+				return;
+			}
+
 			// Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
 			if (
 				ctx.activeSessionId &&
@@ -500,7 +549,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						);
 						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
-						setTimeout(() => ctx.inputRef.current?.focus(), 50);
+						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 						trackShortcut('newTab');
 					}
 				}
@@ -514,10 +563,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						// File tab was already closed by handleCloseCurrentTab
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'ai' && closeResult.tabId) {
-						// AI tab - need to handle wizard confirmation
+						// AI tab - need to handle wizard, draft, or regular confirmation
 						if (closeResult.isWizardTab) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'Close this wizard? Your progress will be lost and cannot be restored.',
+								onConfirm: () => {
+									ctx.performTabClose(closeResult.tabId);
+									trackShortcut('closeTab');
+								},
+							});
+						} else if (closeResult.hasDraft) {
+							useModalStore.getState().openModal('confirm', {
+								message: 'This tab has an unsent draft. Are you sure you want to close it?',
 								onConfirm: () => {
 									ctx.performTabClose(closeResult.tabId);
 									trackShortcut('closeTab');

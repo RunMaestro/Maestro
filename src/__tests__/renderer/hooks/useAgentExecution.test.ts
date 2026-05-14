@@ -189,7 +189,8 @@ describe('useAgentExecution', () => {
 	});
 
 	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {
-		const platformSpy = vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
+		const originalPlatform = (window as any).maestro?.platform;
+		(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 		const session = createMockSession({ toolType: 'codex' });
 		const sessionsRef = { current: [session] };
 		const setSessions = vi.fn();
@@ -228,7 +229,7 @@ describe('useAgentExecution', () => {
 			onExitHandler?.(targetSessionId);
 		});
 		await spawnPromise;
-		platformSpy.mockRestore();
+		(window as any).maestro.platform = originalPlatform;
 	});
 
 	it('does not enable local stdin flags for SSH batch runs', async () => {

@@ -21,6 +21,7 @@ import { getShellPath } from '../runtime/getShellPath';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { expandTilde, detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
+import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = 'PathProber';
 
@@ -40,12 +41,11 @@ export interface BinaryDetectionResult {
 export function getExpandedEnv(): NodeJS.ProcessEnv {
 	const home = os.homedir();
 	const env = { ...process.env };
-	const isWindows = process.platform === 'win32';
 
 	// Platform-specific paths
 	let additionalPaths: string[];
 
-	if (isWindows) {
+	if (isWindows()) {
 		// Windows-specific paths
 		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
 		const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
@@ -180,8 +180,6 @@ export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
  * On Windows, also tries .cmd and .exe extensions if the path doesn't exist as-is
  */
 export async function checkCustomPath(customPath: string): Promise<BinaryDetectionResult> {
-	const isWindows = process.platform === 'win32';
-
 	// Expand tilde to home directory (Node.js fs doesn't understand ~)
 	const expandedPath = expandTilde(customPath);
 
@@ -199,7 +197,7 @@ export async function checkCustomPath(customPath: string): Promise<BinaryDetecti
 		// First, try the exact path provided (with tilde expanded)
 		if (await checkPath(expandedPath)) {
 			// Check if file is executable (on Unix systems)
-			if (!isWindows) {
+			if (!isWindows()) {
 				try {
 					await fs.promises.access(expandedPath, fs.constants.X_OK);
 				} catch {
@@ -212,7 +210,7 @@ export async function checkCustomPath(customPath: string): Promise<BinaryDetecti
 		}
 
 		// On Windows, if the exact path doesn't exist, try with .cmd and .exe extensions
-		if (isWindows) {
+		if (isWindows()) {
 			const lowerPath = expandedPath.toLowerCase();
 			// Only try extensions if the path doesn't already have one
 			if (!lowerPath.endsWith('.cmd') && !lowerPath.endsWith('.exe')) {
@@ -480,11 +478,9 @@ export async function probeUnixPaths(binaryName: string): Promise<string | null>
  * 2. Fall back to which/where command with expanded PATH
  */
 export async function checkBinaryExists(binaryName: string): Promise<BinaryDetectionResult> {
-	const isWindows = process.platform === 'win32';
-
 	// First try direct file probing of known installation paths
 	// This is more reliable than which/where in packaged Electron apps
-	if (isWindows) {
+	if (isWindows()) {
 		const probedPath = await probeWindowsPaths(binaryName);
 		if (probedPath) {
 			return { exists: true, path: probedPath };
@@ -501,7 +497,7 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 
 	try {
 		// Use 'which' on Unix-like systems, 'where' on Windows
-		const command = isWindows ? 'where' : 'which';
+		const command = getWhichCommand();
 
 		// Use expanded PATH to find binaries in common installation locations.
 		// Prefer shell-provided PATH entries when available (they should be
@@ -518,7 +514,7 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 				.map((p) => p.trim())
 				.filter((p) => p);
 
-			if (process.platform === 'win32' && matches.length > 0) {
+			if (isWindows() && matches.length > 0) {
 				// On Windows, prefer .exe > extensionless (shell scripts) > .cmd
 				// This helps avoid cmd.exe limitations and supports PowerShell/bash scripts
 				const exeMatch = matches.find((p) => p.toLowerCase().endsWith('.exe'));

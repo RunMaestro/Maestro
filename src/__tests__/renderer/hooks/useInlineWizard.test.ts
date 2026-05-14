@@ -8,6 +8,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
 
+// Mock hasCapabilityCached for wizard support checks
+vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
+	const actual = await vi.importActual('../../../renderer/hooks/agent/useAgentCapabilities');
+	return {
+		...actual,
+		hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
+			if (capability === 'supportsWizard') {
+				return ['claude-code', 'codex', 'opencode'].includes(agentId);
+			}
+			return false;
+		}),
+	};
+});
+
 // Mock the dependencies
 vi.mock('../../../renderer/services/wizardIntentParser', () => ({
 	parseWizardIntent: vi.fn(),

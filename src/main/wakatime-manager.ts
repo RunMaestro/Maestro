@@ -19,6 +19,7 @@ import fs from 'fs';
 import https from 'https';
 import type Store from 'electron-store';
 import type { MaestroSettings } from './stores/types';
+import { isWindows } from '../shared/platformDetection';
 
 const LOG_CONTEXT = '[WakaTime]';
 const HEARTBEAT_DEBOUNCE_MS = 120_000; // 2 minutes - WakaTime deduplicates within this window
@@ -257,7 +258,7 @@ export class WakaTimeManager {
 		const plat = getWakaTimePlatform();
 		const arch = getWakaTimeArch();
 		if (!plat || !arch) return null;
-		const binaryName = `wakatime-cli-${plat}-${arch}${process.platform === 'win32' ? '.exe' : ''}`;
+		const binaryName = `wakatime-cli-${plat}-${arch}${isWindows() ? '.exe' : ''}`;
 		return path.join(os.homedir(), '.wakatime', binaryName);
 	}
 
@@ -331,7 +332,7 @@ export class WakaTimeManager {
 			return false;
 		}
 
-		const binaryName = `wakatime-cli-${plat}-${arch}${process.platform === 'win32' ? '.exe' : ''}`;
+		const binaryName = `wakatime-cli-${plat}-${arch}${isWindows() ? '.exe' : ''}`;
 		const zipName = `wakatime-cli-${plat}-${arch}.zip`;
 		const downloadUrl = `https://github.com/wakatime/wakatime-cli/releases/latest/download/${zipName}`;
 		const installDir = path.join(os.homedir(), '.wakatime');
@@ -348,7 +349,7 @@ export class WakaTimeManager {
 			logger.info('WakaTime CLI download complete, extracting...', LOG_CONTEXT);
 
 			// Extract
-			if (process.platform === 'win32') {
+			if (isWindows()) {
 				// Use PowerShell to extract on Windows
 				const extractResult = await execFileNoThrow('powershell', [
 					'-Command',
@@ -369,7 +370,7 @@ export class WakaTimeManager {
 
 			// Make executable on macOS/Linux
 			const binaryPath = path.join(installDir, binaryName);
-			if (process.platform !== 'win32') {
+			if (!isWindows()) {
 				fs.chmodSync(binaryPath, 0o755);
 			}
 

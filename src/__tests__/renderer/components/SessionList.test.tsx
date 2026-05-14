@@ -259,6 +259,7 @@ describe('SessionList', () => {
 			isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 			start: vi.fn().mockResolvedValue({ success: true, url: 'https://tunnel.example.com' }),
 			stop: vi.fn().mockResolvedValue(undefined),
+			getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
 		};
 	});
 
@@ -308,6 +309,16 @@ describe('SessionList', () => {
 			render(<SessionList {...props} />);
 
 			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+		});
+
+		it('branding header has z-20 to stack menu above sidebar content', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({});
+			render(<SessionList {...props} />);
+
+			const header = screen.getByText('MAESTRO').closest('.border-b');
+			expect(header).toHaveClass('z-20');
+			expect(header).toHaveClass('relative');
 		});
 
 		it('renders collapsed sidebar mode', () => {
@@ -1159,7 +1170,7 @@ describe('SessionList', () => {
 			expect(menuContainer).toHaveClass('overflow-y-auto');
 			expect(menuContainer).toHaveClass('scrollbar-thin');
 			// Verify max-height is set via inline style for scroll support
-			expect(menuContainer?.style.maxHeight).toBe('calc(100vh - 90px)');
+			expect(menuContainer?.style.maxHeight).toBe('calc(100vh - 120px)');
 		});
 
 		it("shows Director's Notes menu item in hamburger menu", () => {
@@ -1995,6 +2006,29 @@ describe('SessionList', () => {
 
 			expect(setActiveSessionId).toHaveBeenCalledWith('s1');
 		});
+
+		it('does not render collapsed palette for a collapsed group with no top-level sessions', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Collapsed', collapsed: true });
+			const sessions = [
+				createMockSession({
+					id: 's-child',
+					name: 'Nested Worktree Session',
+					groupId: 'g1',
+					parentSessionId: 's-parent',
+				}),
+			];
+			useSessionStore.setState({
+				sessions: sessions,
+				groups: [group],
+			});
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			const { container } = render(<SessionList {...props} />);
+
+			expect(container.querySelector('.ml-8.mr-3.mt-1.mb-2.flex')).toBeNull();
+		});
 	});
 
 	// ============================================================================
@@ -2084,16 +2118,17 @@ describe('SessionList', () => {
 	});
 
 	// ============================================================================
-	// Tunnel/Remote Access Tests
+	// Tunnel/Remote Control Tests
 	// ============================================================================
 
-	describe('Tunnel and Remote Access', () => {
+	describe('Tunnel and Remote Control', () => {
 		it('checks cloudflared installation when live overlay opens', async () => {
 			const mockIsInstalled = vi.fn().mockResolvedValue(true);
 			(window.maestro as Record<string, unknown>).tunnel = {
 				isCloudflaredInstalled: mockIsInstalled,
 				start: vi.fn().mockResolvedValue({ success: true, url: 'https://tunnel.example.com' }),
 				stop: vi.fn().mockResolvedValue(undefined),
+				getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2117,6 +2152,7 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: mockIsInstalled,
 				start: vi.fn(),
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2141,6 +2177,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2154,12 +2195,12 @@ describe('SessionList', () => {
 
 			// Wait for cloudflared check to complete
 			await waitFor(() => {
-				const toggleButton = screen.getByTitle('Enable remote access');
+				const toggleButton = screen.getByTitle('Enable remote control');
 				expect(toggleButton).toBeInTheDocument();
 			});
 
 			// Click the toggle to start tunnel
-			const toggleButton = screen.getByTitle('Enable remote access');
+			const toggleButton = screen.getByTitle('Enable remote control');
 			fireEvent.click(toggleButton);
 
 			await waitFor(() => {
@@ -2176,6 +2217,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: mockStop,
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2188,19 +2234,19 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				const toggleButton = screen.getByTitle('Enable remote access');
+				const toggleButton = screen.getByTitle('Enable remote control');
 				expect(toggleButton).toBeInTheDocument();
 			});
 
 			// Start tunnel first
-			fireEvent.click(screen.getByTitle('Enable remote access'));
+			fireEvent.click(screen.getByTitle('Enable remote control'));
 
 			await waitFor(() => {
-				expect(screen.getByTitle('Disable remote access')).toBeInTheDocument();
+				expect(screen.getByTitle('Disable remote control')).toBeInTheDocument();
 			});
 
 			// Now stop tunnel
-			fireEvent.click(screen.getByTitle('Disable remote access'));
+			fireEvent.click(screen.getByTitle('Disable remote control'));
 
 			await waitFor(() => {
 				expect(mockStop).toHaveBeenCalled();
@@ -2213,6 +2259,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: false,
+					url: null,
+					error: 'Connection failed',
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2225,7 +2276,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				const toggleButton = screen.getByTitle('Enable remote access');
+				const toggleButton = screen.getByTitle('Enable remote control');
 				fireEvent.click(toggleButton);
 			});
 
@@ -2240,6 +2291,7 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockRejectedValue(new Error('Network error')),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2252,7 +2304,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				const toggleButton = screen.getByTitle('Enable remote access');
+				const toggleButton = screen.getByTitle('Enable remote control');
 				fireEvent.click(toggleButton);
 			});
 
@@ -2269,6 +2321,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2281,7 +2338,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				fireEvent.click(screen.getByTitle('Enable remote access'));
+				fireEvent.click(screen.getByTitle('Enable remote control'));
 			});
 
 			await waitFor(() => {
@@ -2298,6 +2355,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2310,7 +2372,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				fireEvent.click(screen.getByTitle('Enable remote access'));
+				fireEvent.click(screen.getByTitle('Enable remote control'));
 			});
 
 			await waitFor(() => {
@@ -2335,6 +2397,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2347,7 +2414,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				fireEvent.click(screen.getByTitle('Enable remote access'));
+				fireEvent.click(screen.getByTitle('Enable remote control'));
 			});
 
 			await waitFor(() => {
@@ -2369,6 +2436,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -2381,7 +2453,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				fireEvent.click(screen.getByTitle('Enable remote access'));
+				fireEvent.click(screen.getByTitle('Enable remote control'));
 			});
 
 			await waitFor(() => {
@@ -3021,6 +3093,7 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: vi.fn(),
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -3047,6 +3120,11 @@ describe('SessionList', () => {
 				isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
 				start: mockStart,
 				stop: vi.fn(),
+				getStatus: vi.fn().mockResolvedValue({
+					isRunning: true,
+					url: 'https://tunnel.example.com',
+					error: null,
+				}),
 			};
 
 			useUIStore.setState({ leftSidebarOpen: true });
@@ -3059,7 +3137,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			await waitFor(() => {
-				fireEvent.click(screen.getByTitle('Enable remote access'));
+				fireEvent.click(screen.getByTitle('Enable remote control'));
 			});
 
 			await waitFor(() => {

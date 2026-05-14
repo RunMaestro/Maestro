@@ -1170,7 +1170,7 @@ describe('HistoryManager', () => {
 	// ----------------------------------------------------------------
 	describe('startWatching() / stopWatching()', () => {
 		it('should start watching history directory for changes', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
@@ -1184,7 +1184,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should create directory if it does not exist before watching', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(false);
 
@@ -1196,7 +1196,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should invoke callback when a .json file changes', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
 				watchCallback = cb as (event: string, filename: string | null) => void;
@@ -1214,7 +1214,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should not invoke callback for non-json files', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
 				watchCallback = cb as (event: string, filename: string | null) => void;
@@ -1230,7 +1230,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should not invoke callback when filename is null', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			let watchCallback: (event: string, filename: string | null) => void = () => {};
 			mockWatch.mockImplementation((_dir: string, cb: unknown) => {
 				watchCallback = cb as (event: string, filename: string | null) => void;
@@ -1246,7 +1246,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should not start watching again if already watching', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
@@ -1257,7 +1257,7 @@ describe('HistoryManager', () => {
 		});
 
 		it('should stop watching and close watcher', () => {
-			const mockWatcher = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValue(mockWatcher);
 			mockExistsSync.mockReturnValue(true);
 
@@ -1268,8 +1268,8 @@ describe('HistoryManager', () => {
 		});
 
 		it('should allow re-watching after stop', () => {
-			const mockWatcher1 = { close: vi.fn() } as unknown as fs.FSWatcher;
-			const mockWatcher2 = { close: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher1 = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
+			const mockWatcher2 = { close: vi.fn(), on: vi.fn() } as unknown as fs.FSWatcher;
 			mockWatch.mockReturnValueOnce(mockWatcher1).mockReturnValueOnce(mockWatcher2);
 			mockExistsSync.mockReturnValue(true);
 
@@ -1283,6 +1283,30 @@ describe('HistoryManager', () => {
 		it('should be safe to call stopWatching when not watching', () => {
 			// Should not throw
 			expect(() => manager.stopWatching()).not.toThrow();
+		});
+
+		it('should register an error handler on the watcher to prevent unhandled rejections', () => {
+			const onSpy = vi.fn();
+			const mockWatcher = { close: vi.fn(), on: onSpy } as unknown as fs.FSWatcher;
+			mockWatch.mockReturnValue(mockWatcher);
+			mockExistsSync.mockReturnValue(true);
+
+			manager.startWatching(vi.fn());
+
+			expect(onSpy).toHaveBeenCalledWith('error', expect.any(Function));
+		});
+
+		it('should log and not throw if fs.watch itself throws', () => {
+			mockWatch.mockImplementation(() => {
+				throw new Error('EBUSY: resource busy');
+			});
+			mockExistsSync.mockReturnValue(true);
+
+			expect(() => manager.startWatching(vi.fn())).not.toThrow();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to start history watcher'),
+				expect.any(String)
+			);
 		});
 	});
 

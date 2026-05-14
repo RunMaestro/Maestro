@@ -111,8 +111,18 @@ describe('filesystem handlers', () => {
 	describe('fs:readDir', () => {
 		it('should read local directory entries', async () => {
 			const mockEntries = [
-				{ name: 'file1.txt', isDirectory: () => false, isFile: () => true },
-				{ name: 'folder1', isDirectory: () => true, isFile: () => false },
+				{
+					name: 'file1.txt',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'folder1',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
 			];
 			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
 
@@ -158,6 +168,113 @@ describe('filesystem handlers', () => {
 				'SSH remote not found: invalid-remote'
 			);
 		});
+
+		it('should resolve symlinks pointing to directories', async () => {
+			const mockEntries = [
+				{
+					name: 'linked-folder',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(fs.stat).toHaveBeenCalledWith(expect.stringContaining('linked-folder'));
+			expect(result).toHaveLength(1);
+			expect(result[0].name).toBe('linked-folder');
+			expect(result[0].isDirectory).toBe(true);
+			expect(result[0].isFile).toBe(false);
+		});
+
+		it('should resolve symlinks pointing to regular files', async () => {
+			const mockEntries = [
+				{
+					name: 'linked-doc.md',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => false,
+				isFile: () => true,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].isDirectory).toBe(false);
+			expect(result[0].isFile).toBe(true);
+		});
+
+		it('should surface broken symlinks as files so they remain visible', async () => {
+			const mockEntries = [
+				{
+					name: 'broken-link',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].isDirectory).toBe(false);
+			expect(result[0].isFile).toBe(true);
+		});
+
+		it('should normalize local entry names to NFC Unicode form', async () => {
+			const nfdName = 'caf\u00e9'.normalize('NFD');
+			const nfcName = 'caf\u00e9'.normalize('NFC');
+			// Verify precondition: the names are different byte sequences
+			expect(nfdName).not.toBe(nfcName);
+
+			const mockEntries = [
+				{
+					name: nfdName,
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].name).toBe(nfcName);
+			expect(result[0].name.normalize('NFC')).toBe(result[0].name);
+		});
+
+		it('should normalize remote entry names to NFC Unicode form', async () => {
+			const nfdName = 'r\u00e9sum\u00e9.md'.normalize('NFD');
+			const nfcName = 'r\u00e9sum\u00e9.md'.normalize('NFC');
+
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readDirRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: nfdName, isDirectory: false, isSymlink: false }],
+			});
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/remote/path', 'remote-1');
+
+			expect(result[0].name).toBe(nfcName);
+			expect(result[0].name.normalize('NFC')).toBe(result[0].name);
+		});
 	});
 
 	describe('fs:readFile', () => {
@@ -190,6 +307,20 @@ describe('filesystem handlers', () => {
 			const result = await handler!({}, '/test/icon.svg');
 
 			expect(result).toMatch(/^data:image\/svg\+xml;base64,/);
+		});
+
+		it('should return null when path resolves to a directory (EISDIR)', async () => {
+			// Caller may pass a path that turned out to be a folder. Returning
+			// null instead of throwing keeps the IPC promise from rejecting and
+			// surfacing as an unhandled rejection. Fixes MAESTRO-JP.
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('EISDIR'), { code: 'EISDIR' })
+			);
+
+			const handler = registeredHandlers.get('fs:readFile');
+			const result = await handler!({}, '/test/some-folder');
+
+			expect(result).toBeNull();
 		});
 	});
 
@@ -323,15 +454,86 @@ describe('filesystem handlers', () => {
 			// Mock a simple directory structure
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'file1.txt', isDirectory: () => false },
-					{ name: 'subfolder', isDirectory: () => true },
+					{
+						name: 'file1.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
+						isSymbolicLink: () => false,
+					},
 				] as any)
-				.mockResolvedValueOnce([{ name: 'file2.txt', isDirectory: () => false }] as any);
+				.mockResolvedValueOnce([
+					{
+						name: 'file2.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+				] as any);
 
 			const handler = registeredHandlers.get('fs:countItems');
 			const result = await handler!({}, '/test/folder');
 
 			expect(result).toEqual({ fileCount: 2, folderCount: 1 });
+		});
+
+		it('should count symlinked folders as folders and recurse into them', async () => {
+			// Root: one file, one symlinked folder. Symlinked folder contains one file.
+			vi.mocked(fs.readdir)
+				.mockResolvedValueOnce([
+					{
+						name: 'file1.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'linked-folder',
+						isDirectory: () => false,
+						isFile: () => false,
+						isSymbolicLink: () => true,
+					},
+				] as any)
+				.mockResolvedValueOnce([
+					{
+						name: 'nested.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+				] as any);
+			// fs.stat is only called for the symlink
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:countItems');
+			const result = await handler!({}, '/test/folder');
+
+			expect(result).toEqual({ fileCount: 2, folderCount: 1 });
+		});
+
+		it('should count broken symlinks as files', async () => {
+			vi.mocked(fs.readdir).mockResolvedValueOnce([
+				{
+					name: 'broken',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			] as any);
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:countItems');
+			const result = await handler!({}, '/test/folder');
+
+			expect(result).toEqual({ fileCount: 1, folderCount: 0 });
 		});
 
 		it('should count items in remote directory via SSH', async () => {

@@ -30,6 +30,7 @@ import {
 	Timer,
 	User,
 	ArrowDownToLine,
+	SpellCheck,
 	HelpCircle,
 	ExternalLink,
 	Keyboard,
@@ -38,7 +39,7 @@ import {
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
 import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
-import { getOpenInLabel } from '../../../utils/platformUtils';
+import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { EnvVarsEditor } from '../EnvVarsEditor';
@@ -78,6 +79,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultShowThinking,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+		// Spell check
+		spellCheck,
+		setSpellCheck,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -760,6 +764,17 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 			/>
 
+			{/* Spell Check */}
+			<SettingCheckbox
+				icon={SpellCheck}
+				sectionLabel="Spell Check"
+				title="Enable spell checking"
+				description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+				checked={spellCheck}
+				onChange={setSpellCheck}
+				theme={theme}
+			/>
+
 			{/* Sleep Prevention */}
 			<div>
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
@@ -814,7 +829,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					</div>
 
 					{/* Linux note */}
-					{navigator.platform.toLowerCase().includes('linux') && (
+					{isLinuxPlatform() && (
 						<div
 							className="text-xs p-2 rounded"
 							style={{

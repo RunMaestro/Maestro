@@ -42,7 +42,48 @@
  *
  * Context Variables:
  *   {{CONTEXT_USAGE}}     - Current context window usage percentage
+ *
+ * Maestro Variables:
+ *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
+ *   {{READ_ONLY_MODE}}    - "true" if agent is in read-only/plan mode, "false" otherwise
  */
+
+/**
+ * Detect the current platform in both Node.js (main process / CLI) and
+ * renderer (browser) contexts.  The renderer has no `process` global —
+ * platform is exposed via the preload bridge at `window.maestro.platform`.
+ */
+function getCurrentPlatform(): string {
+	if (typeof process !== 'undefined' && process.platform) {
+		return process.platform;
+	}
+
+	if (typeof globalThis !== 'undefined' && (globalThis as any).maestro?.platform) {
+		return (globalThis as any).maestro.platform;
+	}
+	return 'linux'; // safe fallback
+}
+
+/**
+ * Returns the platform-appropriate command to run maestro-cli.
+ * The CLI is bundled as a JS file inside the Maestro application package,
+ * so the returned value includes the `node` invocation with the full path.
+ */
+function getMaestroCLIPath(): string {
+	const platform = getCurrentPlatform();
+	switch (platform) {
+		case 'darwin':
+			return 'node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"';
+		case 'win32': {
+			const programFiles =
+				(typeof process !== 'undefined' && process.env?.ProgramFiles) || 'C:\\Program Files';
+			return `node "${programFiles}\\Maestro\\resources\\maestro-cli.js"`;
+		}
+		default:
+			// Linux (deb/rpm installs to /opt)
+			return 'node "/opt/Maestro/resources/maestro-cli.js"';
+	}
+}
 
 /**
  * Minimal session interface that works for both CLI (SessionInfo) and renderer (Session)
@@ -73,6 +114,8 @@ export interface TemplateContext {
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	// Read-only / plan mode state
+	readOnlyMode?: boolean;
 }
 
 // List of all available template variables for documentation (alphabetically sorted)
@@ -96,12 +139,14 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{DOCUMENT_PATH}}', description: 'Current document path', autoRunOnly: true },
 	{ variable: '{{GIT_BRANCH}}', description: 'Git branch name' },
 	{ variable: '{{IS_GIT_REPO}}', description: 'Is git repo (true/false)' },
+	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{
 		variable: '{{LOOP_NUMBER}}',
 		description: 'Loop iteration (00001, 00002...)',
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
+	{ variable: '{{READ_ONLY_MODE}}', description: 'Read-only/plan mode (true/false)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
 	{ variable: '{{TIME_SHORT}}', description: 'Time (HH:MM)' },
@@ -127,6 +172,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		documentPath,
 		historyFilePath,
 		conductorProfile,
+		readOnlyMode,
 	} = context;
 	const now = new Date();
 
@@ -183,6 +229,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Context variables
 		CONTEXT_USAGE: String(session.contextUsage || 0),
+
+		// Maestro variables
+		MAESTRO_CLI_PATH: getMaestroCLIPath(),
+		READ_ONLY_MODE: String(readOnlyMode ?? false),
 	};
 
 	// Perform case-insensitive replacement

@@ -103,6 +103,7 @@ vi.mock('react-syntax-highlighter', () => ({
 
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
+	vs: {},
 }));
 
 // Mock remark-gfm
@@ -117,8 +118,12 @@ vi.mock('rehype-slug', () => ({
 
 // Mock markdownConfig utilities
 vi.mock('../../../../renderer/utils/markdownConfig', () => ({
+	REMARK_GFM_PLUGINS: [],
 	generateProseStyles: () => '',
+	generateInlineWizardPreviewProseStyles: () => '',
 	createMarkdownComponents: () => ({}),
+	createWizardBubbleMarkdownComponents: () => ({}),
+	createReleaseNotesMarkdownComponents: () => ({}),
 }));
 
 // Mock MermaidRenderer

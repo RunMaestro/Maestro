@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import type { Group, SessionInfo, HistoryEntry } from '../../../shared/types';
 
 // Store original env values
@@ -38,7 +39,14 @@ import {
 	readGroups,
 	readHistory,
 	readSettings,
+	readSettingValue,
+	writeSettingValue,
+	deleteSettingValue,
 	readAgentConfigs,
+	readAgentConfig,
+	readAgentConfigValue,
+	writeAgentConfigValue,
+	deleteAgentConfigValue,
 	getAgentCustomPath,
 	resolveAgentId,
 	resolveGroupId,
@@ -98,7 +106,9 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/Users/testuser/Library/Application Support/Maestro');
+			expect(result).toBe(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro')
+			);
 		});
 
 		it('should return Windows config path with APPDATA', () => {
@@ -130,7 +140,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.custom-config/Maestro');
+			expect(result).toBe(path.join('/home/testuser/.custom-config', 'Maestro'));
 		});
 
 		it('should return Linux config path fallback without XDG_CONFIG_HOME', () => {
@@ -140,7 +150,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.config/Maestro');
+			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
 		});
 
 		it('should use Linux path for unknown platforms', () => {
@@ -150,7 +160,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.config/Maestro');
+			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
 		});
 	});
 
@@ -829,7 +839,9 @@ describe('storage service', () => {
 
 			const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
 			expect(writeCall[0]).toContain('maestro-history.json');
-			expect(writeCall[0]).toContain('/Users/testuser/Library/Application Support/Maestro');
+			expect(writeCall[0]).toContain(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro')
+			);
 		});
 	});
 
@@ -919,11 +931,11 @@ describe('storage service', () => {
 		beforeEach(() => {
 			// Enable migrated mode by making existsSync return true for migration marker
 			vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-				const pathStr = String(filepath);
+				const pathStr = path.normalize(String(filepath));
 				if (pathStr.includes('history-migrated.json')) {
 					return true;
 				}
-				if (pathStr.includes('/history/')) {
+				if (pathStr.includes(`${path.sep}history${path.sep}`)) {
 					// Check specific session file existence
 					return pathStr.includes('session-123.json') || pathStr.includes('session-456.json');
 				}
@@ -971,15 +983,15 @@ describe('storage service', () => {
 				] as unknown as fs.Dirent[]);
 
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
-					if (pathStr.includes('history-migrated.json') || pathStr.includes('/history')) {
+					const pathStr = path.normalize(String(filepath));
+					if (pathStr.includes('history-migrated.json') || pathStr.includes(`${path.sep}history`)) {
 						return true;
 					}
 					return false;
 				});
 
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
 						return JSON.stringify({
 							version: 1,
@@ -1016,15 +1028,15 @@ describe('storage service', () => {
 				] as unknown as fs.Dirent[]);
 
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
-					if (pathStr.includes('history-migrated.json') || pathStr.includes('/history')) {
+					const pathStr = path.normalize(String(filepath));
+					if (pathStr.includes('history-migrated.json') || pathStr.includes(`${path.sep}history`)) {
 						return true;
 					}
 					return false;
 				});
 
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
 						return JSON.stringify({
 							version: 1,
@@ -1066,14 +1078,14 @@ describe('storage service', () => {
 
 			it('should write entry to session-specific file', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					if (pathStr.includes('/history/session-123.json')) {
+					if (pathStr.includes(`${path.sep}history${path.sep}session-123.json`)) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				const existingData = {
@@ -1093,7 +1105,7 @@ describe('storage service', () => {
 
 				expect(fs.writeFileSync).toHaveBeenCalled();
 				const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-				expect(writeCall[0]).toContain('/history/session-123.json');
+				expect(writeCall[0]).toContain(path.join('history', 'session-123.json'));
 				const writtenData = JSON.parse(writeCall[1] as string);
 				expect(writtenData.entries).toHaveLength(2);
 				expect(writtenData.entries[0].id).toBe('new-entry'); // New entry at beginning
@@ -1101,7 +1113,7 @@ describe('storage service', () => {
 
 			it('should create history directory if it does not exist', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
@@ -1115,18 +1127,18 @@ describe('storage service', () => {
 				});
 				addHistoryEntry(newEntry);
 
-				expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('/history'), {
+				expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining(`${path.sep}history`), {
 					recursive: true,
 				});
 			});
 
 			it('should skip entries without sessionId', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				const newEntry = mockHistoryEntry({
@@ -1143,11 +1155,11 @@ describe('storage service', () => {
 
 			it('should enforce max entries limit (5000)', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				// Create 5000 existing entries
@@ -1177,6 +1189,251 @@ describe('storage service', () => {
 				// Last entry should be trimmed
 				expect(writtenData.entries[4999].id).toBe('entry-4998');
 			});
+		});
+	});
+
+	describe('readSettingValue', () => {
+		it('should read a top-level setting', () => {
+			const settings = { fontSize: 16, activeThemeId: 'monokai' };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+
+			expect(readSettingValue('fontSize')).toBe(16);
+		});
+
+		it('should read a nested setting via dot-notation', () => {
+			const settings = { encoreFeatures: { directorNotes: true } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+
+			expect(readSettingValue('encoreFeatures.directorNotes')).toBe(true);
+		});
+
+		it('should return undefined for non-existent key', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+
+			expect(readSettingValue('nonExistent')).toBeUndefined();
+		});
+
+		it('should return undefined for non-existent nested key', () => {
+			const settings = { encoreFeatures: { directorNotes: true } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+
+			expect(readSettingValue('encoreFeatures.nonExistent')).toBeUndefined();
+		});
+	});
+
+	describe('writeSettingValue', () => {
+		beforeEach(() => {
+			// Reset writeFileSync to plain mock (may have been set to throw by earlier tests)
+			vi.mocked(fs.writeFileSync).mockReset();
+		});
+
+		it('should write a top-level setting', () => {
+			const settings = { fontSize: 14 };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = writeSettingValue('fontSize', 18);
+
+			expect(result).toBe(true);
+			expect(fs.writeFileSync).toHaveBeenCalled();
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.fontSize).toBe(18);
+		});
+
+		it('should write a nested setting via dot-notation', () => {
+			const settings = { encoreFeatures: { directorNotes: false } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeSettingValue('encoreFeatures.directorNotes', true);
+
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.encoreFeatures.directorNotes).toBe(true);
+		});
+
+		it('should create intermediate objects for new nested paths', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeSettingValue('newSection.newKey', 'hello');
+
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.newSection.newKey).toBe('hello');
+		});
+
+		it('should create config directory if it does not exist', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			writeSettingValue('fontSize', 16);
+
+			expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('Maestro'), {
+				recursive: true,
+			});
+		});
+	});
+
+	describe('deleteSettingValue', () => {
+		beforeEach(() => {
+			vi.mocked(fs.writeFileSync).mockReset();
+		});
+
+		it('should delete a top-level setting', () => {
+			const settings = { fontSize: 16, activeThemeId: 'monokai' };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = deleteSettingValue('fontSize');
+
+			expect(result).toBe(true);
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.fontSize).toBeUndefined();
+			expect(written.activeThemeId).toBe('monokai');
+		});
+
+		it('should delete a nested setting via dot-notation', () => {
+			const settings = { encoreFeatures: { directorNotes: true, other: false } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(settings));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = deleteSettingValue('encoreFeatures.directorNotes');
+
+			expect(result).toBe(true);
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.encoreFeatures.directorNotes).toBeUndefined();
+			expect(written.encoreFeatures.other).toBe(false);
+		});
+
+		it('should return false when key does not exist', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+
+			const result = deleteSettingValue('nonExistent');
+
+			expect(result).toBe(false);
+			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+
+		it('should return false for non-existent nested path', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ a: { b: 1 } }));
+
+			const result = deleteSettingValue('a.c');
+
+			expect(result).toBe(false);
+			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('readAgentConfig', () => {
+		it('should return config for a specific agent', () => {
+			const data = { configs: { 'claude-code': { model: 'opus', customPath: '/usr/bin/claude' } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			const result = readAgentConfig('claude-code');
+
+			expect(result.model).toBe('opus');
+			expect(result.customPath).toBe('/usr/bin/claude');
+		});
+
+		it('should return empty object for unknown agent', () => {
+			const data = { configs: {} };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			expect(readAgentConfig('unknown')).toEqual({});
+		});
+	});
+
+	describe('readAgentConfigValue', () => {
+		it('should return a specific config value', () => {
+			const data = { configs: { codex: { contextWindow: 400000 } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			expect(readAgentConfigValue('codex', 'contextWindow')).toBe(400000);
+		});
+
+		it('should return undefined for missing key', () => {
+			const data = { configs: { codex: {} } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			expect(readAgentConfigValue('codex', 'model')).toBeUndefined();
+		});
+	});
+
+	describe('writeAgentConfigValue', () => {
+		beforeEach(() => {
+			vi.mocked(fs.writeFileSync).mockReset();
+		});
+
+		it('should write a config value for an existing agent', () => {
+			const data = { configs: { codex: { model: 'gpt-4o' } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeAgentConfigValue('codex', 'contextWindow', 128000);
+
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.configs.codex.model).toBe('gpt-4o');
+			expect(written.configs.codex.contextWindow).toBe(128000);
+		});
+
+		it('should create agent entry if it does not exist', () => {
+			const data = { configs: {} };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeAgentConfigValue('opencode', 'model', 'sonnet');
+
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.configs.opencode.model).toBe('sonnet');
+		});
+	});
+
+	describe('deleteAgentConfigValue', () => {
+		beforeEach(() => {
+			vi.mocked(fs.writeFileSync).mockReset();
+		});
+
+		it('should delete a config key', () => {
+			const data = { configs: { codex: { model: 'gpt-4o', contextWindow: 400000 } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = deleteAgentConfigValue('codex', 'model');
+
+			expect(result).toBe(true);
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.configs.codex.model).toBeUndefined();
+			expect(written.configs.codex.contextWindow).toBe(400000);
+		});
+
+		it('should remove empty agent config object after last key deleted', () => {
+			const data = { configs: { codex: { model: 'gpt-4o' } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			deleteAgentConfigValue('codex', 'model');
+
+			const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+			expect(written.configs.codex).toBeUndefined();
+		});
+
+		it('should return false for non-existent key', () => {
+			const data = { configs: { codex: { model: 'gpt-4o' } } };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			const result = deleteAgentConfigValue('codex', 'nonExistent');
+
+			expect(result).toBe(false);
+			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+
+		it('should return false for non-existent agent', () => {
+			const data = { configs: {} };
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(data));
+
+			const result = deleteAgentConfigValue('unknown', 'model');
+
+			expect(result).toBe(false);
+			expect(fs.writeFileSync).not.toHaveBeenCalled();
 		});
 	});
 });

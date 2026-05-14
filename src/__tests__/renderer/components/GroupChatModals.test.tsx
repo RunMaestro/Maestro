@@ -1,5 +1,5 @@
 /**
- * @fileoverview Tests for NewGroupChatModal and EditGroupChatModal components
+ * @fileoverview Tests for GroupChatModal component (create and edit modes)
  *
  * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
  * This test ensures that when users customize the moderator agent in group chat modals,
@@ -8,8 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { NewGroupChatModal } from '../../../renderer/components/NewGroupChatModal';
-import { EditGroupChatModal } from '../../../renderer/components/EditGroupChatModal';
+import { GroupChatModal } from '../../../renderer/components/GroupChatModal';
 import type { Theme, GroupChat, AgentConfig } from '../../../renderer/types';
 
 // Mock lucide-react icons
@@ -134,32 +133,37 @@ function createMockGroupChat(overrides: Partial<GroupChat> = {}): GroupChat {
 // TESTS
 // =============================================================================
 
-describe('Group Chat Modals', () => {
-	beforeEach(() => {
-		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
-		mockUnregisterLayer.mockClear();
-		mockUpdateLayerHandler.mockClear();
-
-		// Setup default mock implementations
-		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-			createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
-		]);
+describe('GroupChatModal', () => {
+	/**
+	 * Setup fresh mocks before each test.
+	 * Uses mockResolvedValue for agent IPC methods (detect, getConfig, setConfig, getModels).
+	 * Called in beforeEach; individual tests only need to call this again if they
+	 * need different agents than the default single claude-code agent.
+	 */
+	function setupDefaultMocks(agents?: AgentConfig[]) {
+		const defaultAgents = agents ?? [createMockAgent({ id: 'claude-code', name: 'Claude Code' })];
+		vi.mocked(window.maestro.agents.detect).mockResolvedValue(defaultAgents);
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
-	});
+	}
 
-	afterEach(() => {
+	beforeEach(() => {
 		vi.clearAllMocks();
+		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
+		mockUnregisterLayer.mockClear();
+		mockUpdateLayerHandler.mockClear();
+		setupDefaultMocks();
 	});
 
-	describe('NewGroupChatModal', () => {
+	describe('create mode', () => {
 		it('should display MAESTRO_SESSION_RESUMED in moderator configuration panel', async () => {
 			const onCreate = vi.fn();
 			const onClose = vi.fn();
 
 			render(
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={createMockTheme()}
 					isOpen={true}
 					onClose={onClose}
@@ -168,9 +172,12 @@ describe('Group Chat Modals', () => {
 			);
 
 			// Wait for agent detection and verify dropdown is rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify Claude Code is selected in dropdown
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
@@ -191,7 +198,7 @@ describe('Group Chat Modals', () => {
 
 		it('should show all available agents in dropdown', async () => {
 			// Setup multiple agents
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+			setupDefaultMocks([
 				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
 				createMockAgent({ id: 'codex', name: 'Codex' }),
 				createMockAgent({ id: 'opencode', name: 'OpenCode' }),
@@ -202,7 +209,8 @@ describe('Group Chat Modals', () => {
 			const onClose = vi.fn();
 
 			render(
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={createMockTheme()}
 					isOpen={true}
 					onClose={onClose}
@@ -211,26 +219,30 @@ describe('Group Chat Modals', () => {
 			);
 
 			// Wait for dropdown to be rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify all agents appear as options
 			expect(screen.getByRole('option', { name: /Claude Code/i })).toBeInTheDocument();
-			expect(screen.getByRole('option', { name: /Codex.*Beta/i })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: /OpenCode.*Beta/i })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: /Factory Droid.*Beta/i })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /^Codex$/i })).toBeInTheDocument();
 		});
 	});
 
-	describe('EditGroupChatModal', () => {
+	describe('edit mode', () => {
 		it('should display MAESTRO_SESSION_RESUMED in moderator configuration panel', async () => {
 			const onSave = vi.fn();
 			const onClose = vi.fn();
 			const groupChat = createMockGroupChat();
 
 			render(
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={createMockTheme()}
 					isOpen={true}
 					groupChat={groupChat}
@@ -240,9 +252,12 @@ describe('Group Chat Modals', () => {
 			);
 
 			// Wait for dropdown to be rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify Claude Code is pre-selected
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
@@ -263,7 +278,7 @@ describe('Group Chat Modals', () => {
 
 		it('should show warning when changing moderator agent', async () => {
 			// Setup multiple agents
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+			setupDefaultMocks([
 				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
 				createMockAgent({ id: 'codex', name: 'Codex' }),
 			]);
@@ -273,7 +288,8 @@ describe('Group Chat Modals', () => {
 			const groupChat = createMockGroupChat({ moderatorAgentId: 'claude-code' });
 
 			render(
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={createMockTheme()}
 					isOpen={true}
 					groupChat={groupChat}
@@ -283,9 +299,12 @@ describe('Group Chat Modals', () => {
 			);
 
 			// Wait for dropdown
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Change to different agent
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });

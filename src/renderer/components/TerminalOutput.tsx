@@ -5,7 +5,6 @@ import {
 	Trash2,
 	Copy,
 	Check,
-	ArrowDown,
 	Eye,
 	FileText,
 	RotateCcw,
@@ -32,6 +31,8 @@ import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
+const BIONIFY_BUTTON_LABEL = 'B';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -126,6 +127,10 @@ interface LogItemProps {
 	onShowErrorDetails?: (error: AgentError) => void;
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
+	bionifyReadingMode: boolean;
+	bionifyIntensity: number;
+	bionifyAlgorithm: string;
+	onToggleBionifyReadingMode: () => void;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
 }
@@ -166,6 +171,10 @@ const LogItemComponent = memo(
 		onFileClick,
 		onShowErrorDetails,
 		onSaveToFile,
+		bionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
+		onToggleBionifyReadingMode,
 		userMessageAlignment,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
@@ -368,6 +377,7 @@ const LogItemComponent = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+		const showBionifyTabToggle = log.source !== 'user' && isAIMode && !markdownEditMode;
 
 		return (
 			<div
@@ -402,7 +412,7 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 ${showBionifyTabToggle ? 'pr-14' : ''} rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
@@ -421,6 +431,19 @@ const LogItemComponent = memo(
 									: theme.colors.border,
 					}}
 				>
+					{showBionifyTabToggle && (
+						<button
+							onClick={onToggleBionifyReadingMode}
+							className="absolute top-2 right-2 z-10 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+							style={{ color: bionifyReadingMode ? theme.colors.accent : theme.colors.textDim }}
+							title={
+								bionifyReadingMode ? 'Disable Bionify for this tab' : 'Enable Bionify for this tab'
+							}
+							aria-pressed={bionifyReadingMode}
+						>
+							<span className="text-[12px] font-black leading-none">{BIONIFY_BUTTON_LABEL}</span>
+						</button>
+					)}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -535,6 +558,9 @@ const LogItemComponent = memo(
 										content={log.text}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -649,6 +675,9 @@ const LogItemComponent = memo(
 											content={displayText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -732,6 +761,9 @@ const LogItemComponent = memo(
 											content={filteredText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -807,6 +839,9 @@ const LogItemComponent = memo(
 										content={filteredText}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -958,6 +993,9 @@ const LogItemComponent = memo(
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
+			prevProps.bionifyReadingMode === nextProps.bionifyReadingMode &&
+			prevProps.bionifyIntensity === nextProps.bionifyIntensity &&
+			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment
 		);
@@ -1040,7 +1078,6 @@ interface TerminalOutputProps {
 	onShowErrorDetails?: (error: AgentError) => void; // Callback to show the error modal (for error log entries)
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
 	autoScrollAiMode?: boolean; // Whether to auto-scroll in AI mode (like terminal mode)
-	setAutoScrollAiMode?: (value: boolean) => void; // Toggle auto-scroll in AI mode
 	userMessageAlignment?: 'left' | 'right'; // User message bubble alignment (default: right)
 	onOpenInTab?: (file: {
 		path: string;
@@ -1085,10 +1122,18 @@ export const TerminalOutput = memo(
 			onShowErrorDetails,
 			onFileSaved,
 			autoScrollAiMode,
-			setAutoScrollAiMode,
 			userMessageAlignment = 'right',
 			onOpenInTab,
 		} = props;
+		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const globalBionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+		const [bionifyOverride, setBionifyOverride] = useState<boolean | null>(null);
+		const effectiveBionifyReadingMode = bionifyOverride ?? globalBionifyReadingMode;
+
+		useEffect(() => {
+			setBionifyOverride(null);
+		}, [session.id, session.activeTabId]);
 
 		// Use the forwarded ref if provided, otherwise create a local one
 		const localRef = useRef<HTMLDivElement>(null);
@@ -1138,8 +1183,6 @@ export const TerminalOutput = memo(
 
 		// New message indicator state
 		const [isAtBottom, setIsAtBottom] = useState(true);
-		const [hasNewMessages, setHasNewMessages] = useState(false);
-		const [newMessageCount, setNewMessageCount] = useState(0);
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
@@ -1400,8 +1443,6 @@ export const TerminalOutput = memo(
 
 			// Clear new message indicator when user scrolls to bottom
 			if (atBottom) {
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				// Resume auto-scroll when user scrolls back to bottom
 				setAutoScrollPaused(false);
 				// Save read state for current tab
@@ -1445,9 +1486,6 @@ export const TerminalOutput = memo(
 		// Restore read state when switching tabs
 		useEffect(() => {
 			if (!activeTabId) {
-				// Terminal mode - just reset
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				setIsAtBottom(true);
 				lastLogCountRef.current = filteredLogs.length;
 				return;
@@ -1461,19 +1499,13 @@ export const TerminalOutput = memo(
 				// Tab was visited before - check for new messages since last read
 				const unreadCount = currentCount - savedReadCount;
 				if (unreadCount > 0) {
-					setHasNewMessages(true);
-					setNewMessageCount(unreadCount);
 					setIsAtBottom(false);
 				} else {
-					setHasNewMessages(false);
-					setNewMessageCount(0);
 					setIsAtBottom(true);
 				}
 			} else {
 				// First visit to this tab - mark all as read
 				tabReadStateRef.current.set(activeTabId, currentCount);
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				setIsAtBottom(true);
 			}
 
@@ -1497,10 +1529,7 @@ export const TerminalOutput = memo(
 				}
 
 				if (!actuallyAtBottom) {
-					const newCount = currentCount - lastLogCountRef.current;
-					setHasNewMessages(true);
-					setNewMessageCount((prev) => prev + newCount);
-					// Also update isAtBottom state to match reality
+					// Update isAtBottom state to match reality
 					setIsAtBottom(false);
 				} else {
 					// At bottom, update read state
@@ -1632,8 +1661,6 @@ export const TerminalOutput = memo(
 			() => generateTerminalProseStyles(theme, '.terminal-output'),
 			[theme]
 		);
-
-		const isAutoScrollActive = autoScrollAiMode && !autoScrollPaused;
 
 		return (
 			<div
@@ -1781,6 +1808,12 @@ export const TerminalOutput = memo(
 							onFileClick={onFileClick}
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
+							bionifyReadingMode={effectiveBionifyReadingMode}
+							bionifyIntensity={globalBionifyIntensity}
+							bionifyAlgorithm={globalBionifyAlgorithm}
+							onToggleBionifyReadingMode={() =>
+								setBionifyOverride((current) => !(current ?? globalBionifyReadingMode))
+							}
 							userMessageAlignment={userMessageAlignment}
 						/>
 					))}
@@ -1830,65 +1863,7 @@ export const TerminalOutput = memo(
 					<div ref={logsEndRef} />
 				</div>
 
-				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
-				{/* Visible when: has content AND (not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin)) */}
-				{session.inputMode === 'ai' &&
-					setAutoScrollAiMode &&
-					filteredLogs.length > 0 &&
-					(!isAtBottom || isAutoScrollActive) && (
-						<button
-							onClick={() => {
-								if (isAutoScrollActive && isAtBottom) {
-									// Currently pinned at bottom — unpin
-									setAutoScrollAiMode(false);
-								} else {
-									// Not pinned — jump to bottom and pin
-									setAutoScrollPaused(false);
-									setAutoScrollAiMode(true);
-									setHasNewMessages(false);
-									setNewMessageCount(0);
-									if (scrollContainerRef.current) {
-										scrollContainerRef.current.scrollTo({
-											top: scrollContainerRef.current.scrollHeight,
-											behavior: 'smooth',
-										});
-									}
-								}
-							}}
-							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
-							style={{
-								backgroundColor: isAutoScrollActive
-									? theme.colors.accent
-									: hasNewMessages
-										? theme.colors.accent
-										: theme.colors.bgSidebar,
-								color: isAutoScrollActive
-									? theme.colors.accentForeground
-									: hasNewMessages
-										? theme.colors.accentForeground
-										: theme.colors.textDim,
-								border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
-								animation:
-									hasNewMessages && !isAutoScrollActive
-										? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-										: undefined,
-							}}
-							title={
-								isAutoScrollActive
-									? 'Auto-scroll ON (click to unpin)'
-									: hasNewMessages
-										? 'New messages (click to pin to bottom)'
-										: 'Scroll to bottom (click to pin)'
-							}
-						>
-							<ArrowDown className="w-4 h-4" />
-							{newMessageCount > 0 && !isAutoScrollActive && (
-								<span className="text-xs font-bold">
-									{newMessageCount > 99 ? '99+' : newMessageCount}
-								</span>
-							)}
-						</button>
-					)}
+				{/* Auto-scroll toggle removed — was too noisy */}
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (

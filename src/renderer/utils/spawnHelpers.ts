@@ -1,3 +1,5 @@
+import { isWindowsPlatform } from './platformUtils';
+
 /**
  * Compute stdin transport flags for spawning agents on Windows.
  *
@@ -12,7 +14,7 @@ export function getStdinFlags(opts: { isSshSession: boolean; supportsStreamJsonI
 	sendPromptViaStdin: boolean;
 	sendPromptViaStdinRaw: boolean;
 } {
-	const isWindows = navigator.platform.toLowerCase().includes('win');
+	const isWindows = isWindowsPlatform();
 	const useStdin = isWindows && !opts.isSshSession;
 
 	return {

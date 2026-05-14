@@ -11,3 +11,8 @@ export {
 	type WindowManagerDependencies,
 } from './window-manager';
 export { createQuitHandler, type QuitHandler, type QuitHandlerDependencies } from './quit-handler';
+export {
+	createSettingsWatcher,
+	type SettingsWatcher,
+	type SettingsWatcherDependencies,
+} from './settings-watcher';

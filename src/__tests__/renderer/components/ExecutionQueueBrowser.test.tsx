@@ -1849,5 +1849,39 @@ describe('ExecutionQueueBrowser', () => {
 			// Verify item has grab cursor before interaction
 			expect(itemRow).toHaveStyle({ cursor: 'grab' });
 		});
+
+		it('should use item rows as drop targets during drag', () => {
+			const session = createSession({
+				id: 'active-session',
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'First item' }),
+					createQueuedItem({ id: 'item-2', text: 'Second item' }),
+				],
+			});
+			const { container } = render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={mockOnReorderItems}
+				/>
+			);
+
+			// Item rows should exist for both items
+			const itemRows = container.querySelectorAll('.group.select-none');
+			expect(itemRows.length).toBe(2);
+
+			// Both rows should have grab cursor (indicating they're draggable)
+			expect(itemRows[0]).toHaveStyle({ cursor: 'grab' });
+			expect(itemRows[1]).toHaveStyle({ cursor: 'grab' });
+
+			// The outer wrapper divs (with onMouseMove for drop targeting) should exist
+			const wrappers = container.querySelectorAll('.relative.my-1');
+			expect(wrappers.length).toBe(2);
+		});
 	});
 });

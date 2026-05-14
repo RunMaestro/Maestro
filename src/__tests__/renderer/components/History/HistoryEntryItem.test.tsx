@@ -250,6 +250,25 @@ describe('HistoryEntryItem', () => {
 		expect(screen.getByText('ABC12345')).toBeInTheDocument();
 	});
 
+	it('session name pill is shrinkable to avoid date collision', () => {
+		const entry = createMockEntry({
+			agentSessionId: 'abc12345-def6-7890',
+			sessionName: 'A Very Long Session Name That Should Truncate',
+		});
+		render(
+			<HistoryEntryItem
+				entry={entry}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		const sessionButton = screen.getByTitle('A Very Long Session Name That Should Truncate');
+		expect(sessionButton).toHaveClass('flex-shrink');
+		expect(sessionButton).not.toHaveClass('flex-shrink-0');
+	});
+
 	it('shows session name when both sessionName and agentSessionId are present', () => {
 		const entry = createMockEntry({
 			agentSessionId: 'abc12345-def6-7890',

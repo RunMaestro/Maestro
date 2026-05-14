@@ -16,6 +16,7 @@ import {
 	LOG_LEVEL_PRIORITY,
 	DEFAULT_MAX_LOGS,
 } from '../../shared/logger-types';
+import { isWindows, isMacOS } from '../../shared/platformDetection';
 
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
@@ -26,12 +27,11 @@ export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
  * On macOS/Linux: ~/Library/Application Support/Maestro/logs/maestro-debug.log (or ~/.config/Maestro/logs)
  */
 function getLogFilePath(): string {
-	const isWindows = process.platform === 'win32';
 	let appDataDir: string;
 
-	if (isWindows) {
+	if (isWindows()) {
 		appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-	} else if (process.platform === 'darwin') {
+	} else if (isMacOS()) {
 		appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
 	} else {
 		appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
@@ -56,7 +56,7 @@ class Logger extends EventEmitter {
 
 		// Enable file logging on Windows by default for debugging
 		// Users can also enable it on other platforms via enableFileLogging()
-		if (process.platform === 'win32') {
+		if (isWindows()) {
 			this.enableFileLogging();
 		}
 	}

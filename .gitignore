@@ -3,9 +3,11 @@ TEMP-REFACTORING-PLAN.md
 TEMP-REFACTORING-PLAN-2.md
 Auto\ Run\ Docs/
 Work\ Trees/
+.worktrees/
 community-data/
 .mcp.json
 specs/
+.maestro/
 
 # Tests
 coverage/
@@ -25,6 +27,7 @@ src/generated/
 *.log
 tmp/
 scratch/
+dogfood-output/
 
 # Environment
 .env
@@ -55,3 +58,6 @@ yarn-error.log*
 .vscode/
 .VSCodeCounter
 .qodo
+
+# Claude Code local settings
+.claude/settings.local.json

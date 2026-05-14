@@ -76,17 +76,14 @@ vi.mock('../../../renderer/components/AutoRunSetupModal', () => ({
 	AutoRunSetupModal: () => null,
 }));
 vi.mock('../../../renderer/components/LightboxModal', () => ({ LightboxModal: () => null }));
-vi.mock('../../../renderer/components/NewGroupChatModal', () => ({
-	NewGroupChatModal: () => null,
+vi.mock('../../../renderer/components/GroupChatModal', () => ({
+	GroupChatModal: () => null,
 }));
 vi.mock('../../../renderer/components/DeleteGroupChatModal', () => ({
 	DeleteGroupChatModal: () => null,
 }));
 vi.mock('../../../renderer/components/RenameGroupChatModal', () => ({
 	RenameGroupChatModal: () => null,
-}));
-vi.mock('../../../renderer/components/EditGroupChatModal', () => ({
-	EditGroupChatModal: () => null,
 }));
 vi.mock('../../../renderer/components/GroupChatInfoOverlay', () => ({
 	GroupChatInfoOverlay: () => null,

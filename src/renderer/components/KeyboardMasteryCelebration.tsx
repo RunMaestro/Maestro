@@ -14,6 +14,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
+import { isMacOSPlatform } from '../utils/platformUtils';
 
 interface KeyboardMasteryCelebrationProps {
 	theme: Theme;
@@ -83,7 +84,7 @@ export function KeyboardMasteryCelebration({
 	const isMaestro = level === 4;
 
 	// Get help shortcut for display
-	const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+	const isMac = isMacOSPlatform();
 	const helpShortcut = useMemo(() => {
 		const activeShortcuts = shortcuts || DEFAULT_SHORTCUTS;
 		const helpKeys = activeShortcuts.help?.keys || ['Meta', '/'];

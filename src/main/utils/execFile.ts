@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
+import { isWindows } from '../../shared/platformDetection';
 
 const execFileAsync = promisify(execFile);
 
@@ -114,8 +115,7 @@ export async function execFileNoThrow(
 	try {
 		// On Windows, some commands need shell execution
 		// This is safe because we're executing a specific file path, not user input
-		const isWindows = process.platform === 'win32';
-		const useShell = isWindows && needsWindowsShell(command);
+		const useShell = isWindows() && needsWindowsShell(command);
 
 		const { stdout, stderr } = await execFileAsync(command, args, {
 			cwd,
@@ -164,8 +164,7 @@ async function execFileWithInput(
 	timeout?: number
 ): Promise<ExecResult> {
 	return new Promise((resolve) => {
-		const isWindows = process.platform === 'win32';
-		const useShell = isWindows && needsWindowsShell(command);
+		const useShell = isWindows() && needsWindowsShell(command);
 
 		const child = spawn(command, args, {
 			cwd,

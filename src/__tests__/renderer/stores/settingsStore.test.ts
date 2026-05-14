@@ -14,6 +14,7 @@ import {
 	DEFAULT_AI_COMMANDS,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
+import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
@@ -47,6 +48,7 @@ function resetStore() {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		showHiddenFiles: true,
+		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -118,7 +120,7 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
-		it('has correct default values for all 65 fields', () => {
+		it('has correct default values for all 66 fields', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -145,6 +147,7 @@ describe('settingsStore', () => {
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.showHiddenFiles).toBe(true);
+			expect(state.fileExplorerIconTheme).toBe('default');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
@@ -344,6 +347,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setShowHiddenFiles(false);
 				expect(useSettingsStore.getState().showHiddenFiles).toBe(false);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('showHiddenFiles', false);
+			});
+
+			it('setFileExplorerIconTheme updates state and persists', () => {
+				useSettingsStore.getState().setFileExplorerIconTheme('rich');
+				expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fileExplorerIconTheme', 'rich');
 			});
 		});
 
@@ -1339,6 +1348,27 @@ describe('settingsStore', () => {
 			expect(state.enterToSendAI).toBe(true);
 		});
 
+		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'rich' satisfies FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
+		});
+
+		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'neon' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
+		});
+
 		it('uses defaults when settings are empty/undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 
@@ -1636,7 +1666,138 @@ describe('settingsStore', () => {
 	});
 
 	// ========================================================================
-	// 13. Non-React Access
+	// 13. setPersistentWebLink race-condition and rollback tests
+	// ========================================================================
+
+	describe('setPersistentWebLink', () => {
+		beforeEach(() => {
+			useSettingsStore.setState({ persistentWebLink: false });
+		});
+
+		it('should optimistically set persistentWebLink to true and call persistCurrentToken', async () => {
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(true);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			expect(window.maestro.live.persistCurrentToken).toHaveBeenCalledOnce();
+		});
+
+		it('should rollback to false on soft IPC failure (result.success === false)', async () => {
+			vi.mocked(window.maestro.live.persistCurrentToken).mockResolvedValueOnce({
+				success: false,
+				message: 'Web server is not running.',
+			});
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(true);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+		});
+
+		it('should rollback to false on hard IPC failure (thrown exception)', async () => {
+			vi.mocked(window.maestro.live.persistCurrentToken).mockRejectedValueOnce(
+				new Error('IPC timeout')
+			);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(true);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+		});
+
+		it('should call clearPersistentToken when disabling', async () => {
+			useSettingsStore.setState({ persistentWebLink: true });
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(false);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			expect(window.maestro.live.clearPersistentToken).toHaveBeenCalledOnce();
+		});
+
+		it('should rollback to true on clearPersistentToken hard failure (thrown exception)', async () => {
+			useSettingsStore.setState({ persistentWebLink: true });
+			vi.mocked(window.maestro.live.clearPersistentToken).mockRejectedValueOnce(
+				new Error('IPC timeout')
+			);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(false);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+		});
+
+		it('should rollback to true on clearPersistentToken soft failure (result.success === false)', async () => {
+			useSettingsStore.setState({ persistentWebLink: true });
+			vi.mocked(window.maestro.live.clearPersistentToken).mockResolvedValueOnce({
+				success: false,
+				message: 'Settings write failed.',
+			} as any);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+			await setPersistentWebLink(false);
+
+			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+		});
+
+		it('should handle rapid double-toggle (enable then disable) correctly', async () => {
+			// Simulate enable call that resolves slowly
+			let resolveEnable: (value: any) => void;
+			const slowEnable = new Promise((resolve) => {
+				resolveEnable = resolve;
+			});
+			vi.mocked(window.maestro.live.persistCurrentToken).mockReturnValueOnce(slowEnable as any);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+
+			// Start enable (will be in-flight)
+			const enablePromise = setPersistentWebLink(true);
+			// Immediately disable (supersedes the enable)
+			const disablePromise = setPersistentWebLink(false);
+
+			// Resolve the slow enable after disable was called
+			resolveEnable!({ success: true });
+
+			await enablePromise;
+			await disablePromise;
+
+			// Final state should reflect the last user intent: disabled
+			expect(useSettingsStore.getState().persistentWebLink).toBe(false);
+			expect(window.maestro.live.clearPersistentToken).toHaveBeenCalled();
+		});
+
+		it('should handle rapid reverse toggle (disable then enable) correctly', async () => {
+			// Start with enabled state
+			useSettingsStore.setState({ persistentWebLink: true });
+
+			// Simulate disable call that resolves slowly
+			let resolveClear: (value: any) => void;
+			const slowClear = new Promise((resolve) => {
+				resolveClear = resolve;
+			});
+			vi.mocked(window.maestro.live.clearPersistentToken).mockReturnValueOnce(slowClear as any);
+
+			const { setPersistentWebLink } = useSettingsStore.getState();
+
+			// Start disable (will be in-flight)
+			const disablePromise = setPersistentWebLink(false);
+			// Immediately re-enable (supersedes the disable)
+			const enablePromise = setPersistentWebLink(true);
+
+			// Resolve the slow clear after enable was called
+			resolveClear!({ success: true });
+
+			await disablePromise;
+			await enablePromise;
+
+			// Final state should reflect the last user intent: enabled
+			expect(useSettingsStore.getState().persistentWebLink).toBe(true);
+			expect(window.maestro.live.persistCurrentToken).toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
+	// 14. Non-React Access
 	// ========================================================================
 
 	describe('non-React access', () => {

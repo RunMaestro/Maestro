@@ -621,6 +621,105 @@ function formatDurationSeconds(seconds: number): string {
 	return `${(seconds / 3600).toFixed(1)}h`;
 }
 
+// Settings formatting
+export interface SettingDisplay {
+	key: string;
+	value: unknown;
+	type: string;
+	category: string;
+	description?: string;
+	defaultValue?: unknown;
+	isDefault?: boolean;
+	sensitive?: boolean;
+}
+
+function formatSettingValue(value: unknown, sensitive?: boolean): string {
+	if (sensitive) return c('red', '***');
+	if (value === null) return dim('null');
+	if (value === undefined) return dim('undefined');
+	if (typeof value === 'boolean') return c(value ? 'green' : 'red', String(value));
+	if (typeof value === 'number') return c('yellow', String(value));
+	if (typeof value === 'string') {
+		if (value === '') return dim('""');
+		return c('white', value.length > 60 ? truncate(value, 60) : value);
+	}
+	if (Array.isArray(value)) {
+		if (value.length === 0) return dim('[]');
+		const compact = JSON.stringify(value);
+		return dim(compact.length > 60 ? truncate(compact, 60) : compact);
+	}
+	if (typeof value === 'object') {
+		const compact = JSON.stringify(value);
+		return dim(compact.length > 60 ? truncate(compact, 60) : compact);
+	}
+	return String(value);
+}
+
+export function formatSettingsList(
+	settings: SettingDisplay[],
+	options?: { verbose?: boolean; keysOnly?: boolean; showDefaults?: boolean }
+): string {
+	if (settings.length === 0) {
+		return dim('No settings found.');
+	}
+
+	const verbose = options?.verbose ?? false;
+	const keysOnly = options?.keysOnly ?? false;
+	const showDefaults = options?.showDefaults ?? false;
+
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'SETTINGS')) + dim(` (${settings.length})`));
+	lines.push('');
+
+	let currentCategory = '';
+	for (const setting of settings) {
+		// Category header
+		if (setting.category !== currentCategory) {
+			if (currentCategory !== '') lines.push('');
+			lines.push(`  ${bold(c('blue', setting.category))}`);
+			currentCategory = setting.category;
+		}
+
+		if (keysOnly) {
+			lines.push(`    ${c('white', setting.key)}`);
+			continue;
+		}
+
+		const valueStr = formatSettingValue(setting.value, setting.sensitive);
+		const defaultMarker = setting.isDefault ? dim(' (default)') : '';
+		lines.push(`    ${c('white', setting.key)} = ${valueStr}${defaultMarker}`);
+
+		if (showDefaults && !setting.isDefault) {
+			const defStr = formatSettingValue(setting.defaultValue);
+			lines.push(`      ${dim('default:')} ${defStr}`);
+		}
+
+		if (verbose && setting.description) {
+			lines.push(`      ${dim(setting.description)}`);
+		}
+	}
+
+	return lines.join('\n');
+}
+
+export function formatSettingDetail(setting: SettingDisplay): string {
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'SETTING')));
+	lines.push('');
+	lines.push(`  ${c('white', 'Key:')}       ${setting.key}`);
+	lines.push(
+		`  ${c('white', 'Value:')}     ${formatSettingValue(setting.value, setting.sensitive)}`
+	);
+	lines.push(`  ${c('white', 'Type:')}      ${dim(setting.type)}`);
+	lines.push(`  ${c('white', 'Default:')}   ${formatSettingValue(setting.defaultValue)}`);
+	lines.push(`  ${c('white', 'Category:')}  ${setting.category}`);
+	if (setting.description) {
+		lines.push('');
+		lines.push(`  ${dim(setting.description)}`);
+	}
+	return lines.join('\n');
+}
+
 // Error formatting
 export function formatError(message: string): string {
 	return `${c('red', '✗')} ${c('red', 'Error:')} ${message}`;

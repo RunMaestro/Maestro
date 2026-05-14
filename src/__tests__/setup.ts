@@ -82,7 +82,7 @@ vi.mock('lucide-react', () => {
 });
 
 // Global mock for shortcutFormatter to ensure platform-independent test output.
-// Without this, shortcutFormatter detects the platform via navigator.userAgent, producing
+// Without this, shortcutFormatter detects the platform via window.maestro.platform, producing
 // different output on macOS vs Linux CI. This mock always uses the non-Mac format (Ctrl+, Shift+, etc.)
 // so tests are deterministic regardless of where they run. Individual test files can override
 // this with their own vi.mock() if they need custom behavior.
@@ -207,6 +207,7 @@ const mockMaestro = {
 		get: vi.fn().mockResolvedValue(undefined),
 		set: vi.fn().mockResolvedValue(undefined),
 		getAll: vi.fn().mockResolvedValue({}),
+		onExternalChange: vi.fn().mockReturnValue(() => {}),
 	},
 	sessions: {
 		get: vi.fn().mockResolvedValue([]),
@@ -403,6 +404,18 @@ const mockMaestro = {
 		getReadme: vi.fn().mockResolvedValue({ success: true, content: null }),
 		importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),
 		onManifestChanged: vi.fn().mockReturnValue(() => {}),
+	},
+	live: {
+		toggle: vi.fn().mockResolvedValue({ live: false, url: null }),
+		getStatus: vi.fn().mockResolvedValue({ live: false, url: null }),
+		getDashboardUrl: vi.fn().mockResolvedValue(null),
+		getLiveSessions: vi.fn().mockResolvedValue([]),
+		broadcastActiveSession: vi.fn().mockResolvedValue(undefined),
+		startServer: vi.fn().mockResolvedValue({ success: true, url: 'http://localhost:3000' }),
+		stopServer: vi.fn().mockResolvedValue({ success: true }),
+		persistCurrentToken: vi.fn().mockResolvedValue({ success: true }),
+		clearPersistentToken: vi.fn().mockResolvedValue({ success: true }),
+		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
 		broadcastAutoRunState: vi.fn(),

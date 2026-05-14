@@ -1,5 +1,5 @@
 ---
-title: Remote Access
+title: Remote Control
 description: Control Maestro from your phone via the built-in web server and Cloudflare tunnels.
 icon: wifi
 ---
@@ -45,13 +45,13 @@ The mobile web interface provides a comprehensive remote control experience:
 The web interface uses your local IP address (e.g., `192.168.x.x`) for LAN accessibility. Both devices must be on the same network.
 </Note>
 
-## Remote Access (Outside Your Network)
+## Remote Control (Outside Your Network)
 
 To access Maestro from outside your local network (e.g., on mobile data or from another location):
 
 1. Install cloudflared: `brew install cloudflared` (macOS) or [download for other platforms](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
 2. Enable the web interface (**OFFLINE** → **LIVE**)
-3. Toggle **Remote Access** in the Live overlay panel
+3. Toggle **Remote Control** in the Live overlay panel
 4. A secure Cloudflare tunnel URL (e.g., `https://abc123.trycloudflare.com`) will be generated within ~30 seconds
 5. Use the **Local/Remote** pill selector to switch between QR codes
 6. The tunnel stays active as long as Maestro is running — no time limits, no Cloudflare account required

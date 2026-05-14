@@ -31,6 +31,9 @@ import type { Theme, ShellInfo } from '../../../../../renderer/types';
 // Mock platformUtils
 vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	getOpenInLabel: vi.fn(() => 'Open in Finder'),
+	isWindowsPlatform: vi.fn(() => false),
+	isMacOSPlatform: vi.fn(() => false),
+	isLinuxPlatform: vi.fn(() => false),
 }));
 
 // Shared mock fns so tests can assert on useSettings setters
@@ -1100,6 +1103,35 @@ describe('GeneralTab', () => {
 
 			fireEvent.click(toggleSwitch!);
 			expect(mockSetPreventSleepEnabled).toHaveBeenCalledWith(false);
+		});
+
+		it('should show Linux-specific note when on Linux platform', async () => {
+			const { isLinuxPlatform } = await import('../../../../../renderer/utils/platformUtils');
+			vi.mocked(isLinuxPlatform).mockReturnValue(true);
+
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(
+				screen.getByText(/limited support on some Linux desktop environments/)
+			).toBeInTheDocument();
+
+			vi.mocked(isLinuxPlatform).mockReturnValue(false);
+		});
+
+		it('should not show Linux-specific note on non-Linux platforms', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(
+				screen.queryByText(/limited support on some Linux desktop environments/)
+			).not.toBeInTheDocument();
 		});
 	});
 

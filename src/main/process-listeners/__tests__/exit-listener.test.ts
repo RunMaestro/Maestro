@@ -63,6 +63,7 @@ describe('Exit Listener', () => {
 				spawnModeratorSynthesis: vi.fn().mockResolvedValue(undefined),
 				getGroupChatReadOnlyState: vi.fn().mockReturnValue(false),
 				respawnParticipantWithRecovery: vi.fn().mockResolvedValue(undefined),
+				clearActiveParticipantTaskSession: vi.fn(),
 			},
 			groupChatStorage: {
 				loadGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),

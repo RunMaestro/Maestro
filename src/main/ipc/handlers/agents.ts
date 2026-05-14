@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { AgentDetector, AGENT_DEFINITIONS, getAgentCapabilities } from '../../agents';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
+import { getWhichCommand } from '../../../shared/platformDetection';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -370,7 +371,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			// If a specific agent was requested, return detailed debug info
 			if (agentId) {
 				const agent = agents.find((a) => a.id === agentId);
-				const command = process.platform === 'win32' ? 'where' : 'which';
+				const command = getWhichCommand();
 
 				// Try to find the binary manually to get error info
 				const debugInfo = {

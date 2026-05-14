@@ -49,6 +49,19 @@ function readStoreFile<T>(filename: string): T | undefined {
 	}
 }
 
+/**
+ * Write a JSON value back to an Electron Store JSON file.
+ * Creates the file (and parent directory) if it doesn't exist.
+ */
+function writeStoreFile<T>(filename: string, data: T): void {
+	const dirPath = getConfigDir();
+	if (!fs.existsSync(dirPath)) {
+		fs.mkdirSync(dirPath, { recursive: true });
+	}
+	const filePath = path.join(dirPath, filename);
+	fs.writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
+}
+
 // Store file structures (as used by Electron Store)
 interface SessionsStore {
 	sessions: SessionInfo[];
@@ -219,6 +232,90 @@ export function readSettings(): SettingsStore {
 }
 
 /**
+ * Read a single setting value, supporting dot-notation for nested keys.
+ * E.g., readSettingValue('encoreFeatures.directorNotes') traverses into the object.
+ * Returns undefined if the key doesn't exist.
+ */
+export function readSettingValue(key: string): unknown {
+	const settings = readSettings();
+	return getNestedValue(settings, key);
+}
+
+/**
+ * Write a single setting value, supporting dot-notation for nested keys.
+ * Returns true on success.
+ */
+export function writeSettingValue(key: string, value: unknown): boolean {
+	const settings = readSettings();
+	setNestedValue(settings, key, value);
+	writeStoreFile('maestro-settings.json', settings);
+	return true;
+}
+
+/**
+ * Delete a setting key (reset to default by removing from store).
+ * Supports dot-notation for nested keys.
+ * Returns true if the key existed and was removed.
+ */
+export function deleteSettingValue(key: string): boolean {
+	const settings = readSettings();
+	const removed = deleteNestedValue(settings, key);
+	if (removed) {
+		writeStoreFile('maestro-settings.json', settings);
+	}
+	return removed;
+}
+
+// --- Nested key helpers ---
+
+function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+	const parts = path.split('.');
+	let current: unknown = obj;
+	for (const part of parts) {
+		if (current === null || current === undefined || typeof current !== 'object') {
+			return undefined;
+		}
+		current = (current as Record<string, unknown>)[part];
+	}
+	return current;
+}
+
+function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
+	const parts = path.split('.');
+	let current: Record<string, unknown> = obj;
+	for (let i = 0; i < parts.length - 1; i++) {
+		const part = parts[i];
+		if (
+			current[part] === undefined ||
+			current[part] === null ||
+			typeof current[part] !== 'object'
+		) {
+			current[part] = {};
+		}
+		current = current[part] as Record<string, unknown>;
+	}
+	current[parts[parts.length - 1]] = value;
+}
+
+function deleteNestedValue(obj: Record<string, unknown>, path: string): boolean {
+	const parts = path.split('.');
+	let current: Record<string, unknown> = obj;
+	for (let i = 0; i < parts.length - 1; i++) {
+		const part = parts[i];
+		if (current[part] === undefined || typeof current[part] !== 'object') {
+			return false;
+		}
+		current = current[part] as Record<string, unknown>;
+	}
+	const lastKey = parts[parts.length - 1];
+	if (lastKey in current) {
+		delete current[lastKey];
+		return true;
+	}
+	return false;
+}
+
+/**
  * Read agent configurations from storage
  * This includes custom paths set by the user in the desktop app
  */
@@ -238,6 +335,54 @@ export function getAgentCustomPath(agentId: string): string | undefined {
 		return agentConfig.customPath;
 	}
 	return undefined;
+}
+
+/**
+ * Read the full config for a specific agent.
+ * Returns an empty object if no config exists for this agent.
+ */
+export function readAgentConfig(agentId: string): Record<string, unknown> {
+	const configs = readAgentConfigs();
+	return configs[agentId] || {};
+}
+
+/**
+ * Read a single agent config value.
+ */
+export function readAgentConfigValue(agentId: string, key: string): unknown {
+	const config = readAgentConfig(agentId);
+	return config[key];
+}
+
+/**
+ * Write a single agent config value.
+ */
+export function writeAgentConfigValue(agentId: string, key: string, value: unknown): boolean {
+	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json') || { configs: {} };
+	if (!data.configs[agentId]) {
+		data.configs[agentId] = {};
+	}
+	data.configs[agentId][key] = value;
+	writeStoreFile('maestro-agent-configs.json', data);
+	return true;
+}
+
+/**
+ * Delete a single agent config key.
+ * Returns true if the key existed and was removed.
+ */
+export function deleteAgentConfigValue(agentId: string, key: string): boolean {
+	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
+	if (!data?.configs?.[agentId] || !(key in data.configs[agentId])) {
+		return false;
+	}
+	delete data.configs[agentId][key];
+	// Clean up empty agent config objects
+	if (Object.keys(data.configs[agentId]).length === 0) {
+		delete data.configs[agentId];
+	}
+	writeStoreFile('maestro-agent-configs.json', data);
+	return true;
 }
 
 /**

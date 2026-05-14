@@ -544,4 +544,45 @@ describe('ContextWarningSash', () => {
 			expect(container.firstChild).toBeNull();
 		});
 	});
+
+	describe('light mode contrast', () => {
+		const lightTheme: Theme = {
+			...theme,
+			id: 'light-test',
+			name: 'Light Test',
+			mode: 'light',
+		};
+
+		it('should use dark text colors in light mode for yellow warning', () => {
+			render(
+				<ContextWarningSash
+					theme={lightTheme}
+					contextUsage={65}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+			const warningText = screen.getByText(/reaching/);
+			// yellow-800 (#854d0e) for light mode instead of yellow-300
+			expect(warningText).toHaveStyle({ color: '#854d0e' });
+		});
+
+		it('should use dark text colors in light mode for red warning', () => {
+			render(
+				<ContextWarningSash
+					theme={lightTheme}
+					contextUsage={85}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+			const warningText = screen.getByText(/consider compacting/);
+			// red-800 (#991b1b) for light mode instead of red-300
+			expect(warningText).toHaveStyle({ color: '#991b1b' });
+		});
+	});
 });

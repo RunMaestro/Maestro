@@ -1,10 +1,10 @@
 ---
 title: Command Line Interface
-description: Send messages to agents, list sessions, run playbooks, and manage Maestro from the command line.
+description: Send messages to agents, list sessions, run playbooks, and manage Maestro settings from the command line.
 icon: square-terminal
 ---
 
-Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, and managing resources from the command line, cron jobs, or CI/CD pipelines. The CLI requires Node.js (which you already have if you're using Claude Code).
+Maestro includes a CLI tool (`maestro-cli`) for sending messages to agents, browsing sessions, running playbooks, managing settings, and controlling resources from the command line, cron jobs, or CI/CD pipelines. The CLI requires Node.js (which you already have if you're using Claude Code).
 
 ## Installation
 
@@ -184,6 +184,108 @@ maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
 ```
 
+### Managing Settings
+
+View and modify any Maestro configuration setting directly from the CLI. Changes take effect immediately in the running desktop app — no restart required.
+
+```bash
+# List all settings with current values
+maestro-cli settings list
+
+# List with descriptions (great for understanding what each setting does)
+maestro-cli settings list -v
+
+# Filter by category
+maestro-cli settings list -c appearance
+maestro-cli settings list -c shell -v
+
+# Show only setting keys
+maestro-cli settings list --keys-only
+
+# Get a specific setting
+maestro-cli settings get fontSize
+maestro-cli settings get activeThemeId
+
+# Get nested settings with dot-notation
+maestro-cli settings get encoreFeatures.directorNotes
+
+# Get with full details (type, default, description)
+maestro-cli settings get fontSize -v
+
+# Set a setting (type is auto-detected)
+maestro-cli settings set fontSize 16
+maestro-cli settings set audioFeedbackEnabled true
+maestro-cli settings set activeThemeId monokai
+maestro-cli settings set defaultShowThinking on
+
+# Set complex values with explicit JSON
+maestro-cli settings set localIgnorePatterns --raw '["node_modules",".git","dist"]'
+
+# Reset a setting to its default value
+maestro-cli settings reset fontSize
+```
+
+| Flag                    | Description                                             | Commands      |
+| ----------------------- | ------------------------------------------------------- | ------------- |
+| `-v, --verbose`         | Show descriptions for each setting                      | `list`, `get` |
+| `--keys-only`           | Show only setting key names                             | `list`        |
+| `--defaults`            | Show default values alongside current values            | `list`        |
+| `-c, --category <name>` | Filter by category (appearance, shell, editor, etc.)    | `list`        |
+| `--show-secrets`        | Show sensitive values like API keys (masked by default) | `list`        |
+| `--raw <json>`          | Pass an explicit JSON value                             | `set`         |
+| `--json`                | Machine-readable JSON output                            | all           |
+
+**Categories:** appearance, editor, shell, notifications, updates, logging, web, ssh, file-indexing, context, document-graph, stats, accessibility, integrations, onboarding, advanced, internal.
+
+<Tip>
+Use `maestro-cli settings list -v` from inside an AI agent conversation to give the agent full context about every available setting and what it controls.
+</Tip>
+
+### Managing Agent Configuration
+
+Each agent (Claude Code, Codex, OpenCode, Factory Droid) can have its own configuration for custom paths, CLI arguments, environment variables, and model overrides.
+
+```bash
+# List all agent configurations
+maestro-cli settings agent list
+
+# List config for a specific agent
+maestro-cli settings agent list claude-code
+
+# Get a specific agent config value
+maestro-cli settings agent get codex model
+maestro-cli settings agent get claude-code customPath
+
+# Set agent config values
+maestro-cli settings agent set codex contextWindow 128000
+maestro-cli settings agent set claude-code customPath /usr/local/bin/claude
+maestro-cli settings agent set codex customEnvVars --raw '{"DEBUG":"true"}'
+
+# Remove an agent config key
+maestro-cli settings agent reset codex model
+```
+
+| Flag            | Description                           | Commands      |
+| --------------- | ------------------------------------- | ------------- |
+| `-v, --verbose` | Show descriptions for each config key | `list`, `get` |
+| `--raw <json>`  | Pass an explicit JSON value           | `set`         |
+| `--json`        | Machine-readable JSON output          | all           |
+
+**Common agent config keys:**
+
+| Key               | Type   | Description                                      |
+| ----------------- | ------ | ------------------------------------------------ |
+| `customPath`      | string | Custom path to the agent CLI binary              |
+| `customArgs`      | string | Additional CLI arguments                         |
+| `customEnvVars`   | object | Extra environment variables                      |
+| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
+| `contextWindow`   | number | Context window size in tokens                    |
+| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+
+<Info>
+Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately — it's as if you toggled the setting in the Settings modal yourself.
+</Info>
+
 ## Partial IDs
 
 All commands that accept an agent ID or group ID support partial matching. You only need to type enough characters to uniquely identify the resource:
@@ -238,6 +340,21 @@ The `send` command always outputs JSON (no `--json` flag needed).
 # Run a playbook every hour (use --json for log parsing)
 0 * * * * /usr/local/bin/maestro-cli playbook <playbook-id> --json >> /var/log/maestro.jsonl 2>&1
 ```
+
+## Agent Integration
+
+Maestro agents are automatically informed about `maestro-cli` through the system prompt. Each agent receives the platform-appropriate CLI invocation command via the `{{MAESTRO_CLI_PATH}}` template variable, which resolves to the full `node "/path/to/maestro-cli.js"` command for the current OS.
+
+This means agents can:
+
+- **Read settings** to understand the current Maestro configuration
+- **Change settings** on behalf of the user (e.g., "switch to the nord theme", "increase font size")
+- **Manage agent configs** (e.g., "set the Codex context window to 128000")
+- **List resources** like agents, groups, and playbooks
+
+When a user asks an agent to change a Maestro setting, the agent can use the CLI directly rather than instructing the user to navigate the settings modal. Changes take effect instantly.
+
+The system prompt instructs agents to use `settings list -v` to discover available settings with descriptions, giving them full context to reason about configuration changes.
 
 ## Requirements
 

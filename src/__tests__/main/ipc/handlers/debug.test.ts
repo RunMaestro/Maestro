@@ -26,6 +26,9 @@ vi.mock('electron', () => ({
 	dialog: {
 		showSaveDialog: vi.fn(),
 	},
+	app: {
+		getPath: vi.fn().mockReturnValue('/Users/test/Desktop'),
+	},
 	BrowserWindow: vi.fn(),
 }));
 
@@ -33,6 +36,7 @@ vi.mock('electron', () => ({
 vi.mock('path', () => ({
 	default: {
 		dirname: vi.fn(),
+		join: vi.fn((...args: string[]) => args.join('/')),
 	},
 }));
 

@@ -18,6 +18,7 @@ class TunnelManager {
 	private process: ChildProcess | null = null;
 	private url: string | null = null;
 	private error: string | null = null;
+	private stopping = false;
 
 	async start(port: number): Promise<TunnelResult> {
 		// Validate port number
@@ -37,6 +38,7 @@ class TunnelManager {
 		const cloudflaredBinary = getCloudflaredPath() || 'cloudflared';
 
 		return new Promise((resolve) => {
+			this.stopping = false;
 			logger.info(
 				`Starting cloudflared tunnel for port ${port} using ${cloudflaredBinary}`,
 				'TunnelManager'
@@ -92,10 +94,14 @@ class TunnelManager {
 					clearTimeout(timeout);
 					this.error = `cloudflared exited unexpectedly (code ${code})`;
 					resolve({ success: false, error: this.error });
+				} else if (!this.stopping) {
+					this.error = `cloudflared exited unexpectedly (code ${code})`;
+					logger.error(this.error, 'TunnelManager');
 				}
 				// Only clear process reference on exit, not URL
 				// URL is cleared explicitly in stop() to preserve it for display
 				this.process = null;
+				this.stopping = false;
 			});
 		});
 	}
@@ -103,6 +109,7 @@ class TunnelManager {
 	async stop(): Promise<void> {
 		if (this.process) {
 			logger.info('Stopping tunnel', 'TunnelManager');
+			this.stopping = true;
 			const proc = this.process;
 			proc.kill('SIGTERM');
 
@@ -126,6 +133,7 @@ class TunnelManager {
 
 			this.process = null;
 		}
+		this.stopping = false;
 		this.url = null;
 		this.error = null;
 	}

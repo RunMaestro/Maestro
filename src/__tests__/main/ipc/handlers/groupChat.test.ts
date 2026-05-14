@@ -70,6 +70,10 @@ vi.mock('../../../../main/group-chat/group-chat-agent', () => ({
 // Mock group-chat-router
 vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 	routeUserMessage: vi.fn(),
+	clearPendingParticipants: vi.fn(),
+	routeAgentResponse: vi.fn(),
+	markParticipantResponded: vi.fn(),
+	spawnModeratorSynthesis: vi.fn(),
 }));
 
 // Mock agent-detector
@@ -169,6 +173,8 @@ describe('groupChat IPC handlers', () => {
 				'groupChat:startModerator',
 				'groupChat:sendToModerator',
 				'groupChat:stopModerator',
+				'groupChat:stopAll',
+				'groupChat:reportAutoRunComplete',
 				'groupChat:getModeratorSessionId',
 				// Participant handlers
 				'groupChat:addParticipant',
@@ -983,6 +989,107 @@ describe('groupChat IPC handlers', () => {
 
 			await expect(handler!({} as any, 'non-existent')).rejects.toThrow(
 				'Group chat not found: non-existent'
+			);
+		});
+	});
+
+	describe('groupChat:stopAll', () => {
+		it('should kill moderator, clear participant sessions, and emit idle states', async () => {
+			const mockChat: GroupChat = {
+				id: 'gc-stop-all',
+				name: 'Stop All Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'session-stop',
+				participants: [
+					{
+						name: 'Worker 1',
+						agentId: 'claude-code',
+						sessionId: 'p-1',
+						addedAt: Date.now(),
+					},
+					{
+						name: 'Worker 2',
+						agentId: 'claude-code',
+						sessionId: 'p-2',
+						addedAt: Date.now(),
+					},
+				],
+				logPath: '/path/stop',
+				imagesDir: '/images/stop',
+			};
+
+			vi.mocked(groupChatModerator.killModerator).mockResolvedValue(undefined);
+			vi.mocked(groupChatAgent.clearAllParticipantSessions).mockResolvedValue(undefined);
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(mockChat);
+
+			const handler = handlers.get('groupChat:stopAll');
+			await handler!({} as any, 'gc-stop-all');
+
+			expect(groupChatModerator.killModerator).toHaveBeenCalledWith(
+				'gc-stop-all',
+				mockProcessManager
+			);
+			expect(groupChatAgent.clearAllParticipantSessions).toHaveBeenCalledWith(
+				'gc-stop-all',
+				mockProcessManager
+			);
+			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-stop-all');
+		});
+
+		it('should handle null process manager', async () => {
+			const depsNoProcessManager: GroupChatHandlerDependencies = {
+				...mockDeps,
+				getProcessManager: () => null,
+			};
+
+			handlers.clear();
+			registerGroupChatHandlers(depsNoProcessManager);
+
+			vi.mocked(groupChatModerator.killModerator).mockResolvedValue(undefined);
+			vi.mocked(groupChatAgent.clearAllParticipantSessions).mockResolvedValue(undefined);
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(null);
+
+			const handler = handlers.get('groupChat:stopAll');
+			await handler!({} as any, 'gc-stop-null');
+
+			expect(groupChatModerator.killModerator).toHaveBeenCalledWith('gc-stop-null', undefined);
+			expect(groupChatAgent.clearAllParticipantSessions).toHaveBeenCalledWith(
+				'gc-stop-null',
+				undefined
+			);
+		});
+	});
+
+	describe('groupChat:reportAutoRunComplete', () => {
+		it('should route agent response and mark participant as responded', async () => {
+			vi.mocked(groupChatRouter.routeAgentResponse).mockResolvedValue(undefined);
+			vi.mocked(groupChatRouter.markParticipantResponded).mockReturnValue(false);
+
+			const handler = handlers.get('groupChat:reportAutoRunComplete');
+			await handler!({} as any, 'gc-autorun', 'Worker 1', 'Task completed successfully');
+
+			expect(groupChatRouter.routeAgentResponse).toHaveBeenCalledWith(
+				'gc-autorun',
+				'Worker 1',
+				'Task completed successfully',
+				mockProcessManager
+			);
+		});
+
+		it('should trigger synthesis when all participants have responded', async () => {
+			vi.mocked(groupChatRouter.routeAgentResponse).mockResolvedValue(undefined);
+			vi.mocked(groupChatRouter.markParticipantResponded).mockReturnValue(true);
+			vi.mocked(groupChatRouter.spawnModeratorSynthesis).mockResolvedValue(undefined);
+
+			const handler = handlers.get('groupChat:reportAutoRunComplete');
+			await handler!({} as any, 'gc-autorun-done', 'Worker 1', 'All done');
+
+			expect(groupChatRouter.routeAgentResponse).toHaveBeenCalled();
+			expect(groupChatRouter.markParticipantResponded).toHaveBeenCalledWith(
+				'gc-autorun-done',
+				'Worker 1'
 			);
 		});
 	});

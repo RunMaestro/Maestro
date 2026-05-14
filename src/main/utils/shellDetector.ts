@@ -1,4 +1,5 @@
 import { execFileNoThrow } from './execFile';
+import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 
 export interface ShellInfo {
 	id: string;
@@ -12,10 +13,8 @@ export interface ShellInfo {
  * Checks for platform-appropriate shells
  */
 export async function detectShells(): Promise<ShellInfo[]> {
-	const isWindows = process.platform === 'win32';
-
 	// Platform-specific shell definitions
-	const shells = isWindows
+	const shells = isWindows()
 		? [
 				// Windows shells
 				{ id: 'powershell', name: 'PowerShell' },
@@ -48,11 +47,9 @@ export async function detectShells(): Promise<ShellInfo[]> {
  */
 async function detectShell(shellId: string, shellName: string): Promise<ShellInfo> {
 	try {
-		const isWindows = process.platform === 'win32';
-
 		// Map shell IDs to executable names for Windows
 		let executableName = shellId;
-		if (isWindows) {
+		if (isWindows()) {
 			switch (shellId) {
 				case 'powershell':
 					executableName = 'powershell.exe';
@@ -73,7 +70,7 @@ async function detectShell(shellId: string, shellName: string): Promise<ShellInf
 		}
 
 		// Use 'which' on Unix-like systems, 'where' on Windows
-		const command = isWindows ? 'where' : 'which';
+		const command = getWhichCommand();
 		const result = await execFileNoThrow(command, [executableName]);
 
 		if (result.exitCode === 0 && result.stdout.trim()) {
@@ -105,7 +102,7 @@ async function detectShell(shellId: string, shellName: string): Promise<ShellInf
  */
 export function getShellCommand(shellId: string): string {
 	// For Windows, map to appropriate commands
-	if (process.platform === 'win32') {
+	if (isWindows()) {
 		switch (shellId) {
 			case 'powershell':
 				return 'powershell.exe';

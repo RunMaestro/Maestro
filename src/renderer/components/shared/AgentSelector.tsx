@@ -19,6 +19,7 @@
 import React from 'react';
 import { Bot, RefreshCw } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../types';
+import { isBetaAgent } from '../../../shared/agentMetadata';
 
 // ============================================================================
 // Types
@@ -85,7 +86,7 @@ export function AgentCard({
 	isSupported = true,
 	showComingSoon,
 }: AgentCardProps) {
-	const isBetaAgent = agent.id === 'codex' || agent.id === 'opencode';
+	const agentIsBeta = isBetaAgent(agent.id);
 
 	return (
 		<button
@@ -110,7 +111,7 @@ export function AgentCard({
 						<h4 className="font-medium" style={{ color: theme.colors.textMain }}>
 							{agent.name}
 						</h4>
-						{showBetaBadge && isBetaAgent && (
+						{showBetaBadge && agentIsBeta && (
 							<span
 								className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
 								style={{

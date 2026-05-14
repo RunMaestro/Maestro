@@ -119,7 +119,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								e.stopPropagation();
 								onOpenSessionAsTab?.(entry.agentSessionId!);
 							}}
-							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 max-w-[200px] flex-shrink-0 ${entry.sessionName ? '' : 'font-mono uppercase'}`}
+							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{
 								backgroundColor: theme.colors.accent + '20',
 								color: theme.colors.accent,

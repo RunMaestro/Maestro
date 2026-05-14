@@ -15,14 +15,10 @@
  */
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[AgentSessionStorage]';
-
-/**
- * Known agent IDs that have session storage support
- */
-const KNOWN_AGENT_IDS: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
 
 /**
  * Session origin types - indicates how the session was created
@@ -251,7 +247,7 @@ export function getSessionStorage(agentId: ToolType | string): AgentSessionStora
 
 	if (!storage) {
 		// Warn if this is an unrecognized agent ID (not one of our known agents)
-		if (!KNOWN_AGENT_IDS.includes(agentId as ToolType) && agentId !== 'terminal') {
+		if (!isValidAgentId(agentId)) {
 			logger.warn(`Unrecognized agent ID requested for session storage: "${agentId}"`, LOG_CONTEXT);
 		}
 	}

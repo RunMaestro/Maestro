@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { buildPtyTerminalEnv, buildChildProcessEnv } from '../utils/envBuilder';
+import { isWindows } from '../../../shared/platformDetection';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -34,7 +35,6 @@ export class PtySpawner {
 		} = config;
 
 		const isTerminal = toolType === 'terminal';
-		const isWindows = process.platform === 'win32';
 
 		try {
 			let ptyCommand: string;
@@ -45,11 +45,11 @@ export class PtySpawner {
 				if (shell) {
 					ptyCommand = shell;
 				} else {
-					ptyCommand = isWindows ? 'powershell.exe' : 'bash';
+					ptyCommand = isWindows() ? 'powershell.exe' : 'bash';
 				}
 
 				// Use -l (login) AND -i (interactive) flags for fully configured shell
-				ptyArgs = isWindows ? [] : ['-l', '-i'];
+				ptyArgs = isWindows() ? [] : ['-l', '-i'];
 
 				// Append custom shell arguments from user configuration
 				if (shellArgs && shellArgs.trim()) {

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { logger } from './logger';
+import { isLinux } from '../../shared/platformDetection';
 
 /**
  * WSL (Windows Subsystem for Linux) environment detection utilities.
@@ -20,7 +21,7 @@ export function isWsl(): boolean {
 		return wslDetectionCache;
 	}
 
-	if (process.platform !== 'linux') {
+	if (!isLinux()) {
 		wslDetectionCache = false;
 		return false;
 	}

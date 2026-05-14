@@ -132,6 +132,19 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Hello, world!');
 		});
 
+		it('should strip leaked terminal mode sequences in plain text mode', () => {
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: false,
+				isBatchMode: false,
+			});
+
+			handler.handleData(sessionId, '\x1b[?1h\x1b=Hello, remote world!');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Hello, remote world!'
+			);
+		});
+
 		it('should accumulate to jsonBuffer in batch mode', () => {
 			const { handler, bufferManager, sessionId, proc } = createTestContext({
 				isBatchMode: true,
@@ -154,6 +167,23 @@ describe('StdoutHandler', () => {
 			// to the catch block and be emitted via bufferManager
 			handler.handleData(sessionId, 'plain text output\n');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'plain text output');
+		});
+
+		it('should strip terminal mode sequences before parsing stream JSON lines', () => {
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: undefined,
+			});
+
+			handler.handleData(
+				sessionId,
+				'\x1b[?1h\x1b={"type":"result","result":"Recovered remote output"}\n'
+			);
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Recovered remote output'
+			);
 		});
 
 		it('should buffer incomplete lines in stream JSON mode until newline arrives', () => {
@@ -407,11 +437,30 @@ describe('StdoutHandler', () => {
 					}
 					return { type: 'system' };
 				}),
+				parseJsonObject: vi.fn((parsed: any) => {
+					if (parsed.type === 'agent') {
+						return { type: 'result', text: parsed.text };
+					}
+					if (parsed.type === 'done') {
+						return {
+							type: 'usage',
+							usage: {
+								inputTokens: 100,
+								outputTokens: 50,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								contextWindow: 400000,
+							},
+						};
+					}
+					return { type: 'system' };
+				}),
 				extractUsage: vi.fn((event: any) => event.usage || null),
 				extractSessionId: vi.fn(() => null),
 				extractSlashCommands: vi.fn(() => null),
 				isResultMessage: vi.fn((event: any) => event.type === 'result' && !!event.text),
 				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
 			};
 
 			const { handler, bufferManager, sessionId, proc } = createTestContext({
@@ -481,11 +530,19 @@ describe('StdoutHandler', () => {
 						return null;
 					}
 				}),
+				parseJsonObject: vi.fn((parsed: any) => {
+					return {
+						type: parsed.type || 'message',
+						text: parsed.text,
+						isPartial: false,
+					};
+				}),
 				extractUsage: vi.fn(() => usageReturn),
 				extractSessionId: vi.fn(() => null),
 				extractSlashCommands: vi.fn(() => null),
 				isResultMessage: vi.fn(() => false),
 				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
 			};
 		}
 
@@ -1217,6 +1274,188 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 		});
 	});
+
+	// ── OpenCode multi-step result handling ────────────────────────────────
+
+	describe('opencode multi-step result handling', () => {
+		/**
+		 * OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat.
+		 * Each step can have a text event (intermediate thinking). Only the last text event
+		 * (before step_finish with reason:"stop") is the real result.
+		 *
+		 * Bug reproduced from issue #512: the first text event locked resultEmitted=true,
+		 * causing subsequent text events (including the final summary) to be silently dropped.
+		 *
+		 * Fix: reset resultEmitted on each new step_start for opencode.
+		 */
+		function createOpenCodeParser() {
+			return {
+				agentId: 'opencode',
+				parseJsonLine: vi.fn((line: string) => {
+					const parsed = JSON.parse(line);
+					if (parsed.type === 'step_start') {
+						return { type: 'init', sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'text') {
+						return { type: 'result', text: parsed.part?.text, sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'tool_use') {
+						return { type: 'tool_use', toolName: parsed.part?.tool, sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'step_finish') {
+						return { type: 'system', sessionId: parsed.sessionID };
+					}
+					return { type: 'system' };
+				}),
+				parseJsonObject: vi.fn((parsed: any) => {
+					if (parsed.type === 'step_start') {
+						return { type: 'init', sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'text') {
+						return { type: 'result', text: parsed.part?.text, sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'tool_use') {
+						return { type: 'tool_use', toolName: parsed.part?.tool, sessionId: parsed.sessionID };
+					}
+					if (parsed.type === 'step_finish') {
+						return { type: 'system', sessionId: parsed.sessionID };
+					}
+					return { type: 'system' };
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn((event: any) => event.sessionId || null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn((event: any) => event.type === 'result'),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+			};
+		}
+
+		it('should emit the final text result (last step) not just the first', () => {
+			// Reproduces issue #512: step1 text was shown, step3 final summary was dropped
+			const parser = createOpenCodeParser();
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'opencode',
+				outputParser: parser as any,
+			});
+
+			// Step 1: tool call with no text before it
+			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_use',
+				sessionID: 'ses_abc',
+				part: { tool: 'glob' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'step_finish',
+				sessionID: 'ses_abc',
+				part: { reason: 'tool-calls' },
+			});
+
+			// Step 2: intermediate thinking text + more tool calls
+			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
+			sendJsonLine(handler, sessionId, {
+				type: 'text',
+				sessionID: 'ses_abc',
+				part: { text: 'Intermediate thinking...' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'tool_use',
+				sessionID: 'ses_abc',
+				part: { tool: 'glob' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'step_finish',
+				sessionID: 'ses_abc',
+				part: { reason: 'tool-calls' },
+			});
+
+			// Step 3: final answer
+			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
+			sendJsonLine(handler, sessionId, {
+				type: 'text',
+				sessionID: 'ses_abc',
+				part: { text: 'Final summary answer.' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'step_finish',
+				sessionID: 'ses_abc',
+				part: { reason: 'stop' },
+			});
+
+			const emittedTexts = (bufferManager.emitDataBuffered as any).mock.calls.map(
+				(call: any[]) => call[1]
+			);
+
+			// Both the intermediate and final texts should be emitted
+			expect(emittedTexts).toContain('Intermediate thinking...');
+			expect(emittedTexts).toContain('Final summary answer.');
+		});
+
+		it('should reset resultEmitted on each new step_start for opencode', () => {
+			const parser = createOpenCodeParser();
+			const { handler, proc, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'opencode',
+				outputParser: parser as any,
+			});
+
+			// After first step_start, resultEmitted should be false
+			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
+			expect(proc.resultEmitted).toBe(false);
+
+			// After text (result), resultEmitted becomes true
+			sendJsonLine(handler, sessionId, {
+				type: 'text',
+				sessionID: 'ses_abc',
+				part: { text: 'Step 1 text.' },
+			});
+			expect(proc.resultEmitted).toBe(true);
+
+			// New step_start resets it
+			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
+			expect(proc.resultEmitted).toBe(false);
+		});
+
+		it('should NOT reset resultEmitted on step_start for non-opencode agents', () => {
+			// claude-code should keep the one-result-per-run gate intact
+			const parser = {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn((line: string) => {
+					const parsed = JSON.parse(line);
+					if (parsed.type === 'step_start') return { type: 'init', sessionId: 'x' };
+					if (parsed.type === 'text') return { type: 'result', text: parsed.text };
+					return { type: 'system' };
+				}),
+				parseJsonObject: vi.fn((parsed: any) => {
+					if (parsed.type === 'step_start') return { type: 'init', sessionId: 'x' };
+					if (parsed.type === 'text') return { type: 'result', text: parsed.text };
+					return { type: 'system' };
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn((event: any) => event.type === 'result'),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+			};
+
+			const { handler, proc, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			sendJsonLine(handler, sessionId, { type: 'step_start' });
+			sendJsonLine(handler, sessionId, { type: 'text', text: 'First result.' });
+			expect(proc.resultEmitted).toBe(true);
+
+			// step_start should NOT reset for claude-code
+			sendJsonLine(handler, sessionId, { type: 'step_start' });
+			expect(proc.resultEmitted).toBe(true);
+		});
+	});
 });
 
 // ── Shared helper for minimal parser ───────────────────────────────────────
@@ -1240,10 +1479,110 @@ function createMinimalOutputParser(usageReturn: {
 				return null;
 			}
 		}),
+		parseJsonObject: vi.fn((parsed: any) => {
+			return { type: parsed.type || 'message', text: parsed.text, isPartial: false };
+		}),
 		extractUsage: vi.fn(() => usageReturn),
 		extractSessionId: vi.fn(() => null),
 		extractSlashCommands: vi.fn(() => null),
 		isResultMessage: vi.fn(() => false),
 		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
 	};
 }
+
+// ── Performance: single JSON.parse per NDJSON line ──────────────────────
+
+describe('StdoutHandler — single JSON parse per line', () => {
+	it('parses JSON exactly once per NDJSON line (output parser path)', () => {
+		// Instrument JSON.parse to count calls
+		const originalParse = JSON.parse;
+		let parseCount = 0;
+		const countingParse = vi.fn((...args: Parameters<typeof JSON.parse>) => {
+			parseCount++;
+			return originalParse.apply(JSON, args);
+		});
+		JSON.parse = countingParse;
+
+		try {
+			const mockParser = {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(() => ({
+					type: 'text' as const,
+					text: 'hello',
+					isPartial: true,
+					raw: {},
+				})),
+				parseJsonObject: vi.fn((parsed: unknown) => ({
+					type: 'text' as const,
+					text: 'hello',
+					isPartial: true,
+					raw: parsed,
+				})),
+				isResultMessage: vi.fn(() => false),
+				extractSessionId: vi.fn(() => null),
+				extractUsage: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+
+			const { handler, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: mockParser as any,
+			});
+
+			// Send a valid JSON line
+			const jsonLine = JSON.stringify({
+				type: 'assistant',
+				content: 'hi',
+			});
+			parseCount = 0; // reset after the stringify parse above
+
+			handler.handleData(sessionId, jsonLine + '\n');
+
+			// Should parse exactly once (in processLine), not 3× as before
+			expect(parseCount).toBe(1);
+
+			// parseJsonObject should be called with pre-parsed object (not parseJsonLine)
+			expect(mockParser.parseJsonObject).toHaveBeenCalledTimes(1);
+			expect(mockParser.parseJsonLine).not.toHaveBeenCalled();
+
+			// detectErrorFromParsed should be called (not detectErrorFromLine)
+			expect(mockParser.detectErrorFromParsed).toHaveBeenCalledTimes(1);
+			expect(mockParser.detectErrorFromLine).not.toHaveBeenCalled();
+		} finally {
+			JSON.parse = originalParse;
+		}
+	});
+
+	it('falls back to detectErrorFromLine for non-JSON lines', () => {
+		const mockParser = {
+			agentId: 'claude-code',
+			parseJsonLine: vi.fn(() => null),
+			parseJsonObject: vi.fn(() => null),
+			isResultMessage: vi.fn(() => false),
+			extractSessionId: vi.fn(() => null),
+			extractUsage: vi.fn(() => null),
+			extractSlashCommands: vi.fn(() => null),
+			detectErrorFromLine: vi.fn(() => null),
+			detectErrorFromParsed: vi.fn(() => null),
+			detectErrorFromExit: vi.fn(() => null),
+		};
+
+		const { handler, sessionId } = createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'claude-code',
+			outputParser: mockParser as any,
+		});
+
+		// Send a non-JSON line (e.g., stderr with embedded JSON)
+		handler.handleData(sessionId, 'Error streaming: 400 {"type":"error"}\n');
+
+		// Should fall back to line-based detection since JSON.parse fails
+		expect(mockParser.detectErrorFromLine).toHaveBeenCalledTimes(1);
+		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
+	});
+});

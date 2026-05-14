@@ -118,6 +118,7 @@ describe('director-notes IPC handlers', () => {
 		registerDirectorNotesHandlers({
 			getProcessManager: () => mockProcessManager,
 			getAgentDetector: () => mockAgentDetector,
+			agentConfigsStore: { get: vi.fn(() => ({})) } as any,
 		});
 	});
 
@@ -242,6 +243,37 @@ describe('director-notes IPC handlers', () => {
 			expect(result.stats.autoCount).toBe(2);
 			expect(result.stats.userCount).toBe(1);
 			expect(result.stats.totalCount).toBe(3);
+		});
+
+		it('should only count agents with entries in lookback window for agentCount', async () => {
+			const now = Date.now();
+			const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
+			const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
+
+			// 3 sessions on disk, but only 2 have entries within 7-day lookback
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+				'session-1',
+				'session-2',
+				'session-3',
+			]);
+
+			vi.mocked(mockHistoryManager.getEntries)
+				.mockReturnValueOnce([
+					createMockEntry({ id: 'e1', timestamp: twoDaysAgo, agentSessionId: 'as-1' }),
+				])
+				.mockReturnValueOnce([
+					// session-2 only has old entries outside lookback
+					createMockEntry({ id: 'e2', timestamp: tenDaysAgo, agentSessionId: 'as-2' }),
+				])
+				.mockReturnValueOnce([
+					createMockEntry({ id: 'e3', timestamp: twoDaysAgo, agentSessionId: 'as-3' }),
+				]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.stats.agentCount).toBe(2); // Only 2 agents had entries in window
+			expect(result.entries).toHaveLength(2);
 		});
 
 		it('should filter by lookbackDays', async () => {

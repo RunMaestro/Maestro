@@ -76,6 +76,7 @@ const defaultTheme: Theme = {
 interface ClaudeSession {
 	sessionId: string;
 	projectPath: string;
+	createdAt: number;
 	timestamp: string;
 	modifiedAt: string;
 	firstMessage: string;
@@ -105,6 +106,7 @@ interface SessionMessage {
 const createMockClaudeSession = (overrides: Partial<ClaudeSession> = {}): ClaudeSession => ({
 	sessionId: `d02d0bd6-${Math.random().toString(36).substr(2, 6)}-4a01-9123-456789abcdef`,
 	projectPath: '/path/to/project',
+	createdAt: Date.parse('2025-01-15T09:00:00Z'),
 	timestamp: '2025-01-15T10:00:00Z',
 	modifiedAt: '2025-01-15T11:30:00Z',
 	firstMessage: 'Help me with this code',
@@ -133,6 +135,7 @@ const createMockActiveSession = (overrides: Partial<Session> = {}): Session => (
 	id: 'session-1',
 	name: 'Test Project',
 	toolType: 'claude-code',
+	createdAt: Date.parse('2025-01-15T08:30:00Z'),
 	state: 'idle',
 	inputMode: 'ai',
 	cwd: '/path/to/project',
@@ -688,8 +691,10 @@ describe('AgentSessionsBrowser', () => {
 			expect(statsText).toHaveClass('animate-pulse');
 		});
 
-		it('shows oldest session date', async () => {
+		it('shows the active session creation date in the since label', async () => {
 			const sessions = [createMockClaudeSession()];
+			const createdAt = Date.parse('2026-04-09T12:00:00Z');
+			const oldestTimestamp = '2024-06-15T00:00:00Z';
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions,
 				hasMore: false,
@@ -698,7 +703,13 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			await act(async () => {
-				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ createdAt }),
+						})}
+					/>
+				);
 				await vi.runAllTimersAsync();
 			});
 
@@ -709,13 +720,18 @@ describe('AgentSessionsBrowser', () => {
 					totalMessages: 10,
 					totalCostUsd: 0.5,
 					totalSizeBytes: 5000,
-					oldestTimestamp: '2024-06-15T00:00:00Z',
+					oldestTimestamp,
 					isComplete: true,
 				});
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(/Since/i)).toBeInTheDocument();
+			expect(
+				screen.getByText(`Since ${new Date(createdAt).toLocaleDateString()}`)
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText(`Since ${new Date(oldestTimestamp).toLocaleDateString()}`)
+			).toBeNull();
 		});
 
 		it('ignores stats updates for different project paths', async () => {

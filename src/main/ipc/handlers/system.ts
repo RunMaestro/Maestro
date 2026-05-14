@@ -14,7 +14,7 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage, BrowserWindow, App } from 'electron';
 import * as path from 'path';
 import * as fsSync from 'fs';
 import Store from 'electron-store';
@@ -200,7 +200,20 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		try {
 			parsed = new URL(url);
 		} catch {
-			throw new Error(`Invalid URL: ${url}`);
+			// Detect absolute file paths and redirect to openPath — Fixes MAESTRO-FN/FA/F4
+			if (path.isAbsolute(url)) {
+				if (fsSync.existsSync(url)) {
+					const errorMessage = await shell.openPath(url);
+					if (errorMessage) {
+						throw new Error(errorMessage);
+					}
+					return;
+				}
+				throw new Error(`Path does not exist: ${url}`);
+			}
+			// Relative paths (LICENSE, ./README.md, vscode/**) are not actionable — log and return
+			logger.warn(`Ignored non-URL string passed to openExternal: "${url}"`, 'Shell');
+			return;
 		}
 		// Redirect file:// URLs to shell.openPath instead of rejecting — Fixes MAESTRO-9M
 		if (parsed.protocol === 'file:') {
@@ -237,10 +250,29 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		// Resolve to absolute path and verify it exists
 		const absolutePath = path.resolve(itemPath);
+		// Path missing → user's intent (delete) is already satisfied; no-op gracefully
+		// rather than rejecting the IPC promise, which surfaces as an unhandled
+		// rejection in the renderer. Fixes MAESTRO-JD/JC.
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			logger.warn(`shell:trashItem - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
-		await shell.trashItem(absolutePath);
+		try {
+			await shell.trashItem(absolutePath);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// User or system cancelled the trash operation — not a real error
+			// Fixes MAESTRO-A4
+			if (
+				message.includes('aborted') ||
+				message.includes('cancelled') ||
+				message.includes('canceled')
+			) {
+				logger.debug(`Trash operation cancelled for ${absolutePath}`, 'Shell');
+				return;
+			}
+			throw error;
+		}
 	});
 
 	// Shell operations - reveal item in system file manager (Finder on macOS, Explorer on Windows)
@@ -250,8 +282,12 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		// Resolve to absolute path and verify it exists
 		const absolutePath = path.resolve(itemPath);
+		// Stale path → log + return rather than rejecting the IPC, which produces
+		// noisy unhandled rejections from fire-and-forget callers in the renderer.
+		// Mirrors the shell:openPath fix (MAESTRO-B3). Fixes MAESTRO-K1/HN/HS.
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			logger.warn(`shell:showItemInFolder - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
 		shell.showItemInFolder(absolutePath);
 	});
@@ -263,12 +299,27 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		const absolutePath = path.resolve(itemPath);
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			// Path doesn't exist — log and return gracefully since many callers
+			// fire-and-forget without catching. Fixes MAESTRO-B3
+			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
 		const errorMessage = await shell.openPath(absolutePath);
 		if (errorMessage) {
-			throw new Error(errorMessage);
+			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
+	});
+
+	// Clipboard operations - copy image to system clipboard via Electron native API
+	ipcMain.handle('clipboard:writeImage', async (_event, dataUrl: string) => {
+		if (!dataUrl || typeof dataUrl !== 'string') {
+			throw new Error('Invalid data URL: must be a non-empty string');
+		}
+		const img = nativeImage.createFromDataURL(dataUrl);
+		if (img.isEmpty()) {
+			throw new Error('Failed to create image from data URL');
+		}
+		clipboard.writeImage(img);
 	});
 
 	// ============ Tunnel Handlers (Cloudflare) ============

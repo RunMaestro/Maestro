@@ -153,7 +153,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					name,
 					workingDir,
 					agentId as ToolType,
-					currentSessions
+					currentSessions,
+					sessionSshRemoteConfig?.enabled ? sessionSshRemoteConfig.remoteId : null
 				);
 				if (!validation.valid) {
 					console.error(`Session validation failed: ${validation.error}`);
@@ -210,6 +211,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					cwd: workingDir,
 					fullPath: workingDir,
 					projectRoot: workingDir,
+					createdAt: Date.now(),
 					isGitRepo,
 					gitBranches,
 					gitTags,

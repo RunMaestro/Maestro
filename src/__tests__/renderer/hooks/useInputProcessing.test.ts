@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+
+// Mock hasCapabilityCached — batch mode agents should return true for supportsBatchMode
+vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
+	const actual = await vi.importActual('../../../renderer/hooks/agent/useAgentCapabilities');
+	return {
+		...actual,
+		hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
+			// Default batch mode agents: claude-code, codex, opencode, factory-droid
+			if (capability === 'supportsBatchMode') {
+				return ['claude-code', 'codex', 'opencode', 'factory-droid'].includes(agentId);
+			}
+			return false;
+		}),
+	};
+});
+
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
 import type {
 	Session,

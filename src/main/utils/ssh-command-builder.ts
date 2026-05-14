@@ -335,8 +335,9 @@ export async function buildSshCommandWithStdin(
 		args.push(config.host);
 	}
 
-	// The remote command is just /bin/bash - it will read the script from stdin
-	args.push('/bin/bash');
+	// Run bash without rc/profile files so remote shell init can't inject control
+	// sequences into the agent stream before the script executes.
+	args.push('/bin/bash', '--norc', '--noprofile', '-s');
 
 	// Build the script to send via stdin
 	const scriptLines: string[] = [];

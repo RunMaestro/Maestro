@@ -10,7 +10,6 @@ import {
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
 import {
 	Eye,
@@ -52,9 +51,15 @@ import {
 	imageCache,
 } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
-import { generateAutoRunProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
+import {
+	REMARK_GFM_PLUGINS,
+	generateAutoRunProseStyles,
+	createMarkdownComponents,
+} from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
+import { useBatchStore } from '../stores/batchStore';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface AutoRunProps {
 	theme: Theme;
@@ -509,8 +514,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const isAutoRunActive = batchRunState?.isRunning || false;
 	const isStopping = batchRunState?.isStopping || false;
 	// Error state (Phase 5.10)
-	const isErrorPaused = batchRunState?.errorPaused || false;
-	const batchError = batchRunState?.error;
+	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
+	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
+	// which drops errorPaused updates via updateBatchStateAndBroadcast/UPDATE_PROGRESS.
+	const isErrorPaused = useBatchStore(
+		useCallback((s) => s.batchRunStates[sessionId]?.errorPaused ?? false, [sessionId])
+	);
+	const batchError = useBatchStore(
+		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
+	);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+	const [previewBionifyOverride, setPreviewBionifyOverride] = useState<boolean | null>(null);
 	const errorDocumentName =
 		batchRunState?.errorDocumentIndex !== undefined
 			? batchRunState.documents[batchRunState.errorDocumentIndex]
@@ -1362,6 +1378,13 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		const total = completed + uncheckedMatches.length;
 		return { completed, total };
 	}, [savedContent]);
+	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
+	const previewBionifyReadingMode = previewBionifyOverride ?? bionifyReadingMode;
+	const effectivePreviewBionifyReadingMode = previewBionifyReadingMode && !hasActivePreviewSearch;
+
+	useEffect(() => {
+		setPreviewBionifyOverride(null);
+	}, [sessionId, folderPath, selectedFile]);
 
 	// Token counting based on saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes
@@ -1428,7 +1451,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Memoize remarkPlugins - include remarkFileLinks when we have file tree
 	const remarkPlugins = useMemo(() => {
-		const plugins: any[] = [remarkGfm];
+		const plugins: any[] = [...REMARK_GFM_PLUGINS];
 		if (fileTree.length > 0) {
 			// cwd is empty since we're at the root of the Auto Run folder
 			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '' }]);
@@ -1444,10 +1467,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			customLanguageRenderers: {
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
+			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href) => {
+				if (/^https?:\/\/|^mailto:/.test(href)) {
+					void window.maestro.shell.openExternal(href);
+				}
+			},
 			// Provide container ref for anchor link scrolling
 			containerRef: previewRef,
 			// No search highlighting here - added separately when needed
@@ -1468,7 +1498,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				/>
 			),
 		};
-	}, [theme, folderPath, sshRemoteId, openLightboxByFilename, handleFileClick]);
+	}, [
+		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
+		theme,
+		folderPath,
+		sshRemoteId,
+		openLightboxByFilename,
+		handleFileClick,
+	]);
 
 	// Search-highlighted components - only used in preview mode with active search
 	// This allows the base components to remain stable during editing
@@ -1483,8 +1522,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			customLanguageRenderers: {
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
+			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			onFileClick: handleFileClick,
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href) => {
+				if (/^https?:\/\/|^mailto:/.test(href)) {
+					void window.maestro.shell.openExternal(href);
+				}
+			},
 			containerRef: previewRef,
 			searchHighlight: {
 				query: searchQuery,
@@ -1509,6 +1555,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		};
 	}, [
 		theme,
+		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		folderPath,
 		sshRemoteId,
 		openLightboxByFilename,
@@ -1742,7 +1791,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							Run
 						</button>
 					)}
-					{/* Playbook Exchange button */}
+					{/* PlayBooks button */}
 					{onOpenMarketplace && (
 						<button
 							onClick={onOpenMarketplace}
@@ -1752,10 +1801,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Browse Playbook Exchange - discover and share community playbooks"
+							title="Browse PlayBooks - discover and share community playbooks"
 						>
 							<LayoutGrid className="w-3.5 h-3.5" />
-							<span className="text-xs font-medium">Exchange</span>
+							<span className="text-xs font-medium">PlayBooks</span>
 						</button>
 					)}
 					{/* Launch Wizard button */}
@@ -1801,6 +1850,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						onRefresh={onRefresh}
 						onChangeFolder={onOpenSetup}
 						onCreateDocument={onCreateDocument}
+						bionifyEnabled={previewBionifyReadingMode}
+						onToggleBionify={() =>
+							setPreviewBionifyOverride((current) => !(current ?? bionifyReadingMode))
+						}
 						isLoading={isLoadingDocuments}
 						documentTaskCounts={documentTaskCounts}
 					/>
@@ -2212,10 +2265,7 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		prevProps.batchRunState?.isStopping === nextProps.batchRunState?.isStopping &&
 		prevProps.batchRunState?.currentTaskIndex === nextProps.batchRunState?.currentTaskIndex &&
 		prevProps.batchRunState?.totalTasks === nextProps.batchRunState?.totalTasks &&
-		// Error state (Phase 5.10)
-		prevProps.batchRunState?.errorPaused === nextProps.batchRunState?.errorPaused &&
-		prevProps.batchRunState?.error?.type === nextProps.batchRunState?.error?.type &&
-		prevProps.batchRunState?.error?.message === nextProps.batchRunState?.error?.message &&
+		// Error state is read directly from Zustand store (not props), so no comparison needed here.
 		// Session state affects UI (busy disables Run button)
 		prevProps.sessionState === nextProps.sessionState &&
 		// Callbacks are typically stable, but check identity

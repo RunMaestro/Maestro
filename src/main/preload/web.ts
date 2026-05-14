@@ -95,6 +95,8 @@ export function createLiveApi() {
 		disableAll: () => ipcRenderer.invoke('live:disableAll'),
 		startServer: () => ipcRenderer.invoke('live:startServer'),
 		stopServer: () => ipcRenderer.invoke('live:stopServer'),
+		persistCurrentToken: () => ipcRenderer.invoke('live:persistCurrentToken'),
+		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
 	};
 }
 

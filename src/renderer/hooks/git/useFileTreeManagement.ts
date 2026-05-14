@@ -149,6 +149,24 @@ export function useFileTreeManagement(
 
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 
+	// Per-session sequence counters to discard stale file tree loads.
+	// Keyed by sessionId so loads for different sessions don't cancel each other.
+	// When a newer load starts for the same session, any in-flight load with an
+	// older sequence number will discard its result instead of calling setSessions.
+	const loadSeqMapRef = useRef<Map<string, number>>(new Map());
+
+	/** Increment and return the next sequence number for a session. */
+	const nextSeq = useCallback((sessionId: string): number => {
+		const seq = (loadSeqMapRef.current.get(sessionId) || 0) + 1;
+		loadSeqMapRef.current.set(sessionId, seq);
+		return seq;
+	}, []);
+
+	/** Check if a sequence number is stale (a newer load has started for this session). */
+	const isStale = useCallback((sessionId: string, seq: number): boolean => {
+		return seq !== loadSeqMapRef.current.get(sessionId);
+	}, []);
+
 	// Build SSH context options from settings
 	const sshContextOptions: SshContextOptions = useMemo(
 		() => ({
@@ -174,6 +192,7 @@ export function useFileTreeManagement(
 	 */
 	const refreshFileTree = useCallback(
 		async (sessionId: string): Promise<FileTreeChanges | undefined> => {
+			const seq = nextSeq(sessionId);
 			// Use sessionsRef to avoid dependency on sessions state (prevents timer reset on every session change)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return undefined;
@@ -198,7 +217,15 @@ export function useFileTreeManagement(
 					});
 
 				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
+
+				// Discard if a newer load started for this session while we were awaiting
+				if (isStale(sessionId, seq)) return undefined;
+
 				const stats = await statsPromise;
+
+				// Re-check after stats await — another load may have started during directorySize
+				if (isStale(sessionId, seq)) return undefined;
+
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, newTree);
 
@@ -231,7 +258,7 @@ export function useFileTreeManagement(
 				return undefined;
 			}
 		},
-		[sessionsRef, setSessions, sshContextOptions, localOptions]
+		[sessionsRef, setSessions, sshContextOptions, localOptions, nextSeq, isStale]
 	);
 
 	/**
@@ -241,6 +268,7 @@ export function useFileTreeManagement(
 	 */
 	const refreshGitFileState = useCallback(
 		async (sessionId: string) => {
+			const seq = nextSeq(sessionId);
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
@@ -275,7 +303,13 @@ export function useFileTreeManagement(
 					gitService.isRepo(gitRoot, sshContext?.sshRemoteId),
 				]);
 
+				// Discard if a newer load started for this session while we were awaiting
+				if (isStale(sessionId, seq)) return;
+
 				const stats = await statsPromise;
+
+				// Re-check after stats await
+				if (isStale(sessionId, seq)) return;
 
 				let gitBranches: string[] | undefined;
 				let gitTags: string[] | undefined;
@@ -288,6 +322,9 @@ export function useFileTreeManagement(
 					]);
 					gitRefsCacheTime = Date.now();
 				}
+
+				// Re-check after additional awaits (branches/tags fetch)
+				if (isStale(sessionId, seq)) return;
 
 				setSessions((prev) =>
 					prev.map((s) =>
@@ -323,7 +360,7 @@ export function useFileTreeManagement(
 				});
 			}
 		},
-		[sessions, setSessions, rightPanelRef, sshContextOptions, localOptions]
+		[sessions, setSessions, rightPanelRef, sshContextOptions, localOptions, nextSeq, isStale]
 	);
 
 	// Ref to track pending retry timers per session
@@ -407,6 +444,9 @@ export function useFileTreeManagement(
 				);
 			};
 
+			// Increment per-session load sequence so concurrent loads can detect staleness
+			const seq = nextSeq(sessionId);
+
 			// Load tree with progress callback for SSH sessions
 			const treePromise = sshContext
 				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localOptions)
@@ -425,7 +465,33 @@ export function useFileTreeManagement(
 
 			treePromise
 				.then(async (tree) => {
+					// Discard if a newer load started for this session while we were awaiting
+					if (isStale(sessionId, seq)) {
+						// Reset loading state so this session can retry later
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+									: s
+							)
+						);
+						return;
+					}
+
 					const stats = await statsPromise;
+
+					// Re-check after stats await — another load may have started during directorySize
+					if (isStale(sessionId, seq)) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+									: s
+							)
+						);
+						return;
+					}
+
 					setSessions((prev) =>
 						prev.map((s) =>
 							s.id === sessionId
@@ -449,6 +515,18 @@ export function useFileTreeManagement(
 					);
 				})
 				.catch((error) => {
+					// Ignore errors from stale loads — a newer load is in progress
+					if (isStale(sessionId, seq)) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+									: s
+							)
+						);
+						return;
+					}
+
 					logger.error('File tree error', 'FileTreeManagement', {
 						error: error?.message || 'Unknown error',
 					});
@@ -470,7 +548,7 @@ export function useFileTreeManagement(
 					);
 				});
 		}
-	}, [activeSessionId, sessions, setSessions, sshContextOptions, localOptions]);
+	}, [activeSessionId, sessions, setSessions, sshContextOptions, localOptions, nextSeq, isStale]);
 
 	// Cleanup retry timers on unmount
 	useEffect(() => {

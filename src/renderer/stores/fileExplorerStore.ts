@@ -13,6 +13,7 @@
 
 import { create } from 'zustand';
 import type { FlatTreeNode } from '../utils/fileExplorer';
+import type { FileNode } from '../types/fileTree';
 
 // ============================================================================
 // Types
@@ -32,6 +33,9 @@ export interface FileExplorerStoreState {
 	// File preview loading indicator (migrated from App.tsx)
 	filePreviewLoading: FilePreviewLoading | null;
 
+	// Filtered file tree (tree-structured, for FileExplorerPanel rendering)
+	filteredFileTree: FileNode[];
+
 	// Flattened file list for keyboard navigation (migrated from App.tsx)
 	flatFileList: FlatTreeNode[];
 
@@ -50,7 +54,8 @@ export interface FileExplorerStoreActions {
 	// File preview loading
 	setFilePreviewLoading: (loading: FilePreviewLoading | null) => void;
 
-	// Flat file list
+	// File tree data
+	setFilteredFileTree: (tree: FileNode[]) => void;
 	setFlatFileList: (list: FlatTreeNode[]) => void;
 
 	// Document Graph
@@ -87,6 +92,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	fileTreeFilter: '',
 	fileTreeFilterOpen: false,
 	filePreviewLoading: null,
+	filteredFileTree: [],
 	flatFileList: [],
 	isGraphViewOpen: false,
 	graphFocusFilePath: undefined,
@@ -100,6 +106,7 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 
 	setFilePreviewLoading: (loading) => set({ filePreviewLoading: loading }),
 
+	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),
 	setFlatFileList: (list) => set({ flatFileList: list }),
 
 	focusFileInGraph: (relativePath) =>
@@ -150,6 +157,7 @@ export function getFileExplorerActions() {
 		setFileTreeFilter: state.setFileTreeFilter,
 		setFileTreeFilterOpen: state.setFileTreeFilterOpen,
 		setFilePreviewLoading: state.setFilePreviewLoading,
+		setFilteredFileTree: state.setFilteredFileTree,
 		setFlatFileList: state.setFlatFileList,
 		focusFileInGraph: state.focusFileInGraph,
 		openLastDocumentGraph: state.openLastDocumentGraph,

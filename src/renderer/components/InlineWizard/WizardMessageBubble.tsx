@@ -13,11 +13,15 @@
  * - Confidence badge for assistant messages (when confidence is available)
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type { Theme } from '../../types';
 import { getConfidenceColor } from '../Wizard/services/wizardPrompts';
+import { formatAgentName } from '../Wizard/shared/wizardHelpers';
+import {
+	REMARK_GFM_PLUGINS,
+	createWizardBubbleMarkdownComponents,
+} from '../../utils/markdownConfig';
 
 /**
  * Message structure for wizard conversations
@@ -53,23 +57,6 @@ export interface WizardMessageBubbleProps {
 }
 
 /**
- * Check if a string contains an emoji
- */
-function containsEmoji(str: string): boolean {
-	const emojiRegex =
-		/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u;
-	return emojiRegex.test(str);
-}
-
-/**
- * Format agent name with robot emoji prefix if no emoji present
- */
-function formatAgentName(name: string): string {
-	if (!name) return '🤖 Agent';
-	return containsEmoji(name) ? name : `🤖 ${name}`;
-}
-
-/**
  * Format timestamp for display
  */
 function formatTimestamp(timestamp: number): string {
@@ -93,6 +80,10 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 }: WizardMessageBubbleProps): JSX.Element {
 	const isUser = message.role === 'user';
 	const isSystem = message.role === 'system';
+	const wizardMarkdownComponents = useMemo(
+		() => createWizardBubbleMarkdownComponents(theme),
+		[theme]
+	);
 
 	return (
 		<div
@@ -156,60 +147,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 					{isUser ? (
 						<span className="whitespace-pre-wrap">{message.content}</span>
 					) : (
-						<ReactMarkdown
-							remarkPlugins={[remarkGfm]}
-							components={{
-								// Style markdown elements to match theme
-								p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-								ul: ({ children }) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
-								ol: ({ children }) => <ol className="list-decimal ml-4 mb-2">{children}</ol>,
-								li: ({ children }) => <li className="mb-1">{children}</li>,
-								strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-								em: ({ children }) => <em className="italic">{children}</em>,
-								code: ({ children, className }) => {
-									const isInline = !className;
-									return isInline ? (
-										<code
-											className="px-1 py-0.5 rounded text-xs font-mono"
-											style={{ backgroundColor: `${theme.colors.bgMain}80` }}
-										>
-											{children}
-										</code>
-									) : (
-										<code className={className}>{children}</code>
-									);
-								},
-								pre: ({ children }) => (
-									<pre
-										className="p-2 rounded text-xs font-mono overflow-x-auto mb-2"
-										style={{ backgroundColor: theme.colors.bgMain }}
-									>
-										{children}
-									</pre>
-								),
-								a: ({ href, children }) => (
-									<button
-										type="button"
-										className="underline"
-										style={{ color: theme.colors.accent }}
-										onClick={() => href && window.maestro.shell.openExternal(href)}
-									>
-										{children}
-									</button>
-								),
-								h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
-								h2: ({ children }) => <h2 className="text-base font-bold mb-2">{children}</h2>,
-								h3: ({ children }) => <h3 className="text-sm font-bold mb-1">{children}</h3>,
-								blockquote: ({ children }) => (
-									<blockquote
-										className="border-l-2 pl-2 mb-2 italic"
-										style={{ borderColor: theme.colors.border }}
-									>
-										{children}
-									</blockquote>
-								),
-							}}
-						>
+						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={wizardMarkdownComponents}>
 							{message.content}
 						</ReactMarkdown>
 					)}
@@ -226,6 +164,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 							<img
 								key={imgIdx}
 								src={img}
+								alt={`Attached image ${imgIdx + 1}`}
 								className="h-20 rounded border cursor-zoom-in shrink-0"
 								style={{
 									objectFit: 'contain',

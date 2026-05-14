@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { COMMON_SHELL_PATHS } from '../constants';
+import { isWindows } from '../../../shared/platformDetection';
 
 // Cache for shell path resolution
 const shellPathCache = new Map<string, string>();
@@ -9,14 +10,13 @@ const shellPathCache = new Map<string, string>();
  * Uses caching to avoid repeated filesystem checks.
  */
 export function resolveShellPath(shell: string): string {
-	const isWindows = process.platform === 'win32';
 	const shellName =
 		shell
 			.split(/[/\\]/)
 			.pop()
 			?.replace(/\.exe$/i, '') || shell;
 
-	if (isWindows) {
+	if (isWindows()) {
 		if (shellName === 'powershell' && !shell.includes('\\')) {
 			return 'powershell.exe';
 		} else if (shellName === 'pwsh' && !shell.includes('\\')) {
@@ -57,9 +57,7 @@ export function resolveShellPath(shell: string): string {
  * Build a wrapped command with shell config sourcing for runCommand
  */
 export function buildWrappedCommand(command: string, shellName: string): string {
-	const isWindows = process.platform === 'win32';
-
-	if (isWindows) {
+	if (isWindows()) {
 		return command;
 	}
 
@@ -78,6 +76,26 @@ export function buildWrappedCommand(command: string, shellName: string): string 
 	}
 
 	return command;
+}
+
+/**
+ * Build shell arguments for interactive one-off PTY commands.
+ * Terminal aliases like `ls` -> `eza` only render correctly when the shell has a real PTY.
+ */
+export function buildInteractiveShellArgs(command: string, shellName: string): string[] {
+	if (isWindows()) {
+		return [command];
+	}
+
+	if (shellName === 'zsh' || shellName === 'bash') {
+		return ['-l', '-i', '-c', command];
+	}
+
+	if (shellName === 'fish') {
+		return ['-i', '-c', command];
+	}
+
+	return ['-c', command];
 }
 
 /**

@@ -33,6 +33,11 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock symphony-fork
+vi.mock('../../../main/utils/symphony-fork', () => ({
+	ensureForkSetup: vi.fn(),
+}));
+
 // Mock global fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -41,6 +46,7 @@ global.fetch = mockFetch;
 import fs from 'fs/promises';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { ensureForkSetup } from '../../../main/utils/symphony-fork';
 import {
 	startContribution,
 	finalizeContribution,
@@ -81,6 +87,9 @@ describe('Symphony Runner Service', () => {
 		vi.mocked(fs.rm).mockResolvedValue(undefined);
 		vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 		vi.mocked(fs.copyFile).mockResolvedValue(undefined);
+
+		// Default: no fork needed
+		vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false });
 	});
 
 	afterEach(() => {
@@ -1281,7 +1290,7 @@ describe('Symphony Runner Service', () => {
 			);
 		});
 
-		it('handles PR close failure gracefully (warns but continues)', async () => {
+		it('returns failure when PR close fails', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
 				stdout: '',
 				stderr: 'pr close failed',
@@ -1295,8 +1304,8 @@ describe('Symphony Runner Service', () => {
 				expect.any(String),
 				expect.objectContaining({ prNumber: 42 })
 			);
-			// Should still return success
-			expect(result.success).toBe(true);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('pr close failed');
 		});
 
 		it('removes local directory when cleanup=true', async () => {
@@ -1323,7 +1332,7 @@ describe('Symphony Runner Service', () => {
 			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
-		it('returns success:true even if PR close fails', async () => {
+		it('does not clean up local directory when PR close fails', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
 				stdout: '',
 				stderr: 'error',
@@ -1332,7 +1341,198 @@ describe('Symphony Runner Service', () => {
 
 			const result = await cancelContribution('/tmp/test-repo', 42, true);
 
-			expect(result.success).toBe(true);
+			expect(result.success).toBe(false);
+			expect(fs.rm).not.toHaveBeenCalled();
+		});
+
+		it('adds --repo flag without --delete-branch for fork contributions', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await cancelContribution('/tmp/test-repo', 42, true, 'upstream-owner/repo');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'gh',
+				['pr', 'close', '42', '--repo', 'upstream-owner/repo'],
+				'/tmp/test-repo'
+			);
+		});
+	});
+
+	// ============================================================================
+	// Fork Support Tests
+	// ============================================================================
+
+	describe('fork support', () => {
+		const defaultOptions = {
+			contributionId: 'test-id',
+			repoSlug: 'upstream-owner/repo',
+			repoUrl: 'https://github.com/upstream-owner/repo.git',
+			issueNumber: 42,
+			issueTitle: 'Test Fork Issue',
+			documentPaths: [],
+			localPath: '/tmp/test-repo',
+			branchName: 'symphony/test-branch',
+		};
+
+		describe('startContribution with fork', () => {
+			it('calls ensureForkSetup after clone and branch creation', async () => {
+				mockSuccessfulWorkflow();
+
+				await startContribution(defaultOptions);
+
+				expect(ensureForkSetup).toHaveBeenCalledWith('/tmp/test-repo', 'upstream-owner/repo');
+
+				// Verify ensureForkSetup runs after checkout -b (2nd execFileNoThrow call)
+				const checkoutOrder = vi.mocked(execFileNoThrow).mock.invocationCallOrder[1]; // checkout -b
+				const forkSetupOrder = vi.mocked(ensureForkSetup).mock.invocationCallOrder[0];
+				expect(forkSetupOrder).toBeGreaterThan(checkoutOrder);
+			});
+
+			it('returns fork info when ensureForkSetup detects a fork', async () => {
+				vi.mocked(ensureForkSetup).mockResolvedValue({
+					isFork: true,
+					forkSlug: 'myuser/repo',
+				});
+				vi.mocked(execFileNoThrow)
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // checkout -b
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.name
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.email
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // commit --allow-empty
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // push
+					.mockResolvedValueOnce({ stdout: 'symphony/test-branch', stderr: '', exitCode: 0 }) // git rev-parse --abbrev-ref HEAD
+					.mockResolvedValueOnce({
+						stdout: 'https://github.com/upstream-owner/repo/pull/5',
+						stderr: '',
+						exitCode: 0,
+					}); // pr create
+
+				const result = await startContribution(defaultOptions);
+
+				expect(result.success).toBe(true);
+				expect(result.isFork).toBe(true);
+				expect(result.forkSlug).toBe('myuser/repo');
+			});
+
+			it('passes --repo and --head to gh pr create for fork contributions', async () => {
+				vi.mocked(ensureForkSetup).mockResolvedValue({
+					isFork: true,
+					forkSlug: 'myuser/repo',
+				});
+				vi.mocked(execFileNoThrow)
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // checkout -b
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.name
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // config user.email
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // commit --allow-empty
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // push
+					.mockResolvedValueOnce({ stdout: 'symphony/test-branch', stderr: '', exitCode: 0 }) // git rev-parse --abbrev-ref HEAD
+					.mockResolvedValueOnce({
+						stdout: 'https://github.com/upstream-owner/repo/pull/5',
+						stderr: '',
+						exitCode: 0,
+					}); // pr create
+
+				await startContribution(defaultOptions);
+
+				const prCreateCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('create'));
+				expect(prCreateCall).toBeDefined();
+				expect(prCreateCall![1]).toContain('--repo');
+				expect(prCreateCall![1]).toContain('upstream-owner/repo');
+				expect(prCreateCall![1]).toContain('--head');
+				expect(prCreateCall![1]).toContain('myuser:symphony/test-branch');
+			});
+
+			it('cleans up and returns error when ensureForkSetup fails', async () => {
+				vi.mocked(ensureForkSetup).mockResolvedValue({
+					isFork: false,
+					error: 'GitHub CLI not authenticated',
+				});
+				vi.mocked(execFileNoThrow)
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }) // clone
+					.mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 }); // checkout -b
+
+				const result = await startContribution(defaultOptions);
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Fork setup failed');
+				expect(fs.rm).toHaveBeenCalledWith('/tmp/test-repo', { recursive: true, force: true });
+			});
+
+			it('does not pass --repo/--head for non-fork contributions', async () => {
+				vi.mocked(ensureForkSetup).mockResolvedValue({ isFork: false });
+				mockSuccessfulWorkflow();
+
+				await startContribution(defaultOptions);
+
+				const prCreateCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('create'));
+				expect(prCreateCall).toBeDefined();
+				expect(prCreateCall![1]).not.toContain('--repo');
+				expect(prCreateCall![1]).not.toContain('--head');
+			});
+		});
+
+		describe('finalizeContribution with fork', () => {
+			it('adds --repo flag to gh pr ready, edit, and view for fork contributions', async () => {
+				mockFinalizeWorkflow('https://github.com/upstream-owner/repo/pull/5');
+
+				await finalizeContribution('/tmp/test-repo', 5, 42, 'Test Issue', 'upstream-owner/repo');
+
+				const readyCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('ready'));
+				expect(readyCall![1]).toContain('--repo');
+				expect(readyCall![1]).toContain('upstream-owner/repo');
+
+				const editCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('edit'));
+				expect(editCall![1]).toContain('--repo');
+				expect(editCall![1]).toContain('upstream-owner/repo');
+
+				const viewCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('view'));
+				expect(viewCall![1]).toContain('--repo');
+				expect(viewCall![1]).toContain('upstream-owner/repo');
+			});
+
+			it('does not add --repo flag when upstreamSlug is not provided', async () => {
+				mockFinalizeWorkflow();
+
+				await finalizeContribution('/tmp/test-repo', 1, 123, 'Test Issue');
+
+				const readyCall = vi
+					.mocked(execFileNoThrow)
+					.mock.calls.find((call) => call[0] === 'gh' && call[1]?.includes('ready'));
+				expect(readyCall![1]).not.toContain('--repo');
+			});
+		});
+
+		describe('cancelContribution with fork', () => {
+			it('does not add --repo flag when upstreamSlug is not provided', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+
+				await cancelContribution('/tmp/test-repo', 42, true);
+
+				expect(execFileNoThrow).toHaveBeenCalledWith(
+					'gh',
+					['pr', 'close', '42', '--delete-branch'],
+					'/tmp/test-repo'
+				);
+			});
 		});
 	});
 });

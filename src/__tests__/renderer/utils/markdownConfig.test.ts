@@ -1,4 +1,6 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
 
 // Mock react-syntax-highlighter before importing the module under test
 vi.mock('react-syntax-highlighter', () => ({
@@ -6,13 +8,19 @@ vi.mock('react-syntax-highlighter', () => ({
 }));
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
+	vs: {},
 }));
 
 import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
 	generateTerminalProseStyles,
+	generateInlineWizardPreviewProseStyles,
 	generateDiffViewStyles,
+	createWizardBubbleMarkdownComponents,
+	createReleaseNotesMarkdownComponents,
+	createMarkdownComponents,
+	REMARK_GFM_PLUGINS,
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
@@ -220,14 +228,17 @@ describe('generateProseStyles', () => {
 		it('should include baseline alignment selectors for styled first-child content inside list-item paragraphs', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
 			expect(css).toContain(
-				'.prose li > p > strong:first-child, .prose li > p > b:first-child, .prose li > p > em:first-child, .prose li > p > code:first-child, .prose li > p > a:first-child { vertical-align: baseline; line-height: inherit; }'
+				'.prose li > p:first-child > strong:first-child, .prose li > p:first-child > b:first-child, .prose li > p:first-child > em:first-child, .prose li > p:first-child > code:first-child, .prose li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }'
 			);
 		});
 
-		it('should normalize list-item paragraphs even when compactSpacing is false', () => {
+		it('should normalize only first list-item paragraph inline and keep subsequent paragraphs block-level', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: false });
 			expect(css).toContain(
-				'.prose li > p { margin: 0 !important; display: block; line-height: inherit; }'
+				'.prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+			);
+			expect(css).toContain(
+				'.prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }'
 			);
 		});
 
@@ -535,7 +546,10 @@ describe('generateTerminalProseStyles', () => {
 	it('should include li inline styling rules', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
 		expect(css).toContain(
-			`${scopeSelector} .prose li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }`
+			`${scopeSelector} .prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }`
+		);
+		expect(css).toContain(
+			`${scopeSelector} .prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }`
 		);
 	});
 
@@ -547,7 +561,7 @@ describe('generateTerminalProseStyles', () => {
 	it('should include extra vertical-align rule for styled first-child content in list items', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
 		expect(css).toContain(`${scopeSelector} .prose li > strong:first-child`);
-		expect(css).toContain(`${scopeSelector} .prose li > p > strong:first-child`);
+		expect(css).toContain(`${scopeSelector} .prose li > p:first-child > strong:first-child`);
 		expect(css).toContain('vertical-align: baseline');
 	});
 
@@ -645,5 +659,194 @@ describe('generateDiffViewStyles', () => {
 		expect(css).toContain('background-color: #aabbcc !important');
 		expect(css).toContain('color: #ddeeff !important');
 		expect(css).toContain('color: #ff00ff !important');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// generateInlineWizardPreviewProseStyles
+// ---------------------------------------------------------------------------
+
+describe('generateInlineWizardPreviewProseStyles', () => {
+	it('should support both same-element and descendant scoped prose selectors', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
+	});
+
+	it('should scope Bionify selectors to descendant prose blocks only', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view .prose .bionify-word');
+		expect(css).not.toContain('.doc-gen-view.prose, .doc-gen-view .prose .bionify-word');
+	});
+
+	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+		);
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }'
+		);
+	});
+
+	it('should include list marker alignment rules for styled first-child content', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose li > strong:first-child');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child > strong:first-child'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Shared Markdown Presets
+// ---------------------------------------------------------------------------
+
+describe('shared markdown presets', () => {
+	it('should export a shared remark-gfm plugin array', () => {
+		expect(Array.isArray(REMARK_GFM_PLUGINS)).toBe(true);
+		expect(REMARK_GFM_PLUGINS.length).toBeGreaterThan(0);
+	});
+
+	it('should create wizard bubble markdown components', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.pre).toBeDefined();
+		expect(components.a).toBeDefined();
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.blockquote).toBeDefined();
+	});
+
+	it('should create release notes markdown components', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.a).toBeDefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// createMarkdownComponents — link handling (Fixes MAESTRO-F4, MAESTRO-E5, etc.)
+// ---------------------------------------------------------------------------
+
+describe('createMarkdownComponents link handling', () => {
+	it('should call onExternalLinkClick for http/https URLs', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+		expect(aComponent).toBeDefined();
+
+		// Simulate rendering and clicking an https link
+		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
+		const clickEvent = { preventDefault: vi.fn() } as any;
+		element.props.onClick(clickEvent);
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com');
+	});
+
+	it('should call onExternalLinkClick for mailto URLs', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+
+		const element = aComponent({ node: null, href: 'mailto:test@example.com', children: 'email' });
+		const clickEvent = { preventDefault: vi.fn() } as any;
+		element.props.onClick(clickEvent);
+		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com');
+	});
+
+	it('should NOT call onExternalLinkClick for relative paths', () => {
+		const onExternalLinkClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+		});
+		const aComponent = components.a as any;
+
+		// Relative paths like LICENSE, ./README.md should not trigger openExternal
+		for (const href of [
+			'LICENSE',
+			'./README.md',
+			'../docs/spec.md',
+			'constitution/specs/SPEC.md',
+		]) {
+			onExternalLinkClick.mockClear();
+			const element = aComponent({ node: null, href, children: 'link' });
+			const clickEvent = { preventDefault: vi.fn() } as any;
+			element.props.onClick(clickEvent);
+			expect(onExternalLinkClick).not.toHaveBeenCalled();
+		}
+	});
+
+	it('should route relative paths to onFileClick when available', () => {
+		const onExternalLinkClick = vi.fn();
+		const onFileClick = vi.fn();
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			onExternalLinkClick,
+			onFileClick,
+		});
+		const aComponent = components.a as any;
+
+		const element = aComponent({ node: null, href: 'LICENSE', children: 'license' });
+		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
+		element.props.onClick(clickEvent);
+		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
+		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	});
+});
+
+describe('createMarkdownComponents reading mode', () => {
+	it('wraps paragraph prose in Bionify spans when enabled', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Paragraph = components.p as any;
+
+		const { container } = render(Paragraph({ children: 'Readable prose only' }));
+
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+		expect(container.textContent).toBe('Readable prose only');
+	});
+
+	it('leaves inline code untouched while transforming surrounding emphasis content', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Strong = components.strong as any;
+
+		render(
+			Strong({
+				children: React.createElement(
+					React.Fragment,
+					null,
+					'Before ',
+					React.createElement('code', null, 'const value = 1'),
+					' after'
+				),
+			})
+		);
+
+		expect(screen.getByText('const value = 1')).toBeInTheDocument();
+		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
 	});
 });

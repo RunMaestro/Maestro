@@ -20,6 +20,7 @@ import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, GroupInfo } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { truncatePath } from '../../shared/formatters';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 /**
  * Session card component for the All Sessions view
@@ -64,13 +65,7 @@ function MobileSessionCard({
 
 	// Get tool type display name
 	const getToolTypeLabel = (): string => {
-		const toolTypeMap: Record<string, string> = {
-			'claude-code': 'Claude Code',
-			'openai-codex': 'OpenAI Codex',
-			'gemini-cli': 'Gemini CLI',
-			'qwen3-coder': 'Qwen3 Coder',
-		};
-		return toolTypeMap[session.toolType] || session.toolType;
+		return getAgentDisplayName(session.toolType);
 	};
 
 	const handleClick = useCallback(() => {
@@ -459,7 +454,9 @@ export function AllSessionsView({
 				displayName.toLowerCase().includes(query) ||
 				session.name.toLowerCase().includes(query) ||
 				session.cwd.toLowerCase().includes(query) ||
-				(session.toolType && session.toolType.toLowerCase().includes(query)) ||
+				(session.toolType &&
+					(session.toolType.toLowerCase().includes(query) ||
+						getAgentDisplayName(session.toolType).toLowerCase().includes(query))) ||
 				(session.worktreeBranch && session.worktreeBranch.toLowerCase().includes(query))
 			);
 		});

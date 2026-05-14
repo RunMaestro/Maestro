@@ -582,7 +582,7 @@ describe('group-chat-storage', () => {
 			await deleteGroupChat(chat.id);
 		});
 
-		it('rejects duplicate participant names', async () => {
+		it('is idempotent for duplicate participant names', async () => {
 			const chat = await createGroupChat('Duplicate Name', 'claude-code');
 
 			await addParticipantToChat(chat.id, {
@@ -592,14 +592,17 @@ describe('group-chat-storage', () => {
 				addedAt: Date.now(),
 			});
 
-			await expect(
-				addParticipantToChat(chat.id, {
-					name: 'Agent1',
-					agentId: 'opencode',
-					sessionId: 'ses-2',
-					addedAt: Date.now(),
-				})
-			).rejects.toThrow(/already exists/i);
+			// Adding same name again should return current state, not throw
+			const result = await addParticipantToChat(chat.id, {
+				name: 'Agent1',
+				agentId: 'opencode',
+				sessionId: 'ses-2',
+				addedAt: Date.now(),
+			});
+
+			// Should still have only one participant (the original)
+			expect(result.participants).toHaveLength(1);
+			expect(result.participants[0].agentId).toBe('claude-code');
 
 			await deleteGroupChat(chat.id);
 		});

@@ -200,7 +200,8 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Parse a single JSON line from Codex output
+	 * Parse a single JSON line from Codex output.
+	 * Delegates to parseJsonObject after JSON.parse.
 	 *
 	 * Codex message types (verified v0.73.0+):
 	 * - { type: 'thread.started', thread_id: 'uuid' }
@@ -214,8 +215,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			const msg: CodexRawMessage = JSON.parse(line);
-			return this.transformMessage(msg);
+			return this.parseJsonObject(JSON.parse(line));
 		} catch {
 			// Not valid JSON - return as raw text event
 			return {
@@ -224,6 +224,18 @@ export class CodexOutputParser implements AgentOutputParser {
 				raw: line,
 			};
 		}
+	}
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		return this.transformMessage(parsed as CodexRawMessage);
 	}
 
 	/**
@@ -489,49 +501,49 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Detect an error from a line of agent output
-	 *
-	 * IMPORTANT: Only detect errors from structured JSON error events, not from
-	 * arbitrary text content. Pattern matching on conversational text leads to
-	 * false positives (e.g., AI discussing "timeout" triggers timeout error).
-	 *
-	 * Error detection sources (in order of reliability):
-	 * 1. Structured JSON: { type: "error", error: "..." } or { error: "..." }
-	 * 2. stderr output (handled separately by process-manager)
-	 * 3. Non-zero exit code (handled by detectErrorFromExit)
+	 * Detect an error from a line of agent output.
+	 * Delegates to detectErrorFromParsed after JSON.parse.
 	 */
 	detectErrorFromLine(line: string): AgentError | null {
-		// Skip empty lines
 		if (!line.trim()) {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
-		let errorText: string | null = null;
-		let parsedJson: unknown = null;
 		try {
-			const parsed = JSON.parse(line);
-			// Check for error type messages
-			// Codex uses type: 'error' for some errors and type: 'turn.failed' for others
-			if (parsed.type === 'error' || parsed.type === 'turn.failed' || parsed.error) {
-				parsedJson = parsed;
-				errorText = extractErrorText(parsed.error);
-				if (errorText === 'Unknown error') errorText = null; // No useful info to match
+			const error = this.detectErrorFromParsed(JSON.parse(line));
+			if (error) {
+				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
 			}
-			// If no error field in JSON, this is normal output - don't check it
+			return error;
 		} catch {
 			// Not JSON - skip pattern matching entirely
-			// Errors should come through structured JSON, stderr, or exit codes
-			// Pattern matching on arbitrary text causes false positives
+			return null;
+		}
+	}
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Core logic extracted from detectErrorFromLine to avoid redundant JSON.parse calls.
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
 		}
 
-		// If no error text was extracted, no error to detect
+		const obj = parsed as Record<string, unknown>;
+		let errorText: string | null = null;
+		let parsedJson: unknown = null;
+
+		if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
+			parsedJson = parsed;
+			errorText = extractErrorText(obj.error as CodexRawMessage['error']);
+			if (errorText === 'Unknown error') errorText = null;
+		}
+
 		if (!errorText) {
 			return null;
 		}
 
-		// Match against error patterns
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -542,15 +554,10 @@ export class CodexOutputParser implements AgentOutputParser {
 				recoverable: match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
 				parsedJson,
 			};
 		}
 
-		// Structured error event that didn't match a known pattern —
-		// still report it rather than silently dropping
 		if (parsedJson) {
 			return {
 				type: 'unknown',
@@ -558,7 +565,6 @@ export class CodexOutputParser implements AgentOutputParser {
 				recoverable: true,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: { errorLine: line },
 				parsedJson,
 			};
 		}

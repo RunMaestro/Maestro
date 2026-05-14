@@ -14,14 +14,8 @@ import * as path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
-import type { ToolType } from '../../shared/types';
 import type { ModeratorConfig, GroupChatHistoryEntry } from '../../shared/group-chat-types';
-
-/**
- * Valid agent IDs that can be used as moderators.
- * Must match available agents from agent-detector.
- */
-const VALID_MODERATOR_AGENT_IDS: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
+import { hasCapability } from '../agents/capabilities';
 
 // ---------------------------------------------------------------------------
 // Write serialization & atomic file I/O
@@ -63,11 +57,25 @@ function enqueueWrite<T>(chatId: string, fn: () => Promise<T>): Promise<T> {
  * Atomically write JSON content to a file by writing to a temp file first,
  * then renaming. rename() is atomic on POSIX and effectively atomic on NTFS.
  * This prevents partial/corrupt reads if the process crashes mid-write.
+ * Retries on EPERM/EBUSY errors (Windows file locks from OneDrive/antivirus).
  */
 async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
 	const tmp = filePath + '.tmp';
 	await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
-	await fs.rename(tmp, filePath);
+	const maxRetries = 3;
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		try {
+			await fs.rename(tmp, filePath);
+			return;
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
+				await new Promise((resolve) => setTimeout(resolve, 100 * Math.pow(2, attempt)));
+				continue;
+			}
+			throw err;
+		}
+	}
 }
 
 /**
@@ -222,10 +230,10 @@ export async function createGroupChat(
 	moderatorAgentId: string,
 	moderatorConfig?: ModeratorConfig
 ): Promise<GroupChat> {
-	// Validate agent ID against whitelist
-	if (!VALID_MODERATOR_AGENT_IDS.includes(moderatorAgentId as ToolType)) {
+	// Validate agent ID supports group chat moderation
+	if (!hasCapability(moderatorAgentId, 'supportsGroupChatModeration')) {
 		throw new Error(
-			`Invalid moderator agent ID: ${moderatorAgentId}. Must be one of: ${VALID_MODERATOR_AGENT_IDS.join(', ')}`
+			`Invalid moderator agent ID: ${moderatorAgentId}. Agent does not support group chat moderation.`
 		);
 	}
 
@@ -399,9 +407,9 @@ export function addParticipantToChat(
 			throw new Error(`Group chat not found: ${id}`);
 		}
 
-		// Check for duplicate names
+		// Idempotent: if participant already exists, return current state
 		if (chat.participants.some((p) => p.name === participant.name)) {
-			throw new Error(`Participant with name '${participant.name}' already exists`);
+			return chat;
 		}
 
 		const updated: GroupChat = {

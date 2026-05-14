@@ -6,7 +6,7 @@
  */
 
 import path from 'path';
-import os from 'os';
+import * as os from 'node:os';
 
 // ============================================================================
 // Pre-compiled Regex Patterns (Performance Optimization)

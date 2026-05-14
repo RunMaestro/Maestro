@@ -200,95 +200,23 @@ jobs:
           npm_config_arch: arm64
           npm_config_target_arch: arm64
 
-      - name: Rebuild native modules (non-Linux)
-        if: matrix.platform != 'linux' && matrix.platform != 'linux-arm64'
+      - name: Rebuild native modules (Windows)
+        if: matrix.platform == 'win'
         run: npm run postinstall
         env:
           npm_config_build_from_source: true
 
-      # Verify native module architecture (Linux x64)
-      - name: Verify node-pty architecture (Linux x64)
+      # macOS: Skip initial rebuild - architecture-specific rebuilds happen before each packaging step
+      # This prevents arm64 binaries from contaminating x64 builds (GitHub issue #719)
+
+      # Verify native module architectures after initial rebuild (Linux only — macOS rebuilds per-arch before packaging)
+      - name: Verify native module architecture (Linux x64)
         if: matrix.platform == 'linux'
-        run: |
-          echo "Checking node-pty binary architecture..."
-          PTY_PATH=$(find node_modules/node-pty -name "pty.node" -type f 2>/dev/null | head -1)
-          if [ -n "$PTY_PATH" ]; then
-            file "$PTY_PATH"
-            # Verify it's x64, not ARM64
-            if file "$PTY_PATH" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ node-pty is correctly built for x64"
-            else
-              echo "✗ ERROR: node-pty is NOT built for x64!"
-              file "$PTY_PATH"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: node-pty binary not found!"
-            exit 1
-          fi
+        run: .github/scripts/verify-native-arch.sh x64
 
-      # Verify native module architecture (Linux ARM64)
-      - name: Verify node-pty architecture (Linux ARM64)
+      - name: Verify native module architecture (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: |
-          echo "Checking node-pty binary architecture..."
-          PTY_PATH=$(find node_modules/node-pty -name "pty.node" -type f 2>/dev/null | head -1)
-          if [ -n "$PTY_PATH" ]; then
-            file "$PTY_PATH"
-            # Verify it's ARM64, not x86_64
-            if file "$PTY_PATH" | grep -q "ARM aarch64\|aarch64"; then
-              echo "✓ node-pty is correctly built for ARM64"
-            else
-              echo "✗ ERROR: node-pty is NOT built for ARM64!"
-              file "$PTY_PATH"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: node-pty binary not found!"
-            exit 1
-          fi
-
-      # Verify better-sqlite3 architecture (Linux x64)
-      - name: Verify better-sqlite3 architecture (Linux x64)
-        if: matrix.platform == 'linux'
-        run: |
-          echo "Checking better-sqlite3 binary architecture..."
-          SQLITE_PATH=$(find node_modules/better-sqlite3 -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-          if [ -n "$SQLITE_PATH" ]; then
-            file "$SQLITE_PATH"
-            # Verify it's x64, not ARM64
-            if file "$SQLITE_PATH" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ better-sqlite3 is correctly built for x64"
-            else
-              echo "✗ ERROR: better-sqlite3 is NOT built for x64!"
-              file "$SQLITE_PATH"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: better-sqlite3 binary not found!"
-            exit 1
-          fi
-
-      # Verify better-sqlite3 architecture (Linux ARM64)
-      - name: Verify better-sqlite3 architecture (Linux ARM64)
-        if: matrix.platform == 'linux-arm64'
-        run: |
-          echo "Checking better-sqlite3 binary architecture..."
-          SQLITE_PATH=$(find node_modules/better-sqlite3 -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-          if [ -n "$SQLITE_PATH" ]; then
-            file "$SQLITE_PATH"
-            # Verify it's ARM64, not x86_64
-            if file "$SQLITE_PATH" | grep -q "ARM aarch64\|aarch64"; then
-              echo "✓ better-sqlite3 is correctly built for ARM64"
-            else
-              echo "✗ ERROR: better-sqlite3 is NOT built for ARM64!"
-              file "$SQLITE_PATH"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: better-sqlite3 binary not found!"
-            exit 1
-          fi
+        run: .github/scripts/verify-native-arch.sh arm64
 
       - name: Build application
         run: npm run build
@@ -324,14 +252,38 @@ jobs:
           # Allow codesign to access the key
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-      - name: Package for macOS
+      # macOS: Build each architecture separately with proper native module compilation
+      # This prevents arm64 binaries from contaminating x64 builds (GitHub issue #719)
+      # Similar to the Linux fix for GitHub issue #116
+      - name: Package for macOS x64
         if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+          npm_config_build_from_source: true
+          BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          .github/scripts/rebuild-and-verify-native.sh x64
+          npx electron-builder --mac --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+
+      - name: Package for macOS arm64
+        if: matrix.platform == 'mac'
+        env:
+          DEBUG: electron-builder
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          npm_config_arch: arm64
+          npm_config_target_arch: arm64
+          npm_config_build_from_source: true
+          BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          .github/scripts/rebuild-and-verify-native.sh arm64
+          npx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for Windows
         if: matrix.platform == 'win'
@@ -340,9 +292,9 @@ jobs:
         env:
           DEBUG: electron-builder
 
-      # Linux x64: Explicitly rebuild native modules before packaging
-      # The npmRebuild: false in package.json prevents electron-builder from re-running
-      # npm rebuild during packaging, so we ensure correct binaries are in place first
+      # Linux/macOS: Rebuild native modules for the target arch, verify, then package.
+      # npmRebuild: false in package.json prevents electron-builder from re-running npm rebuild,
+      # so we ensure correct binaries are in place first via the shared script.
       - name: Package for Linux x64
         if: matrix.platform == 'linux'
         env:
@@ -352,59 +304,9 @@ jobs:
           npm_config_build_from_source: true
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          # Critical: Clean build directories to force fresh compilation
-          # This prevents any cached/prebuilt ARM binaries from being used
-          echo "Cleaning native module build directories..."
-          rm -rf node_modules/node-pty/build
-          rm -rf node_modules/node-pty/prebuilds
-          rm -rf node_modules/better-sqlite3/build
-          rm -rf node_modules/better-sqlite3/prebuilds
-
-          # Explicitly rebuild native modules for x64 architecture
-          echo "Rebuilding native modules for x64..."
-          npx electron-rebuild --arch=x64 --force
-
-          # Verify node-pty binary was built correctly for x64 before packaging
-          echo "Verifying node-pty binary architecture before packaging..."
-          PTY_PATH=$(find node_modules/node-pty -name "pty.node" -type f 2>/dev/null | head -1)
-          if [ -n "$PTY_PATH" ]; then
-            echo "Found pty.node at: $PTY_PATH"
-            file "$PTY_PATH"
-            if file "$PTY_PATH" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ node-pty is correctly built for x64"
-            else
-              echo "✗ ERROR: node-pty is NOT built for x64!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: node-pty binary not found!"
-            exit 1
-          fi
-
-          # Verify better-sqlite3 binary was built correctly for x64 before packaging
-          echo "Verifying better-sqlite3 binary architecture before packaging..."
-          SQLITE_PATH=$(find node_modules/better-sqlite3 -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-          if [ -n "$SQLITE_PATH" ]; then
-            echo "Found better_sqlite3.node at: $SQLITE_PATH"
-            file "$SQLITE_PATH"
-            if file "$SQLITE_PATH" | grep -q "x86-64\|x86_64\|AMD64"; then
-              echo "✓ better-sqlite3 is correctly built for x64"
-            else
-              echo "✗ ERROR: better-sqlite3 is NOT built for x64!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: better-sqlite3 binary not found!"
-            exit 1
-          fi
-
-          # Package with x64 target
+          .github/scripts/rebuild-and-verify-native.sh x64
           npx electron-builder --linux --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
-      # ARM64 Linux: Build on native ARM64 runner to properly compile node-pty
-      # Critical: Explicitly rebuild native modules for ARM64 before packaging
-      # The npmRebuild: false in package.json prevents electron-builder from re-running
-      # npm rebuild with x86_64 flags (-m64) that would corrupt the ARM64 binaries
       - name: Package for Linux ARM64
         if: matrix.platform == 'linux-arm64'
         env:
@@ -415,54 +317,7 @@ jobs:
           USE_SYSTEM_FPM: 'true'
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          # Critical: Clean build directories to force fresh compilation
-          # This prevents any cached/prebuilt x64 binaries from being used
-          echo "Cleaning native module build directories..."
-          rm -rf node_modules/node-pty/build
-          rm -rf node_modules/node-pty/prebuilds
-          rm -rf node_modules/better-sqlite3/build
-          rm -rf node_modules/better-sqlite3/prebuilds
-
-          # Explicitly rebuild native modules for ARM64 architecture
-          # This ensures node-pty is correctly compiled before packaging
-          echo "Rebuilding native modules for ARM64..."
-          npx electron-rebuild --arch=arm64 --force
-
-          # Verify node-pty binary was built correctly for ARM64 before packaging
-          echo "Verifying node-pty binary architecture before packaging..."
-          PTY_PATH=$(find node_modules/node-pty -name "pty.node" -type f 2>/dev/null | head -1)
-          if [ -n "$PTY_PATH" ]; then
-            echo "Found pty.node at: $PTY_PATH"
-            file "$PTY_PATH"
-            if file "$PTY_PATH" | grep -q "ARM\|aarch64"; then
-              echo "✓ node-pty is correctly built for ARM64"
-            else
-              echo "✗ ERROR: node-pty is NOT built for ARM64!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: node-pty binary not found!"
-            exit 1
-          fi
-
-          # Verify better-sqlite3 binary was built correctly for ARM64 before packaging
-          echo "Verifying better-sqlite3 binary architecture before packaging..."
-          SQLITE_PATH=$(find node_modules/better-sqlite3 -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-          if [ -n "$SQLITE_PATH" ]; then
-            echo "Found better_sqlite3.node at: $SQLITE_PATH"
-            file "$SQLITE_PATH"
-            if file "$SQLITE_PATH" | grep -q "ARM\|aarch64"; then
-              echo "✓ better-sqlite3 is correctly built for ARM64"
-            else
-              echo "✗ ERROR: better-sqlite3 is NOT built for ARM64!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: better-sqlite3 binary not found!"
-            exit 1
-          fi
-
-          # Package with ARM64 target
+          .github/scripts/rebuild-and-verify-native.sh arm64
           npx electron-builder --linux --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       # Verify native modules are correctly included in unpacked resources (Linux x64)

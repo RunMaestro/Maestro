@@ -10,6 +10,20 @@ import { AutoRun, AutoRunHandle } from '../../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Theme, BatchRunState, SessionState } from '../../../renderer/types';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+const createMarkdownComponentsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+
+// Helper to seed the Zustand batch store so the component's direct store reads
+// (isErrorPaused, batchError) see the expected state for a given session.
+const seedBatchStore = (sessionId: string, state: Partial<BatchRunState>) => {
+	useBatchStore.setState({
+		batchRunStates: {
+			[sessionId]: state as BatchRunState,
+		},
+	});
+};
 
 // Helper to render with LayerStackProvider (required by AutoRunSearchBar)
 const renderWithProvider = (ui: React.ReactElement) => {
@@ -36,6 +50,11 @@ const getByNormalizedText = (text: RegExp) => {
 	};
 };
 
+beforeEach(() => {
+	useSettingsStore.setState({ bionifyReadingMode: false });
+	createMarkdownComponentsCalls.length = 0;
+});
+
 // Mock the external dependencies
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -47,6 +66,17 @@ vi.mock('remark-gfm', () => ({
 	default: {},
 }));
 
+vi.mock('../../../renderer/utils/markdownConfig', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/markdownConfig')>();
+	return {
+		...actual,
+		createMarkdownComponents: (options: Record<string, unknown>) => {
+			createMarkdownComponentsCalls.push(options);
+			return actual.createMarkdownComponents(options as any);
+		},
+	};
+});
+
 vi.mock('react-syntax-highlighter', () => ({
 	Prism: ({ children }: { children: string }) => (
 		<code data-testid="syntax-highlighter">{children}</code>
@@ -55,6 +85,7 @@ vi.mock('react-syntax-highlighter', () => ({
 
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
+	vs: {},
 }));
 
 vi.mock('../../../renderer/components/AutoRunnerHelpModal', () => ({
@@ -80,6 +111,8 @@ vi.mock('../../../renderer/components/AutoRunDocumentSelector', () => ({
 		onRefresh,
 		onChangeFolder,
 		onCreateDocument,
+		bionifyEnabled,
+		onToggleBionify,
 		isLoading,
 	}: any) => (
 		<div data-testid="document-selector">
@@ -99,6 +132,9 @@ vi.mock('../../../renderer/components/AutoRunDocumentSelector', () => ({
 			</button>
 			<button data-testid="change-folder-btn" onClick={onChangeFolder}>
 				Change
+			</button>
+			<button data-testid="toggle-bionify-btn" onClick={onToggleBionify}>
+				{bionifyEnabled ? 'Bionify On' : 'Bionify Off'}
 			</button>
 			{isLoading && <span data-testid="loading-indicator">Loading...</span>}
 		</div>
@@ -252,6 +288,17 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
+		});
+
+		it('allows Bionify to be toggled from the document selector area', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTestId('toggle-bionify-btn')).toHaveTextContent('Bionify Off');
+
+			fireEvent.click(screen.getByTestId('toggle-bionify-btn'));
+
+			expect(screen.getByTestId('toggle-bionify-btn')).toHaveTextContent('Bionify On');
 		});
 
 		it('shows "Select Auto Run Folder" button when no folder is configured', () => {
@@ -2248,6 +2295,33 @@ describe('Preview Mode with Search', () => {
 		});
 	});
 
+	it('passes bionify=false to preview markdown components while search is active', async () => {
+		const props = createDefaultProps({ mode: 'preview', content: 'information information' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		fireEvent.click(screen.getByTestId('toggle-bionify-btn'));
+		expect(screen.getByTestId('toggle-bionify-btn')).toHaveTextContent('Bionify On');
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'f', metaKey: true });
+
+		const searchInput = await screen.findByPlaceholderText(/Search/);
+		fireEvent.change(searchInput, { target: { value: 'information' } });
+
+		await waitFor(() => {
+			expect(screen.getByText('1/2')).toBeInTheDocument();
+		});
+
+		expect(
+			createMarkdownComponentsCalls.some(
+				(call) =>
+					call.searchHighlight &&
+					call.enableBionifyReadingMode === false &&
+					(call.searchHighlight as { query?: string }).query === 'information'
+			)
+		).toBe(true);
+	});
+
 	it('toggles mode with Cmd+E from preview', async () => {
 		const props = createDefaultProps({ mode: 'preview' });
 		renderWithProvider(<AutoRun {...props} />);
@@ -3422,6 +3496,7 @@ describe('Reset Tasks Flash Notification', () => {
 				},
 				errorDocumentIndex: 0,
 			});
+			seedBatchStore('test-session-1', batchRunState);
 			const props = createDefaultProps({
 				batchRunState,
 				onResumeAfterError,
@@ -3448,6 +3523,7 @@ describe('Reset Tasks Flash Notification', () => {
 				},
 				errorDocumentIndex: 0,
 			});
+			seedBatchStore('test-session-1', batchRunState);
 			const props = createDefaultProps({
 				batchRunState,
 				onResumeAfterError,
@@ -3477,6 +3553,7 @@ describe('Reset Tasks Flash Notification', () => {
 				},
 				errorDocumentIndex: 0,
 			});
+			seedBatchStore('test-session-1', batchRunState);
 			const props = createDefaultProps({
 				batchRunState,
 				onAbortBatchOnError,
@@ -3500,6 +3577,7 @@ describe('Reset Tasks Flash Notification', () => {
 				},
 				errorDocumentIndex: 0,
 			});
+			seedBatchStore('test-session-1', batchRunState);
 			const props = createDefaultProps({
 				batchRunState,
 				onResumeAfterError,

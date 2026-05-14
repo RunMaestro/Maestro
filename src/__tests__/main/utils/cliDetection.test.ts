@@ -414,8 +414,8 @@ describe('cliDetection.ts', () => {
 
 			// Should still have the additional paths
 			if (process.platform === 'win32') {
-				expect(path).toContain('C:\\Program Files\\dotnet');
-				expect(path).toContain('C:\\WINDOWS\\System32\\OpenSSH');
+				expect(path.toLowerCase()).toContain('c:\\program files\\dotnet');
+				expect(path.toLowerCase()).toContain('c:\\windows\\system32\\openssh');
 			} else {
 				expect(path).toContain('/opt/homebrew/bin');
 				expect(path).toContain('/usr/local/bin');

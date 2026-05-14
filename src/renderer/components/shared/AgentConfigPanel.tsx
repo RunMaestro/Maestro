@@ -37,7 +37,7 @@ interface ModelTextInputProps {
 	option: { key: string; default?: string };
 	value: string;
 	onChange: (value: string) => void;
-	onBlur: () => void;
+	onBlur: (committedValue: string) => void;
 	availableModels: string[];
 	loadingModels: boolean;
 	onRefreshModels?: () => void;
@@ -141,11 +141,17 @@ function ModelTextInput({
 									if (filterText && filterText !== committedValueRef.current) {
 										onChange(filterText);
 										committedValueRef.current = filterText;
+										setIsFiltering(false);
+										setFilterText('');
+										// Pass the newly committed value so the consumer can save it
+										// without relying on stale React state
+										onBlur(filterText);
+										return;
 									}
 									setIsFiltering(false);
 									setFilterText('');
 								}
-								onBlur();
+								onBlur(committedValueRef.current);
 							}, 150);
 						}}
 						onClick={(e) => e.stopPropagation()}
@@ -190,7 +196,7 @@ function ModelTextInput({
 										setShowDropdown(false);
 										setFilterText('');
 										setIsFiltering(false);
-										onBlur();
+										onBlur(model);
 									}}
 									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
 									style={{
@@ -255,7 +261,8 @@ export interface AgentConfigPanelProps {
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
 	onConfigChange: (key: string, value: any) => void;
-	onConfigBlur: () => void;
+	/** Called when a config field blurs. For text fields, `committedValue` is the value that was just saved. */
+	onConfigBlur: (key: string, committedValue: any) => void | Promise<void>;
 	// Model selection (if supported)
 	availableModels?: string[];
 	loadingModels?: boolean;
@@ -300,6 +307,14 @@ export function AgentConfigPanel({
 	showBuiltInEnvVars = false,
 	isSshEnabled = false,
 }: AgentConfigPanelProps): JSX.Element {
+	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
+		const maybePromise = onConfigBlur(key, committedValue);
+		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+			void (maybePromise as Promise<void>).catch((error: unknown) => {
+				console.error(`Failed to persist config field "${key}":`, error);
+			});
+		}
+	};
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
 	// Track which built-in env var tooltip is showing
@@ -604,7 +619,10 @@ export function AgentConfigPanel({
 									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
 									onConfigChange(option.key, isNaN(value) ? 0 : value);
 								}}
-								onBlur={onConfigBlur}
+								onBlur={(e) => {
+									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+									callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
+								}}
 								onClick={(e) => e.stopPropagation()}
 								placeholder={option.default?.toString() || '0'}
 								min={0}
@@ -618,7 +636,7 @@ export function AgentConfigPanel({
 								option={option}
 								value={agentConfig[option.key] ?? option.default}
 								onChange={(value) => onConfigChange(option.key, value)}
-								onBlur={onConfigBlur}
+								onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
 								availableModels={option.key === 'model' ? availableModels : []}
 								loadingModels={option.key === 'model' ? loadingModels : false}
 								onRefreshModels={
@@ -639,7 +657,7 @@ export function AgentConfigPanel({
 									onChange={(e) => {
 										onConfigChange(option.key, e.target.checked);
 										// Immediately persist checkbox changes
-										onConfigBlur();
+										callOnConfigBlurSafely(option.key, e.target.checked);
 									}}
 									className="w-4 h-4"
 									style={{ accentColor: theme.colors.accent }}
@@ -654,7 +672,7 @@ export function AgentConfigPanel({
 								value={agentConfig[option.key] ?? option.default ?? ''}
 								onChange={(e) => {
 									onConfigChange(option.key, e.target.value);
-									onConfigBlur();
+									callOnConfigBlurSafely(option.key, e.target.value);
 								}}
 								onClick={(e) => e.stopPropagation()}
 								className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"

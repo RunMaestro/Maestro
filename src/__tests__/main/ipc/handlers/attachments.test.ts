@@ -1,3 +1,4 @@
+import path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 
@@ -15,7 +16,7 @@ vi.mock('electron', () => ({
 
 // Mock app
 const mockApp = {
-	getPath: vi.fn().mockReturnValue('/mock/userData'),
+	getPath: vi.fn().mockReturnValue(path.resolve('/mock/userData')),
 };
 
 // Mock fs/promises module

@@ -27,29 +27,19 @@
  */
 
 import type { ToolType, AgentError } from '../../shared/types';
+import { isValidAgentId } from '../../shared/agentIds';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../shared/types';
 
 /**
- * Valid ToolType values for output parser registration
- * This array is the single source of truth for agent types that can have parsers
- */
-const VALID_TOOL_TYPES: ToolType[] = [
-	'claude-code',
-	'opencode',
-	'codex',
-	'terminal',
-	'factory-droid',
-];
-
-/**
- * Type guard to validate if a string is a valid ToolType
+ * Type guard to validate if a string is a valid ToolType.
+ * Delegates to the single source of truth in shared/agentIds.ts.
  * @param id - The string to check
  * @returns True if the string is a valid ToolType
  */
 export function isValidToolType(id: string): id is ToolType {
-	return VALID_TOOL_TYPES.includes(id as ToolType);
+	return isValidAgentId(id);
 }
 
 /**
@@ -197,6 +187,16 @@ export interface AgentOutputParser {
 	extractSlashCommands(event: ParsedEvent): string[] | null;
 
 	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Like parseJsonLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns ParsedEvent if the object is valid and should be processed, null otherwise
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null;
+
+	/**
 	 * Detect an error from a line of agent output
 	 * Checks for error patterns in the output and returns structured error info
 	 *
@@ -204,6 +204,16 @@ export interface AgentOutputParser {
 	 * @returns AgentError if an error was detected, null otherwise
 	 */
 	detectErrorFromLine(line: string): AgentError | null;
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Like detectErrorFromLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns AgentError if an error was detected, null otherwise
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null;
 
 	/**
 	 * Detect an error from process exit information

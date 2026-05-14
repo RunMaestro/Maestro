@@ -17,18 +17,21 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
 import { Eye, Edit, ChevronDown, ChevronRight, X, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MermaidRenderer } from '../../MermaidRenderer';
 import type { GeneratedDocument } from '../WizardContext';
 import { DocumentSelector } from './DocumentSelector';
-import { generateProseStyles, createMarkdownComponents } from '../../../utils/markdownConfig';
+import {
+	REMARK_GFM_PLUGINS,
+	generateProseStyles,
+	createMarkdownComponents,
+} from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 // Memoize plugin arrays - they never change
-const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeSlug];
 
 /**
@@ -243,6 +246,7 @@ export function DocumentEditor({
 	onDropdownOpenChange,
 }: DocumentEditorProps): JSX.Element {
 	const [attachmentsExpanded, setAttachmentsExpanded] = useState(true);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 
 	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
@@ -475,15 +479,18 @@ export function DocumentEditor({
 		() =>
 			createMarkdownComponents({
 				theme,
+				enableBionifyReadingMode: bionifyReadingMode,
 				imageRenderer: WizardImageRenderer,
 				customLanguageRenderers: {
 					mermaid: MermaidWrapper,
 				},
 				onExternalLinkClick: (href) => {
-					window.maestro.shell.openExternal(href);
+					if (/^https?:\/\/|^mailto:/.test(href)) {
+						void window.maestro.shell.openExternal(href);
+					}
 				},
 			}),
-		[theme, WizardImageRenderer, MermaidWrapper]
+		[bionifyReadingMode, theme, WizardImageRenderer, MermaidWrapper]
 	);
 
 	return (
@@ -676,7 +683,7 @@ export function DocumentEditor({
 						<style>{proseStyles}</style>
 						<div className="prose prose-sm max-w-none">
 							<ReactMarkdown
-								remarkPlugins={REMARK_PLUGINS}
+								remarkPlugins={REMARK_GFM_PLUGINS}
 								rehypePlugins={REHYPE_PLUGINS}
 								components={markdownComponents}
 							>

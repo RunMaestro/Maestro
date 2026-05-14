@@ -28,6 +28,7 @@ import {
 	type DocumentGenerationCallbacks,
 } from '../../services/inlineWizardDocumentGeneration';
 import type { ToolType } from '../../types';
+import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 
 /**
  * Wizard mode determines whether the user wants to create new documents
@@ -634,11 +635,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 				// Step 4: Initialize conversation session (only for 'new' or 'iterate' modes)
 				// Only allow wizard for agents that support structured output
-				const supportedWizardAgents: ToolType[] = ['claude-code', 'codex', 'opencode'];
 				if (
 					(mode === 'new' || mode === 'iterate') &&
 					agentType &&
-					supportedWizardAgents.includes(agentType) &&
+					hasCapabilityCached(agentType, 'supportsWizard') &&
 					effectiveAutoRunFolderPath
 				) {
 					// historyFilePath was fetched in Step 0 above
@@ -673,14 +673,14 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				} else if (
 					(mode === 'new' || mode === 'iterate') &&
 					agentType &&
-					!supportedWizardAgents.includes(agentType)
+					!hasCapabilityCached(agentType, 'supportsWizard')
 				) {
 					// Agent not supported for wizard
 					logger.warn(`Wizard not supported for agent type: ${agentType}`, '[InlineWizard]');
 					setTabState(effectiveTabId, (prev) => ({
 						...prev,
 						isInitializing: false,
-						error: `The inline wizard is not supported for ${agentType}. Please use Claude, Claude Code, or Codex.`,
+						error: `The inline wizard is not supported for this agent type.`,
 					}));
 					return; // Don't update state with parsed results
 				}
@@ -759,9 +759,6 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			images?: string[],
 			callbacks?: ConversationCallbacks
 		): Promise<void> => {
-			// Only allow wizard for agents that support structured output
-			const supportedWizardAgents: ToolType[] = ['claude-code', 'codex', 'opencode'];
-
 			// Get the tab ID from the current state, ensure currentTabId is set for visibility
 			const tabId = currentTabId || 'default';
 			if (tabId !== currentTabId) {
@@ -807,7 +804,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				if (
 					currentState?.mode === 'ask' &&
 					currentState.agentType &&
-					supportedWizardAgents.includes(currentState.agentType) &&
+					hasCapabilityCached(currentState.agentType, 'supportsWizard') &&
 					effectiveAutoRunFolderPath
 				) {
 					console.log('[useInlineWizard] Auto-creating session for direct message in ask mode');
@@ -998,7 +995,11 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					currentState.autoRunFolderPath ||
 					(currentState.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
 
-				if (currentState.agentType && effectiveAutoRunFolderPath) {
+				if (
+					currentState.agentType &&
+					hasCapabilityCached(currentState.agentType, 'supportsWizard') &&
+					effectiveAutoRunFolderPath
+				) {
 					// Use historyFilePath from state (fetched during startWizard)
 					const session = startInlineWizardConversation({
 						mode: newMode,

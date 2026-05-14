@@ -678,7 +678,7 @@ async function saveDocument(
 		autoRunFolderPath,
 		filename,
 		doc.content,
-		sshRemoteId || undefined
+		sshRemoteId
 	);
 
 	if (!result.success) {
@@ -721,7 +721,7 @@ export async function generateInlineDocuments(
 	// Create a date-prefixed subfolder name: "YYYY-MM-DD-Feature-Name" (with -2, -3, etc. if needed)
 	const baseFolderName = generateWizardFolderBaseName(projectName);
 	const sshRemoteId = config.sessionSshRemoteConfig?.enabled
-		? config.sessionSshRemoteConfig.remoteId
+		? (config.sessionSshRemoteConfig.remoteId ?? undefined)
 		: undefined;
 
 	// Only attempt to check existing folders if we're local OR if listDocs supports remote
@@ -843,7 +843,7 @@ export async function generateInlineDocuments(
 				// Set up file watcher for real-time document streaming
 				// The agent writes files directly, and we detect them here
 				window.maestro.autorun
-					.watchFolder(subfolderPath)
+					.watchFolder(subfolderPath, sshRemoteId)
 					.then((watchResult) => {
 						if (watchResult.success) {
 							console.log('[InlineWizardDocGen] Started watching folder:', subfolderPath);
@@ -871,7 +871,7 @@ export async function generateInlineDocuments(
 										const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
 											for (let attempt = 1; attempt <= retries; attempt++) {
 												try {
-													const content = await window.maestro.fs.readFile(fullPath);
+													const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 													if (content && typeof content === 'string' && content.length > 0) {
 														console.log(
 															'[InlineWizardDocGen] File read successful:',
@@ -1096,7 +1096,7 @@ export async function generateInlineDocuments(
 		if (documents.length === 0 || totalTasks === 0) {
 			// Check for files on disk (agent may have written directly)
 			callbacks?.onProgress?.('Checking for documents on disk...');
-			const diskDocs = await readDocumentsFromDisk(subfolderPath);
+			const diskDocs = await readDocumentsFromDisk(subfolderPath, sshRemoteId);
 			if (diskDocs.length > 0) {
 				console.log('[InlineWizardDocGen] Found documents on disk:', diskDocs.length);
 				documents = diskDocs;
@@ -1113,7 +1113,7 @@ export async function generateInlineDocuments(
 		const savedDocuments: InlineGeneratedDocument[] = [];
 		for (const doc of documents) {
 			try {
-				const savedDoc = await saveDocument(subfolderPath, doc, sshRemoteId || undefined);
+				const savedDoc = await saveDocument(subfolderPath, doc, sshRemoteId);
 				savedDocuments.push(savedDoc);
 				callbacks?.onDocumentComplete?.(savedDoc);
 			} catch (error) {
@@ -1238,13 +1238,20 @@ async function createPlaybookForDocuments(
  *
  * Note: Documents read from disk are treated as new (isUpdate: false)
  * since they were written directly by the agent.
+ *
+ * @param autoRunFolderPath - Path to the Auto Run folder
+ * @param sshRemoteId - Optional SSH remote ID for reading from remote sessions
+ * @returns Array of parsed documents from disk
  */
-async function readDocumentsFromDisk(autoRunFolderPath: string): Promise<ParsedDocument[]> {
+async function readDocumentsFromDisk(
+	autoRunFolderPath: string,
+	sshRemoteId?: string
+): Promise<ParsedDocument[]> {
 	const documents: ParsedDocument[] = [];
 
 	try {
 		// List files in the Auto Run folder
-		const listResult = await window.maestro.autorun.listDocs(autoRunFolderPath);
+		const listResult = await window.maestro.autorun.listDocs(autoRunFolderPath, sshRemoteId);
 		if (!listResult.success || !listResult.files) {
 			return [];
 		}
@@ -1254,7 +1261,11 @@ async function readDocumentsFromDisk(autoRunFolderPath: string): Promise<ParsedD
 		for (const fileBaseName of listResult.files) {
 			const filename = fileBaseName.endsWith('.md') ? fileBaseName : `${fileBaseName}.md`;
 
-			const readResult = await window.maestro.autorun.readDoc(autoRunFolderPath, fileBaseName);
+			const readResult = await window.maestro.autorun.readDoc(
+				autoRunFolderPath,
+				fileBaseName,
+				sshRemoteId
+			);
 			if (readResult.success && readResult.content) {
 				// Extract phase number from filename
 				const phaseMatch = filename.match(/Phase-(\d+)/i);

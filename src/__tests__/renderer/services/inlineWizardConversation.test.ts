@@ -384,21 +384,18 @@ describe('inlineWizardConversation', () => {
 
 	describe('Windows stdin handling', () => {
 		// Save original platform
-		const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+		const originalMaestroPlatform = (window as any).maestro?.platform;
 
 		afterEach(() => {
 			// Restore original platform
-			if (originalPlatform) {
-				Object.defineProperty(navigator, 'platform', originalPlatform);
+			if ((window as any).maestro) {
+				(window as any).maestro.platform = originalMaestroPlatform;
 			}
 		});
 
 		it('should use sendPromptViaStdin for claude-code on Windows', async () => {
 			// Mock Windows platform
-			Object.defineProperty(navigator, 'platform', {
-				value: 'Win32',
-				configurable: true,
-			});
+			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 
 			const mockAgent = {
 				id: 'claude-code',
@@ -436,10 +433,7 @@ describe('inlineWizardConversation', () => {
 
 		it('should use sendPromptViaStdinRaw for opencode on Windows', async () => {
 			// Mock Windows platform
-			Object.defineProperty(navigator, 'platform', {
-				value: 'Win32',
-				configurable: true,
-			});
+			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 
 			const mockAgent = {
 				id: 'opencode',
@@ -477,10 +471,7 @@ describe('inlineWizardConversation', () => {
 
 		it('should not use stdin flags on non-Windows platforms', async () => {
 			// Mock macOS platform
-			Object.defineProperty(navigator, 'platform', {
-				value: 'MacIntel',
-				configurable: true,
-			});
+			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'darwin' };
 
 			const mockAgent = {
 				id: 'opencode',
@@ -518,10 +509,7 @@ describe('inlineWizardConversation', () => {
 
 		it('should add --input-format stream-json for claude-code on Windows', async () => {
 			// Mock Windows platform
-			Object.defineProperty(navigator, 'platform', {
-				value: 'Win32',
-				configurable: true,
-			});
+			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 
 			const mockAgent = {
 				id: 'claude-code',

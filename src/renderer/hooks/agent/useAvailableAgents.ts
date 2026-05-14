@@ -12,6 +12,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { ToolType, Session } from '../../types';
 import type { AgentCapabilities } from './useAgentCapabilities';
 import { DEFAULT_CAPABILITIES } from './useAgentCapabilities';
+import { getAgentIcon } from '../../constants/agentIcons';
 
 // Use AgentConfig from types - it has optional capabilities fields
 // The detect API may not return all capability fields
@@ -56,28 +57,6 @@ export interface UseAvailableAgentsReturn {
 	refresh: () => Promise<void>;
 	/** Get a specific agent by ID */
 	getAgent: (id: ToolType) => AvailableAgent | undefined;
-}
-
-/**
- * Get display icon for an agent
- */
-function getAgentIcon(agentId: string): string {
-	switch (agentId) {
-		case 'claude-code':
-			return '🤖';
-		case 'codex':
-			return '◇';
-		case 'gemini-cli':
-			return '🔷';
-		case 'qwen3-coder':
-			return '⬡';
-		case 'opencode':
-			return '📟';
-		case 'factory-droid':
-			return '🏭';
-		default:
-			return '🔧';
-	}
 }
 
 /**

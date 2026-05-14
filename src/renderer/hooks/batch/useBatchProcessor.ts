@@ -2008,23 +2008,18 @@ export function useBatchProcessor({
 				errorResolution.resolve('abort');
 				delete errorResolutionRefs.current[sessionId];
 			}
-			updateBatchStateAndBroadcast(
-				sessionId,
-				(prev) => ({
-					...prev,
-					[sessionId]: {
-						...prev[sessionId],
-						isStopping: true,
-						error: undefined,
-						errorPaused: false,
-						errorDocumentIndex: undefined,
-						errorTaskDescription: undefined,
-					},
-				}),
-				true
-			); // immediate: critical state change (aborting)
+
+			// Use SET_STOPPING action directly (not updateBatchStateAndBroadcast which only
+			// supports UPDATE_PROGRESS and silently drops errorPaused/isStopping/error fields).
+			// SET_STOPPING from PAUSED_ERROR state already clears all error fields.
+			dispatch({ type: 'SET_STOPPING', sessionId });
+			// Broadcast state change
+			const currentState = useBatchStore.getState().batchRunStates[sessionId];
+			if (currentState) {
+				broadcastAutoRunState(sessionId, currentState);
+			}
 		},
-		[updateBatchStateAndBroadcast]
+		[broadcastAutoRunState]
 	);
 
 	return {

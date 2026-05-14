@@ -13,12 +13,14 @@ import {
 	getSshErrorPatterns,
 	registerErrorPatterns,
 	clearPatternRegistry,
-	CLAUDE_ERROR_PATTERNS,
-	OPENCODE_ERROR_PATTERNS,
-	CODEX_ERROR_PATTERNS,
 	SSH_ERROR_PATTERNS,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
+
+// Access per-agent patterns via the registry (single public API)
+const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
+const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
+const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -420,6 +422,19 @@ describe('error-patterns', () => {
 			it('should return null for empty patterns', () => {
 				const result = matchErrorPattern({}, 'rate limit exceeded');
 				expect(result).toBeNull();
+			});
+
+			it('should return null for non-string line input', () => {
+				// Runtime guard: obj.message may be an object instead of string
+				const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, {
+					type: 'error',
+				} as unknown as string);
+				expect(result).toBeNull();
+			});
+
+			it('should return null for null/undefined line input', () => {
+				expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, null as unknown as string)).toBeNull();
+				expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, undefined as unknown as string)).toBeNull();
 			});
 		});
 

@@ -24,6 +24,7 @@ import {
 	type WizardError,
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
+import { getStdinFlags } from '../../../utils/spawnHelpers';
 
 /**
  * Configuration for starting a conversation
@@ -576,6 +577,27 @@ class ConversationManager {
 			// Each agent has different CLI structure for batch mode
 			const argsForSpawn = this.buildArgsForAgent(agent);
 
+			// Determine whether to send the prompt via stdin on Windows to avoid
+			// exceeding the command line length limit. Uses agent capabilities and
+			// SSH session flag to avoid interfering with remote execution paths.
+			const isSshSession = Boolean(
+				this.session!.sshRemoteConfig?.enabled && this.session!.sshRemoteConfig?.remoteId
+			);
+			const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
+				getStdinFlags({
+					isSshSession,
+					supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
+				});
+			if (sendViaStdin) {
+				// Ensure the agent uses stream-json input format when sending JSON via stdin
+				const inputFormatIndex = argsForSpawn.findIndex((arg) => arg === '--input-format');
+				if (inputFormatIndex === -1) {
+					argsForSpawn.push('--input-format', 'stream-json');
+				} else if (argsForSpawn[inputFormatIndex + 1] !== 'stream-json') {
+					argsForSpawn[inputFormatIndex + 1] = 'stream-json';
+				}
+			}
+
 			// Use the agent's resolved path if available, falling back to command name
 			// This is critical for packaged Electron apps where PATH may not include agent locations
 			const commandToUse = agent.path || agent.command;
@@ -604,6 +626,16 @@ class ConversationManager {
 				remoteId: this.session!.sshRemoteConfig?.remoteId || null,
 			});
 
+			if (sendViaStdin || sendViaStdinRaw) {
+				wizardDebugLogger.log('spawn', 'Using stdin for Windows', {
+					sessionId: this.session!.sessionId,
+					platform: navigator.platform,
+					promptLength: prompt.length,
+					sendViaStdin,
+					sendViaStdinRaw,
+				});
+			}
+
 			window.maestro.process
 				.spawn({
 					sessionId: this.session!.sessionId,
@@ -612,6 +644,11 @@ class ConversationManager {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: prompt,
+					// When true, the main process will send the prompt via stdin instead of
+					// passing it as a command-line argument. This avoids Windows command
+					// line length limits for large prompts.
+					sendPromptViaStdin: sendViaStdin,
+					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
 				})

@@ -67,7 +67,8 @@ describe('agent-definitions', () => {
 			expect(opencode).toBeDefined();
 			expect(opencode?.batchModePrefix).toEqual(['run']);
 			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
-			expect(opencode?.noPromptSeparator).toBe(true);
+			// noPromptSeparator removed: '--' separator prevents yargs from misinterpreting prompt content (#527)
+			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
 
 		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {

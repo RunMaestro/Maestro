@@ -475,6 +475,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							session: targetSession,
 							gitBranch,
 							conductorProfile,
+							readOnlyMode: false,
 						});
 						effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 					}

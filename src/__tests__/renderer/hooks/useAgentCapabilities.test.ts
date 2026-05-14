@@ -5,6 +5,10 @@ import {
 	clearCapabilitiesCache,
 	DEFAULT_CAPABILITIES,
 } from '../../../renderer/hooks';
+import {
+	hasCapabilityCached,
+	setCapabilitiesCache,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 const baseCapabilities = {
 	supportsResume: true,
@@ -26,6 +30,10 @@ const baseCapabilities = {
 	supportsThinkingDisplay: false, // Added in Show Thinking feature
 	supportsContextMerge: false,
 	supportsContextExport: false,
+	supportsWizard: false,
+	supportsGroupChatModeration: false,
+	usesJsonLineOutput: false,
+	usesCombinedContextWindow: false,
 };
 
 describe('useAgentCapabilities', () => {
@@ -81,7 +89,7 @@ describe('useAgentCapabilities', () => {
 	});
 
 	it('clears error state when agentId is unset', async () => {
-		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce(new Error('boom'));
+		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValue(new Error('boom'));
 
 		const { result, rerender } = renderHook(
 			({ agentId }: { agentId?: string }) => useAgentCapabilities(agentId),
@@ -98,5 +106,50 @@ describe('useAgentCapabilities', () => {
 			expect(result.current.error).toBeNull();
 			expect(result.current.capabilities).toEqual(DEFAULT_CAPABILITIES);
 		});
+	});
+});
+
+describe('hasCapabilityCached', () => {
+	beforeEach(() => {
+		clearCapabilitiesCache();
+	});
+
+	it('returns DEFAULT_CAPABILITIES value when agent is not cached', () => {
+		expect(hasCapabilityCached('uncached-agent', 'supportsResume')).toBe(false);
+		expect(hasCapabilityCached('uncached-agent', 'supportsBatchMode')).toBe(false);
+	});
+
+	it('returns correct value from cached capabilities', () => {
+		setCapabilitiesCache('test-agent', {
+			...DEFAULT_CAPABILITIES,
+			supportsResume: true,
+			supportsBatchMode: true,
+			supportsWizard: true,
+		});
+
+		expect(hasCapabilityCached('test-agent', 'supportsResume')).toBe(true);
+		expect(hasCapabilityCached('test-agent', 'supportsBatchMode')).toBe(true);
+		expect(hasCapabilityCached('test-agent', 'supportsWizard')).toBe(true);
+		expect(hasCapabilityCached('test-agent', 'supportsSlashCommands')).toBe(false);
+	});
+
+	it('returns false for new capability flags when not set', () => {
+		setCapabilitiesCache('test-agent', { ...DEFAULT_CAPABILITIES });
+
+		expect(hasCapabilityCached('test-agent', 'supportsWizard')).toBe(false);
+		expect(hasCapabilityCached('test-agent', 'supportsGroupChatModeration')).toBe(false);
+		expect(hasCapabilityCached('test-agent', 'usesJsonLineOutput')).toBe(false);
+		expect(hasCapabilityCached('test-agent', 'usesCombinedContextWindow')).toBe(false);
+	});
+
+	it('falls back to defaults after cache is cleared', () => {
+		setCapabilitiesCache('test-agent', {
+			...DEFAULT_CAPABILITIES,
+			supportsResume: true,
+		});
+		expect(hasCapabilityCached('test-agent', 'supportsResume')).toBe(true);
+
+		clearCapabilitiesCache();
+		expect(hasCapabilityCached('test-agent', 'supportsResume')).toBe(false);
 	});
 });

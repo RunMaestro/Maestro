@@ -54,6 +54,7 @@ describe('Exit Listener', () => {
 				emitParticipantState: vi.fn(),
 				emitParticipantsChanged: vi.fn(),
 				emitModeratorUsage: vi.fn(),
+				emitMessage: vi.fn(),
 			},
 			groupChatRouter: {
 				routeModeratorResponse: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +63,7 @@ describe('Exit Listener', () => {
 				spawnModeratorSynthesis: vi.fn().mockResolvedValue(undefined),
 				getGroupChatReadOnlyState: vi.fn().mockReturnValue(false),
 				respawnParticipantWithRecovery: vi.fn().mockResolvedValue(undefined),
+				clearActiveParticipantTaskSession: vi.fn(),
 			},
 			groupChatStorage: {
 				loadGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),

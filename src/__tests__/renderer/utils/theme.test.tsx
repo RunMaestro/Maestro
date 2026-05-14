@@ -15,6 +15,8 @@ import {
 	getStatusColor,
 	formatActiveTime,
 	getFileIcon,
+	getExplorerFileIcon,
+	getExplorerFolderIcon,
 } from '../../../renderer/utils/theme';
 import type { Theme, SessionState, FileChangeType } from '../../../renderer/types';
 
@@ -471,6 +473,61 @@ describe('theme utilities', () => {
 				const svg = container.querySelector('svg');
 				expect(svg).toHaveStyle({ color: mockTheme.colors.accent });
 			});
+		});
+	});
+
+	describe('explorer icon themes', () => {
+		it('returns the existing default Files pane icon theme by default', () => {
+			const { container } = render(getExplorerFileIcon('index.ts', mockTheme));
+			const icon = container.querySelector('svg');
+
+			expect(icon).toBeTruthy();
+			expect(container.querySelector('img')).toBeNull();
+		});
+
+		it('returns rich file icons when the rich theme is selected', () => {
+			const { container } = render(getExplorerFileIcon('index.ts', mockTheme, undefined, 'rich'));
+			const icon = container.querySelector('img[data-file-explorer-icon-theme="rich"]');
+
+			expect(icon).toBeTruthy();
+			expect(icon?.getAttribute('data-file-explorer-icon-key')).toBe('typescript');
+		});
+
+		it('returns rich README icons for rich theme special files', () => {
+			const { container } = render(getExplorerFileIcon('README.md', mockTheme, undefined, 'rich'));
+			const icon = container.querySelector('img[data-file-explorer-icon-theme="rich"]');
+
+			expect(icon?.getAttribute('data-file-explorer-icon-key')).toBe('readme');
+		});
+
+		it('returns the JSON icon for rich JSON files', () => {
+			const { container } = render(
+				getExplorerFileIcon('package.json', mockTheme, undefined, 'rich')
+			);
+			const icon = container.querySelector('img[data-file-explorer-icon-theme="rich"]');
+
+			expect(icon?.getAttribute('data-file-explorer-icon-key')).toBe('package');
+		});
+
+		it('returns the YAML icon for rich YAML files', () => {
+			const { container } = render(
+				getExplorerFileIcon('config.yaml', mockTheme, undefined, 'rich')
+			);
+			const icon = container.querySelector('img[data-file-explorer-icon-theme="rich"]');
+
+			expect(icon?.getAttribute('data-file-explorer-icon-key')).toBe('yaml');
+		});
+
+		it('returns rich folder icons with open and closed states', () => {
+			const closed = render(getExplorerFolderIcon('src', false, mockTheme, 'rich'));
+			const open = render(getExplorerFolderIcon('src', true, mockTheme, 'rich'));
+
+			const closedIcon = closed.container.querySelector('img[data-file-explorer-icon-key="src"]');
+			const openIcon = open.container.querySelector('img[data-file-explorer-icon-key="src"]');
+
+			expect(closedIcon).toBeTruthy();
+			expect(openIcon).toBeTruthy();
+			expect(closedIcon?.getAttribute('src')).not.toBe(openIcon?.getAttribute('src'));
 		});
 	});
 });

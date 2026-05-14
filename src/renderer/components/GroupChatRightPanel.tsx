@@ -20,6 +20,7 @@ import {
 	type ParticipantColorInfo,
 } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
+import { useGroupChatStore } from '../stores/groupChatStore';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -80,6 +81,8 @@ export function GroupChatRightPanel({
 	onJumpToMessage,
 	onColorsComputed,
 }: GroupChatRightPanelProps): JSX.Element | null {
+	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
+
 	// Color preferences state
 	const [colorPreferences, setColorPreferences] = useState<Record<string, number>>({});
 	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
@@ -185,6 +188,14 @@ export function GroupChatRightPanel({
 			} catch (error) {
 				console.error(`Failed to reset context for ${participantName}:`, error);
 			}
+		},
+		[groupChatId]
+	);
+
+	// Handle removing a participant from the group chat
+	const handleRemoveParticipant = useCallback(
+		async (participantName: string) => {
+			await window.maestro.groupChat.removeParticipant(groupChatId, participantName);
 		},
 		[groupChatId]
 	);
@@ -322,6 +333,8 @@ export function GroupChatRightPanel({
 									color={participantColors[participant.name]}
 									groupChatId={groupChatId}
 									onContextReset={handleContextReset}
+									onRemove={handleRemoveParticipant}
+									liveOutput={participantLiveOutput.get(`${groupChatId}:${participant.name}`)}
 								/>
 							);
 						})

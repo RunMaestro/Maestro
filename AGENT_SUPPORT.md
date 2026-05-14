@@ -20,14 +20,32 @@ The multi-provider refactoring has established the pluggable architecture for su
 
 ### Adding a New Agent
 
-To add support for a new agent (e.g., Gemini CLI, Codex), follow these steps:
+To add support for a new agent, follow this checklist. The agent completeness test (`agent-completeness.test.ts`) will fail CI if any required step is missed.
 
-1. Add agent definition to `src/main/agent-detector.ts`
-2. Define capabilities in `src/main/agent-capabilities.ts`
-3. Create output parser in `src/main/parsers/{agent}-output-parser.ts`
-4. Register parser in `src/main/parsers/index.ts`
-5. (Optional) Create session storage in `src/main/storage/{agent}-session-storage.ts`
-6. (Optional) Add error patterns to `src/main/parsers/error-patterns.ts`
+#### Required Steps
+
+1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
+2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
+3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (23 boolean fields)
+4. **Add display name & beta status** to `src/shared/agentMetadata.ts` → `AGENT_DISPLAY_NAMES` record, optionally add to `BETA_AGENTS` set
+5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
+6. **Sync renderer interfaces** — add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
+
+#### Conditional Steps (based on capabilities)
+
+7. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
+8. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
+9. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+
+#### CI Enforcement
+
+The `agent-completeness.test.ts` test validates:
+
+- Every ID in `AGENT_IDS` has a definition in `AGENT_DEFINITIONS` (and vice versa)
+- Every definition has capabilities in `AGENT_CAPABILITIES` with all required fields
+- Every agent with `supportsJsonOutput` has a registered output parser
+- Every agent with `supportsSessionStorage` has a registered session storage
+- Every agent with an output parser has error patterns registered
 
 See detailed instructions below.
 
@@ -63,8 +81,8 @@ Use these terms consistently throughout the codebase:
 
 Maestro uses a pluggable architecture for AI agents. Each agent integrates through:
 
-1. **Agent Definition** (`src/main/agent-detector.ts`) - CLI binary, arguments, detection
-2. **Capabilities** (`src/main/agent-capabilities.ts`) - Feature flags controlling UI
+1. **Agent Definition** (`src/main/agents/definitions.ts`) - CLI binary, arguments, detection
+2. **Capabilities** (`src/main/agents/capabilities.ts`) - Feature flags controlling UI
 3. **Output Parser** (`src/main/parsers/`) - Translates agent JSON to Maestro events
 4. **Session Storage** (`src/main/storage/`) - Optional browsing of past sessions
 5. **Error Patterns** (`src/main/parsers/error-patterns.ts`) - Error detection and recovery
@@ -104,7 +122,7 @@ Each agent declares capabilities that determine which UI features are available.
 ### Capability Interface
 
 ```typescript
-// src/main/agent-capabilities.ts
+// src/main/agents/capabilities.ts (23 boolean fields + 1 optional)
 
 interface AgentCapabilities {
 	// Core features
@@ -113,35 +131,73 @@ interface AgentCapabilities {
 	supportsJsonOutput: boolean; // Emits structured JSON for parsing
 	supportsSessionId: boolean; // Emits session ID for tracking
 
-	// Advanced features
+	// Input capabilities
 	supportsImageInput: boolean; // Can receive images in prompts
+	supportsImageInputOnResume: boolean; // Can receive images when resuming a session
 	supportsSlashCommands: boolean; // Has discoverable slash commands
+	supportsStreamJsonInput: boolean; // Accepts --input-format stream-json for image stdin
+
+	// Storage & tracking
 	supportsSessionStorage: boolean; // Persists provider sessions we can browse
 	supportsCostTracking: boolean; // Reports token costs
 	supportsUsageStats: boolean; // Reports token counts
 
-	// Streaming behavior
+	// Execution behavior
 	supportsBatchMode: boolean; // Runs per-message (vs persistent process)
+	requiresPromptToStart: boolean; // No eager spawn — needs prompt to start
 	supportsStreaming: boolean; // Streams output incrementally
+	supportsModelSelection: boolean; // Supports --model flag for model selection
 
-	// Message classification
+	// Display & classification
 	supportsResultMessages: boolean; // Distinguishes final result from intermediary
+	supportsThinkingDisplay: boolean; // Emits streaming thinking/reasoning content
+
+	// Context transfer
+	supportsContextMerge: boolean; // Can receive merged context from other sessions
+	supportsContextExport: boolean; // Can export context for transfer to other agents
+
+	// Feature gating (used instead of hardcoded agent ID lists)
+	supportsWizard: boolean; // Supports inline wizard structured output
+	supportsGroupChatModeration: boolean; // Can serve as group chat moderator
+	usesJsonLineOutput: boolean; // Uses JSONL (not JSON) in batch mode
+	usesCombinedContextWindow: boolean; // Combined input+output context display
+
+	// Optional non-boolean
+	imageResumeMode?: 'prompt-embed'; // How to handle images on resume when -i unavailable
 }
 ```
 
+> **Note:** This interface is duplicated in 4 places that must stay in sync:
+> `src/main/agents/capabilities.ts`, `src/renderer/hooks/agent/useAgentCapabilities.ts`,
+> `src/renderer/types/index.ts`, `src/renderer/global.d.ts`
+
 ### Capability-to-UI Feature Mapping
 
-| Capability               | UI Feature                 | Hidden When False     |
-| ------------------------ | -------------------------- | --------------------- |
-| `supportsReadOnlyMode`   | Read-only toggle           | Toggle hidden         |
-| `supportsSessionStorage` | Sessions browser tab       | Tab hidden            |
-| `supportsResume`         | Resume button              | Button disabled       |
-| `supportsCostTracking`   | Cost widget                | Widget hidden         |
-| `supportsUsageStats`     | Token usage display        | Display hidden        |
-| `supportsImageInput`     | Image attachment button    | Button hidden         |
-| `supportsSlashCommands`  | Slash command autocomplete | Autocomplete disabled |
-| `supportsSessionId`      | Session ID pill            | Pill hidden           |
-| `supportsResultMessages` | Show only final result     | Shows all messages    |
+| Capability                    | UI Feature                    | Hidden When False        |
+| ----------------------------- | ----------------------------- | ------------------------ |
+| `supportsResume`              | Resume button                 | Button disabled          |
+| `supportsReadOnlyMode`        | Read-only toggle              | Toggle hidden            |
+| `supportsJsonOutput`          | Output parsing                | Raw text fallback        |
+| `supportsSessionId`           | Session ID pill               | Pill hidden              |
+| `supportsImageInput`          | Image attachment button       | Button hidden            |
+| `supportsImageInputOnResume`  | Image attach on resume        | Button hidden on resume  |
+| `supportsSlashCommands`       | Slash command autocomplete    | Autocomplete disabled    |
+| `supportsStreamJsonInput`     | Image via stdin (stream-json) | Uses file path fallback  |
+| `supportsSessionStorage`      | Sessions browser tab          | Tab hidden               |
+| `supportsCostTracking`        | Cost widget                   | Widget hidden            |
+| `supportsUsageStats`          | Token usage display           | Display hidden           |
+| `supportsBatchMode`           | Batch processing              | Persistent process mode  |
+| `requiresPromptToStart`       | Eager spawn on create         | Agent spawns immediately |
+| `supportsStreaming`           | Real-time display             | Waits for full response  |
+| `supportsModelSelection`      | Model dropdown                | Dropdown hidden          |
+| `supportsResultMessages`      | Show only final result        | Shows all messages       |
+| `supportsThinkingDisplay`     | Thinking/reasoning panel      | Panel hidden             |
+| `supportsContextMerge`        | Receive merged context        | Merge option hidden      |
+| `supportsContextExport`       | Export context                | Export option hidden     |
+| `supportsWizard`              | Wizard agent selection        | Agent excluded           |
+| `supportsGroupChatModeration` | Moderator dropdown            | Agent excluded           |
+| `usesJsonLineOutput`          | CLI batch parsing strategy    | Uses JSON fallback       |
+| `usesCombinedContextWindow`   | Context bar display           | Separate bars            |
 
 ### Context Window Configuration
 
@@ -166,7 +222,7 @@ For agents where context window size varies by model (like OpenCode or Codex), M
 **Adding Context Window Config to an Agent:**
 
 ```typescript
-// In agent-detector.ts, add to configOptions:
+// In agents/definitions.ts, add to configOptions:
 configOptions: [
   {
     key: 'contextWindow',
@@ -191,13 +247,24 @@ When adding a new agent, start with all capabilities set to `false`:
   supportsJsonOutput: false,
   supportsSessionId: false,
   supportsImageInput: false,
+  supportsImageInputOnResume: false,
   supportsSlashCommands: false,
+  supportsStreamJsonInput: false,
   supportsSessionStorage: false,
   supportsCostTracking: false,
   supportsUsageStats: false,
   supportsBatchMode: false,
+  requiresPromptToStart: false,
   supportsStreaming: false,
+  supportsModelSelection: false,
   supportsResultMessages: false,
+  supportsThinkingDisplay: false,
+  supportsContextMerge: false,
+  supportsContextExport: false,
+  supportsWizard: false,
+  supportsGroupChatModeration: false,
+  usesJsonLineOutput: false,
+  usesCombinedContextWindow: false,
 },
 ```
 
@@ -240,7 +307,7 @@ Document:
 
 ### Step 2: Add Agent Definition
 
-Edit `src/main/agent-detector.ts`:
+Edit `src/main/agents/definitions.ts`:
 
 ```typescript
 const AGENT_DEFINITIONS: AgentConfig[] = [
@@ -265,9 +332,29 @@ const AGENT_DEFINITIONS: AgentConfig[] = [
 ];
 ```
 
+### Step 2.5: Add Display Name & Beta Status
+
+Edit `src/shared/agentMetadata.ts`:
+
+```typescript
+// Add to AGENT_DISPLAY_NAMES record
+export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
+	// ... existing agents
+	'your-agent': 'Your Agent',
+};
+
+// If beta, add to BETA_AGENTS set
+export const BETA_AGENTS: ReadonlySet<AgentId> = new Set([
+	'codex',
+	'opencode',
+	'factory-droid',
+	'your-agent', // Add here if beta
+]);
+```
+
 ### Step 3: Define Capabilities
 
-Edit `src/main/agent-capabilities.ts`:
+Edit `src/main/agents/capabilities.ts`:
 
 ```typescript
 const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
@@ -278,13 +365,24 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsJsonOutput: true, // If JSON output works
 		supportsSessionId: true, // If session ID in output
 		supportsImageInput: false, // Start false, enable if supported
+		supportsImageInputOnResume: false, // true if images work on resume
 		supportsSlashCommands: false,
+		supportsStreamJsonInput: false, // true if --input-format stream-json
 		supportsSessionStorage: false, // Enable if you implement storage
 		supportsCostTracking: false, // Enable if API-based with costs
 		supportsUsageStats: true, // If token counts in output
 		supportsBatchMode: true,
+		requiresPromptToStart: true, // true if no eager spawn
 		supportsStreaming: true,
+		supportsModelSelection: false, // true if --model flag exists
 		supportsResultMessages: false, // Enable if result vs intermediary distinction
+		supportsThinkingDisplay: false, // true if thinking/reasoning output
+		supportsContextMerge: false, // true if can receive merged context
+		supportsContextExport: false, // true if context is exportable
+		supportsWizard: false, // Enable if structured wizard output works
+		supportsGroupChatModeration: false, // Enable if agent can moderate group chats
+		usesJsonLineOutput: false, // true if batch output is JSONL (not JSON)
+		usesCombinedContextWindow: false, // true if context = input + output combined
 	},
 };
 ```
@@ -774,8 +872,8 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 **To Add:**
 
-1. Agent definition in `agent-detector.ts`
-2. Capabilities in `agent-capabilities.ts`
+1. Agent definition in `agents/definitions.ts`
+2. Capabilities in `agents/capabilities.ts`
 3. Output parser for Gemini JSON format
 4. Error patterns for Google API errors
 
@@ -846,7 +944,7 @@ codex exec --json resume <thread_id> "continue"
 
 **To Add:**
 
-1. Agent definition in `agent-detector.ts`
-2. Capabilities in `agent-capabilities.ts` (likely local model, no cost tracking)
+1. Agent definition in `agents/definitions.ts`
+2. Capabilities in `agents/capabilities.ts` (likely local model, no cost tracking)
 3. Output parser for Qwen JSON format
 4. Error patterns (likely minimal for local models)

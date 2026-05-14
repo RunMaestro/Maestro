@@ -15,6 +15,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileNoThrow } from '../../utils/execFile';
+import { isWindows } from '../../../shared/platformDetection';
 
 export interface WindowsDiagnosticsInfo {
 	isWindows: boolean;
@@ -46,9 +47,7 @@ export interface DirectoryCheck {
  * Returns minimal info on non-Windows platforms.
  */
 export async function collectWindowsDiagnostics(): Promise<WindowsDiagnosticsInfo> {
-	const isWindows = process.platform === 'win32';
-
-	if (!isWindows) {
+	if (!isWindows()) {
 		return { isWindows: false };
 	}
 

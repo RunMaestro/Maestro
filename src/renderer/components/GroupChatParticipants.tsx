@@ -13,6 +13,7 @@ import { ParticipantCard } from './ParticipantCard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildParticipantColorMap } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
+import { useGroupChatStore } from '../stores/groupChatStore';
 
 interface GroupChatParticipantsProps {
 	theme: Theme;
@@ -62,6 +63,8 @@ export function GroupChatParticipants({
 		side: 'right',
 	});
 
+	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
+
 	// Generate consistent colors for all participants (including "Moderator" for the moderator card)
 	const participantColors = useMemo(() => {
 		return buildParticipantColorMap(['Moderator', ...participants.map((p) => p.name)], theme);
@@ -98,6 +101,14 @@ export function GroupChatParticipants({
 			} catch (error) {
 				console.error(`Failed to reset context for ${participantName}:`, error);
 			}
+		},
+		[groupChatId]
+	);
+
+	// Handle removing a participant from the group chat
+	const handleRemoveParticipant = useCallback(
+		async (participantName: string) => {
+			await window.maestro.groupChat.removeParticipant(groupChatId, participantName);
 		},
 		[groupChatId]
 	);
@@ -164,10 +175,12 @@ export function GroupChatParticipants({
 							key={participant.sessionId}
 							theme={theme}
 							participant={participant}
-							state={participantStates.get(participant.sessionId) || 'idle'}
+							state={participantStates.get(participant.name) || 'idle'}
 							color={participantColors[participant.name]}
 							groupChatId={groupChatId}
 							onContextReset={handleContextReset}
+							onRemove={handleRemoveParticipant}
+							liveOutput={participantLiveOutput.get(participant.name)}
 						/>
 					))
 				)}

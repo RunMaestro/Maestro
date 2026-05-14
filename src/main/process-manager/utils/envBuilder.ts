@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { STANDARD_UNIX_PATHS } from '../constants';
 import { detectNodeVersionManagerBinPaths, buildExpandedPath } from '../../../shared/pathUtils';
+import { isWindows } from '../../../shared/platformDetection';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -61,10 +62,9 @@ export function buildUnixBasePath(): string {
  * @note Terminal sessions do NOT strip Electron/IDE variables (full environment inherited on Windows)
  */
 export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): NodeJS.ProcessEnv {
-	const isWindows = process.platform === 'win32';
 	let env: NodeJS.ProcessEnv;
 
-	if (isWindows) {
+	if (isWindows()) {
 		env = {
 			...process.env,
 			TERM: 'xterm-256color',

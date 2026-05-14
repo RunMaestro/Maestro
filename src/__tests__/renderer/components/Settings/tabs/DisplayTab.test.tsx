@@ -30,7 +30,11 @@ const mockSetFontSize = vi.fn();
 const mockSetTerminalWidth = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
+const mockSetBionifyReadingMode = vi.fn();
+const mockSetBionifyIntensity = vi.fn();
+const mockSetBionifyAlgorithm = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
+const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
 const mockSetDocumentGraphShowExternalLinks = vi.fn();
@@ -54,8 +58,16 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setMaxLogBuffer: mockSetMaxLogBuffer,
 		maxOutputLines: 25,
 		setMaxOutputLines: mockSetMaxOutputLines,
+		bionifyReadingMode: false,
+		setBionifyReadingMode: mockSetBionifyReadingMode,
+		bionifyIntensity: 1,
+		setBionifyIntensity: mockSetBionifyIntensity,
+		bionifyAlgorithm: '- 0 1 1 2 0.4',
+		setBionifyAlgorithm: mockSetBionifyAlgorithm,
 		userMessageAlignment: 'right',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
+		fileExplorerIconTheme: 'default',
+		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
 		autoHideMenuBar: false,
@@ -125,6 +137,14 @@ vi.mock('../../../../../renderer/components/Settings/IgnorePatternsSection', () 
 	),
 }));
 
+vi.mock('../../../../../renderer/components/ui/Modal', () => ({
+	Modal: ({ title, children }: { title: string; children: React.ReactNode }) => (
+		<div role="dialog" aria-label={title}>
+			{children}
+		</div>
+	),
+}));
+
 // Sample theme for testing
 const mockTheme: Theme = {
 	id: 'dracula',
@@ -163,6 +183,77 @@ describe('DisplayTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
+	});
+
+	describe('Files Pane Icon Theme', () => {
+		it('should render the Files Pane Icon Theme control and helper copy', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Files Pane Icon Theme')).toBeInTheDocument();
+			expect(
+				screen.getByText(/Rich uses Material Icon Theme style file and folder SVGs/i)
+			).toBeInTheDocument();
+		});
+
+		it('should call setFileExplorerIconTheme when Rich is selected', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rich' }));
+
+			expect(mockSetFileExplorerIconTheme).toHaveBeenCalledWith('rich');
+		});
+	});
+
+	describe('Bionify Display Settings', () => {
+		it('renders intensity controls and algorithm input', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Reading Mode')).toBeInTheDocument();
+			expect(screen.getByText('Intensity')).toBeInTheDocument();
+			expect(screen.getByLabelText('Bionify algorithm')).toHaveValue('- 0 1 1 2 0.4');
+			expect(screen.getByRole('button', { name: 'Info' })).toBeInTheDocument();
+		});
+
+		it('updates Bionify intensity when a new value is chosen', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Strong' }));
+
+			expect(mockSetBionifyIntensity).toHaveBeenCalledWith(1.35);
+		});
+
+		it('updates the algorithm string when edited', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.change(input, { target: { value: '+ 1 1 2 2 0.55' } });
+			fireEvent.blur(input);
+
+			expect(mockSetBionifyAlgorithm).toHaveBeenLastCalledWith('+ 1 1 2 2 0.55');
+		});
+
+		it('shows validation feedback and avoids persisting invalid algorithm input', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.change(input, { target: { value: '- 0 1 1' } });
+			fireEvent.blur(input);
+
+			expect(screen.getByText(/Enter `\+\|-/)).toBeInTheDocument();
+			expect(mockSetBionifyAlgorithm).not.toHaveBeenCalled();
+		});
+
+		it('opens an info modal with the upstream algorithm breakdown', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Info' }));
+
+			const dialog = screen.getByRole('dialog', { name: 'Bionify Algorithm Reference' });
+			expect(dialog).toBeInTheDocument();
+			expect(within(dialog).getAllByText(/- 0 1 1 2 0.4/).length).toBeGreaterThan(0);
+			expect(within(dialog).getByText(/common english words/i)).toBeInTheDocument();
+			expect(within(dialog).getByText(/fraction of each word/i)).toBeInTheDocument();
+		});
 	});
 
 	// =========================================================================

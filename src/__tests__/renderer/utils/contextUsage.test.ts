@@ -395,7 +395,7 @@ describe('calculateContextDisplay', () => {
 		expect(result.contextWindow).toBe(0);
 	});
 
-	it('should not fall back when no fallbackPercentage is provided', () => {
+	it('should clamp tokens to the window when accumulated values exceed it without a fallback', () => {
 		const result = calculateContextDisplay(
 			{
 				inputTokens: 50000,
@@ -406,9 +406,23 @@ describe('calculateContextDisplay', () => {
 			'claude-code'
 			// no fallback
 		);
-		// Raw = 1008000 > 200000, but no fallback, so tokens stay at raw value
-		// Percentage is capped at 100%
-		expect(result.tokens).toBe(1008000);
+		// Raw = 1008000 > 200000, but no fallback, so clamp to the configured window
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+	});
+
+	it('should clamp fallback percentages above 100 before deriving tokens', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			150
+		);
+		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
 	});
 

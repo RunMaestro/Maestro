@@ -152,7 +152,7 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<span
 							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
-							style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
+							style={{ color: theme.colors.textMain }}
 						>
 							{session.name}
 						</span>
