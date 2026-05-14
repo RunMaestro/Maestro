@@ -53,7 +53,7 @@ Clicking a playbook tile (or pressing `Enter`) opens the detail view where you c
 ## Importing a Playbook
 
 1. Open the detail view for a playbook
-2. Optionally edit the **Import to folder** field (defaults to `category/title` slug, e.g., `development/code-review`)
+2. Optionally edit the **Import to folder** field (defaults to a title slug, e.g., `code-review`)
 3. Click **Import Playbook**
 
 The import creates:

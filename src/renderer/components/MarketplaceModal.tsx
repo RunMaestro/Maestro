@@ -1008,10 +1008,13 @@ export function MarketplaceModal({
 			setSelectedDocFilename(null);
 			setDocumentContent(null);
 
-			// Generate default folder name: category/title slug
-			const slug = `${playbook.category}/${playbook.title}`
+			// Default folder name: title-only slug. `assertSafeTargetFolderName`
+			// rejects path separators, so a `category/title` prefill would silently
+			// fail at import time. Category is already shown via the tile chip and
+			// detail-view eyebrow. Mirrors the mobile MarketplaceSheet behavior.
+			const slug = playbook.title
 				.toLowerCase()
-				.replace(/[^a-z0-9/]+/g, '-')
+				.replace(/[^a-z0-9]+/g, '-')
 				.replace(/-+/g, '-')
 				.replace(/^-|-$/g, '');
 			setTargetFolderName(slug);
