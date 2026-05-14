@@ -202,6 +202,13 @@ export function useBatchedSessionUpdates(
 
 					// Apply AI tab logs
 					if (aiTabLogs.size > 0 && updatedSession.aiTabs) {
+						// Interactive Claude turns (maestro-p driving the TUI) stream raw
+						// text with no separate tool_use events — tag those entries so the
+						// renderer can surface the "Captured via interactive TUI" pill and
+						// skip the tool-card flow that the stream-json path expects.
+						const isInteractiveAssistantTurn =
+							updatedSession.claudeInteractive?.mode === 'interactive';
+
 						updatedSession = {
 							...updatedSession,
 							aiTabs: updatedSession.aiTabs.map((tab) => {
@@ -228,12 +235,19 @@ export function useBatchedSessionUpdates(
 									lastLog.source === logSource &&
 									logData.timestamp - lastLog.timestamp < 500;
 
+								const renderStyle: LogEntry['renderStyle'] | undefined =
+									isInteractiveAssistantTurn && !logData.isStderr ? 'text-stream' : undefined;
+
 								let updatedLogs: LogEntry[];
 								if (shouldGroup) {
 									updatedLogs = [...existingLogs];
 									updatedLogs[updatedLogs.length - 1] = {
 										...lastLog,
 										text: lastLog.text + logData.data,
+										// A grouped entry inherits the renderStyle of the first chunk —
+										// stamping it again here keeps grouped interactive chunks tagged
+										// even if the first chunk landed before mode resolution mirrored.
+										...(renderStyle ? { renderStyle } : {}),
 									};
 								} else {
 									const newLog: LogEntry = {
@@ -241,6 +255,7 @@ export function useBatchedSessionUpdates(
 										timestamp: logData.timestamp,
 										source: logSource,
 										text: logData.data,
+										...(renderStyle ? { renderStyle } : {}),
 									};
 									updatedLogs = [...existingLogs, newLog];
 								}

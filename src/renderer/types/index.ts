@@ -202,6 +202,13 @@ export interface LogEntry {
 			output?: unknown;
 		};
 	};
+	// How this assistant turn should be rendered.
+	// `'structured'` (default, omitted) — paired with tool/thinking sibling entries
+	// to render the existing tool-call/code/diff card flow from stream-json.
+	// `'text-stream'` — captured during Claude interactive mode (maestro-p); render
+	// as a single Markdown block with a "Captured via interactive TUI" footer pill,
+	// since no tool_use events are emitted by the TUI.
+	renderStyle?: 'structured' | 'text-stream';
 }
 
 // Queued item for the session-level execution queue

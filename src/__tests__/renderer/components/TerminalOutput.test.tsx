@@ -2772,4 +2772,115 @@ describe('memoization behavior', () => {
 		);
 		expect(hasNewFont).toBe(true);
 	});
+
+	describe('mixed-mode message rendering (interactive vs api)', () => {
+		// In phase 3, a single Claude tab's scrollback can contain turns captured
+		// via the stream-json path (structured tool-card flow) alongside turns
+		// captured via the interactive TUI proxy (single Markdown block + footer
+		// pill). Both rendering styles must coexist without breaking the view.
+		it('renders structured and text-stream turns side-by-side', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'First question (handled in API mode)',
+					source: 'user',
+				}),
+				// Structured turn: separate tool log + assistant stdout (default
+				// renderStyle, no pill).
+				createLogEntry({
+					id: 'tool-1',
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'completed', input: { command: 'ls -la' } } },
+				}),
+				createLogEntry({
+					id: 'ai-1',
+					text: 'Here is the listing from the API turn.',
+					source: 'stdout',
+				}),
+				createLogEntry({
+					id: 'user-2',
+					text: 'Second question (handled via interactive TUI)',
+					source: 'user',
+				}),
+				// Text-stream turn: single stdout LogEntry tagged as captured by
+				// the TUI proxy. No tool sibling — the maestro-p binary doesn't
+				// emit tool_use events.
+				createLogEntry({
+					id: 'ai-2',
+					text: 'Inline answer, including any tool descriptions in the text itself.',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			const { container } = render(<TerminalOutput {...props} />);
+
+			// Both user prompts render.
+			expect(screen.getByText('First question (handled in API mode)')).toBeInTheDocument();
+			expect(screen.getByText('Second question (handled via interactive TUI)')).toBeInTheDocument();
+
+			// Structured turn renders the tool card.
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('ls -la')).toBeInTheDocument();
+
+			// Exactly one footer pill — and it belongs to the text-stream turn.
+			const pills = container.querySelectorAll('[data-testid="interactive-tui-pill"]');
+			expect(pills).toHaveLength(1);
+			expect(pills[0].textContent).toContain('Captured via interactive TUI');
+		});
+
+		it('does not render the interactive pill on structured (default) assistant turns', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({
+					id: 'ai-1',
+					text: 'Plain API mode response.',
+					source: 'stdout',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			const { container } = render(<TerminalOutput {...props} />);
+
+			expect(
+				container.querySelector('[data-testid="interactive-tui-pill"]')
+			).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on user messages even when tagged text-stream', () => {
+			// User entries don't surface the pill (it's for assistant turns only).
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'User message',
+					source: 'user',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			const { container } = render(<TerminalOutput {...props} />);
+
+			expect(
+				container.querySelector('[data-testid="interactive-tui-pill"]')
+			).not.toBeInTheDocument();
+		});
+	});
 });

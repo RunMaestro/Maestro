@@ -850,6 +850,26 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{/* Interactive-mode footer pill — surfaces that this turn came from
+					    the Claude TUI proxy (maestro-p) and therefore has no tool cards. */}
+					{log.renderStyle === 'text-stream' && log.source !== 'user' && (
+						<div
+							className="absolute bottom-2 left-3 flex items-center pointer-events-none"
+							data-testid="interactive-tui-pill"
+						>
+							<span
+								className="px-2 py-0.5 rounded text-[10px] uppercase tracking-wide opacity-70"
+								style={{
+									backgroundColor: `${theme.colors.accent}20`,
+									color: theme.colors.accent,
+									border: `1px solid ${theme.colors.accent}40`,
+								}}
+								title="This turn was captured by Maestro's Claude TUI proxy. Tool calls appear inline in the response text instead of as structured cards."
+							>
+								Captured via interactive TUI (no tool cards)
+							</span>
+						</div>
+					)}
 					{/* Action buttons - bottom right corner */}
 					<div
 						className="absolute bottom-2 right-2 flex items-center gap-1"
@@ -975,6 +995,7 @@ const LogItemComponent = memo(
 			prevProps.log.text === nextProps.log.text &&
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
+			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
