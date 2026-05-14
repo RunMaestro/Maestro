@@ -99,6 +99,34 @@ export interface AgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
+
+	/**
+	 * Binary to use for API headless mode (e.g. real `claude --print`). When omitted, the spawner
+	 * falls back to `command`. Used only by agents that support multiple headless backends
+	 * (currently Claude Code, where `api` mode bills via the API and `interactive` mode drives the
+	 * TUI through `maestro-p` to preserve a Max plan quota).
+	 */
+	apiCommand?: string;
+
+	/**
+	 * Base args appended after the API-mode binary. Equivalent to `args` but only consumed when
+	 * the mode selector resolves to `api`. Kept distinct from `args` so the spawner can pick the
+	 * right argv per mode without re-deriving it.
+	 */
+	apiModeArgs?: string[];
+
+	/**
+	 * Binary to use for interactive headless mode (e.g. `maestro-p`, which drives Claude's TUI).
+	 * When omitted, interactive mode is unsupported for this agent.
+	 */
+	interactiveCommand?: string;
+
+	/**
+	 * Base args appended after the interactive-mode binary. Forwarded to the wrapper, which is
+	 * expected to forward them to the underlying TUI process (e.g. maestro-p forwards
+	 * `--dangerously-skip-permissions` to the real claude binary).
+	 */
+	interactiveModeArgs?: string[];
 }
 
 /**
@@ -127,6 +155,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		id: 'claude-code',
 		name: 'Claude Code',
 		binaryName: 'claude',
+		// Legacy single-binary defaults: kept populated as the API-mode binary + args so any spawn
+		// path that is not yet mode-aware behaves exactly like it does today.
 		command: 'claude',
 		// YOLO mode (--dangerously-skip-permissions) is always enabled - Maestro requires it
 		args: [
@@ -136,7 +166,20 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'stream-json',
 			'--dangerously-skip-permissions',
 		],
-		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
+		// Explicit API-mode entry (mirrors command/args above). Used by the mode-aware spawner.
+		apiCommand: 'claude',
+		apiModeArgs: [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--dangerously-skip-permissions',
+		],
+		// Interactive headless mode: drives the real Claude TUI through maestro-p so usage is
+		// billed against the Max plan instead of the API. maestro-p forwards these flags to claude.
+		interactiveCommand: 'maestro-p',
+		interactiveModeArgs: ['--dangerously-skip-permissions'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID (works for both binaries)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 	},
