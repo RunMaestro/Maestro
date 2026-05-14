@@ -31,7 +31,11 @@ import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
-import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import {
+	BaseSessionStorage,
+	type SearchableMessage,
+	type StorageWatchSpec,
+} from './base-session-storage';
 import type {
 	AgentSessionInfo,
 	SessionMessagesResult,
@@ -158,6 +162,36 @@ function extractTextFromContent(content: FactoryContentItem[] | string): string 
  */
 export class FactoryDroidSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'factory-droid';
+
+	/**
+	 * Describes how to watch Factory Droid's on-disk session storage for activity
+	 * from sessions Maestro did not spawn. Factory lays files out as
+	 * `~/.factory/sessions/<encoded-cwd>/<uuid>.jsonl` alongside a
+	 * `<uuid>.settings.json` sidecar, so the matcher requires exactly two path
+	 * segments and a `.jsonl` suffix (rejecting the sidecar).
+	 *
+	 * Factory's encoding from {@link encodeProjectPath} (`[\\/]` → `-`) is lossy
+	 * when a real directory name contains `-`, and there is no decode helper in
+	 * the codebase to reuse. The encoded segment is passed through as
+	 * `projectPath`; downstream consumers that need the real cwd must read it
+	 * from the JSONL contents (the matcher contract is synchronous).
+	 */
+	getStorageWatchSpec(): StorageWatchSpec | null {
+		return {
+			rootDir: getFactorySessionsDir(),
+			fileMatcher: (relPath) => {
+				const segments = relPath.split(path.sep);
+				if (segments.length !== 2) return null;
+				const [encodedProjectSegment, fileName] = segments;
+				if (!encodedProjectSegment) return null;
+				if (!fileName.endsWith('.jsonl')) return null;
+				return {
+					sessionId: fileName.slice(0, -'.jsonl'.length),
+					projectPath: encodedProjectSegment,
+				};
+			},
+		};
+	}
 
 	/**
 	 * Get the session directory for a project
