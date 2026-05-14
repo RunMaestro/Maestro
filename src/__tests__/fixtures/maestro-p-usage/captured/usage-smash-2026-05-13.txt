@@ -1,0 +1,42 @@
+❯ /usage                                                                                                                                                                                                ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Settings  Status   Config   Usage   Stats
+Session
+
+Totalcost:$0.0000
+Totalduration(API):0s
+Totalduration(wall):2s
+Totalcodechanges:0linesadded,0linesremoved
+Usage:0input,0output,0cacheread,0cachewrite
+
+Currentsession
+█████████████                                     26%used
+Resets1:40am(America/Chicago)
+
+Currentweek(allmodels)
+████████████████                                  32%used
+ResetsMay14at10am(America/Chicago)
+
+What'scontributingtoyourlimitsusage?
+Approximate,basedonlocalsessionsonthismachine—doesnotincludeotherdevicesorclaude.ai
+
+Scanninglocalsessions…
+
+Refreshing…
+
+Esctocancel
+Last 24h· these are independent characteristics of your usage, not a breakdown21% of yourusagewasat>150kcontextLonger sessions are more expensive even when cached. /compact mid-task, /clear  when swithing to new tasks.
+
+20%ofyourusagewaswhile4+sessionsraninparallel
+Allsessionsshareonelimit.Ifyoudon'tneedthemallatonce,queueinguses
+ itmoreevenly.
+
+Skills%ofusage
+/interceptor-browser5%
+/sms-contact1%
+
+dtoday·wtoweek
+
+Refreshing…
+
+Esctocancel
+▌39:59am (America/Chicago)Current week (Sonet nly)                                                   0% usedWhat's contributing to your limits usage?Approximate, based on local sessions on this machine — does not include other devices or claude.aiLast 24h · theseindpndt characteristis of your usge, not  breakdown21%ofyourusagewasat>150kcontext Longer sessions are more expensive even when cached. /compact mid-task, /clear when switching to new tasks.20%ofyourusagewaswhile4+sessionsraninparallel All sessions share one limit. If you don't need them all at once, queueing uses[2C  i more evenly.Skills% of usage/interceptor-brosr5%/sms-contact1%d to day · w to week
+Esctocancel

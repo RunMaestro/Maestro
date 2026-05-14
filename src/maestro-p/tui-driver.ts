@@ -34,10 +34,13 @@ const SPINNER_PATTERN = /\(\d+s\s*·\s*[↑↓]\s*\d+\s*tokens\s*·\s*\w+\)/;
 // "exceeded"). index.ts maps this event to wrapper exit code 2 in a later task.
 const LIMIT_HIT_PATTERN = /(5-hour|weekly)\s+limit\s+(reached|exceeded)/i;
 
-// Claude's interactive input prompt sits at column 0 as `› ` (Unicode triangle
-// + space). When this is the most recent non-spinner line, the TUI is idle and
-// waiting for input.
-const PROMPT_INDICATOR_PATTERN = /^›\s/;
+// Claude's interactive input prompt sits at column 0 as a Unicode chevron
+// followed by a space. claude 2.1.141 (captured 2026-05-13 from both
+// .claude-gmail and .claude-smash via scripts/capture-usage-fixture.mjs) uses
+// `❯ ` (U+276F HEAVY RIGHT-POINTING ANGLE-BRACKET ORNAMENT). The original
+// playbook documented `› ` (U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION
+// MARK) — accept either so a future claude reverting wouldn't break us.
+const PROMPT_INDICATOR_PATTERN = /^[›❯]\s/;
 
 const SPINNER_IDLE_MS = 800;
 const QUIT_GRACE_MS = 2000;

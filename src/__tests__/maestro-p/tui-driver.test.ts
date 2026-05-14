@@ -190,6 +190,23 @@ describe('TuiDriver — spinner-stop / ready', () => {
 		expect(events).toEqual(['spinner-start', 'line', 'line', 'spinner-stop', 'ready']);
 	});
 
+	it('emits `ready` when the real claude 2.1.141 ❯ prompt indicator appears', async () => {
+		// Regression guard: real claude (captured 2026-05-13 from both
+		// .claude-gmail and .claude-smash) uses ❯ (U+276F), not the original
+		// playbook's › (U+203A). PROMPT_INDICATOR_PATTERN must match either.
+		const { driver, pty } = await newDriver();
+		const events: string[] = [];
+		driver.on('spinner-start', () => events.push('spinner-start'));
+		driver.on('spinner-stop', () => events.push('spinner-stop'));
+		driver.on('ready', () => events.push('ready'));
+
+		pty.emitData('Pouncing… (3s · ↑ 100 tokens · esc)\n');
+		pty.emitData('Here is your answer.\n❯ \n');
+
+		vi.advanceTimersByTime(800);
+		expect(events).toEqual(['spinner-start', 'spinner-stop', 'ready']);
+	});
+
 	it('keeps the 800ms idle timer reset while the spinner is still ticking', async () => {
 		const { driver, pty } = await newDriver();
 		const completionEvents: string[] = [];

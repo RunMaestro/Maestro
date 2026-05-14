@@ -1,0 +1,42 @@
+❯ /usage                                                                                                                                                                                                ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Settings  Status   Config   Usage   Stats
+Session
+
+Totalcost:$0.0000
+Totalduration(API):0s
+Totalduration(wall):2s
+Totalcodechanges:0linesadded,0linesremoved
+Usage:0input,0output,0cacheread,0cachewrite
+
+Currentsession
+                                                  0%used
+Resets4am(America/Chicago)
+
+Currentweek(allmodels)
+███████████████████████████████▌                  63%used
+ResetsMay16at6pm(America/Chicago)
+
+What'scontributingtoyourlimitsusage?
+Approximate,basedonlocalsessionsonthismachine—doesnotincludeotherdevicesorclaude.ai
+
+Scanninglocalsessions…
+
+Refreshing…
+
+Esctocancel
+Current week (Sonet nly)                                                   0% usedWhat's contributing to your limits usage?Approximate, based on local sessions on this machine — does not include other devices or claude.aiScanning local sessions…
+Esctocancel
+Last 24h· these are independent characteristics of your usage, not a breakdown21% of your usagewasat>150kcontext
+Longersessionsaremoreexpensiveevenwhencached./compactmid-task,/clear
+whenswitchingtonewtasks.
+
+20%ofyourusagewaswhile4+sessionsraninparallel
+Allsessionsshareonelimit.Ifyoudon'tneedthemallatonce,queueinguses
+ itmoreevenly.
+
+Skills%ofusage
+/interceptor-browser5%
+/sms-contact1%
+
+dtoday·wtoweek
+
+Esctocancel
