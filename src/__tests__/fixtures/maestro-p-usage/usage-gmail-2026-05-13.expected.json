@@ -1,0 +1,11 @@
+{
+	"now_iso": "2026-05-13T20:00:00.000Z",
+	"config_dir": "/Users/pedram/.claude-gmail",
+	"expected": {
+		"type": "status",
+		"config_dir": "/Users/pedram/.claude-gmail",
+		"session": { "percent": 0, "resets_at": "2026-05-14T09:00:00.000Z" },
+		"week_all_models": { "percent": 63, "resets_at": "2026-05-16T23:00:00.000Z" },
+		"week_sonnet_only": { "percent": 0, "resets_at": "2026-05-16T23:00:00.000Z" }
+	}
+}

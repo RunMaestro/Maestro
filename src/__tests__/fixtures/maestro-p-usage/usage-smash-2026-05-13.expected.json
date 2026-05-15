@@ -1,0 +1,11 @@
+{
+	"now_iso": "2026-05-13T20:00:00.000Z",
+	"config_dir": "/Users/pedram/.claude-smash",
+	"expected": {
+		"type": "status",
+		"config_dir": "/Users/pedram/.claude-smash",
+		"session": { "percent": 26, "resets_at": "2026-05-14T06:40:00.000Z" },
+		"week_all_models": { "percent": 32, "resets_at": "2026-05-14T15:00:00.000Z" },
+		"week_sonnet_only": { "percent": 0, "resets_at": "2026-05-14T15:00:00.000Z" }
+	}
+}

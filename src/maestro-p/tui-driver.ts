@@ -1,23 +1,20 @@
-// TUI driver core — spawns `claude` in a pseudoterminal and translates the
-// interactive screen-redraw stream into discrete lifecycle events that the
-// maestro-p wrapper turns into stream-json upstream.
+// TUI driver core — spawns `claude` in a pseudoterminal and exposes the
+// minimum lifecycle events the maestro-p wrapper still needs after the
+// jsonl-tail rewrite: a `line` stream (used by run-status's quiescence
+// detection), a one-shot `ready` signal when the input prompt indicator
+// first appears (so we know claude is accepting input), `limit-hit` for
+// quota messages, and `exit`.
 //
-// Phase 1 task 3 responsibilities:
-//   - Spawn claude via node-pty with a generous viewport so terminal wrapping
-//     does not fragment the lines we want to scrape.
-//   - ANSI-strip every chunk, split on newlines, classify each completed line
-//     as spinner / limit-hit / regular content.
-//   - Maintain a rolling buffer of the last 16 non-spinner lines so we can
-//     detect the `›` input-prompt indicator at completion time.
-//   - When the spinner pattern has been silent for SPINNER_IDLE_MS *and* the
-//     prompt indicator is visible, emit `spinner-stop` then `ready`. That pair
-//     is the completion signal the wrapper hands off as `result`.
+// Previously the driver also tracked claude's spinner pattern to emit
+// `spinner-start` / `spinner-stop` as completion markers. That path is
+// gone — run mode now finalizes based on `stop_reason: end_turn` in the
+// session jsonl, which is robust against the TUI rendering changes that
+// kept invalidating the spinner regex.
 //
-// Why a class with EventEmitter (rather than a callback config or async
-// iterator): the wiring task in index.ts cares about a small set of lifecycle
-// events plus one streaming event (`line`). Listeners compose more cleanly
-// than callback soup, and EventEmitter's once() makes the quit/exit race in
-// quit() trivial to express.
+// Why a class with EventEmitter: the wiring code in index.ts cares about
+// a small set of lifecycle events plus one streaming event. Listeners
+// compose more cleanly than callback soup, and EventEmitter's once()
+// makes the quit/exit race trivial to express.
 
 import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
@@ -25,24 +22,21 @@ import type { IPty } from 'node-pty';
 
 import { stripAnsiCodes } from '../shared/stringUtils';
 
-// The verb in front of claude's spinner changes per release ("Pouncing…",
-// "Crunching…", "Pondering…", etc.), so we anchor on the durable parenthesized
-// status fragment instead. Direction arrow is ↑ or ↓ (input vs. output flow).
-const SPINNER_PATTERN = /\(\d+s\s*·\s*[↑↓]\s*\d+\s*tokens\s*·\s*\w+\)/;
-
 // Both 5-hour and weekly quota messages — wording varies ("reached" vs.
-// "exceeded"). index.ts maps this event to wrapper exit code 2 in a later task.
+// "exceeded"). index.ts maps this event to wrapper exit code 2, which
+// Maestro uses to auto-fall-back to api mode.
 const LIMIT_HIT_PATTERN = /(5-hour|weekly)\s+limit\s+(reached|exceeded)/i;
 
 // Claude's interactive input prompt sits at column 0 as a Unicode chevron
-// followed by a space. claude 2.1.141 (captured 2026-05-13 from both
-// .claude-gmail and .claude-smash via scripts/capture-usage-fixture.mjs) uses
-// `❯ ` (U+276F HEAVY RIGHT-POINTING ANGLE-BRACKET ORNAMENT). The original
-// playbook documented `› ` (U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION
-// MARK) — accept either so a future claude reverting wouldn't break us.
+// followed by a space. claude 2.1.141 uses `❯ ` (U+276F HEAVY RIGHT-
+// POINTING ANGLE-BRACKET ORNAMENT). The original playbook documented `› `
+// (U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK) — accept either so
+// a future claude reverting wouldn't break us. Used only for startup
+// readiness; the post-response prompt-indicator detection that the
+// previous design relied on was unreliable (lines arrived with leading
+// `\r`) and is no longer load-bearing.
 const PROMPT_INDICATOR_PATTERN = /^[›❯]\s/;
 
-const SPINNER_IDLE_MS = 800;
 const QUIT_GRACE_MS = 2000;
 const ROLLING_BUFFER_SIZE = 16;
 const DEFAULT_COLS = 200;
@@ -58,13 +52,10 @@ export interface TuiDriverConfig {
 }
 
 // Emitted events (untyped on EventEmitter, documented here):
-//   'line'          (line: string)        — ANSI-stripped completed text line, excludes spinner status
-//   'spinner-start' ()                    — spinner pattern first observed in the current cycle
-//   'spinner-stop'  ()                    — spinner has been idle SPINNER_IDLE_MS AND prompt is visible
-//   'limit-hit'     (line: string)        — line matched the 5-hour/weekly quota pattern
-//   'ready'         ()                    — input prompt indicator is visible (paired with spinner-stop
-//                                            after a generation cycle, or solo on fresh startup)
-//   'exit'          (exitCode: number)    — underlying pty process exited
+//   'line'      (line: string)     — ANSI-stripped completed text line
+//   'limit-hit' (line: string)     — line matched the 5-hour/weekly quota pattern
+//   'ready'     ()                 — input prompt indicator first observed; fires once
+//   'exit'      (exitCode: number) — underlying pty process exited
 export class TuiDriver extends EventEmitter {
 	private readonly config: TuiDriverConfig;
 	private process: IPty | null = null;
@@ -73,9 +64,6 @@ export class TuiDriver extends EventEmitter {
 	// fragment into two false "line" events.
 	private residual = '';
 	private rollingBuffer: string[] = [];
-	private spinnerStarted = false;
-	private spinnerIdle = false;
-	private spinnerIdleTimer: NodeJS.Timeout | null = null;
 	private readyEmitted = false;
 	private exited = false;
 
@@ -154,10 +142,6 @@ export class TuiDriver extends EventEmitter {
 
 	private handleExit(exitCode: number): void {
 		this.exited = true;
-		if (this.spinnerIdleTimer) {
-			clearTimeout(this.spinnerIdleTimer);
-			this.spinnerIdleTimer = null;
-		}
 		this.emit('exit', exitCode);
 	}
 
@@ -178,23 +162,6 @@ export class TuiDriver extends EventEmitter {
 	}
 
 	private processLine(line: string): void {
-		if (SPINNER_PATTERN.test(line)) {
-			if (!this.spinnerStarted) {
-				this.spinnerStarted = true;
-				this.spinnerIdle = false;
-				// A new generation cycle starts — un-latch readyEmitted so the
-				// paired spinner-stop / ready transition can fire again when
-				// this cycle completes.
-				this.readyEmitted = false;
-				this.emit('spinner-start');
-			}
-			this.refreshSpinnerIdleTimer();
-			// Spinner lines are status, not content — do not emit as 'line'
-			// and do not pollute the rolling buffer (they would push the
-			// prompt-indicator line out of the 16-line window).
-			return;
-		}
-
 		this.rollingBuffer.push(line);
 		if (this.rollingBuffer.length > ROLLING_BUFFER_SIZE) {
 			this.rollingBuffer.shift();
@@ -206,44 +173,13 @@ export class TuiDriver extends EventEmitter {
 
 		this.emit('line', line);
 
-		this.maybeEmitReady();
-	}
-
-	private refreshSpinnerIdleTimer(): void {
-		if (this.spinnerIdleTimer) {
-			clearTimeout(this.spinnerIdleTimer);
-		}
-		this.spinnerIdleTimer = setTimeout(() => {
-			this.spinnerIdleTimer = null;
-			this.spinnerIdle = true;
-			this.maybeEmitReady();
-		}, SPINNER_IDLE_MS);
-	}
-
-	private maybeEmitReady(): void {
-		const promptVisible = this.rollingBuffer.some((line) => PROMPT_INDICATOR_PATTERN.test(line));
-		if (!promptVisible) {
-			return;
-		}
-
-		if (this.spinnerStarted && this.spinnerIdle) {
-			// Generation cycle finished AND prompt is back — the completion
-			// transition. Pair the two events so callers can treat them as
-			// one atomic state change.
-			this.spinnerStarted = false;
-			this.spinnerIdle = false;
-			this.emit('spinner-stop');
-			this.emit('ready');
+		// Fire `ready` once when the input prompt indicator first appears in
+		// the rolling buffer. Used by callers to know claude is up and
+		// accepting input. Deduped via readyEmitted so subsequent prompt
+		// lines (which arrive on every redraw) don't spam the event.
+		if (!this.readyEmitted && this.rollingBuffer.some((l) => PROMPT_INDICATOR_PATTERN.test(l))) {
 			this.readyEmitted = true;
-			return;
-		}
-
-		if (!this.spinnerStarted && !this.readyEmitted) {
-			// Fresh TUI startup: prompt visible before any spinner has fired.
-			// Emit ready once; subsequent prompt-indicator lines in the same
-			// idle window are deduped by readyEmitted.
 			this.emit('ready');
-			this.readyEmitted = true;
 		}
 	}
 }

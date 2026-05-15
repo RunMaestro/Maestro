@@ -95,67 +95,6 @@ describe('JsonEmitter — emitInit', () => {
 	});
 });
 
-describe('JsonEmitter — emitAssistantText', () => {
-	it('writes an assistant message with the text wrapped in a content block', () => {
-		const { emitter, sink } = makeEmitter();
-		emitter.emitInit({ sessionId: 'abc', cwd: '/tmp' });
-		sink.writes.length = 0; // discard init write so we inspect just the assistant
-
-		emitter.emitAssistantText('Hello, world.');
-
-		expect(lastParsed(sink)).toEqual({
-			type: 'assistant',
-			message: {
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Hello, world.' }],
-			},
-		});
-	});
-
-	it('emits one object per call, supporting incremental streaming', () => {
-		const { emitter, sink } = makeEmitter();
-		emitter.emitInit({ sessionId: 'abc', cwd: '/tmp' });
-
-		emitter.emitAssistantText('First chunk.');
-		emitter.emitAssistantText('Second chunk.');
-		emitter.emitAssistantText('Third chunk.');
-
-		// 1 init + 3 assistant writes.
-		expect(sink.writes).toHaveLength(4);
-		const texts = sink.writes
-			.slice(1)
-			.map((line) => JSON.parse(line.trimEnd()))
-			.map((obj: { message: { content: Array<{ text: string }> } }) => obj.message.content[0].text);
-		expect(texts).toEqual(['First chunk.', 'Second chunk.', 'Third chunk.']);
-	});
-
-	it('throws when called before init', () => {
-		const { emitter } = makeEmitter();
-		expect(() => emitter.emitAssistantText('text')).toThrow(/before init/);
-	});
-
-	it('throws when called after result', () => {
-		const { emitter } = makeEmitter();
-		emitter.emitInit({ sessionId: 'abc', cwd: '/tmp' });
-		emitter.emitResult({ sessionId: 'abc', durationMs: 1000, isError: false });
-		expect(() => emitter.emitAssistantText('late text')).toThrow(/after result/);
-	});
-
-	it('preserves special characters and unicode in the text payload', () => {
-		const { emitter, sink } = makeEmitter();
-		emitter.emitInit({ sessionId: 'abc', cwd: '/tmp' });
-		sink.writes.length = 0;
-
-		const tricky = 'Tab\there\nnewline\n"quotes" and 中文 emoji 🚀';
-		emitter.emitAssistantText(tricky);
-
-		const parsed = lastParsed(sink) as { message: { content: Array<{ text: string }> } };
-		expect(parsed.message.content[0].text).toBe(tricky);
-		// And the serialized line itself must still be valid JSONL (single line).
-		expect(sink.writes[0].slice(0, -1).includes('\n')).toBe(false);
-	});
-});
-
 describe('JsonEmitter — emitResult', () => {
 	let emitter: JsonEmitter;
 	let sink: CapturingStream;
@@ -216,6 +155,112 @@ describe('JsonEmitter — emitResult', () => {
 			emitter.emitResult({ sessionId: 'abc-123', durationMs: 1000, isError: false })
 		).toThrow(/twice/);
 	});
+
+	it('includes result/usage/modelUsage/total_cost_usd when provided', () => {
+		emitter.emitResult({
+			sessionId: 'abc-123',
+			durationMs: 4200,
+			isError: false,
+			result: 'Final answer.',
+			usage: { input_tokens: 100, output_tokens: 5 },
+			modelUsage: { 'claude-opus': { inputTokens: 100, outputTokens: 5 } },
+			totalCostUsd: 0.0023,
+		});
+
+		expect(lastParsed(sink)).toMatchObject({
+			type: 'result',
+			subtype: 'success',
+			session_id: 'abc-123',
+			duration_ms: 4200,
+			is_error: false,
+			result: 'Final answer.',
+			usage: { input_tokens: 100, output_tokens: 5 },
+			modelUsage: { 'claude-opus': { inputTokens: 100, outputTokens: 5 } },
+			total_cost_usd: 0.0023,
+		});
+	});
+
+	it('omits the optional fields when not provided', () => {
+		emitter.emitResult({ sessionId: 'abc-123', durationMs: 1000, isError: false });
+		const parsed = lastParsed(sink);
+		expect(parsed).not.toHaveProperty('result');
+		expect(parsed).not.toHaveProperty('usage');
+		expect(parsed).not.toHaveProperty('modelUsage');
+		expect(parsed).not.toHaveProperty('total_cost_usd');
+	});
+});
+
+describe('JsonEmitter — emitAssistantMessage (jsonl pass-through)', () => {
+	let emitter: JsonEmitter;
+	let sink: CapturingStream;
+
+	beforeEach(() => {
+		({ emitter, sink } = makeEmitter());
+		emitter.emitInit({ sessionId: 'abc-123', cwd: '/tmp' });
+		sink.writes.length = 0;
+	});
+
+	it('forwards the message object verbatim under a type=assistant envelope', () => {
+		const message = {
+			role: 'assistant',
+			content: [
+				{ type: 'text', text: 'Hi.' },
+				{ type: 'tool_use', name: 'Bash', id: 'toolu_x', input: { cmd: 'ls' } },
+			],
+			stop_reason: 'tool_use',
+			usage: { input_tokens: 50, output_tokens: 10 },
+		};
+		emitter.emitAssistantMessage(message);
+
+		expect(lastParsed(sink)).toEqual({ type: 'assistant', message });
+	});
+
+	it('throws when called before init', () => {
+		const fresh = makeEmitter();
+		expect(() => fresh.emitter.emitAssistantMessage({ role: 'assistant', content: [] })).toThrow(
+			/before init/
+		);
+	});
+
+	it('throws when called after result', () => {
+		emitter.emitResult({ sessionId: 'abc-123', durationMs: 100, isError: false });
+		expect(() => emitter.emitAssistantMessage({ role: 'assistant', content: [] })).toThrow(
+			/after result/
+		);
+	});
+});
+
+describe('JsonEmitter — emitUserMessage (jsonl pass-through)', () => {
+	let emitter: JsonEmitter;
+	let sink: CapturingStream;
+
+	beforeEach(() => {
+		({ emitter, sink } = makeEmitter());
+		emitter.emitInit({ sessionId: 'abc-123', cwd: '/tmp' });
+		sink.writes.length = 0;
+	});
+
+	it('forwards the message object verbatim under a type=user envelope', () => {
+		const message = {
+			role: 'user',
+			content: [
+				{
+					type: 'tool_result',
+					tool_use_id: 'toolu_x',
+					content: 'file contents here',
+				},
+			],
+		};
+		emitter.emitUserMessage(message);
+		expect(lastParsed(sink)).toEqual({ type: 'user', message });
+	});
+
+	it('throws when called before init', () => {
+		const fresh = makeEmitter();
+		expect(() => fresh.emitter.emitUserMessage({ role: 'user', content: [] })).toThrow(
+			/before init/
+		);
+	});
 });
 
 describe('JsonEmitter — emitStatus', () => {
@@ -254,12 +299,15 @@ describe('JsonEmitter — emitStatus', () => {
 		expect(() => emitter.emitStatus(snapshot)).toThrow(/twice/);
 	});
 
-	it('blocks init/assistantText/result after status was emitted', () => {
+	it('blocks init / assistant / user / result after status was emitted', () => {
 		const { emitter } = makeEmitter();
 		emitter.emitStatus(snapshot);
 
 		expect(() => emitter.emitInit({ sessionId: 'abc', cwd: '/tmp' })).toThrow(/init after status/);
-		expect(() => emitter.emitAssistantText('hi')).toThrow(/in status mode/);
+		expect(() => emitter.emitAssistantMessage({ role: 'assistant', content: [] })).toThrow(
+			/in status mode/
+		);
+		expect(() => emitter.emitUserMessage({ role: 'user', content: [] })).toThrow(/in status mode/);
 		expect(() => emitter.emitResult({ sessionId: 'abc', durationMs: 100, isError: false })).toThrow(
 			/in status mode/
 		);
@@ -271,8 +319,15 @@ describe('JsonEmitter — JSONL framing', () => {
 		const { emitter, sink } = makeEmitter();
 
 		emitter.emitInit({ sessionId: 'abc-123', cwd: '/tmp' });
-		emitter.emitAssistantText('Line one.');
-		emitter.emitAssistantText('Line two.');
+		emitter.emitAssistantMessage({
+			role: 'assistant',
+			content: [{ type: 'text', text: 'Line one.' }],
+		});
+		emitter.emitAssistantMessage({
+			role: 'assistant',
+			content: [{ type: 'text', text: 'Line two.' }],
+			stop_reason: 'end_turn',
+		});
 		emitter.emitResult({ sessionId: 'abc-123', durationMs: 2500, isError: false });
 
 		expect(sink.writes).toHaveLength(4);

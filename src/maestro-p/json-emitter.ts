@@ -27,6 +27,13 @@ export interface ResultParams {
 	durationMs: number;
 	isError: boolean;
 	error?: string;
+	// Final assistant text — the `result` field in claude -p's output schema.
+	// Optional because some error paths (timeout before any assistant turn)
+	// genuinely have no text to report.
+	result?: string;
+	usage?: Record<string, unknown>;
+	modelUsage?: Record<string, unknown>;
+	totalCostUsd?: number;
 }
 
 // Shape documented in the playbook for `maestro-p --status` output. The
@@ -77,23 +84,40 @@ export class JsonEmitter {
 		this.initEmitted = true;
 	}
 
-	emitAssistantText(text: string): void {
+	// Pass-through emit for an assistant message lifted directly from claude's
+	// session jsonl. The shape matches `claude -p`'s stream-json output:
+	//   { type: 'assistant', message: { role, content, stop_reason?, usage?, ... } }
+	// We don't reshape `message` — the downstream parser already understands
+	// claude's canonical schema, so the cleanest contract is to forward it
+	// verbatim. State guards mirror emitAssistantText.
+	emitAssistantMessage(message: Record<string, unknown>): void {
 		if (this.statusEmitted) {
-			throw new Error('JsonEmitter: cannot emit assistant text in status mode');
+			throw new Error('JsonEmitter: cannot emit assistant message in status mode');
 		}
 		if (!this.initEmitted) {
-			throw new Error('JsonEmitter: cannot emit assistant text before init');
+			throw new Error('JsonEmitter: cannot emit assistant message before init');
 		}
 		if (this.resultEmitted) {
-			throw new Error('JsonEmitter: cannot emit assistant text after result');
+			throw new Error('JsonEmitter: cannot emit assistant message after result');
 		}
-		this.write({
-			type: 'assistant',
-			message: {
-				role: 'assistant',
-				content: [{ type: 'text', text }],
-			},
-		});
+		this.write({ type: 'assistant', message });
+	}
+
+	// Pass-through emit for a user message lifted from claude's session jsonl.
+	// In practice only tool_result entries flow through here — plain-text user
+	// prompts (the input we already sent) are filtered out by the caller so
+	// downstream consumers don't see their own input echoed back.
+	emitUserMessage(message: Record<string, unknown>): void {
+		if (this.statusEmitted) {
+			throw new Error('JsonEmitter: cannot emit user message in status mode');
+		}
+		if (!this.initEmitted) {
+			throw new Error('JsonEmitter: cannot emit user message before init');
+		}
+		if (this.resultEmitted) {
+			throw new Error('JsonEmitter: cannot emit user message after result');
+		}
+		this.write({ type: 'user', message });
 	}
 
 	emitResult(params: ResultParams): void {
@@ -118,6 +142,18 @@ export class JsonEmitter {
 		};
 		if (params.error !== undefined) {
 			obj.error = params.error;
+		}
+		if (params.result !== undefined) {
+			obj.result = params.result;
+		}
+		if (params.usage !== undefined) {
+			obj.usage = params.usage;
+		}
+		if (params.modelUsage !== undefined) {
+			obj.modelUsage = params.modelUsage;
+		}
+		if (params.totalCostUsd !== undefined) {
+			obj.total_cost_usd = params.totalCostUsd;
 		}
 		this.write(obj);
 		this.resultEmitted = true;

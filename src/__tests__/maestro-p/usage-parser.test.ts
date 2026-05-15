@@ -299,6 +299,149 @@ describe('parseUsage — timezone edge cases', () => {
 	});
 });
 
+describe('parseUsage — whitespace-collapsed real-world output', () => {
+	// claude 2.1.141's cursor-positioned panel renders inter-word spaces in
+	// the /usage block as zero spaces once ANSI is stripped. These tests pin
+	// the parser to tolerate that shape — the synthetic well-spaced fixtures
+	// no longer prove correctness against the live binary.
+
+	it('parses fully whitespace-collapsed sections', () => {
+		const raw = [
+			'Currentsession',
+			'█████████████                                     26%used',
+			'Resets1:40am(America/Chicago)',
+			'',
+			'Currentweek(allmodels)',
+			'████████████████                                  32%used',
+			'ResetsMay14at10am(America/Chicago)',
+			'',
+			'Currentweek(Sonnetonly)',
+			'                                                  0%used',
+			'ResetsMay14at10am(America/Chicago)',
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T20:00:00.000Z');
+		expect(result).not.toBeNull();
+		expect(result?.session).toEqual({
+			percent: 26,
+			resets_at: '2026-05-14T06:40:00.000Z',
+		});
+		expect(result?.week_all_models).toEqual({
+			percent: 32,
+			resets_at: '2026-05-14T15:00:00.000Z',
+		});
+		expect(result?.week_sonnet_only).toEqual({
+			percent: 0,
+			resets_at: '2026-05-14T15:00:00.000Z',
+		});
+	});
+
+	it('matches the mangled "Sonet nly" sonnet header that real captures produce', () => {
+		// The third section's header is reliably garbled by claude's TUI
+		// overdraw — characters drop at fixed column positions and the row
+		// collides with a sibling section's trailing content. Section
+		// detection has to tolerate "Sonet nly" alongside the canonical
+		// "Sonnet only".
+		const raw = [
+			'Current session',
+			'[██░░░░░░░░] 5% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'[████░░░░░░] 20% used',
+			'Resets May 16 at 6pm (America/Chicago)',
+			'',
+			'12:34am (America/Chicago)Current week (Sonet nly)                       0% used Other stuff',
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T22:00:00.000Z');
+		expect(result).not.toBeNull();
+		expect(result?.week_sonnet_only.percent).toBe(0);
+		expect(result?.week_sonnet_only.resets_at).toBe(result?.week_all_models.resets_at);
+	});
+
+	it('borrows sonnet.resets_at from week_all_models when sonnet has no Resets line', () => {
+		const raw = [
+			'Current session',
+			'[████░░░░░░] 23% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'[██████████] 58% used',
+			'Resets May 16 at 6pm (America/Chicago)',
+			'',
+			'Current week (Sonnet only)',
+			'[░░░░░░░░░░] 0% used',
+			// intentionally no Resets line for sonnet
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T22:00:00.000Z');
+		expect(result).not.toBeNull();
+		expect(result?.week_sonnet_only.percent).toBe(0);
+		expect(result?.week_sonnet_only.resets_at).toBe(result?.week_all_models.resets_at);
+	});
+
+	it('synthesizes a zero-usage sonnet section when the header is absent entirely', () => {
+		// Defensive synthesis: when neither the header nor any sonnet content
+		// is parseable, emit a zero-usage placeholder keyed to the all-models
+		// reset so downstream consumers don't trip on a missing field.
+		const raw = [
+			'Current session',
+			'[████░░░░░░] 23% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'[██████████] 58% used',
+			'Resets May 16 at 6pm (America/Chicago)',
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T22:00:00.000Z');
+		expect(result).not.toBeNull();
+		expect(result?.week_sonnet_only).toEqual({
+			percent: 0,
+			resets_at: result?.week_all_models.resets_at,
+		});
+	});
+
+	it('recovers a section reset spec when "Resets" is mangled to "Reses" (TUI overdraw drops a char)', () => {
+		// The live binary's TUI capture path collapses the session header,
+		// bar, percent, and reset spec onto one line. Cursor positioning
+		// occasionally drops a character from "Resets", leaving "Reses".
+		// The inline-scan fallback should still recover the time spec.
+		const raw = [
+			'Current session██                                                4%usedReses7:50pm (America/Chicago)',
+			'',
+			'Currentweek(allmodels)',
+			'70%used',
+			'ResetsMay16at6pm(America/Chicago)',
+			'',
+			'Currentweek(Sonnetonly)',
+			'0%used',
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T20:00:00.000Z');
+		expect(result).not.toBeNull();
+		expect(result?.session.percent).toBe(4);
+		// 7:50pm CDT on 2026-05-13 = 00:50 UTC on 2026-05-14
+		expect(result?.session.resets_at).toBe('2026-05-14T00:50:00.000Z');
+	});
+
+	it('parses no-space "May14at10am" date+time reset specs', () => {
+		const raw = [
+			'Currentsession',
+			'5%used',
+			'Resets8pm(America/Chicago)',
+			'',
+			'Currentweek(allmodels)',
+			'20%used',
+			'ResetsMay14at10am(America/Chicago)',
+			'',
+			'Currentweek(Sonnetonly)',
+			'0%used',
+			'ResetsMay14at10am(America/Chicago)',
+		].join('\n');
+		const result = parseUsage(raw, '2026-05-13T20:00:00.000Z');
+		expect(result?.week_all_models.resets_at).toBe('2026-05-14T15:00:00.000Z');
+		// 8pm CDT on 2026-05-13 = 01:00 UTC on 2026-05-14
+		expect(result?.session.resets_at).toBe('2026-05-14T01:00:00.000Z');
+	});
+});
+
 describe('parseUsage — config_dir wiring', () => {
 	it('returns the config_dir argument verbatim in the snapshot', () => {
 		const { raw, meta } = loadFixture('usage-fresh');

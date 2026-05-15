@@ -31,33 +31,47 @@
 import { stripAnsiCodes } from '../shared/stringUtils';
 import type { StatusSnapshot } from './json-emitter';
 
-// Section markers — matched case-insensitively against ANSI-stripped lines via
-// .includes(). Distinct enough that "Current session" can't false-match the
-// weekly headers, but the section walker also gates by first-occurrence so a
-// duplicate header later in the output wouldn't shadow the right block.
+// Section markers — matched against a whitespace-stripped lowercase form of
+// each line. Real claude 2.1.141 captures collapse inter-word spaces in the
+// `/usage` panel's cursor-positioned render path ("Currentsession",
+// "Currentweek(allmodels)"), so a plain `.includes("current session")`
+// against the raw lowercased line misses the live output. The compact form
+// catches both layouts. The sonnet matcher is a regex because claude
+// reliably mangles that header in real captures (chars dropped at fixed
+// column positions: "Sonet nly"); we accept any letters between `(` and the
+// trailing `nly)` so both "Sonnet only" and the garbled variant resolve.
 type SectionKey = 'session' | 'week_all_models' | 'week_sonnet_only';
 
-const SECTION_DEFS: ReadonlyArray<{ key: SectionKey; needle: string }> = [
-	{ key: 'session', needle: 'current session' },
-	{ key: 'week_all_models', needle: 'current week (all models)' },
-	{ key: 'week_sonnet_only', needle: 'current week (sonnet only)' },
+const SECTION_MATCHERS: ReadonlyArray<{
+	key: SectionKey;
+	test: (compact: string) => boolean;
+}> = [
+	{ key: 'session', test: (c) => c.includes('currentsession') },
+	{ key: 'week_all_models', test: (c) => c.includes('currentweek(allmodels)') },
+	{ key: 'week_sonnet_only', test: (c) => /currentweek\([a-z]*nly\)/.test(c) },
 ];
 
-// Percent on the same line as the bar. Playbook spells the pattern as
-// "(\d+)% used" and the screenshot bears that out — looser variants (just
-// "(\d+)%") risk picking up a percent inside the section header or a footer.
-const PERCENT_PATTERN = /(\d+)%\s+used/i;
+// Percent on the same line as the bar. Allow zero-or-more whitespace between
+// `%` and `used` — claude's stripped TUI capture collapses the gap ("3%used"
+// is the real-world form; "23% used" the synthetic / well-rendered form).
+const PERCENT_PATTERN = /(\d+)%\s*used/i;
 
-// Capture the reset spec — everything after "Resets " up to end-of-line. We
-// hand the trimmed remainder to resolveResetTime, which owns the format split.
-const RESETS_PATTERN = /Resets\s+(.+?)\s*$/i;
+// Capture the reset spec — everything after "Resets" up to end-of-line. Same
+// whitespace tolerance: real captures land as "Resets1:40am(America/Chicago)"
+// without a space after "Resets".
+const RESETS_PATTERN = /Resets\s*(.+?)\s*$/i;
 
-// Reset spec grammar: optional "Month Day at " prefix, then a 12-hour clock
-// time (with optional minutes), then "(IANA/Zone)". The zone capture is
-// permissive ([^)]+) because IANA names contain slashes, underscores, and
-// occasional plus signs (Etc/GMT+5). Validation happens when Intl rejects it.
-const RESET_SPEC_PATTERN =
-	/^(?:(?<month>\w+)\s+(?<day>\d{1,2})\s+at\s+)?(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<ampm>am|pm)\s+\((?<tz>[^)]+)\)/i;
+// Reset spec grammar with all internal spacing relaxed to \s*. Month is
+// restricted to [A-Za-z]+ so a no-space form like "May14at10am" splits at
+// the digit boundary — `\w+` would greedy-eat the entire token. The body
+// is shared between the anchored form (for parsing a Resets-prefixed
+// substring) and the inline form (for scanning a compound line that no
+// longer contains a clean "Resets " prefix — claude's TUI overdraw can
+// drop a character from the word, leaving "Reses 7:50pm (...)").
+const RESET_SPEC_BODY =
+	'(?:(?<month>[A-Za-z]+)\\s*(?<day>\\d{1,2})\\s*at\\s*)?(?<hour>\\d{1,2})(?::(?<minute>\\d{2}))?\\s*(?<ampm>am|pm)\\s*\\((?<tz>[^)]+)\\)';
+const RESET_SPEC_PATTERN = new RegExp('^' + RESET_SPEC_BODY, 'i');
+const RESET_SPEC_INLINE_PATTERN = new RegExp(RESET_SPEC_BODY, 'i');
 
 // 0-indexed for Date.UTC compatibility. Both abbreviated and full month names
 // covered because the conductor flagged that real captures across accounts
@@ -96,44 +110,55 @@ export function parseUsage(raw: string, nowIso: string, configDir = ''): StatusS
 	}
 
 	const lines = stripAnsiCodes(raw).split(/\r?\n/);
+	const compactLines = lines.map((l) => l.replace(/\s+/g, '').toLowerCase());
 
 	// First-occurrence wins so a later header echo (e.g., in a footer summary)
 	// can't shadow the real block.
 	const sectionStarts: Partial<Record<SectionKey, number>> = {};
 	for (let i = 0; i < lines.length; i++) {
-		const lowered = lines[i].toLowerCase();
-		for (const def of SECTION_DEFS) {
-			if (sectionStarts[def.key] === undefined && lowered.includes(def.needle)) {
-				sectionStarts[def.key] = i;
+		for (const matcher of SECTION_MATCHERS) {
+			if (sectionStarts[matcher.key] === undefined && matcher.test(compactLines[i])) {
+				sectionStarts[matcher.key] = i;
 			}
 		}
 	}
 
-	if (
-		sectionStarts.session === undefined ||
-		sectionStarts.week_all_models === undefined ||
-		sectionStarts.week_sonnet_only === undefined
-	) {
+	// Session and week_all_models are mandatory; the mode selector depends on
+	// them. week_sonnet_only is best-effort — claude reliably mangles that
+	// section in real captures, sometimes colliding it into a sibling section's
+	// trailing characters. When the header survives but the Resets line
+	// doesn't, we borrow week_all_models.resets_at since sonnet always rolls
+	// on the same weekly window.
+	if (sectionStarts.session === undefined || sectionStarts.week_all_models === undefined) {
 		return null;
 	}
 
-	// Order sections by their actual position in the output, then walk each
-	// up to (but not including) the next section's start. Ordering by the
-	// constant SECTION_DEFS list would be wrong if a future Claude release
-	// reordered the panel — sorting by index keeps the scan robust.
-	const orderedStarts = (Object.entries(sectionStarts) as Array<[SectionKey, number]>).sort(
+	// Order sections by their actual position in the output to compute end
+	// boundaries (each section ends where the next one begins). Sorting by
+	// line index keeps this robust to future Claude releases reordering the
+	// panel.
+	const orderedByLine = (Object.entries(sectionStarts) as Array<[SectionKey, number]>).sort(
 		(a, b) => a[1] - b[1]
 	);
 	const sectionEnds = new Map<SectionKey, number>();
-	for (let i = 0; i < orderedStarts.length; i++) {
-		const [key] = orderedStarts[i];
-		const end = i + 1 < orderedStarts.length ? orderedStarts[i + 1][1] : lines.length;
+	for (let i = 0; i < orderedByLine.length; i++) {
+		const [key] = orderedByLine[i];
+		const end = i + 1 < orderedByLine.length ? orderedByLine[i + 1][1] : lines.length;
 		sectionEnds.set(key, end);
 	}
 
 	const parsed: Partial<Record<SectionKey, { percent: number; resets_at: string }>> = {};
 
-	for (const [key, start] of orderedStarts) {
+	// Process in dependency order, not line order, so week_sonnet_only's
+	// resets_at fallback can read parsed.week_all_models regardless of which
+	// section physically appears first in the capture.
+	const processingOrder: SectionKey[] = ['session', 'week_all_models', 'week_sonnet_only'];
+
+	for (const key of processingOrder) {
+		const start = sectionStarts[key];
+		if (start === undefined) {
+			continue; // only week_sonnet_only can be absent (tolerated below)
+		}
 		const end = sectionEnds.get(key) ?? lines.length;
 		let percent: number | null = null;
 		let resetsAt: string | null = null;
@@ -159,18 +184,63 @@ export function parseUsage(raw: string, nowIso: string, configDir = ''): StatusS
 			}
 		}
 
-		if (percent === null || resetsAt === null) {
+		// Fallback: when the live binary's capture path jams the header,
+		// percent, and reset spec onto one line, the "Resets" word can lose
+		// a character ("Reses 7:50pm (...)"). Scan the section's first few
+		// lines for a bare reset spec — the inline pattern is anchored only
+		// loosely enough to skip past garbled prefixes but still demand a
+		// `\(IANA/Zone\)` tail, which keeps it specific.
+		//
+		// Skip for week_sonnet_only: that section's polluted lines often
+		// begin with the prior section's trailing time stamp (cursor
+		// positioning artifact), and we'd pick up the wrong reset. The
+		// borrow path below — sonnet shares all_models' weekly window — is
+		// the right answer for that section anyway.
+		if (resetsAt === null && key !== 'week_sonnet_only') {
+			const inlineEnd = Math.min(start + 3, end);
+			for (let i = start; i < inlineEnd; i++) {
+				const inlineMatch = lines[i].match(RESET_SPEC_INLINE_PATTERN);
+				if (inlineMatch) {
+					const candidate = resolveResetTime(inlineMatch[0], now);
+					if (candidate !== null) {
+						resetsAt = candidate;
+						break;
+					}
+				}
+			}
+		}
+
+		if (percent === null) {
+			if (key === 'week_sonnet_only') {
+				continue; // best-effort; fall through to the synthesized default
+			}
 			return null;
+		}
+		if (resetsAt === null) {
+			if (key === 'week_sonnet_only' && parsed.week_all_models) {
+				resetsAt = parsed.week_all_models.resets_at;
+			} else {
+				return null;
+			}
 		}
 		parsed[key] = { percent, resets_at: resetsAt };
 	}
+
+	// week_sonnet_only is part of the public JSON contract downstream
+	// consumers depend on. When the section is entirely absent or
+	// unparseable, synthesize a zero-usage placeholder pegged to the
+	// all-models reset rather than break the schema.
+	const sonnet = parsed.week_sonnet_only ?? {
+		percent: 0,
+		resets_at: parsed.week_all_models!.resets_at,
+	};
 
 	return {
 		type: 'status',
 		config_dir: configDir,
 		session: parsed.session!,
 		week_all_models: parsed.week_all_models!,
-		week_sonnet_only: parsed.week_sonnet_only!,
+		week_sonnet_only: sonnet,
 	};
 }
 

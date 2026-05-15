@@ -13,9 +13,11 @@ import * as path from 'path';
 import { parseArgs, type ParsedArgs } from './args';
 import { TuiDriver } from './tui-driver';
 import { JsonEmitter } from './json-emitter';
+import { JsonlTailer } from './jsonl-tailer';
 import { DEFAULT_TIMEOUT_MS, discoverSessionId } from './session-watcher';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
+import { encodeClaudeProjectPath } from '../shared/pathUtils';
 
 // Help text is hand-written rather than commander-generated so it stays in
 // lockstep with the consumed / stripped / passthrough rules implemented in
@@ -62,6 +64,11 @@ const HELP_TEXT = [
 // for this many ms of zero line events after sending /usage and treat that
 // as "panel rendered." 1500ms covers a slow remote-account fetch comfortably.
 const STATUS_QUIESCENCE_MS = 1500;
+
+// Once we see an assistant entry with stop_reason=end_turn in the jsonl tail,
+// wait this many ms before finalizing. Gives any trailing entries already in
+// flight (usage stats, final tool acks) a chance to land in the same envelope.
+const END_TURN_IDLE_MS = 600;
 
 interface RuntimeOptions {
 	binPath: string;
@@ -178,35 +185,12 @@ async function runPrompt(opts: RuntimeOptions): Promise<number> {
 
 	const emitter = new JsonEmitter();
 	const startTime = Date.now();
+	const spawnTimestamp = Date.now();
 
-	// Honor an explicit --resume <id> in the forwarded args; that id IS the
-	// session_id by definition, so we skip fs-watch discovery entirely.
+	// Honor an explicit --resume <id> in forwarded args. The id IS the
+	// session_id by definition; we skip fs-watch discovery and tail the
+	// existing jsonl from current-end so we don't replay history.
 	const resumeSessionId = findResumeId(opts.parsed.passThroughArgs);
-
-	// Mutable holder so the resolver below can update what init/result see
-	// without coordinating with the event-emitter callbacks via a Promise.
-	let discoveredSessionId: string | null = resumeSessionId;
-	if (resumeSessionId === null) {
-		// Fire-and-forget: the first-line handler reads whatever value has
-		// landed by the time it runs. If discovery hasn't resolved yet, the
-		// init event uses 'unknown' rather than blocking the stream. In
-		// practice claude writes the jsonl very early in the session, so this
-		// fallback rarely matters.
-		void discoverSessionId({
-			configDir: opts.configDir,
-			cwd: opts.cwd,
-			spawnTimestamp: Date.now(),
-			timeoutMs: DEFAULT_TIMEOUT_MS,
-		})
-			.then((id) => {
-				discoveredSessionId = id;
-			})
-			.catch(() => {
-				// Watcher timed out or failed — falling back to 'unknown' is
-				// the documented behavior. Don't surface to stderr; the
-				// wrapper can still produce a valid stream-json envelope.
-			});
-	}
 
 	const driver = new TuiDriver({
 		binPath: opts.binPath,
@@ -215,46 +199,46 @@ async function runPrompt(opts: RuntimeOptions): Promise<number> {
 		env: process.env,
 	});
 
-	let initEmitted = false;
-	let limitHit = false;
 	let finalized = false;
 	let watchdog: NodeJS.Timeout | null = null;
+	let endTurnTimer: NodeJS.Timeout | null = null;
+	let tailer: JsonlTailer | null = null;
+	let resolvedSessionId: string | null = resumeSessionId;
+	let lastAssistantText = '';
+	let lastAssistantUsage: Record<string, unknown> | undefined;
+	let limitHit = false;
 
-	const emitInitOnce = (): void => {
-		if (initEmitted) return;
-		emitter.emitInit({
-			sessionId: discoveredSessionId ?? 'unknown',
-			cwd: opts.cwd,
-		});
-		initEmitted = true;
-	};
-
-	const finalize = async (result: {
+	const finalize = async (state: {
 		isError: boolean;
 		error?: string;
 		exitCode: number;
 	}): Promise<void> => {
 		if (finalized) return;
 		finalized = true;
-		if (watchdog) {
-			clearTimeout(watchdog);
-			watchdog = null;
-		}
+		if (watchdog) clearTimeout(watchdog);
+		if (endTurnTimer) clearTimeout(endTurnTimer);
+		if (tailer) tailer.stop();
 
-		// Init must precede result even in error paths where we never
-		// received a content line. Falls back to 'unknown' if the watcher
-		// race hasn't produced a real id by now.
-		emitInitOnce();
+		// Init has either already fired (happy path) or never fired (failed
+		// before session-id discovery). emitInit is idempotent, so a redundant
+		// call here is a no-op; the early-failure call ensures the stream
+		// envelope is always valid.
+		emitter.emitInit({
+			sessionId: resolvedSessionId ?? 'unknown',
+			cwd: opts.cwd,
+		});
 
 		emitter.emitResult({
-			sessionId: discoveredSessionId ?? 'unknown',
+			sessionId: resolvedSessionId ?? 'unknown',
 			durationMs: Date.now() - startTime,
-			isError: result.isError,
-			error: result.error,
+			isError: state.isError,
+			error: state.error,
+			result: lastAssistantText || undefined,
+			usage: lastAssistantUsage,
 		});
 
 		await driver.quit();
-		process.exit(result.exitCode);
+		process.exit(state.exitCode);
 	};
 
 	const maxWaitMs = opts.parsed.maxWaitSeconds * 1000;
@@ -262,8 +246,6 @@ async function runPrompt(opts: RuntimeOptions): Promise<number> {
 		if (finalized) return;
 		if (watchdog) clearTimeout(watchdog);
 		watchdog = setTimeout(() => {
-			// If a limit message landed before the timeout, surface that as
-			// the true cause — the timeout itself is downstream of the limit.
 			void finalize({
 				isError: true,
 				error: limitHit ? 'limit_hit' : 'timeout',
@@ -272,43 +254,103 @@ async function runPrompt(opts: RuntimeOptions): Promise<number> {
 		}, maxWaitMs);
 	};
 
-	// The TuiDriver doesn't expose a per-chunk pulse event (out of scope for
-	// task 3), so we approximate "byte received" with the events that DO
-	// fire on every chunk we care about: content lines, new spinner cycles,
-	// and limit-hit matches. Long stretches of "spinner ticking silently
-	// with no content" would not refresh the watchdog, but that pattern
-	// doesn't match Claude's actual generation cadence.
-	driver.on('line', (line: string) => {
-		resetWatchdog();
-		if (opts.parsed.streamThinking) {
-			process.stderr.write(`${line}\n`);
-		}
-		emitInitOnce();
-		if (!finalized) {
-			emitter.emitAssistantText(line);
-		}
-	});
+	const scheduleEndTurnFinalize = (): void => {
+		if (finalized) return;
+		if (endTurnTimer) clearTimeout(endTurnTimer);
+		endTurnTimer = setTimeout(() => {
+			void finalize({
+				isError: limitHit,
+				error: limitHit ? 'limit_hit' : undefined,
+				exitCode: limitHit ? 2 : 0,
+			});
+		}, END_TURN_IDLE_MS);
+	};
 
-	driver.on('spinner-start', () => {
+	const handleTailerEntry = (entry: unknown): void => {
+		if (finalized) return;
 		resetWatchdog();
-	});
+		if (!entry || typeof entry !== 'object') return;
+		const e = entry as Record<string, unknown>;
 
-	driver.on('limit-hit', (line: string) => {
-		// Capture but don't finalize yet — let the spinner-stop cycle run so
-		// the result event lands after the human-readable limit message,
-		// which often comes through as content.
+		if (e.type === 'assistant' && e.message && typeof e.message === 'object') {
+			const msg = e.message as Record<string, unknown>;
+
+			// Claude writes a synthetic "No response requested." entry into
+			// the jsonl when --resume picks up a session that had nothing
+			// pending. It's an internal bookkeeping artifact, not part of the
+			// conversation — model: '<synthetic>' is claude's own marker.
+			// Skip so downstream consumers don't see phantom turns.
+			if (msg.model === '<synthetic>') {
+				return;
+			}
+
+			// Cancel any previous end-turn timer — a new assistant entry means
+			// the generation is still going (e.g., post-tool follow-up turn).
+			if (endTurnTimer) {
+				clearTimeout(endTurnTimer);
+				endTurnTimer = null;
+			}
+			emitter.emitAssistantMessage(msg);
+
+			// Accumulate the latest text block(s) for the final result envelope.
+			const content = msg.content;
+			if (Array.isArray(content)) {
+				const textParts: string[] = [];
+				for (const c of content) {
+					if (
+						c &&
+						typeof c === 'object' &&
+						(c as Record<string, unknown>).type === 'text' &&
+						typeof (c as Record<string, unknown>).text === 'string'
+					) {
+						textParts.push((c as Record<string, unknown>).text as string);
+					}
+				}
+				if (textParts.length > 0) {
+					lastAssistantText = textParts.join('\n');
+				}
+			}
+			if (msg.usage && typeof msg.usage === 'object') {
+				lastAssistantUsage = msg.usage as Record<string, unknown>;
+			}
+
+			// end_turn means claude is finished responding to this prompt and
+			// won't follow up with another turn (vs. tool_use, which signals
+			// a tool round-trip is mid-flight). Schedule finalize after a
+			// short idle so any trailing entries already buffered land first.
+			if (msg.stop_reason === 'end_turn') {
+				scheduleEndTurnFinalize();
+			}
+			return;
+		}
+
+		if (e.type === 'user' && e.message && typeof e.message === 'object') {
+			const msg = e.message as Record<string, unknown>;
+			const content = msg.content;
+			// Skip the entry that records the prompt the user just sent — the
+			// downstream consumer already knows what was sent. Only forward
+			// user messages that carry tool_result blocks (claude executing a
+			// tool inside its agentic loop).
+			let hasToolResult = false;
+			if (Array.isArray(content)) {
+				for (const c of content) {
+					if (c && typeof c === 'object' && (c as Record<string, unknown>).type === 'tool_result') {
+						hasToolResult = true;
+						break;
+					}
+				}
+			}
+			if (hasToolResult) {
+				emitter.emitUserMessage(msg);
+			}
+		}
+	};
+
+	// Limit-hit detection still leans on the TUI's text stream — claude
+	// renders the human-readable "weekly limit reached" line in the panel
+	// before it shows up (if at all) in the jsonl. Cheap to keep around.
+	driver.on('limit-hit', () => {
 		limitHit = true;
-		if (opts.parsed.streamThinking) {
-			process.stderr.write(`maestro-p: limit-hit observed: ${line}\n`);
-		}
-	});
-
-	driver.on('spinner-stop', () => {
-		void finalize({
-			isError: limitHit,
-			error: limitHit ? 'limit_hit' : undefined,
-			exitCode: limitHit ? 2 : 0,
-		});
 	});
 
 	driver.on('exit', (exitCode: number) => {
@@ -330,20 +372,72 @@ async function runPrompt(opts: RuntimeOptions): Promise<number> {
 
 	try {
 		await waitForReady(driver);
-		resetWatchdog();
-		driver.send(prompt);
 	} catch {
-		// TUI exited before the input prompt ever appeared. The 'exit'
-		// listener registered above has already initiated finalize(); the
-		// never-resolving promise below keeps this function alive until
-		// finalize calls process.exit.
+		// TUI exited before reaching the input prompt. The 'exit' listener
+		// above has already initiated finalize(); the never-resolving promise
+		// below keeps the function alive until process.exit runs.
+		return new Promise<number>(() => {
+			/* never resolves — finalize() exits */
+		});
 	}
 
-	// finalize() calls process.exit, so this promise never resolves under
-	// normal operation. Returning it satisfies the type contract while
-	// keeping the event loop alive.
+	// Resume path: jsonl already exists. Tail it from current end so prior
+	// turns don't get replayed through stdout, then send the new prompt.
+	if (resumeSessionId !== null) {
+		const slug = encodeClaudeProjectPath(opts.cwd);
+		const jsonlPath = path.join(opts.configDir, 'projects', slug, `${resumeSessionId}.jsonl`);
+		tailer = new JsonlTailer({ filePath: jsonlPath, skipExisting: true });
+		tailer.on('entry', handleTailerEntry);
+		tailer.start();
+
+		emitter.emitInit({ sessionId: resumeSessionId, cwd: opts.cwd });
+		resetWatchdog();
+		driver.send(prompt);
+
+		return new Promise<number>(() => {
+			/* never resolves — finalize() exits */
+		});
+	}
+
+	// Fresh path: kick off session-id discovery, send the prompt so claude
+	// starts writing its jsonl, then attach the tailer once we know the file.
+	const discoveryPromise = discoverSessionId({
+		configDir: opts.configDir,
+		cwd: opts.cwd,
+		spawnTimestamp,
+		timeoutMs: DEFAULT_TIMEOUT_MS,
+	}).catch(() => null as string | null);
+
+	resetWatchdog();
+	driver.send(prompt);
+
+	discoveryPromise
+		.then((sessionId) => {
+			if (finalized) return;
+			if (sessionId === null) {
+				// Discovery timed out — emit init with 'unknown' so the
+				// downstream envelope is still well-formed; the eventual
+				// watchdog timeout will produce a result.
+				emitter.emitInit({ sessionId: 'unknown', cwd: opts.cwd });
+				return;
+			}
+			resolvedSessionId = sessionId;
+			emitter.emitInit({ sessionId, cwd: opts.cwd });
+
+			const slug = encodeClaudeProjectPath(opts.cwd);
+			const jsonlPath = path.join(opts.configDir, 'projects', slug, `${sessionId}.jsonl`);
+			tailer = new JsonlTailer({ filePath: jsonlPath });
+			tailer.on('entry', handleTailerEntry);
+			tailer.start();
+		})
+		.catch(() => {
+			// Defense in depth: discoveryPromise is already .catch'd above to
+			// resolve null, but a programming error inside the .then handler
+			// would surface here.
+		});
+
 	return new Promise<number>(() => {
-		/* never resolves — process.exit ends the run */
+		/* never resolves — finalize() exits */
 	});
 }
 

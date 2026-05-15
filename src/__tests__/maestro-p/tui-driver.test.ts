@@ -4,16 +4,16 @@
  *              mocked so we can feed synthetic PTY data and exit events into
  *              the driver and assert the lifecycle events it emits.
  *
- * Covers the cases listed in the phase 1 playbook:
+ * The driver was simplified after run mode switched to jsonl-tail: spinner
+ * tracking and the spinner-stop/ready completion transition are gone, since
+ * run-mode completion is now driven by `stop_reason: end_turn` in the
+ * session jsonl, not the screen. What remains:
  *   (a) non-spinner lines emit `line` events with ANSI stripped
- *   (b) lines matching the spinner pattern emit `spinner-start` exactly once
- *       per cycle and are NOT re-emitted as `line`
- *   (c) after 800ms of no spinner pattern AND the prompt indicator is visible,
- *       `spinner-stop` then `ready` fire in order
- *   (d) a limit-hit line emits `limit-hit`
- *   (e) `quit()` writes `/quit\r`, resolves on `'exit'` within 2s, otherwise
+ *   (b) `ready` fires once when the input prompt indicator first appears
+ *   (c) a limit-hit line emits `limit-hit`
+ *   (d) `quit()` writes `/quit\r`, resolves on `'exit'` within 2s, otherwise
  *       falls through to SIGTERM
- *   (f) `kill()` sends SIGKILL immediately
+ *   (e) `kill()` sends SIGKILL immediately
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -122,112 +122,39 @@ describe('TuiDriver — line events', () => {
 	});
 });
 
-describe('TuiDriver — spinner detection', () => {
-	it('emits `spinner-start` exactly once per cycle and suppresses the spinner line', async () => {
-		const { driver, pty } = await newDriver();
-		let spinnerStartCount = 0;
-		const lines: string[] = [];
-		driver.on('spinner-start', () => spinnerStartCount++);
-		driver.on('line', (line: string) => lines.push(line));
-
-		// Three consecutive spinner ticks (each refreshes the idle timer but
-		// must not produce a second spinner-start or any `line` events).
-		pty.emitData('Pouncing… (3s · ↑ 100 tokens · esc)\n');
-		pty.emitData('Crunching… (5s · ↓ 200 tokens · esc)\n');
-		pty.emitData('Pondering… (8s · ↑ 300 tokens · esc)\n');
-
-		expect(spinnerStartCount).toBe(1);
-		expect(lines).toEqual([]);
-	});
-
-	it('does NOT classify a line as spinner when only the verb is present without the status fragment', async () => {
-		// Defensive: the regex anchors on the parenthesized status fragment, not
-		// the verb. A bare "Pouncing…" line should flow through as content.
-		const { driver, pty } = await newDriver();
-		const lines: string[] = [];
-		const spinnerStarts: number[] = [];
-		driver.on('line', (line: string) => lines.push(line));
-		driver.on('spinner-start', () => spinnerStarts.push(1));
-
-		pty.emitData('Pouncing… still warming up\n');
-
-		expect(lines).toEqual(['Pouncing… still warming up']);
-		expect(spinnerStarts).toEqual([]);
-	});
-});
-
-describe('TuiDriver — spinner-stop / ready', () => {
-	beforeEach(() => {
-		vi.useFakeTimers();
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
-	it('emits `spinner-stop` then `ready` after 800ms idle when the prompt indicator is visible', async () => {
+describe('TuiDriver — ready', () => {
+	it('emits `ready` exactly once when the input prompt indicator (›) first appears', async () => {
 		const { driver, pty } = await newDriver();
 		const events: string[] = [];
-		driver.on('spinner-start', () => events.push('spinner-start'));
-		driver.on('spinner-stop', () => events.push('spinner-stop'));
 		driver.on('ready', () => events.push('ready'));
-		driver.on('line', () => events.push('line'));
 
-		// Generation cycle starts.
-		pty.emitData('Pouncing… (3s · ↑ 100 tokens · esc)\n');
-		// Response content arrives, then the input prompt indicator returns.
-		pty.emitData('Here is your answer.\n› \n');
+		pty.emitData('Welcome banner\n› \n');
+		expect(events).toEqual(['ready']);
 
-		// Spinner has fired and prompt is visible, but the 800ms idle window
-		// has not elapsed yet — completion transition must NOT fire.
-		expect(events).toEqual(['spinner-start', 'line', 'line']);
-
-		vi.advanceTimersByTime(799);
-		expect(events).toEqual(['spinner-start', 'line', 'line']);
-
-		// Crossing the 800ms threshold pairs spinner-stop and ready atomically.
-		vi.advanceTimersByTime(1);
-		expect(events).toEqual(['spinner-start', 'line', 'line', 'spinner-stop', 'ready']);
+		// Subsequent prompt-indicator lines must not re-fire ready.
+		pty.emitData('› \n› \n');
+		expect(events).toEqual(['ready']);
 	});
 
-	it('emits `ready` when the real claude 2.1.141 ❯ prompt indicator appears', async () => {
-		// Regression guard: real claude (captured 2026-05-13 from both
-		// .claude-gmail and .claude-smash) uses ❯ (U+276F), not the original
-		// playbook's › (U+203A). PROMPT_INDICATOR_PATTERN must match either.
+	it('emits `ready` for the real claude 2.1.141 ❯ prompt indicator (U+276F)', async () => {
+		// Regression guard: real claude (captured from .claude-gmail and
+		// .claude-smash) uses ❯ (U+276F), not the original playbook's
+		// › (U+203A). PROMPT_INDICATOR_PATTERN must match either.
 		const { driver, pty } = await newDriver();
 		const events: string[] = [];
-		driver.on('spinner-start', () => events.push('spinner-start'));
-		driver.on('spinner-stop', () => events.push('spinner-stop'));
 		driver.on('ready', () => events.push('ready'));
 
-		pty.emitData('Pouncing… (3s · ↑ 100 tokens · esc)\n');
-		pty.emitData('Here is your answer.\n❯ \n');
-
-		vi.advanceTimersByTime(800);
-		expect(events).toEqual(['spinner-start', 'spinner-stop', 'ready']);
+		pty.emitData('Welcome banner\n❯ \n');
+		expect(events).toEqual(['ready']);
 	});
 
-	it('keeps the 800ms idle timer reset while the spinner is still ticking', async () => {
+	it('does not emit `ready` until the prompt indicator has been seen', async () => {
 		const { driver, pty } = await newDriver();
-		const completionEvents: string[] = [];
-		driver.on('spinner-stop', () => completionEvents.push('spinner-stop'));
-		driver.on('ready', () => completionEvents.push('ready'));
+		const events: string[] = [];
+		driver.on('ready', () => events.push('ready'));
 
-		// Spinner active + prompt visible, but spinner refreshes every 400ms so
-		// the idle window never elapses.
-		pty.emitData('Pouncing… (3s · ↑ 100 tokens · esc)\n');
-		pty.emitData('› \n');
-
-		vi.advanceTimersByTime(400);
-		pty.emitData('Pouncing… (4s · ↑ 110 tokens · esc)\n');
-		vi.advanceTimersByTime(799);
-
-		expect(completionEvents).toEqual([]);
-
-		// One more ms after the second timer scheduled time (400 + 800 = 1200)
-		// trips the completion transition.
-		vi.advanceTimersByTime(1);
-		expect(completionEvents).toEqual(['spinner-stop', 'ready']);
+		pty.emitData('banner\nmore banner\n');
+		expect(events).toEqual([]);
 	});
 });
 
