@@ -82,6 +82,10 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTaperStart: 0,
 	annotatorTaperEnd: 0,
 	globalShowHotkey: [],
+	claudeCode: {
+		headlessMode: 'api',
+		autoFallbackToApiOnLimit: true,
+	},
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {
