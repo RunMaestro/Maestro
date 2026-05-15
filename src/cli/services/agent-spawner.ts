@@ -3,6 +3,8 @@
 
 import { spawn, SpawnOptions, ChildProcess } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { AgentSshRemoteConfig, ToolType, UsageStats } from '../../shared/types';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
@@ -42,8 +44,18 @@ function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void 
 
 type SpawnOverrides = Pick<
 	SpawnAgentOptions,
-	'customModel' | 'customEffort' | 'customArgs' | 'customEnvVars'
+	'customModel' | 'customEffort' | 'customArgs' | 'customEnvVars' | 'appendSystemPrompt'
 >;
+
+/**
+ * Maximum command-line length we'll accept before falling back to
+ * `--append-system-prompt-file <tmp>` on Windows. Matches the threshold logic
+ * in `src/main/ipc/handlers/process.ts` — Windows CreateProcess caps the
+ * cmdline at ~32K, so a large inline system prompt would silently truncate.
+ * SSH sessions are exempt: the command runs inside a shell script, not the OS
+ * cmdline. The 30s cleanup mirrors the desktop handler's safety window.
+ */
+const SYSTEM_PROMPT_TMPFILE_CLEANUP_MS = 30_000;
 
 /**
  * Resolve agent-level + session-level overrides and produce final args plus
@@ -105,6 +117,42 @@ function applyEnvLayers(
 	}
 	if (userEnvVars) Object.assign(env, userEnvVars);
 	if (readOnlyOverrides) Object.assign(env, readOnlyOverrides);
+}
+
+/**
+ * Build the args needed to deliver an append-system-prompt to a Claude-style
+ * agent. On Windows local execution the prompt is written to a temp file and
+ * passed via `--append-system-prompt-file` to dodge CreateProcess's ~32K
+ * cmdline limit; everywhere else (and on SSH, where the command runs inside a
+ * shell script) we pass the content inline via `--append-system-prompt`.
+ * Mirrors the equivalent branch in `src/main/ipc/handlers/process.ts`. The
+ * temp-file cleanup is fire-and-forget: scheduled 30s out so the agent has
+ * plenty of time to read it before deletion, regardless of whether the spawn
+ * succeeded.
+ */
+function buildAppendSystemPromptArgs(
+	content: string,
+	sessionTag: string,
+	isSshSession: boolean
+): string[] {
+	if (isWindows() && !isSshSession) {
+		const tempFile = path.join(os.tmpdir(), `maestro-sysprompt-${sessionTag}-${Date.now()}.txt`);
+		try {
+			fs.writeFileSync(tempFile, content, 'utf-8');
+		} catch {
+			// If we can't write the temp file, fall back to inline. The agent
+			// may truncate, but that's better than silently dropping the prompt.
+			return ['--append-system-prompt', content];
+		}
+		setTimeout(() => {
+			fs.promises.unlink(tempFile).catch(() => {
+				// Best-effort cleanup. ENOENT is fine; other errors are not
+				// actionable from CLI without a Sentry pipeline.
+			});
+		}, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
+		return ['--append-system-prompt-file', tempFile];
+	}
+	return ['--append-system-prompt', content];
 }
 
 // Claude Code arguments for batch mode (stream-json format)
@@ -289,12 +337,29 @@ async function spawnClaudeAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: baseArgs, userCustomEnvVars } = resolveAgentOverrides(
+	const { args: resolvedArgs, userCustomEnvVars } = resolveAgentOverrides(
 		'claude-code',
 		def,
 		preOverrideArgs,
 		overrides
 	);
+
+	// Inject the Maestro system prompt via `--append-system-prompt(-file)`. The
+	// flag rides through both the local args and the SSH-wrapped args because
+	// `wrapSpawnWithSsh` rebuilds the remote command from `baseArgs` below.
+	// Claude Code re-reads this flag every turn (not persisted in the session
+	// transcript), so include it on resume too — matches desktop behavior at
+	// `src/main/ipc/handlers/process.ts:254`.
+	const baseArgs = overrides.appendSystemPrompt
+		? [
+				...resolvedArgs,
+				...buildAppendSystemPromptArgs(
+					overrides.appendSystemPrompt,
+					agentSessionId || 'fresh',
+					!!sshRemoteConfig?.enabled
+				),
+			]
+		: resolvedArgs;
 
 	// Build local env: defaults (shell wins) + batch-mode defaults (shell wins)
 	// + user env vars (override shell) + read-only overrides (always).
@@ -603,7 +668,7 @@ async function spawnJsonLineAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: baseArgs, userCustomEnvVars } = resolveAgentOverrides(
+	const { args: resolvedArgs, userCustomEnvVars } = resolveAgentOverrides(
 		toolType,
 		def,
 		preOverrideArgs,
@@ -620,6 +685,31 @@ async function spawnJsonLineAgent(
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
 
+	// System prompt delivery for JSON-line agents:
+	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
+	//    flag (no agent in this branch does today, but the gate future-proofs).
+	//  - Everyone else gets the prompt embedded in the user message on first
+	//    turn; on resume we skip — desktop relies on the prompt being already
+	//    captured in the agent's session transcript (see
+	//    `src/main/ipc/handlers/process.ts:300-312`).
+	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
+	const isResume = !!agentSessionId;
+	const baseArgs =
+		overrides.appendSystemPrompt && supportsNativeSystemPrompt
+			? [
+					...resolvedArgs,
+					...buildAppendSystemPromptArgs(
+						overrides.appendSystemPrompt,
+						agentSessionId || 'fresh',
+						!!sshRemoteConfig?.enabled
+					),
+				]
+			: resolvedArgs;
+	const effectivePrompt =
+		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
+			? `${overrides.appendSystemPrompt}\n\n---\n\n# User Request\n\n${prompt}`
+			: prompt;
+
 	const noPromptSeparator = !!def?.noPromptSeparator;
 
 	// Local prompt embedding mirrors wrapSpawnWithSsh's default behavior.
@@ -628,10 +718,10 @@ async function spawnJsonLineAgent(
 	// via their flag instead of the bare '--' separator (which Copilot CLI
 	// doesn't accept as a positional prompt).
 	const localArgs = def?.promptArgs
-		? [...baseArgs, ...def.promptArgs(prompt)]
+		? [...baseArgs, ...def.promptArgs(effectivePrompt)]
 		: noPromptSeparator
-			? [...baseArgs, prompt]
-			: [...baseArgs, '--', prompt];
+			? [...baseArgs, effectivePrompt]
+			: [...baseArgs, '--', effectivePrompt];
 
 	const agentCommand = getAgentCommand(toolType);
 
@@ -642,12 +732,16 @@ async function spawnJsonLineAgent(
 	let sshStdinScript: string | undefined;
 
 	if (sshRemoteConfig?.enabled) {
+		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
+		// fallback for agents without native --append-system-prompt support
+		// also reaches the SSH remote. baseArgs already carries the native
+		// flag for agents that support it.
 		const wrapped = await maybeWrapSpawnWithSsh(
 			{
 				command: agentCommand,
 				args: baseArgs,
 				cwd,
-				prompt,
+				prompt: effectivePrompt,
 				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
@@ -783,6 +877,15 @@ export interface SpawnAgentOptions {
 	 * desktop app when sessions are configured for SSH remote execution.
 	 */
 	sshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * Maestro system prompt to deliver alongside the user message. Mirrors the
+	 * desktop `process:spawn` handler's `appendSystemPrompt` field. For agents
+	 * with `supportsAppendSystemPrompt: true` (Claude Code today) this is
+	 * passed via `--append-system-prompt`; otherwise it's embedded into the
+	 * first user turn (skipped on resume so it's not repeated). Callers should
+	 * build this via `prepareMaestroSystemPromptCli()` in `./system-prompt.ts`.
+	 */
+	appendSystemPrompt?: string;
 }
 
 /**
@@ -802,6 +905,7 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		appendSystemPrompt: options?.appendSystemPrompt,
 	};
 
 	if (toolType === 'claude-code') {
