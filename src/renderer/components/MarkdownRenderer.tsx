@@ -1,9 +1,12 @@
 import React, { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import 'katex/dist/katex.min.css';
 import { getSyntaxStyle } from '../utils/syntaxTheme';
 import { Clipboard, ImageOff } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
@@ -28,6 +31,7 @@ import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
 import { openMaestroLink } from '../utils/openMaestroLink';
 import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
+import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -326,6 +330,15 @@ interface MarkdownRendererProps {
 	 * render as `<br>`.
 	 */
 	chatLineBreaks?: boolean;
+	/**
+	 * Render `$...$` and `$$...$$` as math via KaTeX (chat-style rendering).
+	 *
+	 * Off by default so file/doc preview keeps treating `$` as literal text —
+	 * markdown files with currency or shell prompts shouldn't suddenly parse
+	 * as math. Enable on chat surfaces so a line-isolated `$$x+y$$` renders
+	 * as a centered block formula (#622).
+	 */
+	chatMath?: boolean;
 }
 
 /**
@@ -356,6 +369,7 @@ export const MarkdownRenderer = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		chatLineBreaks = false,
+		chatMath = false,
 	}: MarkdownRendererProps) => {
 		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -386,6 +400,15 @@ export const MarkdownRenderer = memo(
 			if (chatLineBreaks) {
 				plugins.push(remarkBreaks);
 			}
+			// Chat surfaces parse `$...$` / `$$...$$` as math (#622); file/doc
+			// preview leaves `$` as literal text so currency, shell prompts, and
+			// other dollar-sign content in markdown files aren't accidentally
+			// reinterpreted as broken math. `remarkPromoteDisplayMath` runs
+			// after `remarkMath` so a single-line `$$x+y$$` gets the centered
+			// block treatment users expect, not inline glyph rendering.
+			if (chatMath) {
+				plugins.push(remarkMath, remarkPromoteDisplayMath);
+			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
@@ -396,7 +419,7 @@ export const MarkdownRenderer = memo(
 				]);
 			}
 			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks]);
+		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks, chatMath]);
 
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
@@ -423,6 +446,15 @@ export const MarkdownRenderer = memo(
 				bionifyAlgorithm,
 			});
 
+		// rehype-raw and rehype-katex are independent and can stack. Build the
+		// list once per render rather than reconstructing in JSX.
+		const rehypePlugins = useMemo(() => {
+			const plugins: any[] = [];
+			if (allowRawHtml) plugins.push(rehypeRaw);
+			if (chatMath) plugins.push(rehypeKatex);
+			return plugins.length > 0 ? plugins : undefined;
+		}, [allowRawHtml, chatMath]);
+
 		return (
 			<div
 				className={`prose prose-sm max-w-none text-sm ${className}`}
@@ -430,7 +462,7 @@ export const MarkdownRenderer = memo(
 			>
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
-					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					rehypePlugins={rehypePlugins}
 					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {

@@ -1287,4 +1287,42 @@ describe('MarkdownRenderer', () => {
 			expect(chatRender.container.querySelectorAll('p').length).toBe(2);
 		});
 	});
+
+	describe('chatMath (#622)', () => {
+		it('does not parse $...$ as math by default (document semantics)', () => {
+			const content = 'price is $5 and $10 today';
+			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			// No KaTeX rendering — `$` characters stay as literal text
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$5');
+			expect(container.textContent).toContain('$10');
+		});
+
+		it('renders inline $...$ math via KaTeX when chatMath is enabled', () => {
+			const content = 'inline $x + y$ math';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			// rehype-katex emits a `.katex` wrapper; inline math gets `.katex` without `.katex-display`
+			const katex = container.querySelector('.katex');
+			expect(katex).not.toBeNull();
+			expect(container.querySelector('.katex-display')).toBeNull();
+		});
+
+		it('renders line-isolated $$...$$ as display math when chatMath is enabled', () => {
+			const content = 'before\n\n$$x + y$$\n\nafter';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			// Display math gets the `.katex-display` wrapper
+			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('leaves $$...$$ as literal text when chatMath is disabled', () => {
+			const content = 'before\n\n$$x + y$$\n\nafter';
+			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$$x + y$$');
+		});
+	});
 });

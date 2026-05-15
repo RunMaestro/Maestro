@@ -16,18 +16,31 @@
 
 import React, { memo, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
 import remarkBreaks from 'remark-breaks';
+import remarkMath from 'remark-math';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
+import { remarkPromoteDisplayMath } from '../../shared/remarkPromoteDisplayMath';
 import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
+import 'katex/dist/katex.min.css';
 
 // Mobile chat surfaces (#622): single `\n` should render as a hard break,
-// not be collapsed into a space the way CommonMark does for document prose.
-const MOBILE_CHAT_REMARK_PLUGINS = [...REMARK_GFM_PLUGINS, remarkBreaks];
+// not be collapsed into a space the way CommonMark does for document prose;
+// `$...$` / `$$...$$` should render through KaTeX rather than show as literal
+// dollar-sign text. `remarkPromoteDisplayMath` runs after `remarkMath` so a
+// single-line `$$x+y$$` gets the centered block treatment users expect.
+const MOBILE_CHAT_REMARK_PLUGINS = [
+	...REMARK_GFM_PLUGINS,
+	remarkBreaks,
+	remarkMath,
+	remarkPromoteDisplayMath,
+];
+const MOBILE_CHAT_REHYPE_PLUGINS = [rehypeKatex];
 
 /**
  * Props for MobileMarkdownRenderer
@@ -325,6 +338,7 @@ export const MobileMarkdownRenderer = memo(
         `}</style>
 				<ReactMarkdown
 					remarkPlugins={MOBILE_CHAT_REMARK_PLUGINS}
+					rehypePlugins={MOBILE_CHAT_REHYPE_PLUGINS}
 					components={{
 						// Links open in new tab
 						a: ({ href, children }) => (
