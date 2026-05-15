@@ -1360,6 +1360,13 @@ function setupProcessListeners() {
 				return remotes.find((r) => r.name === name) ?? null;
 			},
 			getAgentContextWindow: (agentId: string) => {
+				// Prefer a runtime-discovered context window from the capability
+				// snapshot if one was probed. Falls back to the static table and
+				// finally to the agent definition's configOption default.
+				const snapshot = capabilitySnapshots.get(agentId);
+				if (typeof snapshot?.contextWindow === 'number' && snapshot.contextWindow > 0) {
+					return snapshot.contextWindow;
+				}
 				const def = getAgentDefinition(agentId);
 				const contextOpt = def?.configOptions?.find((o) => o.key === 'contextWindow');
 				const fallbackDefault =

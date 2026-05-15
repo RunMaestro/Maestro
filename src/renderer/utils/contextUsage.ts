@@ -6,7 +6,12 @@
  */
 
 import type { ToolType } from '../types';
-import { DEFAULT_CONTEXT_WINDOWS, COMBINED_CONTEXT_AGENTS } from '../../shared/agentConstants';
+import {
+	DEFAULT_CONTEXT_WINDOWS,
+	COMBINED_CONTEXT_AGENTS,
+	getContextWindowForAgent,
+} from '../../shared/agentConstants';
+import { useAgentStore } from '../stores/agentStore';
 
 // Re-export for consumers that import from this module
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
@@ -142,12 +147,13 @@ export function estimateContextUsage(
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
 
-	// Determine effective context window
+	// Determine effective context window: runtime-reported stats win, then
+	// the agent's persisted capability snapshot, then the static table.
 	const effectiveContextWindow =
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? DEFAULT_CONTEXT_WINDOWS[agentId as ToolType] || 0
+				? getContextWindowForAgent(agentId, useAgentStore.getState().getCapabilitySnapshot(agentId))
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {
