@@ -539,6 +539,7 @@ export function HistoryDetailModal({
 						projectRoot={projectRoot}
 						onFileClick={onFileClick}
 						enableBionifyReadingMode={bionifyReadingMode}
+						chatLineBreaks
 					/>
 				</div>
 

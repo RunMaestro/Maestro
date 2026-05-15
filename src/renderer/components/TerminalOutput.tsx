@@ -491,6 +491,7 @@ const LogItemComponent = memo(
 									cwd={cwd}
 									projectRoot={projectRoot}
 									onFileClick={onFileClick}
+									chatLineBreaks
 								/>
 							</div>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
@@ -542,6 +543,7 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
 									/>
 								) : (
 									log.text
@@ -707,6 +709,7 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
 										/>
 									) : (
 										displayText
@@ -793,6 +796,7 @@ const LogItemComponent = memo(
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
+											chatLineBreaks
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -871,6 +875,7 @@ const LogItemComponent = memo(
 										cwd={cwd}
 										projectRoot={projectRoot}
 										onFileClick={onFileClick}
+										chatLineBreaks
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)
