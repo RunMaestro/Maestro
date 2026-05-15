@@ -7,6 +7,13 @@ import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { selectMode } from '../../agents/claude-mode-selector';
+import { getMaestroPBinPath, USAGE_SNAPSHOT_STALE_MS } from '../../agents/claude-usage-startup';
+import { sampleUsage } from '../../agents/claude-usage-sampler';
+import {
+	getSnapshot as getUsageSnapshot,
+	resolveConfigDirKey,
+	setSnapshot as setUsageSnapshot,
+} from '../../stores/claudeUsageStore';
 import { logger } from '../../utils/logger';
 import { isWindows } from '../../../shared/platformDetection';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
@@ -240,37 +247,88 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					const autoFallbackOnLimit =
 						settingsStore.get('claudeCode.autoFallbackToApiOnLimit', true) !== false;
 
-					// TODO(maestro-p phase 2, task 7): pass the real `UsageSnapshot` from
-					// `claudeUsageStore.getSnapshot(resolveConfigDirKey(env))` here. The selector
-					// tolerates `null` and treats it as "no limit data — attempt interactive under
-					// auto", which is the desired fallthrough for phase 2 until the snapshot
-					// store ships.
-					const resolution = selectMode({
-						headlessMode,
-						perTabReason: perTab.modeReason,
-						perTabMode: perTab.mode,
-						usageSnapshot: null,
-						autoFallbackOnLimit,
-						now: new Date(),
-					});
-
 					// Canonical `CLAUDE_CONFIG_DIR` for this spawn — used as the event payload's
 					// `configDirKey` so the renderer mirror knows which account's snapshot was
-					// consulted at resolution time. Precedence: agent+session customEnvVars (read
-					// from the agent config store) > process.env > ~/.claude default. Inline here
-					// to avoid taking a dependency on `claudeUsageStore.resolveConfigDirKey()`
-					// before that module exists (task 7 introduces it).
+					// consulted at resolution time, AND as the snapshot store lookup key. Precedence:
+					// agent+session customEnvVars (read from the agent config store) > process.env >
+					// ~/.claude default; we delegate the `~/.claude` fallback + path resolution to
+					// `resolveConfigDirKey()` so every consumer sees the same canonical key.
 					const allConfigsForKey = agentConfigsStore.get('configs', {});
 					const agentEnvForKey = (allConfigsForKey[config.toolType]?.customEnvVars ?? {}) as Record<
 						string,
 						string
 					>;
-					const mergedConfigDirCandidate =
+					const envForConfigDir: NodeJS.ProcessEnv = {};
+					const configDirCandidate =
 						config.sessionCustomEnvVars?.CLAUDE_CONFIG_DIR ??
 						agentEnvForKey.CLAUDE_CONFIG_DIR ??
-						process.env.CLAUDE_CONFIG_DIR ??
-						path.join(os.homedir(), '.claude');
-					const configDirKey = path.resolve(mergedConfigDirCandidate);
+						process.env.CLAUDE_CONFIG_DIR;
+					if (configDirCandidate !== undefined) {
+						envForConfigDir.CLAUDE_CONFIG_DIR = configDirCandidate;
+					}
+					const configDirKey = resolveConfigDirKey(envForConfigDir);
+
+					// 5-minute stale refresh: only under `headlessMode === 'auto'` (pinned modes
+					// ignore the snapshot anyway, so a 30s sample-spawn here would be wasted).
+					// Snapshot is consulted via `claudeUsageStore`; when missing or older than
+					// `USAGE_SNAPSHOT_STALE_MS`, we await a fresh `sampleUsage()` inline so the
+					// selector sees the current quota. Failures fall through with the prior
+					// (or null) snapshot — the selector tolerates null as "no limit data".
+					let usageSnapshot = getUsageSnapshot(configDirKey);
+					if (headlessMode === 'auto') {
+						const snapshotAgeMs = usageSnapshot
+							? Date.now() - new Date(usageSnapshot.sampledAt).getTime()
+							: Number.POSITIVE_INFINITY;
+						if (!usageSnapshot || snapshotAgeMs > USAGE_SNAPSHOT_STALE_MS) {
+							const binPath = getMaestroPBinPath();
+							if (binPath) {
+								const claudeRealBinPath = config.sessionCustomPath || agent.path || agent.command;
+								const sampleEnv: Record<string, string> = {};
+								// Layer agent-level then session-level env vars (session wins),
+								// then force MAESTRO_CLAUDE_BIN so the sampler's underlying TUI
+								// process finds the real claude binary regardless of PATH.
+								for (const [k, v] of Object.entries(agentEnvForKey)) {
+									if (typeof v === 'string') sampleEnv[k] = v;
+								}
+								for (const [k, v] of Object.entries(config.sessionCustomEnvVars ?? {})) {
+									if (typeof v === 'string') sampleEnv[k] = v;
+								}
+								if (claudeRealBinPath) {
+									sampleEnv.MAESTRO_CLAUDE_BIN = claudeRealBinPath;
+								}
+								try {
+									const refreshed = await sampleUsage({
+										binPath,
+										configDir: envForConfigDir.CLAUDE_CONFIG_DIR,
+										cwd: config.cwd,
+										customEnvVars: sampleEnv,
+									});
+									if (refreshed) {
+										setUsageSnapshot(refreshed);
+										usageSnapshot = refreshed;
+									}
+								} catch (err) {
+									// `sampleUsage` already swallows its own failures, but guard
+									// against unexpected throws from the store write so spawn
+									// never breaks on a snapshot-refresh edge case.
+									logger.warn('Inline Claude usage refresh threw; falling through', LOG_CONTEXT, {
+										sessionId: config.sessionId,
+										configDirKey,
+										error: err instanceof Error ? err.message : String(err),
+									});
+								}
+							}
+						}
+					}
+
+					const resolution = selectMode({
+						headlessMode,
+						perTabReason: perTab.modeReason,
+						perTabMode: perTab.mode,
+						usageSnapshot,
+						autoFallbackOnLimit,
+						now: new Date(),
+					});
 
 					claudeModeResolution = {
 						mode: resolution.mode,

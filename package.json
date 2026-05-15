@@ -109,6 +109,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -152,6 +156,10 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
+				},
+				{
 					"from": "src/prompts",
 					"to": "prompts/core",
 					"filter": [
@@ -185,6 +193,10 @@
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
+				},
+				{
+					"from": "dist/cli/maestro-p.js",
+					"to": "maestro-p.js"
 				},
 				{
 					"from": "src/prompts",

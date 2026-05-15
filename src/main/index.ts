@@ -10,6 +10,7 @@ import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
+import { runStartupUsageSampling } from './agents/claude-usage-startup';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import type { AgentId } from '../shared/agentIds';
@@ -598,6 +599,23 @@ app
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
 		}
+
+		// Fire-and-forget: sample maestro-p --status for every CLAUDE_CONFIG_DIR
+		// account referenced by a recent Claude Code session, so the spawner's
+		// auto-mode fallback has fresh quota data on first turn. Failures here
+		// are non-fatal — the spawner's 5-min stale refresh tops the store back
+		// up lazily, and a null snapshot leaves auto-mode in interactive (the
+		// "no limit data → try interactive" branch).
+		void runStartupUsageSampling({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		}).catch((err: unknown) => {
+			logger.warn('Startup Claude usage sampling failed', 'Startup', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
