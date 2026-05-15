@@ -48,6 +48,13 @@ export type MaestroEditorLanguage =
 export interface MaestroEditorHandle {
 	focus: () => void;
 	blur: () => void;
+	/**
+	 * Underlying CodeMirror `EditorView`, or `null` before mount / after
+	 * unmount. Exposed so consumers can read selection, dispatch
+	 * transactions, or attach view-level effects. Prefer the higher-level
+	 * props (`value`, `onChange`, `extensions`) when they suffice.
+	 */
+	getView: () => EditorView | null;
 }
 
 export interface MaestroEditorProps {
@@ -294,6 +301,7 @@ export const MaestroEditor = forwardRef<MaestroEditorHandle, MaestroEditorProps>
 				blur: () => {
 					viewRef.current?.contentDOM.blur();
 				},
+				getView: () => viewRef.current,
 			}),
 			[]
 		);

@@ -13,7 +13,10 @@ import {
 	File,
 	Folder,
 } from 'lucide-react';
+import { EditorView } from '@codemirror/view';
+import type { Extension } from '@codemirror/state';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { MaestroEditor, type MaestroEditorHandle } from './shared/MaestroEditor/MaestroEditor';
 import type { Theme, ThinkingMode, Session, Group } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -107,7 +110,7 @@ export function PromptComposerModal({
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
 	const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const editorRef = useRef<MaestroEditorHandle | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const mentionListRef = useRef<HTMLDivElement>(null);
 	const selectedMentionRef = useRef<HTMLButtonElement>(null);
@@ -125,6 +128,13 @@ export function PromptComposerModal({
 	valueRef.current = value;
 	const showMentionsRef = useRef(showMentions);
 	showMentionsRef.current = showMentions;
+	// Stable refs for image-paste callbacks — the CM6 paste extension is
+	// memoized once and reads handlers through these so prop swaps don't
+	// force a re-mount of the EditorView.
+	const setStagedImagesRef = useRef(setStagedImages);
+	setStagedImagesRef.current = setStagedImages;
+	const onImageAttachBlockedRef = useRef(onImageAttachBlocked);
+	onImageAttachBlockedRef.current = onImageAttachBlocked;
 
 	// Sync value only on mount — while open, the composer owns the value
 	// and syncs back to parent via onSubmit on each keystroke.
@@ -133,16 +143,16 @@ export function PromptComposerModal({
 		if (isOpen) {
 			setValue(initialValue);
 			setShowMentions(false);
-		}
-	}, [isOpen]);
-
-	// Focus textarea when modal opens
-	useEffect(() => {
-		if (isOpen && textareaRef.current) {
-			textareaRef.current.focus();
-			// Move cursor to end
-			textareaRef.current.selectionStart = textareaRef.current.value.length;
-			textareaRef.current.selectionEnd = textareaRef.current.value.length;
+			// Move caret to end of pre-populated draft so the user can keep
+			// typing where they left off.
+			requestAnimationFrame(() => {
+				const view = editorRef.current?.getView();
+				if (view) {
+					const docLen = view.state.doc.length;
+					view.dispatch({ selection: { anchor: docLen } });
+					view.focus();
+				}
+			});
 		}
 	}, [isOpen]);
 
@@ -245,27 +255,32 @@ export function PromptComposerModal({
 		}
 	}, [selectedMentionIndex, showMentions]);
 
-	const insertMention = useCallback(
-		(item: MentionItem) => {
-			const lastAtIndex = value.lastIndexOf('@');
-			const prefix = value.slice(0, lastAtIndex);
-			let insertion: string;
-			if (item.type === 'group') {
-				insertion = item.memberMentions.join(' ') + ' ';
-			} else if (item.type === 'file') {
-				insertion = `@${item.fullPath} `;
-			} else {
-				insertion = `@${item.mentionName} `;
-			}
-			const newValue = prefix + insertion;
-			setValue(newValue);
-			// Persist the draft so the mention survives an abrupt modal close
-			onSubmitRef.current(newValue);
-			setShowMentions(false);
-			textareaRef.current?.focus();
-		},
-		[value]
-	);
+	const insertMention = useCallback((item: MentionItem) => {
+		const view = editorRef.current?.getView();
+		if (!view) return;
+		const doc = view.state.doc.toString();
+		// Preserve the original "greedy from last @" semantics — replace
+		// everything from the last `@` in the document to the end with the
+		// insertion. The composer's mention dropdown only opens while the
+		// user is typing right after the latest `@`, so the trailing range
+		// is exactly the in-progress mention.
+		const lastAtIndex = doc.lastIndexOf('@');
+		if (lastAtIndex === -1) return;
+		let insertion: string;
+		if (item.type === 'group') {
+			insertion = item.memberMentions.join(' ') + ' ';
+		} else if (item.type === 'file') {
+			insertion = `@${item.fullPath} `;
+		} else {
+			insertion = `@${item.mentionName} `;
+		}
+		view.dispatch({
+			changes: { from: lastAtIndex, to: doc.length, insert: insertion },
+			selection: { anchor: lastAtIndex + insertion.length },
+		});
+		setShowMentions(false);
+		view.focus();
+	}, []);
 
 	const handleValueChange = useCallback((newValue: string) => {
 		setValue(newValue);
@@ -273,8 +288,11 @@ export function PromptComposerModal({
 		// typing here is equivalent to typing in the standard input box
 		onSubmitRef.current(newValue);
 
-		// Check for @mention trigger (cursor-aware, same as InputArea)
-		const cursorPos = textareaRef.current?.selectionStart ?? newValue.length;
+		// Check for @mention trigger (cursor-aware, same as InputArea).
+		// Cursor pos read from CM6 selection — by the time onChange fires
+		// the EditorView state already reflects this keystroke.
+		const view = editorRef.current?.getView();
+		const cursorPos = view?.state.selection.main.head ?? newValue.length;
 		const textBeforeCursor = newValue.substring(0, cursorPos);
 		const lastAtIndex = textBeforeCursor.lastIndexOf('@');
 
@@ -295,142 +313,175 @@ export function PromptComposerModal({
 		}
 	}, []);
 
-	if (!isOpen) return null;
+	// Stable refs so the CM6 keydown handler (passed once into the editor
+	// extension) can read the latest mention dropdown state, shortcut
+	// toggles, and send mode without remounting the EditorView.
+	const filteredMentionsRef = useRef(filteredMentions);
+	filteredMentionsRef.current = filteredMentions;
+	const selectedMentionIndexRef = useRef(selectedMentionIndex);
+	selectedMentionIndexRef.current = selectedMentionIndex;
+	const enterToSendRef = useRef(enterToSend);
+	enterToSendRef.current = enterToSend;
+	const stagedImagesRef = useRef(stagedImages);
+	stagedImagesRef.current = stagedImages;
+	const onOpenLightboxRef = useRef(onOpenLightbox);
+	onOpenLightboxRef.current = onOpenLightbox;
+	const onToggleTabSaveToHistoryRef = useRef(onToggleTabSaveToHistory);
+	onToggleTabSaveToHistoryRef.current = onToggleTabSaveToHistory;
+	const onToggleTabReadOnlyModeRef = useRef(onToggleTabReadOnlyMode);
+	onToggleTabReadOnlyModeRef.current = onToggleTabReadOnlyMode;
 
-	const handleSend = () => {
-		if (!value.trim()) return;
-		onSend(value);
-		onClose();
-	};
+	const handleSend = useCallback(() => {
+		if (!valueRef.current.trim()) return;
+		onSendRef.current(valueRef.current);
+		onCloseRef.current();
+	}, []);
 
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		// Handle mention dropdown navigation
-		if (showMentions && filteredMentions.length > 0) {
-			if (e.key === 'ArrowDown') {
-				e.preventDefault();
-				setSelectedMentionIndex((prev) => (prev < filteredMentions.length - 1 ? prev + 1 : 0));
-				return;
+	const handleEditorKeyDown = useCallback(
+		(event: KeyboardEvent): boolean => {
+			// Mention dropdown navigation — wins over the editor's default
+			// arrow / Tab / Enter bindings while open.
+			if (showMentionsRef.current && filteredMentionsRef.current.length > 0) {
+				if (event.key === 'ArrowDown') {
+					event.preventDefault();
+					setSelectedMentionIndex((prev) =>
+						prev < filteredMentionsRef.current.length - 1 ? prev + 1 : 0
+					);
+					return true;
+				}
+				if (event.key === 'ArrowUp') {
+					event.preventDefault();
+					setSelectedMentionIndex((prev) =>
+						prev > 0 ? prev - 1 : filteredMentionsRef.current.length - 1
+					);
+					return true;
+				}
+				if (
+					event.key === 'Tab' ||
+					(event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey)
+				) {
+					event.preventDefault();
+					const item = filteredMentionsRef.current[selectedMentionIndexRef.current];
+					if (item) insertMention(item);
+					return true;
+				}
 			}
-			if (e.key === 'ArrowUp') {
-				e.preventDefault();
-				setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : filteredMentions.length - 1));
-				return;
+
+			// Send the message. Honors the Expanded AI Interaction Mode toggle.
+			// enterToSend === true:  plain Enter sends;       Shift+Enter newline.
+			// enterToSend === false: Cmd/Ctrl+Enter sends;    plain Enter newline.
+			if (event.key === 'Enter') {
+				if (enterToSendRef.current && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+					event.preventDefault();
+					handleSend();
+					return true;
+				}
+				if (!enterToSendRef.current && (event.metaKey || event.ctrlKey)) {
+					event.preventDefault();
+					handleSend();
+					return true;
+				}
 			}
-			if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
-				e.preventDefault();
-				insertMention(filteredMentions[selectedMentionIndex]);
-				return;
-			}
-		}
 
-		// Send the message. Honors the Expanded AI Interaction Mode setting passed in via `enterToSend`.
-		// When enterToSend === true: plain Enter sends; Shift+Enter inserts newline.
-		// When enterToSend === false: Cmd/Ctrl+Enter sends; plain Enter inserts newline.
-		if (e.key === 'Enter') {
-			if (enterToSend && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-				e.preventDefault();
-				handleSend();
-				return;
-			}
-			if (!enterToSend && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault();
-				handleSend();
-				return;
-			}
-		}
-
-		// Tab key inserts a tab character instead of moving focus
-		if (e.key === 'Tab') {
-			e.preventDefault();
-			const textarea = e.currentTarget;
-			const start = textarea.selectionStart;
-			const end = textarea.selectionEnd;
-			const newValue = value.substring(0, start) + '\t' + value.substring(end);
-			handleValueChange(newValue);
-			// Restore cursor position after the tab
-			requestAnimationFrame(() => {
-				textarea.selectionStart = start + 1;
-				textarea.selectionEnd = start + 1;
-			});
-			return;
-		}
-
-		// Cmd/Ctrl + Shift + L to open lightbox (if images are staged)
-		if (e.key === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
-			e.preventDefault();
-			if (stagedImages.length > 0 && onOpenLightbox) {
-				onOpenLightbox(stagedImages[0], stagedImages, 'staged');
-			}
-			return;
-		}
-
-		// Cmd/Ctrl + S to toggle Save to History
-		if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-			e.preventDefault();
-			onToggleTabSaveToHistory?.();
-			return;
-		}
-
-		// Cmd/Ctrl + R to toggle Read-only mode
-		if (e.key === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-			e.preventDefault();
-			onToggleTabReadOnlyMode?.();
-			return;
-		}
-	};
-
-	// Handle paste for images and text (with whitespace trimming)
-	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-		const items = e.clipboardData.items;
-		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
-
-		// Handle text paste with whitespace trimming (when no images)
-		if (!hasImage) {
-			const text = e.clipboardData.getData('text/plain');
-			if (text) {
-				const trimmedText = text.trim();
-				// Only intercept if trimming actually changed the text
-				if (trimmedText !== text) {
-					e.preventDefault();
-					const target = e.target as HTMLTextAreaElement;
-					const start = target.selectionStart ?? 0;
-					const end = target.selectionEnd ?? 0;
-					const currentValue = target.value;
-					const pastedValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-					handleValueChange(pastedValue);
-					// Set cursor position after the pasted text
-					requestAnimationFrame(() => {
-						target.selectionStart = target.selectionEnd = start + trimmedText.length;
+			// Tab inserts a literal tab character (no focus change). CM6 has
+			// no default Tab binding in the keymap installed here, so a
+			// manual dispatch is required to preserve the textarea behavior.
+			if (event.key === 'Tab' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+				event.preventDefault();
+				const view = editorRef.current?.getView();
+				if (view) {
+					const sel = view.state.selection.main;
+					view.dispatch({
+						changes: { from: sel.from, to: sel.to, insert: '\t' },
+						selection: { anchor: sel.from + 1 },
 					});
 				}
+				return true;
 			}
-			return;
-		}
 
-		if (!setStagedImages) {
-			if (hasImage) {
-				e.preventDefault();
-				onImageAttachBlocked?.();
-			}
-			return;
-		}
-
-		for (let i = 0; i < items.length; i++) {
-			if (items[i].type.indexOf('image') !== -1) {
-				e.preventDefault();
-				const blob = items[i].getAsFile();
-				if (blob) {
-					const reader = new FileReader();
-					reader.onload = (event) => {
-						if (event.target?.result) {
-							setStagedImages((prev) => [...prev, event.target!.result as string]);
-						}
-					};
-					reader.readAsDataURL(blob);
+			// Cmd/Ctrl + Shift + L opens the lightbox (when images are staged).
+			if (event.key === 'l' && (event.metaKey || event.ctrlKey) && event.shiftKey) {
+				event.preventDefault();
+				const imgs = stagedImagesRef.current;
+				if (imgs.length > 0 && onOpenLightboxRef.current) {
+					onOpenLightboxRef.current(imgs[0], imgs, 'staged');
 				}
+				return true;
 			}
-		}
-	};
+
+			// Cmd/Ctrl + S toggles Save to History.
+			if (event.key === 's' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+				event.preventDefault();
+				onToggleTabSaveToHistoryRef.current?.();
+				return true;
+			}
+
+			// Cmd/Ctrl + R toggles Read-only mode.
+			if (event.key === 'r' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+				event.preventDefault();
+				onToggleTabReadOnlyModeRef.current?.();
+				return true;
+			}
+
+			return false;
+		},
+		[handleSend, insertMention]
+	);
+
+	// CM6 paste handler: trim text (matches the original textarea quirk) and
+	// stage image clipboard content. Attached via `extensions` so it lives
+	// inside the EditorView and never fights React's synthetic paste.
+	const editorExtensions = useMemo<Extension[]>(
+		() => [
+			EditorView.domEventHandlers({
+				paste: (event, view) => {
+					const items = event.clipboardData?.items;
+					if (!items) return false;
+					const hasImage = Array.from(items).some((it) => it.type.startsWith('image/'));
+
+					if (!hasImage) {
+						const text = event.clipboardData?.getData('text/plain') ?? '';
+						if (!text) return false;
+						const trimmed = text.trim();
+						if (trimmed === text) return false;
+						event.preventDefault();
+						const sel = view.state.selection.main;
+						view.dispatch({
+							changes: { from: sel.from, to: sel.to, insert: trimmed },
+							selection: { anchor: sel.from + trimmed.length },
+						});
+						return true;
+					}
+
+					if (!setStagedImagesRef.current) {
+						event.preventDefault();
+						onImageAttachBlockedRef.current?.();
+						return true;
+					}
+
+					for (let i = 0; i < items.length; i++) {
+						if (items[i].type.indexOf('image') !== -1) {
+							event.preventDefault();
+							const blob = items[i].getAsFile();
+							if (blob) {
+								const reader = new FileReader();
+								reader.onload = (ev) => {
+									if (ev.target?.result) {
+										setStagedImagesRef.current?.((prev) => [...prev, ev.target!.result as string]);
+									}
+								};
+								reader.readAsDataURL(blob);
+							}
+						}
+					}
+					return true;
+				},
+			}),
+		],
+		[]
+	);
+
+	if (!isOpen) return null;
 
 	// Handle file input change for image attachment
 	const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -551,9 +602,9 @@ export function PromptComposerModal({
 					</div>
 				)}
 
-				{/* Textarea */}
+				{/* Editor */}
 				<div className="flex-1 p-4 overflow-hidden relative flex flex-col">
-					{/* Mention dropdown (positioned above textarea) */}
+					{/* Mention dropdown (positioned above editor) */}
 					{showMentions && filteredMentions.length > 0 && (
 						<div
 							ref={mentionListRef}
@@ -645,19 +696,20 @@ export function PromptComposerModal({
 							})}
 						</div>
 					)}
-					<textarea
-						ref={textareaRef}
+					<MaestroEditor
+						ref={editorRef}
 						value={value}
-						onChange={(e) => handleValueChange(e.target.value)}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePaste}
-						className="w-full h-full bg-transparent resize-none outline-none text-base leading-relaxed scrollbar-thin"
-						style={{ color: theme.colors.textMain }}
+						onChange={handleValueChange}
+						onKeyDown={handleEditorKeyDown}
+						extensions={editorExtensions}
+						language="markdown"
 						placeholder={
 							hasAgentMentions
 								? 'Write your prompt here... (@ to mention agents)'
 								: 'Write your prompt here... (@ to reference files)'
 						}
+						autoFocus
+						className="flex-1 min-h-0 text-base leading-relaxed"
 					/>
 				</div>
 
