@@ -1000,6 +1000,18 @@ interface MaestroAPI {
 			mode: 'interactive' | 'api',
 			modeReason: 'user' | 'auto' | 'limit'
 		) => Promise<boolean>;
+		getClaudeUsageSnapshots: () => Promise<
+			Record<
+				string,
+				{
+					sampledAt: string;
+					configDirKey: string;
+					session: { percent: number; resetsAt: string };
+					weekAllModels: { percent: number; resetsAt: string };
+					weekSonnetOnly: { percent: number; resetsAt: string };
+				}
+			>
+		>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

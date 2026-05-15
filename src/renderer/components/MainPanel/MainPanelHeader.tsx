@@ -20,6 +20,7 @@ import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { remoteUrlToBrowserUrl } from '../../../shared/gitUtils';
 import { GitStatusWidget } from '../GitStatusWidget';
+import { ClaudeModeBadge } from '../SessionList/ClaudeModeBadge';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -114,6 +115,11 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					{/* Session name - hidden at narrow widths via CSS container query */}
 					{showAgentName && (
 						<span className="header-session-name truncate">{activeSession.name}</span>
+					)}
+					{/* Claude headless-mode badge: only renders for Claude Code sessions
+					    once their mode has been resolved at least once. */}
+					{activeSession.toolType === 'claude-code' && activeSession.claudeInteractive && (
+						<ClaudeModeBadge sessionId={activeSession.id} />
 					)}
 					{activeSession.bookmarked && (
 						<Bookmark

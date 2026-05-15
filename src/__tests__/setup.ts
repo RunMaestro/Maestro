@@ -330,6 +330,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		setClaudeInteractiveMode: vi.fn().mockResolvedValue(true),
+		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
 	},
 	fonts: {
 		detect: vi.fn().mockResolvedValue([]),

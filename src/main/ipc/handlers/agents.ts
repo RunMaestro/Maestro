@@ -26,6 +26,8 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
+import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -1522,6 +1524,21 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					LOG_CONTEXT
 				);
 				return true;
+			}
+		)
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Claude Max-plan
+	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
+	// whenever `process:claude-mode-resolved` arrives (the only signal that
+	// `sampleUsage()` may have refreshed the on-disk map).
+	ipcMain.handle(
+		'agents:getClaudeUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getClaudeUsageSnapshots'),
+			async (): Promise<Record<string, UsageSnapshot>> => {
+				return getAllClaudeUsageSnapshots();
 			}
 		)
 	);

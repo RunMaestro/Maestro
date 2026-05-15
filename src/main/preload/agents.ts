@@ -10,9 +10,11 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
+import type { UsageSnapshot } from '../agents/claude-mode-selector';
 
 // Re-export for consumers that import from preload
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
+export type { UsageSnapshot } from '../agents/claude-mode-selector';
 
 /**
  * Agent refresh result
@@ -177,6 +179,14 @@ export function createAgentsApi() {
 			modeReason: 'user' | 'auto' | 'limit'
 		): Promise<boolean> =>
 			ipcRenderer.invoke('agents:setClaudeInteractiveMode', sessionId, mode, modeReason),
+
+		/**
+		 * Fetch the live Claude Max-plan usage snapshot map keyed by canonical
+		 * `CLAUDE_CONFIG_DIR`. Used by the renderer-side claudeUsageStore to
+		 * mirror main-process state for the mode badge and Usage Dashboard.
+		 */
+		getClaudeUsageSnapshots: (): Promise<Record<string, UsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
 	};
 }
 

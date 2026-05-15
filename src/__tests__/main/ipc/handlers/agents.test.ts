@@ -173,6 +173,7 @@ describe('agents IPC handlers', () => {
 				'agents:getConfigOptions',
 				'agents:discoverSlashCommands',
 				'agents:setClaudeInteractiveMode',
+				'agents:getClaudeUsageSnapshots',
 			];
 
 			for (const channel of expectedChannels) {
@@ -1799,6 +1800,40 @@ describe('agents IPC handlers', () => {
 			expect(await handler({} as any, 'sess-1', 'api', 'auto')).toBe(true);
 			expect(await handler({} as any, 'sess-1', 'api', 'limit')).toBe(true);
 			expect(await handler({} as any, 'sess-1', 'api', 'user')).toBe(true);
+		});
+	});
+
+	describe('agents:getClaudeUsageSnapshots', () => {
+		it('returns the full snapshot map from claudeUsageStore', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(getAllSpy).toHaveBeenCalled();
+			expect(result).toHaveProperty('/Users/me/.claude');
+			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			getAllSpy.mockRestore();
+		});
+
+		it('returns an empty object when no snapshots are cached', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({});
+
+			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+			const result = await handler({} as any);
+
+			expect(result).toEqual({});
+			getAllSpy.mockRestore();
 		});
 	});
 });

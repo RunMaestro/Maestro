@@ -14,6 +14,7 @@
 
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 
 export function useAgentClaudeModeResolvedListener(): void {
@@ -63,6 +64,11 @@ export function useAgentClaudeModeResolvedListener(): void {
 						};
 					})
 				);
+
+				// The mode resolver may have re-sampled usage as part of its
+				// decision — pull the latest snapshot map so the badge tooltip
+				// reflects the same numbers the spawner just acted on.
+				void useClaudeUsageStore.getState().refresh();
 			}
 		);
 
