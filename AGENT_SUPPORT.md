@@ -671,14 +671,15 @@ describe('YourAgentOutputParser', () => {
 
 ### Claude Code ✅ Fully Implemented
 
-| Aspect           | Value                                |
-| ---------------- | ------------------------------------ |
-| Binary           | `claude`                             |
-| JSON Output      | `--output-format stream-json`        |
-| Resume           | `--resume <session-id>`              |
-| Read-only        | `--permission-mode plan`             |
-| Session ID Field | `session_id` (snake_case)            |
-| Session Storage  | `~/.claude/projects/<encoded-path>/` |
+| Aspect                     | Value                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| Binary                     | `claude`                                                                                    |
+| JSON Output                | `--output-format stream-json`                                                               |
+| Resume                     | `--resume <session-id>`                                                                     |
+| Read-only                  | `--permission-mode plan`                                                                    |
+| Session ID Field           | `session_id` (snake_case)                                                                   |
+| Session Storage            | `~/.claude/projects/<encoded-path>/`                                                        |
+| External Activity Tracking | ✅ Supported — JSONL append watcher (see [[CLAUDE-AGENTS.md]] § External Activity Tracking) |
 
 **Implementation Status:**
 
@@ -697,17 +698,18 @@ describe('YourAgentOutputParser', () => {
 
 ### OpenCode 🔄 Stub Ready
 
-| Aspect           | Value                                                         |
-| ---------------- | ------------------------------------------------------------- |
-| Binary           | `opencode`                                                    |
-| JSON Output      | `--format json`                                               |
-| Resume           | `--session <session-id>`                                      |
-| Read-only        | `--agent plan`                                                |
-| Session ID Field | `sessionID` (camelCase)                                       |
-| Session Storage  | ✅ File-based (see below)                                     |
-| YOLO Mode        | ✅ Auto-enabled in batch mode                                 |
-| Model Selection  | `--model provider/model`                                      |
-| Config File      | `~/.config/opencode/opencode.json` or project `opencode.json` |
+| Aspect                     | Value                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Binary                     | `opencode`                                                                                             |
+| JSON Output                | `--format json`                                                                                        |
+| Resume                     | `--session <session-id>`                                                                               |
+| Read-only                  | `--agent plan`                                                                                         |
+| Session ID Field           | `sessionID` (camelCase)                                                                                |
+| Session Storage            | ✅ File-based (see below)                                                                              |
+| YOLO Mode                  | ✅ Auto-enabled in batch mode                                                                          |
+| Model Selection            | `--model provider/model`                                                                               |
+| Config File                | `~/.config/opencode/opencode.json` or project `opencode.json`                                          |
+| External Activity Tracking | ✅ Supported — per-message-file create watcher (see [[CLAUDE-AGENTS.md]] § External Activity Tracking) |
 
 **YOLO Mode (Auto-Approval) Details:**
 
@@ -881,18 +883,19 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 ### Codex ✅ Fully Implemented
 
-| Aspect           | Value                                                             |
-| ---------------- | ----------------------------------------------------------------- |
-| Binary           | `codex`                                                           |
-| JSON Output      | `--json`                                                          |
-| Batch Mode       | `exec` subcommand                                                 |
-| Resume           | `resume <thread_id>` (v0.30.0+)                                   |
-| Read-only        | `--sandbox read-only`                                             |
-| YOLO Mode        | `--dangerously-bypass-approvals-and-sandbox` (enabled by default) |
-| Session ID Field | `thread_id` (from `thread.started` event)                         |
-| Session Storage  | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`                            |
-| Context Window   | 128K tokens                                                       |
-| Pricing          | o4-mini: $1.10/$4.40 per million tokens (input/output)            |
+| Aspect                     | Value                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| Binary                     | `codex`                                                                                     |
+| JSON Output                | `--json`                                                                                    |
+| Batch Mode                 | `exec` subcommand                                                                           |
+| Resume                     | `resume <thread_id>` (v0.30.0+)                                                             |
+| Read-only                  | `--sandbox read-only`                                                                       |
+| YOLO Mode                  | `--dangerously-bypass-approvals-and-sandbox` (enabled by default)                           |
+| Session ID Field           | `thread_id` (from `thread.started` event)                                                   |
+| Session Storage            | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`                                                      |
+| Context Window             | 128K tokens                                                                                 |
+| Pricing                    | o4-mini: $1.10/$4.40 per million tokens (input/output)                                      |
+| External Activity Tracking | ✅ Supported — JSONL append watcher (see [[CLAUDE-AGENTS.md]] § External Activity Tracking) |
 
 **Implementation Status:**
 
