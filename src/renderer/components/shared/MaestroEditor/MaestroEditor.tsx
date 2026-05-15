@@ -209,7 +209,6 @@ export const MaestroEditor = forwardRef<MaestroEditorHandle, MaestroEditorProps>
 			};
 			// Mount-only — every reactive prop is handled by its own effect
 			// below via the compartment system.
-			 
 		}, []);
 
 		// Sync external `value` prop into the editor doc. We only dispatch
