@@ -273,6 +273,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					sessionSshRemoteConfig,
 					groupId,
 					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
+					claudeInteractive:
+						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
 				setSessions((prev) => [...prev, newSession]);

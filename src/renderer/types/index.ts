@@ -803,6 +803,22 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	// Claude Code interactive-mode state (only set for Claude Code sessions).
+	// `mode` is the resolved spawn mode for the next turn: `interactive` swaps in
+	// maestro-p driving the Claude TUI (preserves Max plan quota); `api` runs
+	// `claude --print` (billed via API).
+	// `modeReason` records why the current mode was chosen so the selector can
+	// distinguish a manual per-tab pin (`user`) from an auto-mode default
+	// (`auto`) or an auto-fallback after hitting a quota wall (`limit`).
+	// `lastUsageSnapshotKey` is the canonical `CLAUDE_CONFIG_DIR` key whose
+	// snapshot was consulted when this state was last resolved — written by the
+	// renderer mirror of `process:claude-mode-resolved`.
+	claudeInteractive?: {
+		mode: 'interactive' | 'api';
+		modeReason: 'user' | 'auto' | 'limit';
+		lastUsageSnapshotKey?: string;
+	};
 }
 
 // AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above
