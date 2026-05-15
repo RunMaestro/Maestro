@@ -52,6 +52,22 @@ The `window.maestro` API exposes the following namespaces:
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
 
+## External Session Activity
+
+Surfaces externally-spawned agent sessions (e.g., Claude Code launched over SSH by the same OS user) observed via per-agent storage-directory watchers. Backed by `ExternalSessionCoordinator`; event shape and the `isActive(event)` helper live in `src/shared/sessionActivity.ts`. See the **External Agent Visibility** section in [[CLAUDE.md]] for the watcher pipeline.
+
+- `storage.listExternalSessions()` - Hydrates the current snapshot of watched session files. Returns `Promise<SessionActivityEvent[]>`.
+- `storage.onExternalActivity(callback)` - Subscribes to coalesced coordinator state changes. The callback receives `SessionActivityEvent[]` batches as files grow or appear. Returns an unsubscribe function.
+
+```typescript
+window.maestro.storage = {
+  listExternalSessions: () => Promise<SessionActivityEvent[]>,
+  onExternalActivity: (callback: (events: SessionActivityEvent[]) => void) => () => void,
+};
+```
+
+Each `SessionActivityEvent` carries `{ agentId, sessionId, projectPath, lastActivityAt, source, sizeBytes }`, where `source` is `'local'` for Maestro-spawned sessions and `'external'` for watch-only observations.
+
 ## History API
 
 Per-agent history storage with 5,000 entries per agent (up from 1,000 global). Each agent's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.
