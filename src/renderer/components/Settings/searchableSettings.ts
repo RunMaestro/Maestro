@@ -197,6 +197,35 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'claudeCode.headlessMode',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Claude Headless Mode',
+		description:
+			'Choose how Claude Code spawns: interactive (maestro-p drives the TUI, spends Max plan quota), api (`claude --print`, billed per token), or auto (interactive first, fall back to API on limit).',
+		keywords: [
+			'claude',
+			'headless',
+			'maestro-p',
+			'interactive',
+			'api',
+			'auto',
+			'tui',
+			'max plan',
+			'quota',
+			'billing',
+		],
+	},
+	{
+		id: 'claudeCode.autoFallbackToApiOnLimit',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Auto-Fallback to API on Limit',
+		description:
+			'When `auto` mode is active and the Max plan quota is exhausted, transparently switch the next turn to API mode.',
+		keywords: ['claude', 'fallback', 'limit', 'auto', 'api', 'max plan', 'quota', 'maestro-p'],
+	},
+	{
 		id: 'general-tab-behavior',
 		tab: 'general',
 		tabLabel: 'General',

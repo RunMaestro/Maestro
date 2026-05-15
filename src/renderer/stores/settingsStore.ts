@@ -211,6 +211,28 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	maestroCue: false,
 };
 
+/**
+ * Three-way Claude headless-mode pin: `'interactive'` drives maestro-p (Max-plan
+ * quota), `'api'` runs `claude --print` (per-token billing), `'auto'` picks the
+ * cheapest viable mode per turn. Renderer-local mirror of the main-process union
+ * in `src/main/agents/claude-mode-selector.ts` — duplicated rather than imported
+ * because pulling main-process types into the renderer bundle is a non-trivial
+ * tsconfig change for a three-element string union.
+ */
+export type ClaudeHeadlessMode = 'interactive' | 'api' | 'auto';
+
+const CLAUDE_HEADLESS_MODE_VALUES: ReadonlyArray<ClaudeHeadlessMode> = [
+	'interactive',
+	'api',
+	'auto',
+];
+
+function isClaudeHeadlessMode(value: unknown): value is ClaudeHeadlessMode {
+	return (
+		typeof value === 'string' && (CLAUDE_HEADLESS_MODE_VALUES as readonly string[]).includes(value)
+	);
+}
+
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
@@ -391,6 +413,10 @@ export interface SettingsStoreState {
 	annotatorStreamline: number;
 	annotatorTaperStart: number;
 	annotatorTaperEnd: number;
+
+	// Claude headless mode (maestro-p) — see ClaudeHeadlessMode for semantics.
+	claudeCodeHeadlessMode: ClaudeHeadlessMode;
+	claudeCodeAutoFallbackToApiOnLimit: boolean;
 }
 
 export interface SettingsStoreActions {
@@ -508,6 +534,11 @@ export interface SettingsStoreActions {
 	setAnnotatorStreamline: (value: number) => void;
 	setAnnotatorTaperStart: (value: number) => void;
 	setAnnotatorTaperEnd: (value: number) => void;
+
+	// Claude headless mode (writes via electron-store dot-notation so the value
+	// lands on the nested `claudeCode` block on disk without changing the schema).
+	setClaudeCodeHeadlessMode: (value: ClaudeHeadlessMode) => void;
+	setClaudeCodeAutoFallbackToApiOnLimit: (value: boolean) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -705,6 +736,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorStreamline: 0.5,
 		annotatorTaperStart: 0,
 		annotatorTaperEnd: 0,
+		claudeCodeHeadlessMode: 'api',
+		claudeCodeAutoFallbackToApiOnLimit: true,
 
 		// ============================================================================
 		// Simple Setters
@@ -1373,6 +1406,19 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAnnotatorTaperEnd: (value) => {
 			set({ annotatorTaperEnd: value });
 			window.maestro.settings.set('annotatorTaperEnd', value);
+		},
+
+		setClaudeCodeHeadlessMode: (value) => {
+			set({ claudeCodeHeadlessMode: value });
+			// Dot-notation lands on the nested `claudeCode` block in electron-store, so
+			// the main-process selector and renderer stay in sync without touching the
+			// on-disk schema introduced in phase 2.
+			window.maestro.settings.set('claudeCode.headlessMode', value);
+		},
+
+		setClaudeCodeAutoFallbackToApiOnLimit: (value) => {
+			set({ claudeCodeAutoFallbackToApiOnLimit: value });
+			window.maestro.settings.set('claudeCode.autoFallbackToApiOnLimit', value);
 		},
 
 		// ============================================================================
@@ -2522,6 +2568,20 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['annotatorTaperEnd'] !== undefined)
 			patch.annotatorTaperEnd = allSettings['annotatorTaperEnd'] as number;
 
+		// Claude headless mode lives in a nested `claudeCode` block on disk; only
+		// patch when the field is valid so a corrupt store falls back to renderer
+		// defaults instead of throwing.
+		const rawClaudeCode = allSettings['claudeCode'];
+		if (rawClaudeCode && typeof rawClaudeCode === 'object') {
+			const claudeCode = rawClaudeCode as Record<string, unknown>;
+			if (isClaudeHeadlessMode(claudeCode.headlessMode)) {
+				patch.claudeCodeHeadlessMode = claudeCode.headlessMode;
+			}
+			if (typeof claudeCode.autoFallbackToApiOnLimit === 'boolean') {
+				patch.claudeCodeAutoFallbackToApiOnLimit = claudeCode.autoFallbackToApiOnLimit;
+			}
+		}
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -2665,5 +2725,7 @@ export function getSettingsActions() {
 		setAnnotatorStreamline: state.setAnnotatorStreamline,
 		setAnnotatorTaperStart: state.setAnnotatorTaperStart,
 		setAnnotatorTaperEnd: state.setAnnotatorTaperEnd,
+		setClaudeCodeHeadlessMode: state.setClaudeCodeHeadlessMode,
+		setClaudeCodeAutoFallbackToApiOnLimit: state.setClaudeCodeAutoFallbackToApiOnLimit,
 	};
 }

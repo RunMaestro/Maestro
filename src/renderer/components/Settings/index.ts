@@ -25,3 +25,7 @@ export type { EnvVarsEditorProps, EnvVarEntry } from './EnvVarsEditor';
 // File Panel Settings (indexer depth + entry cap)
 export { FilePanelSettingsSection } from './FilePanelSettingsSection';
 export type { FilePanelSettingsSectionProps } from './FilePanelSettingsSection';
+
+// Claude Interactive Mode (maestro-p headless mode + Max plan quota snapshots)
+export { ClaudeInteractiveModeSection } from './ClaudeInteractiveModeSection';
+export type { ClaudeInteractiveModeSectionProps } from './ClaudeInteractiveModeSection';
