@@ -25,6 +25,7 @@ import {
 	CREATE_SESSION_LIFECYCLE_SQL,
 	CREATE_SESSION_LIFECYCLE_INDEXES_SQL,
 	CREATE_COMPOUND_INDEXES_SQL,
+	CREATE_QUERY_EVENTS_V5_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -59,6 +60,12 @@ export function getMigrations(): Migration[] {
 			version: 4,
 			description: 'Add compound indexes on query_events for dashboard query performance',
 			up: (db) => migrateV4(db),
+		},
+		{
+			version: 5,
+			description:
+				"Extend query_events.source CHECK constraint to allow 'external-fs' for externally-ingested sessions",
+			up: (db) => migrateV5(db),
 		},
 	];
 }
@@ -246,4 +253,41 @@ function migrateV4(db: Database.Database): void {
 	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
 
 	logger.debug('Added compound indexes on query_events', LOG_CONTEXT);
+}
+
+/**
+ * Migration v5: Widen `query_events.source` CHECK constraint to include
+ * `'external-fs'` for events ingested from the on-disk session watcher.
+ *
+ * SQLite does not allow modifying a CHECK constraint in place, so the table is
+ * rebuilt: create a sibling with the new constraint, copy rows over, swap
+ * names, then recreate the indexes (DROP TABLE drops them).
+ *
+ * Runs inside the migration transaction in {@link applyMigration}, so partial
+ * failure rolls the whole thing back.
+ */
+function migrateV5(db: Database.Database): void {
+	db.prepare(CREATE_QUERY_EVENTS_V5_SQL).run();
+
+	db.prepare(
+		`
+      INSERT INTO query_events_v5
+        (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote)
+      SELECT id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote
+      FROM query_events
+    `
+	).run();
+
+	db.prepare('DROP TABLE query_events').run();
+	db.prepare('ALTER TABLE query_events_v5 RENAME TO query_events').run();
+
+	// Indexes were dropped with the original table — recreate the full set.
+	runStatements(db, CREATE_QUERY_EVENTS_INDEXES_SQL);
+	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_query_is_remote ON query_events(is_remote)').run();
+
+	logger.debug(
+		"Rebuilt query_events with widened source CHECK constraint (allows 'external-fs')",
+		LOG_CONTEXT
+	);
 }

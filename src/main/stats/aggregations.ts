@@ -59,12 +59,16 @@ function queryByAgent(
 
 function queryBySource(db: Database.Database, startTime: number): { user: number; auto: number } {
 	const perfStart = perfMetrics.start();
+	// Restrict to 'user' / 'auto' rows so the typed cast stays accurate; the
+	// dashboard's source breakdown only renders those two buckets. Externally
+	// ingested rows (source = 'external-fs') still contribute to overall totals
+	// via `queryTotals`, just not to this user/auto split.
 	const rows = db
 		.prepare(
 			`
       SELECT source, COUNT(*) as count
       FROM query_events
-      WHERE start_time >= ?
+      WHERE start_time >= ? AND source IN ('user', 'auto')
       GROUP BY source
     `
 		)

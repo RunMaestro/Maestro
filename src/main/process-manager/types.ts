@@ -136,7 +136,14 @@ export interface ToolExecution {
 export interface QueryCompleteData {
 	sessionId: string;
 	agentType: string;
-	source: 'user' | 'auto';
+	/**
+	 * - `user` / `auto` — emitted by ProcessManager for Maestro-spawned processes.
+	 * - `external-fs` — synthesized by the external-session file watcher when
+	 *   ingesting JSONL activity from agents Maestro did NOT spawn (see
+	 *   `ExternalStatsIngester`). Not emitted on `ProcessManager`'s
+	 *   `'query-complete'` event; only flows directly to `db.insertQueryEvent`.
+	 */
+	source: 'user' | 'auto' | 'external-fs';
 	startTime: number;
 	duration: number;
 	projectPath?: string;

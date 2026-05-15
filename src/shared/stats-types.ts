@@ -11,7 +11,13 @@ export interface QueryEvent {
 	id: string;
 	sessionId: string;
 	agentType: string;
-	source: 'user' | 'auto';
+	/**
+	 * - `user` / `auto` — events emitted by Maestro-spawned processes.
+	 * - `external-fs` — events ingested by the external-session file watcher
+	 *   for agents Maestro did NOT spawn (e.g., same user driving the CLI
+	 *   directly or over SSH). See `ExternalStatsIngester`.
+	 */
+	source: 'user' | 'auto' | 'external-fs';
 	startTime: number;
 	duration: number;
 	projectPath?: string;
@@ -104,7 +110,7 @@ export interface StatsAggregation {
  */
 export interface StatsFilters {
 	agentType?: string;
-	source?: 'user' | 'auto';
+	source?: 'user' | 'auto' | 'external-fs';
 	projectPath?: string;
 	sessionId?: string;
 }
@@ -112,4 +118,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 5;

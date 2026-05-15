@@ -41,7 +41,7 @@ export const CREATE_QUERY_EVENTS_SQL = `
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     agent_type TEXT NOT NULL,
-    source TEXT NOT NULL CHECK(source IN ('user', 'auto')),
+    source TEXT NOT NULL CHECK(source IN ('user', 'auto', 'external-fs')),
     start_time INTEGER NOT NULL,
     duration INTEGER NOT NULL,
     project_path TEXT,
@@ -125,6 +125,29 @@ export const CREATE_SESSION_LIFECYCLE_SQL = `
 export const CREATE_SESSION_LIFECYCLE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_session_created_at ON session_lifecycle(created_at);
   CREATE INDEX IF NOT EXISTS idx_session_agent_type ON session_lifecycle(agent_type)
+`;
+
+// ============================================================================
+// Query Events V5 — Rebuilt table with widened source CHECK constraint
+// ============================================================================
+
+/**
+ * Sibling table used by migration v5 to widen the `source` CHECK constraint
+ * (SQLite cannot ALTER a CHECK constraint in place). Mirrors the production
+ * schema including the `is_remote` column added in migration v2.
+ */
+export const CREATE_QUERY_EVENTS_V5_SQL = `
+  CREATE TABLE query_events_v5 (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('user', 'auto', 'external-fs')),
+    start_time INTEGER NOT NULL,
+    duration INTEGER NOT NULL,
+    project_path TEXT,
+    tab_id TEXT,
+    is_remote INTEGER
+  )
 `;
 
 // ============================================================================

@@ -501,10 +501,19 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 100 concurrent writes across all three tables', async () => {
 			const writesByTable = { query: 0, session: 0, task: 0 };
 
-			// Track which table each insert goes to based on SQL
+			// Track which table each insert goes to based on SQL. We assign
+			// `tracker.run` on every prepare (not just the matching ones) so a
+			// non-matching SQL doesn't reuse the counter set by an earlier
+			// matching one — migration v5 in particular runs an
+			// `INSERT INTO query_events_v5 ... FROM query_events` during
+			// initialize, which previously left the shared `tracker.run` pointing
+			// at the query counter and over-counted every subsequent run() call
+			// in the migration (DROP, RENAME, index creates, _migrations insert).
+			// Match `INSERT INTO query_events ` (trailing space) so the v5
+			// migration's `query_events_v5` insert is not counted as a real one.
 			mockDb.prepare.mockImplementation((sql: string) => {
 				const tracker = mockStatement;
-				if (sql.includes('INSERT INTO query_events')) {
+				if (sql.includes('INSERT INTO query_events ')) {
 					tracker.run = vi.fn(() => {
 						writesByTable.query++;
 						return { changes: 1 };
@@ -519,6 +528,8 @@ describe('Concurrent writes and database locking', () => {
 						writesByTable.task++;
 						return { changes: 1 };
 					});
+				} else {
+					tracker.run = vi.fn(() => ({ changes: 1 }));
 				}
 				return tracker;
 			});

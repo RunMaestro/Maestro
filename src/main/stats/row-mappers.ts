@@ -21,7 +21,7 @@ export interface QueryEventRow {
 	id: string;
 	session_id: string;
 	agent_type: string;
-	source: 'user' | 'auto';
+	source: 'user' | 'auto' | 'external-fs';
 	start_time: number;
 	duration: number;
 	project_path: string | null;
