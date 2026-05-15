@@ -9,6 +9,8 @@ import { AgentDetector } from '../../agents';
 import { selectMode } from '../../agents/claude-mode-selector';
 import { getMaestroPBinPath, USAGE_SNAPSHOT_STALE_MS } from '../../agents/claude-usage-startup';
 import { sampleUsage } from '../../agents/claude-usage-sampler';
+import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
+import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import {
 	getSnapshot as getUsageSnapshot,
 	resolveConfigDirKey,
@@ -84,6 +86,14 @@ export interface ProcessHandlerDependencies {
 	sessionsStore: Store<{ sessions: any[] }>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
+	/**
+	 * Optional reactive limit replay controller. When `maestro-p` exits with
+	 * code 2 (Max-plan quota hit mid-turn), the controller respawns the same
+	 * turn under `claude --print` so the user sees one continuous response.
+	 * Optional so test harnesses and CLI paths that don't run the replay flow
+	 * can omit it cleanly.
+	 */
+	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
 }
 
 /**
@@ -925,6 +935,116 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					}
 				}
 
+				// Reactive limit replay registration. When the spawn was routed to
+				// interactive (maestro-p) mode, arm the controller so an exit code 2
+				// transparently re-runs the same prompt under `claude --print`. For
+				// any non-interactive spawn (API mode, or non-Claude agents), clear
+				// any prior registration so a now-stale interactive listener doesn't
+				// fire against the wrong process.
+				const replayController = deps.interactiveReplayController;
+				if (replayController) {
+					if (
+						agent?.id === 'claude-code' &&
+						claudeModeResolution?.mode === 'interactive' &&
+						effectivePrompt
+					) {
+						const replayConfigDirKey = claudeModeResolution.configDirKey;
+						const replayPrompt = effectivePrompt;
+						const replayAgent = agent;
+						const replayContextWindow = contextWindow;
+						const replayGlobalShellEnvVars = globalShellEnvVars;
+						const replayBaseConfig = config;
+						replayController.registerInteractiveReplay(config.sessionId, {
+							configDirKey: replayConfigDirKey,
+							prompt: replayPrompt,
+							buildApiSpawnConfig: ({ prompt }) => {
+								// Pick up the latest agentSessionId — maestro-p's session-id
+								// watcher may have discovered one mid-turn that wasn't known
+								// at the original spawn. Read it from the sessions store
+								// rather than snapshotting at spawn time.
+								const persistedSessions = deps.sessionsStore.get('sessions', []) as Array<{
+									id?: string;
+									agentSessionId?: string;
+									tabs?: Array<{ id?: string; agentSessionId?: string }>;
+								}>;
+								const persistedSessionForReplay = persistedSessions.find(
+									(s) => s?.id === replayBaseConfig.sessionId
+								);
+								let latestAgentSessionId = replayBaseConfig.agentSessionId;
+								if (replayBaseConfig.tabId && Array.isArray(persistedSessionForReplay?.tabs)) {
+									const tab = persistedSessionForReplay?.tabs?.find(
+										(t) => t?.id === replayBaseConfig.tabId
+									);
+									if (tab?.agentSessionId) {
+										latestAgentSessionId = tab.agentSessionId;
+									}
+								} else if (persistedSessionForReplay?.agentSessionId) {
+									latestAgentSessionId = persistedSessionForReplay.agentSessionId;
+								}
+
+								// Build api-mode args using the same pipeline as the initial
+								// spawn, just with the api-mode binary + args set as the base.
+								const apiBaseArgs = replayAgent.apiModeArgs ?? [];
+								let apiArgs = buildAgentArgs(replayAgent, {
+									baseArgs: apiBaseArgs,
+									prompt,
+									cwd: replayBaseConfig.cwd,
+									readOnlyMode: replayBaseConfig.readOnlyMode,
+									modelId: replayBaseConfig.modelId,
+									yoloMode: replayBaseConfig.yoloMode,
+									agentSessionId: latestAgentSessionId,
+								});
+
+								const replayAllConfigs = agentConfigsStore.get('configs', {});
+								const replayAgentValues = replayAllConfigs[replayBaseConfig.toolType] || {};
+								const replayResolution = applyAgentConfigOverrides(replayAgent, apiArgs, {
+									agentConfigValues: replayAgentValues,
+									sessionCustomModel: replayBaseConfig.sessionCustomModel,
+									sessionCustomEffort: replayBaseConfig.sessionCustomEffort,
+									sessionCustomArgs: replayBaseConfig.sessionCustomArgs,
+									sessionCustomEnvVars: replayBaseConfig.sessionCustomEnvVars,
+								});
+								apiArgs = replayResolution.args;
+
+								// Strip MAESTRO_CLAUDE_BIN — api mode invokes `claude` directly.
+								let replayEnvVars: Record<string, string> | undefined =
+									replayResolution.effectiveCustomEnvVars;
+								if (replayEnvVars && 'MAESTRO_CLAUDE_BIN' in replayEnvVars) {
+									const stripped = { ...replayEnvVars };
+									delete stripped.MAESTRO_CLAUDE_BIN;
+									replayEnvVars = stripped;
+								}
+
+								const replayCommand =
+									replayBaseConfig.sessionCustomPath ||
+									replayAgent.apiCommand ||
+									replayAgent.command;
+
+								return {
+									sessionId: replayBaseConfig.sessionId,
+									toolType: replayBaseConfig.toolType,
+									cwd: replayBaseConfig.cwd,
+									command: replayCommand,
+									args: apiArgs,
+									prompt,
+									shellEnvVars: replayGlobalShellEnvVars,
+									customEnvVars: replayEnvVars,
+									imageArgs: replayAgent.imageArgs,
+									imagePromptBuilder: replayAgent.imagePromptBuilder,
+									promptArgs: replayAgent.promptArgs,
+									noPromptSeparator: replayAgent.noPromptSeparator,
+									projectPath: replayBaseConfig.cwd,
+									contextWindow: replayContextWindow,
+									querySource: replayBaseConfig.querySource,
+									tabId: replayBaseConfig.tabId,
+								} satisfies ProcessSpawnConfig;
+							},
+						});
+					} else {
+						replayController.clearInteractiveReplay(config.sessionId);
+					}
+				}
+
 				// Return spawn result with SSH remote info if used
 				return {
 					...result,
@@ -969,6 +1089,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.info(`Killing process: ${sessionId}`, LOG_CONTEXT, { sessionId });
+			// Detach any interactive replay listener. A user-initiated kill
+			// shouldn't trigger an API-mode replay even if it happens to exit 2.
+			deps.interactiveReplayController?.clearInteractiveReplay(sessionId);
 			// Add breadcrumb for crash diagnostics (MAESTRO-5A/4Y)
 			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
 			return processManager.kill(sessionId);

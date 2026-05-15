@@ -154,6 +154,14 @@ import { setupProcessListeners as setupProcessListenersModule } from './process-
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
+import {
+	createInteractiveReplayController,
+	type InteractiveReplayController,
+} from './agents/claude-interactive-replay';
+import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
+import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { getMaestroPBinPath } from './agents/claude-usage-startup';
+import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
 // ============================================================================
@@ -334,6 +342,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -513,6 +522,64 @@ app
 		processManager = new ProcessManager();
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
+
+		// Reactive limit replay controller: armed when a Claude tab spawns in
+		// interactive mode, fires the API-mode replay flow on exit code 2.
+		// Decoupled from the process handler so its dependencies (sampleUsage,
+		// snapshot store write, mode-resolved emit, processManager.spawn) live
+		// in one place instead of being threaded through registerProcessHandlers.
+		interactiveReplayController = createInteractiveReplayController<ProcessSpawnConfig>({
+			emitter: processManager,
+			sampleUsage: async (configDirKey) => {
+				// Re-run sampleUsage for the relevant config dir so the renderer's
+				// dashboard reflects the post-fallback quota state.
+				const binPath = getMaestroPBinPath();
+				if (!binPath) return;
+				const snapshot = await sampleClaudeUsage({
+					binPath,
+					configDir: configDirKey,
+					cwd: app.getPath('home'),
+				});
+				if (snapshot) {
+					setClaudeUsageSnapshot(snapshot);
+				}
+			},
+			updateSessionInteractive: (sessionId, update) => {
+				const sessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+				let mutated = false;
+				const next = sessions.map((s) => {
+					if (s?.id !== sessionId) return s;
+					mutated = true;
+					return {
+						...s,
+						claudeInteractive: {
+							mode: update.mode,
+							modeReason: update.modeReason,
+							lastUsageSnapshotKey: update.lastUsageSnapshotKey,
+						},
+					};
+				});
+				if (mutated) {
+					sessionsStore.set('sessions', next);
+				}
+			},
+			emitModeResolved: (sessionId, resolution) => {
+				if (isWebContentsAvailable(mainWindow)) {
+					mainWindow!.webContents.send('process:claude-mode-resolved', sessionId, resolution);
+				}
+			},
+			spawnReplay: (_sessionId, replayConfig) => {
+				processManager?.spawn(replayConfig);
+			},
+			logger: {
+				debug: (message, ...args) =>
+					logger.debug(message, 'ClaudeInteractiveReplay', ...(args as [])),
+				info: (message, ...args) =>
+					logger.info(message, 'ClaudeInteractiveReplay', ...(args as [])),
+				warn: (message, ...args) =>
+					logger.warn(message, 'ClaudeInteractiveReplay', ...(args as [])),
+			},
+		});
 
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
@@ -1178,6 +1245,7 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		sessionsStore,
+		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
 			// Always query the executor's active process map — processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
