@@ -31,13 +31,15 @@ import 'katex/dist/katex.min.css';
 
 // Mobile chat surfaces (#622): single `\n` should render as a hard break,
 // not be collapsed into a space the way CommonMark does for document prose;
-// `$...$` / `$$...$$` should render through KaTeX rather than show as literal
-// dollar-sign text. `remarkPromoteDisplayMath` runs after `remarkMath` so a
+// `$$...$$` should render through KaTeX rather than show as literal
+// dollar-sign text. `singleDollarTextMath: false` keeps `$5`, `$HOME`,
+// shell variables and similar single-dollar content from being misparsed
+// as inline math. `remarkPromoteDisplayMath` runs after `remarkMath` so a
 // single-line `$$x+y$$` gets the centered block treatment users expect.
-const MOBILE_CHAT_REMARK_PLUGINS = [
+const MOBILE_CHAT_REMARK_PLUGINS: any[] = [
 	...REMARK_GFM_PLUGINS,
 	remarkBreaks,
-	remarkMath,
+	[remarkMath, { singleDollarTextMath: false }],
 	remarkPromoteDisplayMath,
 ];
 const MOBILE_CHAT_REHYPE_PLUGINS = [rehypeKatex];

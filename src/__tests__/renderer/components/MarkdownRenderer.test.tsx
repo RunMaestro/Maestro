@@ -1298,15 +1298,25 @@ describe('MarkdownRenderer', () => {
 			expect(container.textContent).toContain('$10');
 		});
 
-		it('renders inline $...$ math via KaTeX when chatMath is enabled', () => {
+		it('does NOT parse single-dollar $x$ as inline math even when chatMath is enabled', () => {
+			// `singleDollarTextMath: false` keeps single-dollar content as literal
+			// text so chat messages with `$5`, `$HOME`, etc. don't misparse.
 			const content = 'inline $x + y$ math';
 			const { container } = render(
 				<MarkdownRenderer {...defaultProps} content={content} chatMath />
 			);
-			// rehype-katex emits a `.katex` wrapper; inline math gets `.katex` without `.katex-display`
-			const katex = container.querySelector('.katex');
-			expect(katex).not.toBeNull();
-			expect(container.querySelector('.katex-display')).toBeNull();
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$x + y$');
+		});
+
+		it('preserves currency / shell-variable dollar text when chatMath is enabled', () => {
+			const content = 'It costs $5 and shipping is $3; my path is $HOME/bin';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			expect(container.querySelector('.katex')).toBeNull();
+			expect(container.textContent).toContain('$5');
+			expect(container.textContent).toContain('$HOME/bin');
 		});
 
 		it('renders line-isolated $$...$$ as display math when chatMath is enabled', () => {
@@ -1316,6 +1326,24 @@ describe('MarkdownRenderer', () => {
 			);
 			// Display math gets the `.katex-display` wrapper
 			expect(container.querySelector('.katex-display')).not.toBeNull();
+		});
+
+		it('promotes $$...$$ inside a blockquote to display math (nested containers)', () => {
+			const content = '> $$E = mc^2$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			const block = container.querySelector('blockquote .katex-display');
+			expect(block).not.toBeNull();
+		});
+
+		it('promotes $$...$$ inside a list item to display math (nested containers)', () => {
+			const content = '- $$E = mc^2$$';
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatMath />
+			);
+			const block = container.querySelector('li .katex-display');
+			expect(block).not.toBeNull();
 		});
 
 		it('leaves $$...$$ as literal text when chatMath is disabled', () => {

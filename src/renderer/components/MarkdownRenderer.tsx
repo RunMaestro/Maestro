@@ -400,14 +400,16 @@ export const MarkdownRenderer = memo(
 			if (chatLineBreaks) {
 				plugins.push(remarkBreaks);
 			}
-			// Chat surfaces parse `$...$` / `$$...$$` as math (#622); file/doc
-			// preview leaves `$` as literal text so currency, shell prompts, and
-			// other dollar-sign content in markdown files aren't accidentally
-			// reinterpreted as broken math. `remarkPromoteDisplayMath` runs
-			// after `remarkMath` so a single-line `$$x+y$$` gets the centered
-			// block treatment users expect, not inline glyph rendering.
+			// Chat surfaces parse `$$...$$` as math (#622). `singleDollarTextMath:
+			// false` disables single-dollar inline math so chat content with
+			// currency (`$5`), shell variables (`$HOME`), or code snippets isn't
+			// reinterpreted as broken math — see remark-math's own warning that
+			// single-dollar math "often interferes with normal dollars in text".
+			// `remarkPromoteDisplayMath` runs after `remarkMath` so a single-line
+			// `$$x+y$$` gets the centered block treatment users expect.
 			if (chatMath) {
-				plugins.push(remarkMath, remarkPromoteDisplayMath);
+				plugins.push([remarkMath, { singleDollarTextMath: false }]);
+				plugins.push(remarkPromoteDisplayMath);
 			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
