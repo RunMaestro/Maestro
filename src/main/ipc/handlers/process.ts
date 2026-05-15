@@ -248,12 +248,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 					// Validate the headlessMode enum at the boundary — electron-store hands back
 					// `any` for arbitrary keys, and a malformed value should degrade to the safe
-					// default rather than break selection downstream.
-					const rawHeadless = settingsStore.get('claudeCode.headlessMode', 'api');
+					// default rather than break selection downstream. Default flipped to `'auto'`
+					// in phase 3 to match `SETTINGS_DEFAULTS.claudeCode.headlessMode`.
+					const rawHeadless = settingsStore.get('claudeCode.headlessMode', 'auto');
 					const headlessMode: 'interactive' | 'api' | 'auto' =
 						rawHeadless === 'interactive' || rawHeadless === 'api' || rawHeadless === 'auto'
 							? rawHeadless
-							: 'api';
+							: 'auto';
 					const autoFallbackOnLimit =
 						settingsStore.get('claudeCode.autoFallbackToApiOnLimit', true) !== false;
 

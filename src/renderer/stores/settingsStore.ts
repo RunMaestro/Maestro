@@ -736,7 +736,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorStreamline: 0.5,
 		annotatorTaperStart: 0,
 		annotatorTaperEnd: 0,
-		claudeCodeHeadlessMode: 'api',
+		claudeCodeHeadlessMode: 'auto',
 		claudeCodeAutoFallbackToApiOnLimit: true,
 
 		// ============================================================================

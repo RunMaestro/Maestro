@@ -625,7 +625,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			"Claude headless mode. `api` runs Claude with --print (billed via API). `interactive` runs maestro-p, which drives Claude's TUI to preserve your Max plan quota. `auto` tries interactive first and falls back to api when limits are hit. Allowed values: interactive, api, auto.",
 		type: 'string',
-		default: 'api',
+		default: 'auto',
 		category: 'advanced',
 	},
 	'claudeCode.autoFallbackToApiOnLimit': {
