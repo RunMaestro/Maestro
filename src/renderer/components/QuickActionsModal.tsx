@@ -1,5 +1,6 @@
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Bot } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import type {
 	Session,
 	SessionState,
@@ -28,6 +29,7 @@ import type { WizardStep } from './Wizard/WizardContext';
 import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
@@ -103,8 +105,13 @@ interface QuickAction {
 	subtext?: string;
 	shortcut?: Shortcut;
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
-	// bucket "active" agents at the top with a divider beneath them.
+	// bucket "active" agents at the top with a divider beneath them. Also true
+	// for agents in an active Auto Run batch — they idle between prompts but
+	// belong with the live agents.
 	isRunningAgent?: boolean;
+	// Agents-mode only: session is in an active (non-paused) Auto Run batch.
+	// Renders an AUTO badge next to the agent name, matching the sidebar.
+	isInBatch?: boolean;
 	// Agents-mode only: data needed to render rich live status for running agents.
 	// `thinkingStartTime` is recomputed against the modal's tick clock so the elapsed
 	// time updates while the modal stays open.
@@ -356,6 +363,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const setBookmarksCollapsed = useUIStore((s) => s.setBookmarksCollapsed);
+	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -1962,15 +1970,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	// Agent switcher mode: clean names only, no "Jump to:" prefix.
 	// Group chats are intentionally excluded — this modal is the agent jumper.
+	const batchSessionIdSet = new Set(activeBatchSessionIds);
 	const agentActions: QuickAction[] = sessions.map((s) => {
-		const isRunning = s.state !== 'idle';
+		const isInBatch = batchSessionIdSet.has(s.id);
+		const isSessionBusy = s.state !== 'idle';
+		// Auto Run agents idle between prompts but belong with the LIVE bucket
+		// from the user's perspective — they're actively working through tasks.
+		const isRunningAgent = isSessionBusy || isInBatch;
 		// Find the AI tab that's currently working. Falls back to the active tab so
 		// the row still has a tab label when the session-level state diverges from
 		// per-tab state (e.g. connecting/error states).
-		const busyTab = isRunning
+		const busyTab = isSessionBusy
 			? (s.aiTabs?.find((t) => t.state === 'busy') ?? s.aiTabs?.find((t) => t.id === s.activeTabId))
 			: undefined;
-		const runningInfo = isRunning
+		const runningInfo = isSessionBusy
 			? {
 					state: s.state,
 					// Prefer the busy tab's start time; fall back to the session-level timer.
@@ -1990,7 +2003,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			// the agents-mode list, so we leave the per-row subtext empty here. Running
 			// agents render rich live status via `runningInfo` instead.
 			subtext: undefined,
-			isRunningAgent: isRunning,
+			isRunningAgent,
+			isInBatch,
 			runningInfo,
 			bookmarked: !!s.bookmarked,
 			agentSortKey: alphabetizeKey(s.name),
@@ -2250,6 +2264,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 													/>
 												)}
 												<span className="font-medium truncate">{a.label}</span>
+												{a.isInBatch && (
+													<div
+														className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+														style={{
+															backgroundColor: theme.colors.warning + '30',
+															color: theme.colors.warning,
+														}}
+														title="Auto Run active"
+													>
+														<Bot className="w-2.5 h-2.5" />
+														AUTO
+													</div>
+												)}
 											</div>
 											{a.runningInfo ? (
 												<RunningAgentSubtext
