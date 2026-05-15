@@ -85,7 +85,8 @@ import { ExternalSessionCoordinator } from './storage/external-session-coordinat
 import { getAllSessionStorages } from './agents';
 import type { AgentSessionStorage } from './agents';
 import type { ToolType } from '../shared/types';
-import { initializeOutputParsers } from './parsers';
+import { initializeOutputParsers, getAllOutputParsers, type AgentOutputParser } from './parsers';
+import { ExternalStatsIngester } from './process-listeners/external-stats-ingester';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
 	DEMO_MODE,
@@ -594,6 +595,25 @@ function setupIpcHandlers() {
 		externalSessionCoordinator.start().catch((err) => {
 			logger.error(`Failed to start ExternalSessionCoordinator: ${err}`, 'Startup');
 		});
+
+		// File-driven stats ingestion: parallel path to the process-driven
+		// `setupStatsListener`. Reacts to the coordinator's per-file 'append'
+		// and 'create' events, tails JSONL deltas, and writes
+		// `source: 'external-fs'` rows into the stats DB. Passive — no
+		// start/stop; listeners drop when the coordinator stops.
+		const statsDB = getStatsDB();
+		if (statsDB.isReady()) {
+			const parsersByAgent = new Map<ToolType, AgentOutputParser>();
+			for (const parser of getAllOutputParsers()) {
+				parsersByAgent.set(parser.agentId, parser);
+			}
+			new ExternalStatsIngester({
+				coordinator: externalSessionCoordinator,
+				statsDB,
+				parsersByAgent,
+				logger,
+			});
+		}
 	}
 	registerExternalSessionsHandlers({
 		getCoordinator: () => externalSessionCoordinator,
