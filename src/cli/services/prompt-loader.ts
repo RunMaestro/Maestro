@@ -12,8 +12,6 @@ import { getConfigDirectory } from './storage';
 const cliPromptCache = new Map<string, string>();
 let bundledPromptsDir: string | null = null;
 
-const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
-
 function getBundledPromptCandidates(filename: string): string[] {
 	// The CLI runs in three contexts: dev (ts-node from src), packaged Electron
 	// (process.resourcesPath), and standalone bundled CLI (Resources/maestro-cli.js).
@@ -69,13 +67,17 @@ function getBundledPromptsDir(): string | null {
  * empty path.
  */
 function resolveRefs(content: string): string {
-	if (!REF_PATTERN.test(content)) return content;
-	REF_PATTERN.lastIndex = 0;
+	// Local /g regex — using a module-level singleton would force manual
+	// `lastIndex = 0` resets between the `.test()` probe and `.replace()` and
+	// silently skip later matches if any helper in between also called
+	// `.test()`. A fresh regex per call has zero shared state.
+	const refPattern = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
+	if (!content.includes('{{REF:')) return content;
 
 	const promptsDir = getBundledPromptsDir();
 	if (!promptsDir) return content;
 
-	return content.replace(REF_PATTERN, (match, name: string) => {
+	return content.replace(refPattern, (match, name: string) => {
 		const def = CORE_PROMPTS.find((p) => p.id === name);
 		if (!def) return match;
 		return path.resolve(promptsDir, def.filename);

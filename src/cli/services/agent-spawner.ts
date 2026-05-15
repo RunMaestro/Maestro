@@ -12,6 +12,7 @@ import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
+import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
@@ -136,20 +137,44 @@ function buildAppendSystemPromptArgs(
 	isSshSession: boolean
 ): string[] {
 	if (isWindows() && !isSshSession) {
-		const tempFile = path.join(os.tmpdir(), `maestro-sysprompt-${sessionTag}-${Date.now()}.txt`);
+		// Sanitize the session tag before interpolating into a tmp path.
+		// `path.join('/tmp', '../etc/passwd')` normalizes upward, escaping
+		// `os.tmpdir()`, so a hostile session id could redirect the write.
+		// `sanitizeSessionId` (shared with history file naming) collapses
+		// anything outside [A-Za-z0-9_-] to `_`.
+		const safeTag = sanitizeSessionId(sessionTag) || 'session';
+		const tempFile = path.join(os.tmpdir(), `maestro-sysprompt-${safeTag}-${Date.now()}.txt`);
 		try {
 			fs.writeFileSync(tempFile, content, 'utf-8');
-		} catch {
+		} catch (writeErr) {
 			// If we can't write the temp file, fall back to inline. The agent
-			// may truncate, but that's better than silently dropping the prompt.
+			// may truncate on Windows cmdline limits, but that's better than
+			// silently dropping the prompt. Log so the user can spot the
+			// downgrade — CLI has no Sentry pipeline, so stderr is the visibility
+			// surface available here.
+			const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
+			console.error(
+				`[maestro-cli] system prompt tempfile write failed (${reason}); falling back to inline --append-system-prompt`
+			);
 			return ['--append-system-prompt', content];
 		}
-		setTimeout(() => {
-			fs.promises.unlink(tempFile).catch(() => {
-				// Best-effort cleanup. ENOENT is fine; other errors are not
-				// actionable from CLI without a Sentry pipeline.
+		// `.unref()` so the 30s cleanup timer doesn't keep the CLI alive after
+		// the agent already exited — without it, `maestro-cli send` would
+		// appear to hang on Windows until the timer fires.
+		const cleanupTimer = setTimeout(() => {
+			fs.promises.unlink(tempFile).catch((unlinkErr: NodeJS.ErrnoException) => {
+				// ENOENT means the file is already gone — expected if the OS
+				// cleaned tmpdir or a parallel run won the race. Other errors
+				// indicate a real problem (permissions, FS issue): surface them
+				// on stderr so the user has a breadcrumb.
+				if (unlinkErr.code !== 'ENOENT') {
+					console.error(
+						`[maestro-cli] system prompt tempfile cleanup failed (${unlinkErr.message}) at ${tempFile}`
+					);
+				}
 			});
 		}, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
+		cleanupTimer.unref?.();
 		return ['--append-system-prompt-file', tempFile];
 	}
 	return ['--append-system-prompt', content];

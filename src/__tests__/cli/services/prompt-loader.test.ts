@@ -14,9 +14,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Single shared mock fn so the named-export and default-export view of
 // `fs/promises.readFile` are the same instance — otherwise the prompt-loader
 // reads via the default while tests configure the named (or vice versa) and
-// the configuration goes nowhere. See `agent-spawner.test.ts` for the same
-// "mocked first, then re-export as default" pattern.
-const mockReadFile = vi.fn();
+// the configuration goes nowhere. `vi.hoisted` is required because `vi.mock`
+// calls are hoisted to the top of the file; referencing a plain `const`
+// declared between imports breaks on hoist-ordering in newer vitest
+// (CI hits "Cannot access 'mockReadFile' before initialization").
+const { mockReadFile } = vi.hoisted(() => ({ mockReadFile: vi.fn() }));
 vi.mock('fs/promises', () => ({
 	default: { readFile: mockReadFile },
 	readFile: mockReadFile,
@@ -24,10 +26,14 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', async () => {
 	const actual = await vi.importActual<typeof import('fs')>('fs');
+	// `actual.constants` is a getter on the fs module — spreading `actual`
+	// drops it (only own enumerable data properties carry through), and
+	// `getBundledPromptsDir` reads `fs.constants.R_OK`. Inline the literal
+	// so the mock surface still exposes a usable constants object.
 	const mocked = {
 		...actual,
 		accessSync: vi.fn(),
-		constants: actual.constants,
+		constants: { ...actual.constants, R_OK: 4 },
 	};
 	return { ...mocked, default: mocked };
 });

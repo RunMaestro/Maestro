@@ -82,11 +82,24 @@ describe('prepareMaestroSystemPromptCli', () => {
 	});
 
 	it('returns undefined when the prompt template fails to load (non-fatal)', async () => {
-		vi.mocked(getCliPrompt).mockRejectedValue(new Error('template missing'));
+		vi.mocked(getCliPrompt).mockRejectedValue(
+			new Error('Failed to load prompt "maestro-system-prompt" (maestro-system-prompt.md)')
+		);
 
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
 		expect(result).toBeUndefined();
+	});
+
+	it('re-throws unexpected errors so genuine bugs surface (not just "failed to load")', async () => {
+		// A non-"Failed to load…" error indicates a bug in the loader or a
+		// caller misuse — those must propagate so the user sees them rather
+		// than silently spawning without a system prompt.
+		vi.mocked(getCliPrompt).mockRejectedValue(new TypeError('something is undefined'));
+
+		await expect(prepareMaestroSystemPromptCli(mockSession())).rejects.toThrow(
+			/something is undefined/
+		);
 	});
 
 	it('skips git branch lookup when the cwd is not a git repo', async () => {

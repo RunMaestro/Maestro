@@ -2208,6 +2208,38 @@ Some text with [x] in it that's not a checkbox
 			}
 		});
 
+		it('sanitizes the session tag in the Windows temp-file path to block traversal', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				// A session id containing path separators / `..` would normally
+				// let `path.join(os.tmpdir(), …)` walk upward and escape tmpdir.
+				// We pass it through as the agentSessionId (which becomes the
+				// sessionTag inside buildAppendSystemPromptArgs).
+				const p = spawnAgent('claude-code', 'C:\\proj', 'hi', '../../../etc/passwd', {
+					appendSystemPrompt: 'sysprompt',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { args } = spawnCall();
+				const fileFlagIdx = args.indexOf('--append-system-prompt-file');
+				expect(fileFlagIdx).toBeGreaterThanOrEqual(0);
+				const tempPath = args[fileFlagIdx + 1];
+				// Sanitized path must not contain unescaped traversal tokens
+				expect(tempPath).not.toMatch(/\.\.\//);
+				expect(tempPath).not.toMatch(/\.\.\\/);
+				// And the dangerous chars should have collapsed to safe ones
+				expect(tempPath).toMatch(/maestro-sysprompt-[A-Za-z0-9_-]+-\d+\.txt$/);
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
 		it('uses inline --append-system-prompt on Windows when SSH is enabled (cmd is in a shell script)', async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });

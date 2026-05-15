@@ -54,8 +54,18 @@ export async function prepareMaestroSystemPromptCli(
 	let template: string;
 	try {
 		template = await getCliPrompt(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT);
-	} catch {
-		return undefined;
+	} catch (err) {
+		// `getCliPrompt` throws a known "Failed to load prompt …" Error when no
+		// candidate file is readable. That's the only failure mode we want to
+		// treat as non-fatal — anything else (TypeError, parse bug, etc.) is a
+		// real defect and should bubble up to the caller's error handler rather
+		// than masquerade as "prompt missing". Log the swallow so the user has
+		// a breadcrumb when their relay bot suddenly loses Maestro context.
+		if (err instanceof Error && err.message.startsWith('Failed to load prompt')) {
+			console.error(`[maestro-cli] ${err.message}; spawning without Maestro system prompt`);
+			return undefined;
+		}
+		throw err;
 	}
 
 	const sessionIsGitRepo = isGitRepo(session.cwd);
