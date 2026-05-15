@@ -100,6 +100,11 @@
 				"pages": ["provider-notes", "multi-claude", "cli"]
 			},
 			{
+				"group": "Agent Modes",
+				"icon": "shuffle",
+				"pages": ["claude-interactive-mode"]
+			},
+			{
 				"group": "Integrations",
 				"pages": ["mcp-server", "deep-links"],
 				"icon": "plug"
