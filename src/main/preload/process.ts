@@ -291,6 +291,36 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to Claude headless-mode resolution.
+		 * Emitted after a Claude Code spawn succeeds, carrying the mode the spawner
+		 * actually picked (`api` vs `interactive`/maestro-p), the reason tag for
+		 * persistence, and the canonical CLAUDE_CONFIG_DIR key the snapshot was
+		 * consulted under. Non-Claude agents and SSH Claude spawns don't fire this.
+		 */
+		onClaudeModeResolved: (
+			callback: (
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'user' | 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => callback(sessionId, resolution);
+			ipcRenderer.on('process:claude-mode-resolved', handler);
+			return () => ipcRenderer.removeListener('process:claude-mode-resolved', handler);
+		},
+
+		/**
 		 * Subscribe to remote command execution from web interface
 		 * This allows web commands to go through the same code path as desktop commands
 		 * inputMode is optional - if provided, renderer should use it instead of session state
