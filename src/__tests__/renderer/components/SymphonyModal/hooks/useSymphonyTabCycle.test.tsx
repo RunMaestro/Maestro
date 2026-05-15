@@ -87,10 +87,13 @@ describe('useSymphonyTabCycle', () => {
 		const order: ModalTab[] = ['projects', 'active', 'history', 'stats'];
 		for (let i = 0; i < order.length; i++) {
 			const onTabChange = vi.fn();
-			renderHook(() => useSymphonyTabCycle({ isOpen: true, activeTab: order[i], onTabChange }));
+			const { unmount } = renderHook(() =>
+				useSymphonyTabCycle({ isOpen: true, activeTab: order[i], onTabChange })
+			);
 			fire(']');
 			const expected = order[(i + 1) % order.length];
 			expect(onTabChange).toHaveBeenCalledWith(expected);
+			unmount();
 		}
 	});
 });

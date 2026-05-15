@@ -30,6 +30,18 @@ describe('useDocumentPreview', () => {
 		expect(result.current.isLoadingDocument).toBe(false);
 	});
 
+	it('treats empty successful content as a valid preview', async () => {
+		fetchDocumentContent.mockResolvedValue({ success: true, content: '' });
+		const { result } = renderHook(() =>
+			useDocumentPreview({ selectedRepo: makeRepo(), fetchDocumentContent })
+		);
+		await act(async () => {
+			await result.current.previewDocument('https://gist.github.com/empty', true);
+		});
+		expect(result.current.documentPreview).toBe('');
+		expect(result.current.isLoadingDocument).toBe(false);
+	});
+
 	it('renders an error message when the IPC returns success:false', async () => {
 		fetchDocumentContent.mockResolvedValue({ success: false, error: '404' });
 		const { result } = renderHook(() =>
@@ -83,6 +95,43 @@ describe('useDocumentPreview', () => {
 		});
 		expect(result.current.isLoadingDocument).toBe(false);
 		expect(result.current.documentPreview).toBe('Done');
+	});
+
+	it('ignores stale responses when a newer preview request finishes first', async () => {
+		let firstResolver: (v: { success: boolean; content: string }) => void;
+		let secondResolver: (v: { success: boolean; content: string }) => void;
+		fetchDocumentContent
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					firstResolver = resolve;
+				})
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					secondResolver = resolve;
+				})
+			);
+		const { result } = renderHook(() =>
+			useDocumentPreview({ selectedRepo: makeRepo(), fetchDocumentContent })
+		);
+
+		act(() => {
+			result.current.previewDocument('https://example.com/first.md', true);
+			result.current.previewDocument('https://example.com/second.md', true);
+		});
+		await act(async () => {
+			secondResolver!({ success: true, content: 'Second' });
+			await flushPromises();
+		});
+		expect(result.current.documentPreview).toBe('Second');
+		expect(result.current.isLoadingDocument).toBe(false);
+
+		await act(async () => {
+			firstResolver!({ success: true, content: 'First' });
+			await flushPromises();
+		});
+		expect(result.current.documentPreview).toBe('Second');
+		expect(result.current.isLoadingDocument).toBe(false);
 	});
 
 	it('catches IPC throws and renders an error markdown', async () => {

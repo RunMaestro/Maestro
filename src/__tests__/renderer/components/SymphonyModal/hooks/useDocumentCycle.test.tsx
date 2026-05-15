@@ -27,6 +27,10 @@ function fireMetaShift(key: '[' | ']') {
 	window.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, shiftKey: true }));
 }
 
+function fireCtrlShift(key: '[' | ']') {
+	window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, shiftKey: true }));
+}
+
 describe('useDocumentCycle', () => {
 	let onPreview: ReturnType<typeof vi.fn>;
 	let onIndex: ReturnType<typeof vi.fn>;
@@ -64,6 +68,36 @@ describe('useDocumentCycle', () => {
 		fireMetaShift('[');
 		expect(onIndex).toHaveBeenCalledWith(2);
 		expect(onPreview).toHaveBeenCalledWith('path/doc-2.md', true);
+	});
+
+	it('cycles with Ctrl+Shift+] for non-mac shortcuts', () => {
+		const issue = makeIssueWithDocs(3);
+		renderHook(() =>
+			useDocumentCycle({
+				selectedIssue: issue,
+				selectedDocIndex: 0,
+				onPreviewDocument: onPreview,
+				onIndexChange: onIndex,
+			})
+		);
+		fireCtrlShift(']');
+		expect(onIndex).toHaveBeenCalledWith(1);
+		expect(onPreview).toHaveBeenCalledWith('path/doc-1.md', false);
+	});
+
+	it('clamps out-of-range selectedDocIndex before cycling', () => {
+		const issue = makeIssueWithDocs(3);
+		renderHook(() =>
+			useDocumentCycle({
+				selectedIssue: issue,
+				selectedDocIndex: 99,
+				onPreviewDocument: onPreview,
+				onIndexChange: onIndex,
+			})
+		);
+		fireMetaShift(']');
+		expect(onIndex).toHaveBeenCalledWith(0);
+		expect(onPreview).toHaveBeenCalledWith('path/doc-0.md', true);
 	});
 
 	it('is a no-op when selectedIssue is null', () => {

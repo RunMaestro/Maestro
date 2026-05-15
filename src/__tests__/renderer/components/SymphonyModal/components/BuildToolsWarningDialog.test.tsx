@@ -100,6 +100,16 @@ describe('BuildToolsWarningDialog', () => {
 		expect(onConfirm).toHaveBeenCalledTimes(1);
 	});
 
+	it('does not enable confirmation when ghCliStatus is unknown', () => {
+		const onConfirm = vi.fn();
+		const { getByText, queryByText } = render(
+			<BuildToolsWarningDialog {...baseProps} onConfirm={onConfirm} ghCliStatus={null} />
+		);
+		expect(getByText('Unable to Verify GitHub CLI')).toBeTruthy();
+		expect(queryByText('I Have the Build Tools')).toBeNull();
+		expect(onConfirm).not.toHaveBeenCalled();
+	});
+
 	it('Cancel button in the healthy state calls onClose only', () => {
 		const onConfirm = vi.fn();
 		const onClose = vi.fn();

@@ -407,7 +407,7 @@ export function RepositoryDetailView({
 										>
 											{selectedIssue.documentPaths.map((doc, index) => (
 												<button
-													key={doc.name}
+													key={doc.path}
 													onClick={() => handleSelectDoc(index)}
 													onMouseEnter={() => setHoveredDocIndex(index)}
 													onMouseLeave={() => setHoveredDocIndex(null)}

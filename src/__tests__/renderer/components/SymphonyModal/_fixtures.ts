@@ -11,23 +11,25 @@ import type {
 import type { Achievement } from '../../../../renderer/hooks/symphony/useContributorStats';
 
 export const mockTheme: Theme = {
+	id: 'dracula',
 	name: 'Test',
+	mode: 'dark',
 	colors: {
 		bgMain: '#111',
 		bgSidebar: '#222',
 		bgActivity: '#333',
+		border: '#444',
 		textMain: '#fff',
 		textDim: '#aaa',
 		accent: '#5af',
+		accentDim: '#5af80',
+		accentText: '#5af',
 		accentForeground: '#000',
-		border: '#444',
-		shadow: '#000',
-		statusReady: '#0f0',
-		statusBusy: '#ff0',
-		statusError: '#f00',
-		statusConnecting: '#f80',
+		success: '#0f0',
+		warning: '#ff0',
+		error: '#f00',
 	},
-} as unknown as Theme;
+};
 
 export function makeRepo(overrides: Partial<RegisteredRepository> = {}): RegisteredRepository {
 	return {

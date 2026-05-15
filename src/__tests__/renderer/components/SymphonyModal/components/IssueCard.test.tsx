@@ -141,6 +141,24 @@ describe('IssueCard', () => {
 		expect(onSelect).toHaveBeenCalledTimes(2);
 	});
 
+	it('does not expose button semantics or select handlers for claimed issues', () => {
+		const onSelect = vi.fn();
+		const { container } = render(
+			<IssueCard
+				issue={makeIssue({ status: 'in_progress' })}
+				theme={mockTheme}
+				isSelected={false}
+				onSelect={onSelect}
+			/>
+		);
+		const card = container.firstElementChild as HTMLElement;
+		expect(card.getAttribute('role')).toBeNull();
+		expect(card.tabIndex).toBe(-1);
+		fireEvent.click(card);
+		fireEvent.keyDown(card, { key: 'Enter' });
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
 	it('lists up to 2 document names then "...and N more"', () => {
 		const { getByText, queryByText } = render(
 			<IssueCard

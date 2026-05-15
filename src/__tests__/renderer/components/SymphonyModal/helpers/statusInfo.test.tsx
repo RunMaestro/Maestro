@@ -1,6 +1,6 @@
 /**
  * Tests for SymphonyModal/helpers/statusInfo — STATUS_COLORS palette + getStatusInfo
- * mapping for every known ContributionStatus + unknown-status fallback.
+ * mapping for every known ContributionStatus.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
@@ -40,7 +40,7 @@ const KNOWN_STATUSES: { status: ContributionStatus; label: string; iconTestId: s
 	{ status: 'running', label: 'Running', iconTestId: 'icon-Play' },
 	{ status: 'paused', label: 'Paused', iconTestId: 'icon-Pause' },
 	{ status: 'completed', label: 'Completed', iconTestId: 'icon-CheckCircle' },
-	{ status: 'completing' as ContributionStatus, label: 'Completing', iconTestId: 'spinner' },
+	{ status: 'completing', label: 'Completing', iconTestId: 'spinner' },
 	{ status: 'ready_for_review', label: 'Ready for Review', iconTestId: 'icon-GitPullRequest' },
 	{ status: 'failed', label: 'Failed', iconTestId: 'icon-AlertCircle' },
 	{ status: 'cancelled', label: 'Cancelled', iconTestId: 'icon-X' },
@@ -67,12 +67,5 @@ describe('SymphonyModal/helpers/statusInfo', () => {
 				expect(getByTestId(iconTestId)).toBeTruthy();
 			});
 		}
-
-		it('returns sensible fallback for an unknown status', () => {
-			const info = getStatusInfo('not_a_real_status' as ContributionStatus);
-			expect(info.label).toBe('not_a_real_status');
-			expect(info.color).toBe('#6b7280');
-			expect(info.icon).toBeNull();
-		});
 	});
 });

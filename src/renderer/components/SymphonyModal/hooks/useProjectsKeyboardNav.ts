@@ -86,6 +86,9 @@ export function useProjectsKeyboardNav({
 				case 'ArrowUp':
 					e.preventDefault();
 					setSelectedTileIndex((i) => Math.max(0, i - gridColumns));
+					if (e.target instanceof HTMLInputElement) {
+						tileGridRef.current?.focus();
+					}
 					break;
 				case 'Enter': {
 					e.preventDefault();

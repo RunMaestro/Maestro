@@ -13,6 +13,8 @@ export const SymphonyAchievementBadge = memo(function SymphonyAchievementBadge({
 	achievement,
 	theme,
 }: SymphonyAchievementBadgeProps) {
+	const clampedProgress = Math.max(0, Math.min(100, achievement.progress ?? 0));
+
 	return (
 		<div
 			className="p-3 rounded-lg border"
@@ -42,7 +44,7 @@ export const SymphonyAchievementBadge = memo(function SymphonyAchievementBadge({
 								<div
 									className="h-full rounded-full"
 									style={{
-										width: `${achievement.progress}%`,
+										width: `${clampedProgress}%`,
 										backgroundColor: theme.colors.accent,
 									}}
 								/>

@@ -28,7 +28,7 @@ export const IssueCard = memo(function IssueCard({
 
 	return (
 		<div
-			role="button"
+			role={isSelectable ? 'button' : undefined}
 			tabIndex={isSelectable ? 0 : -1}
 			onClick={isSelectable ? onSelect : undefined}
 			onKeyDown={

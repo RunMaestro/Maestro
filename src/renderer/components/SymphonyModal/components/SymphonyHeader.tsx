@@ -44,6 +44,8 @@ export const SymphonyHeader = forwardRef<HTMLButtonElement, SymphonyHeaderProps>
 		},
 		helpButtonRef
 	) {
+		const helpPopoverId = 'symphony-help-popover';
+
 		return (
 			<div
 				className="flex items-center justify-between px-4 py-3 border-b"
@@ -66,11 +68,14 @@ export const SymphonyHeader = forwardRef<HTMLButtonElement, SymphonyHeaderProps>
 							className="p-1 rounded hover:bg-white/10 transition-colors"
 							title="About Maestro Symphony"
 							aria-label="Help"
+							aria-expanded={showHelp}
+							aria-controls={helpPopoverId}
 						>
 							<HelpCircle className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 						</button>
 						{showHelp && (
 							<div
+								id={helpPopoverId}
 								className="absolute top-full left-0 mt-2 w-80 p-4 rounded-lg shadow-xl z-50"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,

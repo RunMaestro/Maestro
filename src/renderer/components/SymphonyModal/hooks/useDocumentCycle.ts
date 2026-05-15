@@ -31,15 +31,17 @@ export function useDocumentCycle({
 				e.preventDefault();
 
 				const docCount = selectedIssue.documentPaths.length;
+				const currentIndex = Math.max(0, Math.min(docCount - 1, selectedDocIndex));
 				let newIndex: number;
 
 				if (e.key === '[') {
-					newIndex = selectedDocIndex <= 0 ? docCount - 1 : selectedDocIndex - 1;
+					newIndex = currentIndex <= 0 ? docCount - 1 : currentIndex - 1;
 				} else {
-					newIndex = selectedDocIndex >= docCount - 1 ? 0 : selectedDocIndex + 1;
+					newIndex = currentIndex >= docCount - 1 ? 0 : currentIndex + 1;
 				}
 
 				const doc = selectedIssue.documentPaths[newIndex];
+				if (!doc) return;
 				onIndexChange(newIndex);
 				onPreviewDocument(doc.path, doc.isExternal);
 			}

@@ -101,7 +101,7 @@ export function usePrStatusSync({
 				logger.error('Failed to sync contribution:', undefined, err);
 				scheduleClear('Sync failed');
 			} finally {
-				setSyncingContributionId(null);
+				setSyncingContributionId((current) => (current === contributionId ? null : current));
 			}
 		},
 		[syncContribution, scheduleClear]

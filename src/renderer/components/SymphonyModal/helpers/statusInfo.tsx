@@ -4,7 +4,7 @@ import { Spinner } from '../../ui/Spinner';
 import { COLORBLIND_AGENT_PALETTE } from '../../../constants/colorblindPalettes';
 import type { ContributionStatus } from '../../../../shared/symphony-types';
 
-export const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<ContributionStatus, string> = {
 	cloning: COLORBLIND_AGENT_PALETTE[0],
 	creating_pr: COLORBLIND_AGENT_PALETTE[0],
 	running: COLORBLIND_AGENT_PALETTE[2],
@@ -23,7 +23,7 @@ export interface StatusInfo {
 }
 
 export function getStatusInfo(status: ContributionStatus): StatusInfo {
-	const icons: Record<string, React.ReactNode> = {
+	const icons: Record<ContributionStatus, React.ReactNode> = {
 		cloning: <Spinner size={12} />,
 		creating_pr: <Spinner size={12} />,
 		running: <Play className="w-3 h-3" />,
@@ -34,7 +34,7 @@ export function getStatusInfo(status: ContributionStatus): StatusInfo {
 		failed: <AlertCircle className="w-3 h-3" />,
 		cancelled: <X className="w-3 h-3" />,
 	};
-	const labels: Record<string, string> = {
+	const labels: Record<ContributionStatus, string> = {
 		cloning: 'Cloning',
 		creating_pr: 'Creating PR',
 		running: 'Running',
@@ -46,8 +46,8 @@ export function getStatusInfo(status: ContributionStatus): StatusInfo {
 		cancelled: 'Cancelled',
 	};
 	return {
-		label: labels[status] ?? status,
-		color: STATUS_COLORS[status] ?? '#6b7280',
-		icon: icons[status] ?? null,
+		label: labels[status],
+		color: STATUS_COLORS[status],
+		icon: icons[status],
 	};
 }

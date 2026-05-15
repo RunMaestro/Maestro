@@ -2,7 +2,7 @@
  * Tests for SymphonyModal/hooks/useProjectsKeyboardNav — repository tile-grid
  * keyboard nav (Arrows / Enter / "/" / Esc-blur).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useProjectsKeyboardNav } from '../../../../../renderer/components/SymphonyModal/hooks/useProjectsKeyboardNav';
 import { makeRepo } from '../_fixtures';
@@ -58,6 +58,11 @@ function setup(params: {
 }
 
 describe('useProjectsKeyboardNav', () => {
+	afterEach(() => {
+		document.getElementById('search')?.remove();
+		document.querySelectorAll('div[tabindex="0"]').forEach((node) => node.remove());
+	});
+
 	it('ArrowRight increments and clamps at total-1', () => {
 		const { setSelectedTileIndex } = setup({ selectedTileIndex: 0, repoCount: 9 });
 		fire('ArrowRight');
@@ -140,13 +145,18 @@ describe('useProjectsKeyboardNav', () => {
 	});
 
 	it('inside the search input, only ArrowDown/ArrowUp affect tile selection', () => {
-		const { setSelectedTileIndex, searchInput } = setup({});
+		const { setSelectedTileIndex, searchInput, grid } = setup({});
 		fire('ArrowLeft', searchInput);
 		fire('ArrowRight', searchInput);
 		fire('Enter', searchInput);
 		expect(setSelectedTileIndex).not.toHaveBeenCalled();
 		fire('ArrowDown', searchInput);
 		expect(setSelectedTileIndex).toHaveBeenCalledTimes(1);
+		expect(document.activeElement).toBe(grid);
+		searchInput.focus();
+		fire('ArrowUp', searchInput);
+		expect(setSelectedTileIndex).toHaveBeenCalledTimes(2);
+		expect(document.activeElement).toBe(grid);
 	});
 
 	it('is a no-op when isOpen is false', () => {

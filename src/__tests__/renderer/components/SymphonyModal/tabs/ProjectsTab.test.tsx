@@ -2,8 +2,7 @@
  * Tests for SymphonyModal/tabs/ProjectsTab — search, categories, grid render,
  * loading / error / empty states.
  */
-import { describe, it, expect, vi, useRef as _ } from 'vitest';
-void _;
+import { describe, it, expect, vi } from 'vitest';
 import { createRef } from 'react';
 import { render, fireEvent } from '@testing-library/react';
 

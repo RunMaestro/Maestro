@@ -38,6 +38,7 @@ export const BuildToolsWarningDialog = memo(function BuildToolsWarningDialog({
 	onClose,
 }: BuildToolsWarningDialogProps) {
 	if (!isOpen) return null;
+	const isGhCliReady = Boolean(ghCliStatus?.installed && ghCliStatus.authenticated);
 
 	const dialog = (
 		<div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 10001 }}>
@@ -185,7 +186,7 @@ export const BuildToolsWarningDialog = memo(function BuildToolsWarningDialog({
 							</button>
 						</div>
 					</>
-				) : (
+				) : isGhCliReady ? (
 					<>
 						<div className="flex items-start gap-3 mb-1">
 							<CheckCircle
@@ -240,6 +241,39 @@ export const BuildToolsWarningDialog = memo(function BuildToolsWarningDialog({
 								}}
 							>
 								I Have the Build Tools
+							</button>
+						</div>
+					</>
+				) : (
+					<>
+						<div className="flex items-start gap-3 mb-4">
+							<AlertCircle
+								className="w-6 h-6 shrink-0 mt-0.5"
+								style={{ color: STATUS_COLORS.failed }}
+							/>
+							<div>
+								<h3
+									className="font-semibold text-base mb-2"
+									style={{ color: theme.colors.textMain }}
+								>
+									Unable to Verify GitHub CLI
+								</h3>
+								<p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
+									Symphony could not verify the GitHub CLI status. Try the pre-flight check again
+									before starting a contribution.
+								</p>
+							</div>
+						</div>
+						<div className="flex justify-end mt-4">
+							<button
+								onClick={onClose}
+								className="px-4 py-2 rounded text-sm transition-colors hover:bg-white/10"
+								style={{
+									color: theme.colors.textDim,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								Close
 							</button>
 						</div>
 					</>
