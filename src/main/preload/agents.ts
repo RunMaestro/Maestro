@@ -187,6 +187,16 @@ export function createAgentsApi() {
 		 */
 		getClaudeUsageSnapshots: (): Promise<Record<string, UsageSnapshot>> =>
 			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
+
+		/**
+		 * Trigger a fresh `runStartupUsageSampling()` pass on main so every known
+		 * `CLAUDE_CONFIG_DIR` account re-samples `maestro-p --status` and the
+		 * snapshot store is rewritten. The dashboard / settings refresh button
+		 * calls this and then pulls the updated map back into the renderer
+		 * mirror via `claudeUsageStore.refresh()`.
+		 */
+		refreshClaudeUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('claude:usage:refresh-all'),
 	};
 }
 

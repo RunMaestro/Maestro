@@ -174,6 +174,7 @@ describe('agents IPC handlers', () => {
 				'agents:discoverSlashCommands',
 				'agents:setClaudeInteractiveMode',
 				'agents:getClaudeUsageSnapshots',
+				'claude:usage:refresh-all',
 			];
 
 			for (const channel of expectedChannels) {
@@ -1834,6 +1835,71 @@ describe('agents IPC handlers', () => {
 
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
+		});
+	});
+
+	describe('claude:usage:refresh-all', () => {
+		it('delegates to runStartupUsageSampling and returns the snapshot count', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+				'/Users/me/.claude': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude',
+					session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 3, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+				'/Users/me/.claude-gmail': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					configDirKey: '/Users/me/.claude-gmail',
+					session: { percent: 20, resetsAt: '2026-05-15T05:00:00.000Z' },
+					weekAllModels: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+					weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+				},
+			});
+
+			// Re-register with the full dep set so the handler can delegate.
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+				handlers.set(channel, handler);
+			});
+			registerAgentsHandlers({
+				getAgentDetector: () => mockAgentDetector as any,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: { get: vi.fn(), set: vi.fn() } as any,
+				sessionsStore: { get: vi.fn(), set: vi.fn() } as any,
+			});
+
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).toHaveBeenCalledTimes(1);
+			expect(result).toEqual({ refreshed: 2 });
+
+			runSpy.mockRestore();
+			getAllSpy.mockRestore();
+		});
+
+		it('returns refreshed: 0 without throwing when sessionsStore is missing', async () => {
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const runSpy = vi
+				.spyOn(claudeUsageStartup, 'runStartupUsageSampling')
+				.mockResolvedValue(undefined);
+
+			// The default beforeEach() wires deps WITHOUT sessionsStore/settingsStore,
+			// so the registered handler should fall back to the no-op path.
+			const handler = handlers.get('claude:usage:refresh-all')!;
+			const result = await handler({} as any);
+
+			expect(runSpy).not.toHaveBeenCalled();
+			expect(result).toEqual({ refreshed: 0 });
+
+			runSpy.mockRestore();
 		});
 	});
 });

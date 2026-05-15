@@ -30,6 +30,7 @@ import { DurationTrendsChart } from './DurationTrendsChart';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AutoRunStats } from './AutoRunStats';
 import { SessionStats } from './SessionStats';
+import { ClaudePlanUsage } from './ClaudePlanUsage';
 import { WorktreeAnalytics } from './WorktreeAnalytics';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
@@ -70,7 +71,12 @@ const OVERVIEW_SECTIONS = [
 	'activity-heatmap',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
-const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
+const AGENT_OVERVIEW_SECTIONS = [
+	'session-stats',
+	'claude-plan-usage',
+	'agent-efficiency',
+	'agent-usage',
+] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
 const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
 
@@ -418,6 +424,7 @@ export function UsageDashboardModal({
 			'summary-cards': 'Summary Cards',
 			'agent-overview-cards': 'Active Agents Overview',
 			'session-stats': 'Agent Statistics',
+			'claude-plan-usage': 'Claude Max Plan Usage',
 			'agent-efficiency': 'Agent Efficiency Chart',
 			'agent-comparison': 'Provider Comparison Chart',
 			'provider-trends': 'Provider Trends Over Time',
@@ -1126,6 +1133,31 @@ export function UsageDashboardModal({
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Claude Max Plan Usage — per-account quota burndown for the
+									    Claude Code Max plan. Sits next to SessionStats so quota +
+									    agent-type breakdowns live in the same view. Empty state
+									    covers the no-snapshot case so we render unconditionally. */}
+									<div
+										ref={setSectionRef('claude-plan-usage')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('claude-plan-usage')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'claude-plan-usage')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'claude-plan-usage'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '25ms',
+										}}
+										data-testid="section-claude-plan-usage"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Claude Max Plan Usage">
+											<ClaudePlanUsage theme={theme} />
 										</ChartErrorBoundary>
 									</div>
 

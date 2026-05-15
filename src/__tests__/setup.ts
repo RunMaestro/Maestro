@@ -332,6 +332,7 @@ const mockMaestro = {
 		}),
 		setClaudeInteractiveMode: vi.fn().mockResolvedValue(true),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
 	fonts: {
 		detect: vi.fn().mockResolvedValue([]),

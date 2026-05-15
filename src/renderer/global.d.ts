@@ -1012,6 +1012,7 @@ interface MaestroAPI {
 				}
 			>
 		>;
+		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

@@ -28,6 +28,7 @@ import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
+import { runStartupUsageSampling } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -1539,6 +1540,49 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
 				return getAllClaudeUsageSnapshots();
+			}
+		)
+	);
+
+	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
+	// the boot path calls, so the dashboard / settings refresh button takes the
+	// exact same code path that populated the store on launch. Returns a count
+	// of how many account snapshots are now in the store after sampling — the
+	// renderer surfaces this in the optimistic spinner state.
+	//
+	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
+	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// from blowing up in dev/test contexts where the agents handler was wired
+	// without the full main dependency set.
+	ipcMain.handle(
+		'claude:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshClaudeUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore || !settingsStore) {
+					logger.warn(
+						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+							hasSettingsStore: !!settingsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runStartupUsageSampling({
+					sessionsStore: sessionsStore as unknown as Store<{ sessions: any[] }>,
+					agentConfigsStore,
+					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
+					agentDetector,
+				});
+
+				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;
+				logger.info(`Refreshed Claude usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
 			}
 		)
 	);
