@@ -77,7 +77,7 @@ export function setupWakaTimeListener(
 		sessionId: string,
 		projectDir: string | undefined,
 		projectName: string,
-		source?: 'user' | 'auto'
+		source?: 'user' | 'auto' | 'external-fs'
 	): void {
 		const sessionFiles = pendingFiles.get(sessionId);
 		if (!sessionFiles || sessionFiles.size === 0) return;

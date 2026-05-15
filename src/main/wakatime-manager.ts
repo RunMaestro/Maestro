@@ -543,7 +543,7 @@ export class WakaTimeManager {
 		sessionId: string,
 		projectName: string,
 		projectCwd?: string,
-		source?: 'user' | 'auto'
+		source?: 'user' | 'auto' | 'external-fs'
 	): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
@@ -616,7 +616,7 @@ export class WakaTimeManager {
 		files: Array<{ filePath: string; timestamp: number }>,
 		projectName: string,
 		projectCwd?: string,
-		source?: 'user' | 'auto'
+		source?: 'user' | 'auto' | 'external-fs'
 	): Promise<void> {
 		if (files.length === 0) return;
 
