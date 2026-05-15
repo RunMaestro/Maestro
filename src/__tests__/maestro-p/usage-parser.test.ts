@@ -69,6 +69,19 @@ describe('parseUsage / fixtures', () => {
 	it('parses the no-space "May14at10am(<zone>)" date+time spec and rolls to next year when the date is past now_iso', () => {
 		runFixture('usage-no-space-date');
 	});
+
+	// Real-account captures (task 10). Both files are the verbatim
+	// ANSI-stripped stderr maestro-p emitted while running --status
+	// --stream-thinking on 2026-05-15. The gmail fixture is the
+	// regression case for the `6m` → `6pm` PM-heuristic (see
+	// RESET_SPEC_BODY in usage-parser.ts).
+	it('parses a real /usage capture from the gmail account (compound session row, 6m PM-heuristic)', () => {
+		runFixture('usage-gmail-2026-05-15');
+	});
+
+	it('parses a real /usage capture from the smash account (compound session row with intact 3:50am)', () => {
+		runFixture('usage-smash-2026-05-15');
+	});
 });
 
 describe('parseUsage / behavioral guards', () => {
@@ -254,5 +267,25 @@ describe('RESET_SPEC_BODY', () => {
 		const m = 'May22at10am(America/Chicago)'.match(re);
 		expect(m?.groups?.month).toBe('May');
 		expect(m?.groups?.day).toBe('22');
+	});
+
+	it('matches a bare-m spec (claude dropped the p in pm) and resolves to PM', () => {
+		// Real gmail-account compound session row renders "Resets 6pm" as
+		// "Reses 6m" — both 't' and 'p' clobbered. The regex must still
+		// match so the inline-scan reset extraction can recover; to24Hour
+		// then resolves the lone 'm' as PM. See RESET_SPEC_BODY comment.
+		const m = '6m (America/Chicago)'.match(re);
+		expect(m?.groups?.hour).toBe('6');
+		expect(m?.groups?.ampm?.toLowerCase()).toBe('m');
+		expect(m?.groups?.zone).toBe('America/Chicago');
+	});
+
+	it('prefers the full "am" token over the bare-m fallback when both could match', () => {
+		// Regex alternation order matters: `am|pm|m` lets the engine match
+		// the full two-letter token when present (so we don't degrade
+		// "6am" into hour=6 + ampm=m by greedily eating the m).
+		const m = '6am(America/Chicago)'.match(re);
+		expect(m?.groups?.hour).toBe('6');
+		expect(m?.groups?.ampm?.toLowerCase()).toBe('am');
 	});
 });

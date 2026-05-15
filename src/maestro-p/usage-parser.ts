@@ -57,14 +57,26 @@ import type { StatusSnapshot } from './json-emitter';
 //   "1:40am(America/Chicago)"                  (no internal spaces)
 //   "May 22 at 6pm (America/Chicago)"
 //   "May14at10am(America/Chicago)"             (no internal spaces)
+//   "6m (America/Chicago)"                     (claude dropped the 'p')
 //
 // Month token is `[A-Za-z]+` (not `\w+`) so it doesn't greedy-eat the
 // following day digits. Every internal whitespace is `\s*` for the same
 // cursor-collapse reason as the surrounding patterns.
+//
+// ampm alternation is ordered `am|pm|m` so the regex matches the full
+// two-letter token when present and only falls through to bare `m` when
+// the leading letter was clobbered. A lone `m` resolves to PM (see
+// to24Hour) — this is a heuristic justified by real captures: the gmail
+// account's compound session row consistently renders "6pm" as "6m"
+// (drops the 'p'), while "am" tokens stay intact in every capture we
+// have. Cost of being wrong on a hypothetical clobbered `am`: 12-hour
+// drift on a single section's reset time; benefit of catching the
+// observed clobber: the parser actually returns a snapshot on the gmail
+// account instead of null.
 export const RESET_SPEC_BODY =
 	'(?:(?<month>[A-Za-z]+)\\s*(?<day>\\d{1,2})\\s*at\\s*)?' +
 	'(?<hour>\\d{1,2})(?::(?<minute>\\d{2}))?' +
-	'\\s*(?<ampm>am|pm)' +
+	'\\s*(?<ampm>am|pm|m)' +
 	'\\s*\\((?<zone>[^)]+)\\)';
 
 const PERCENT_RE = /(\d+)%\s*used/i;
@@ -338,7 +350,9 @@ function resolveResetToIsoUtc(groups: ResetSpecGroups, nowIso: string): string |
 function to24Hour(hourStr: string, ampm: string): number | null {
 	const h = parseInt(hourStr, 10);
 	if (Number.isNaN(h) || h < 1 || h > 12) return null;
-	const isPm = ampm.toLowerCase() === 'pm';
+	const token = ampm.toLowerCase();
+	// Lone `m` → PM heuristic, see RESET_SPEC_BODY comment.
+	const isPm = token === 'pm' || token === 'm';
 	if (isPm) return h === 12 ? 12 : h + 12;
 	return h === 12 ? 0 : h;
 }
