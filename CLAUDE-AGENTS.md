@@ -90,6 +90,22 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 - **YOLO Mode:** Auto-enabled in batch mode (no flag needed)
 - **Multi-Provider:** Supports 75+ LLMs including Ollama, LM Studio, llama.cpp
 
+## External Activity Tracking
+
+Maestro observes externally-spawned agent sessions by watching each agent's session-storage directory on disk. Sessions launched outside Maestro (e.g., the agent's own CLI in another terminal, or an SSH session on the same host) are surfaced in the thinking pill and ingested into the Usage Dashboard alongside Maestro-owned sessions. See the **External Agent Visibility** section in [[CLAUDE.md]] for the watcher pipeline.
+
+| Agent         | Storage Path                                     | File Model         | Participates? |
+| ------------- | ------------------------------------------------ | ------------------ | ------------- |
+| Claude Code   | `~/.claude/projects/<encoded>/<id>.jsonl`        | JSONL append       | Yes           |
+| Codex         | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`   | JSONL append       | Yes           |
+| Factory Droid | `~/.factory/sessions/<encoded>/<uuid>.jsonl`     | JSONL append       | Yes           |
+| OpenCode      | `~/.local/share/opencode/storage/.../<msg>.json` | Per-message create | Yes           |
+| Terminal      | (no session storage)                             | —                  | No            |
+
+**Same-user only:** the watchers read session files directly via the local filesystem, so visibility is bounded by OS permissions. Maestro will only observe sessions owned by the same OS user running the app; cross-user observation is out of scope.
+
+**v1 visual treatment:** externally-observed sessions render identically to Maestro-spawned sessions in the thinking pill — there is no separate badge or styling. Users see the unified set of active agents on the host regardless of who spawned them.
+
 ## Adding New Agents
 
 To add support for a new agent:
