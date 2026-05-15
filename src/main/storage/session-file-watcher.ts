@@ -250,7 +250,12 @@ export class SessionFileWatcher extends EventEmitter {
 			const eventType = session.pendingEvent;
 			session.pendingEvent = null;
 			if (eventType) {
-				this.emit(eventType, this.toEvent(session));
+				// Emit with (event, filePath) so consumers that need the absolute
+				// path (e.g., the stats ingester tailing the JSONL) get it without
+				// exposing it on the IPC-visible SessionActivityEvent payload.
+				// Single-arg listeners on the existing 'append' / 'create' channels
+				// still work — the second arg is just ignored.
+				this.emit(eventType, this.toEvent(session), session.filePath);
 			}
 		}, this.debounceMs);
 	}

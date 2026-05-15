@@ -51,6 +51,19 @@ export interface ExternalSessionStateChange {
 export const STATE_CHANGED_EVENT = 'state-changed' as const;
 
 /**
+ * Per-file activity events forwarded from the underlying watchers. Listeners
+ * receive `(event: SessionActivityEvent, filePath: string)` and are intended
+ * for in-process consumers that need the absolute file path (e.g., the
+ * external stats ingester that tails JSONL deltas).
+ *
+ * Only fired for events whose annotated `source` resolved to `'external'` —
+ * sessions Maestro is already driving locally are filtered out so downstream
+ * consumers don't have to dedup themselves.
+ */
+export const APPEND_EVENT = 'append' as const;
+export const CREATE_EVENT = 'create' as const;
+
+/**
  * Reads `getStorageWatchSpec()` off a storage instance without forcing every
  * caller to know it's defined on {@link BaseSessionStorage}. Returns `null`
  * for the (legal) case where the storage doesn't ship a spec.
@@ -123,8 +136,17 @@ export class ExternalSessionCoordinator extends EventEmitter {
 			// which one each agent treats as its dominant signal. The
 			// renderer-visible "is this session thinking?" check uses
 			// `isActive(event)` on the timestamp, not the event name.
-			watcher.on('append', (event) => this.handleActivity(event));
-			watcher.on('create', (event) => this.handleActivity(event));
+			//
+			// We accept the second `filePath` arg from the watcher emit so we
+			// can re-broadcast it on the coordinator's own `'append'` /
+			// `'create'` channels for in-process consumers (the stats ingester)
+			// that need to read the underlying JSONL.
+			watcher.on('append', (event, filePath: string) =>
+				this.handleFileActivity(APPEND_EVENT, event, filePath)
+			);
+			watcher.on('create', (event, filePath: string) =>
+				this.handleFileActivity(CREATE_EVENT, event, filePath)
+			);
 			watcher.on('idle', (event) => this.handleIdle(event));
 
 			try {
@@ -167,11 +189,27 @@ export class ExternalSessionCoordinator extends EventEmitter {
 		this.started = false;
 	}
 
-	private handleActivity(event: SessionActivityEvent): void {
+	/**
+	 * Update the coalesced state map for the renderer-facing `state-changed`
+	 * stream AND re-emit the underlying watcher event on the coordinator's
+	 * `'append'` / `'create'` channel for in-process consumers that need the
+	 * file path. The per-file event is suppressed for sessions Maestro already
+	 * drives locally (the stats DB would otherwise get a second insert via the
+	 * process-driven path).
+	 */
+	private handleFileActivity(
+		channel: typeof APPEND_EVENT | typeof CREATE_EVENT,
+		event: SessionActivityEvent,
+		filePath: string
+	): void {
 		const annotated = this.annotateSource(event);
 		const key = `${annotated.agentId}:${annotated.sessionId}`;
 		this.stateMap.set(key, annotated);
 		this.scheduleStateChange();
+
+		if (annotated.source === 'external') {
+			this.emit(channel, annotated, filePath);
+		}
 	}
 
 	private handleIdle(event: SessionActivityEvent): void {
