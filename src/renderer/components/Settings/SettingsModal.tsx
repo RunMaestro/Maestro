@@ -12,6 +12,7 @@ import {
 	Monitor,
 	Globe,
 	Wand2,
+	Box,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -31,6 +32,7 @@ import { EncoreTab } from './tabs/EncoreTab';
 import { ShortcutsTab } from './tabs/ShortcutsTab';
 import { ThemeTab } from './tabs/ThemeTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
+import { AgentsTab } from './tabs/AgentsTab';
 import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from './SettingsSearch';
 import type { SearchableSetting } from './searchableSettings';
 
@@ -47,6 +49,7 @@ type SettingsTabId =
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
+	| 'agents'
 	| 'ssh'
 	| 'environment'
 	| 'encore'
@@ -76,6 +79,7 @@ interface SettingsModalProps {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'agents'
 		| 'ssh'
 		| 'environment'
 		| 'encore'
@@ -275,6 +279,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'theme'
 				| 'notifications'
 				| 'aicommands'
+				| 'agents'
 				| 'ssh'
 				| 'environment'
 				| 'encore'
@@ -288,6 +293,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'agents',
 						'prompts',
 						'ssh',
 						'environment',
@@ -300,6 +306,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'agents',
 						'prompts',
 						'ssh',
 						'environment',
@@ -450,6 +457,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		{ id: 'theme', label: 'Themes', icon: Palette },
 		{ id: 'notifications', label: 'Notifications', icon: Bell },
 		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
+		{ id: 'agents', label: 'Agents', icon: Box },
 		{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
 		{ id: 'environment', label: 'Environment', icon: Globe },
@@ -750,6 +758,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'environment' && <EnvironmentTab theme={theme} />}
 
 						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
+
+						{activeTab === 'agents' && <AgentsTab theme={theme} />}
 					</div>
 				</div>
 			</div>

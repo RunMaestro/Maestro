@@ -20,6 +20,7 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
+	AgentCapabilitiesData,
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
@@ -30,6 +31,7 @@ import {
 	SESSIONS_DEFAULTS,
 	GROUPS_DEFAULTS,
 	AGENT_CONFIGS_DEFAULTS,
+	AGENT_CAPABILITIES_DEFAULTS,
 	WINDOW_STATE_DEFAULTS,
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
@@ -50,6 +52,7 @@ let _settingsStore: Store<MaestroSettings> | null = null;
 let _sessionsStore: Store<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
+let _agentCapabilitiesStore: Store<AgentCapabilitiesData> | null = null;
 let _windowStateStore: Store<WindowState> | null = null;
 let _claudeSessionOriginsStore: Store<ClaudeSessionOriginsData> | null = null;
 let _agentSessionOriginsStore: Store<AgentSessionOriginsData> | null = null;
@@ -127,6 +130,16 @@ export function initializeStores(options: StoreInitOptions): {
 		deserialize: deserializeStoreJson,
 	});
 
+	// Agent capability snapshots — keyed by `agentId` or `agentId:remoteUuid`.
+	// Per-device because detection state (installed paths, auth status) is
+	// inherently local to the machine, even when other agent settings sync.
+	_agentCapabilitiesStore = new Store<AgentCapabilitiesData>({
+		name: 'maestro-agent-capabilities',
+		cwd: _productionDataPath,
+		defaults: AGENT_CAPABILITIES_DEFAULTS,
+		deserialize: deserializeStoreJson,
+	});
+
 	// Window state is intentionally NOT synced - it's per-device
 	_windowStateStore = new Store<WindowState>({
 		name: 'maestro-window-state',
@@ -173,6 +186,7 @@ export function getStoreInstances() {
 		sessionsStore: _sessionsStore,
 		groupsStore: _groupsStore,
 		agentConfigsStore: _agentConfigsStore,
+		agentCapabilitiesStore: _agentCapabilitiesStore,
 		windowStateStore: _windowStateStore,
 		claudeSessionOriginsStore: _claudeSessionOriginsStore,
 		agentSessionOriginsStore: _agentSessionOriginsStore,

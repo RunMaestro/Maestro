@@ -10,9 +10,21 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
+import {
+	SNAPSHOT_UPDATED_CHANNEL,
+	type AgentCapabilitiesSnapshot,
+	type AgentCapabilitiesSnapshotMap,
+	type SnapshotUpdatedPayload,
+} from '../../shared/agentCapabilities';
 
 // Re-export for consumers that import from preload
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
+export type {
+	AgentCapabilitiesSnapshot,
+	AgentCapabilitiesSnapshotMap,
+	AgentStatus,
+	SnapshotUpdatedPayload,
+} from '../../shared/agentCapabilities';
 
 /**
  * Agent refresh result
@@ -162,6 +174,40 @@ export function createAgentsApi() {
 			sshRemoteId?: string
 		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
+
+		/**
+		 * Get the persisted capability snapshot for an agent in a given
+		 * environment (local or per-SSH-remote). Returns null when no
+		 * snapshot exists yet — callers should fall back to detect().
+		 */
+		getSnapshot: (
+			agentId: string,
+			sshRemoteId?: string
+		): Promise<AgentCapabilitiesSnapshot | null> =>
+			ipcRenderer.invoke('agents:getSnapshot', agentId, sshRemoteId),
+
+		/** Read every persisted snapshot — used to hydrate the renderer at startup. */
+		getAllSnapshots: (): Promise<AgentCapabilitiesSnapshotMap> =>
+			ipcRenderer.invoke('agents:getAllSnapshots'),
+
+		/**
+		 * Clear an agent's snapshot and re-run detection. Resolves with the
+		 * post-detection snapshot (or null when nothing was written, e.g.
+		 * the terminal agent or an unknown id).
+		 */
+		reprobe: (agentId: string, sshRemoteId?: string): Promise<AgentCapabilitiesSnapshot | null> =>
+			ipcRenderer.invoke('agents:reprobe', agentId, sshRemoteId),
+
+		/**
+		 * Subscribe to live snapshot mutations. Returns an unsubscribe fn.
+		 * The renderer mirror calls this once at startup and updates state
+		 * in place — no polling needed.
+		 */
+		onSnapshotUpdated: (callback: (payload: SnapshotUpdatedPayload) => void): (() => void) => {
+			const handler = (_: unknown, payload: SnapshotUpdatedPayload) => callback(payload);
+			ipcRenderer.on(SNAPSHOT_UPDATED_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(SNAPSHOT_UPDATED_CHANNEL, handler);
+		},
 	};
 }
 

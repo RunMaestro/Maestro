@@ -25,6 +25,7 @@ import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { capabilitySnapshots } from './capability-snapshot';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -195,6 +196,23 @@ export class AgentDetector {
 				customPath: customPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
+
+			// Mirror detection into the capability snapshot store so the
+			// renderer has a persisted readiness pill for every agent. Skip
+			// the internal `terminal` agent — it isn't user-facing.
+			if (agentDef.id !== 'terminal') {
+				if (detection.exists) {
+					// Preserve any reactive auth_required state set by a recent
+					// spawn failure — detection alone shouldn't clear it. The
+					// next successful spawn (or explicit re-probe) flips it back.
+					const existing = capabilitySnapshots.get(agentDef.id);
+					if (existing?.status !== 'auth_required') {
+						capabilitySnapshots.markOk(agentDef.id, { path: detection.path });
+					}
+				} else {
+					capabilitySnapshots.markNotInstalled(agentDef.id);
+				}
+			}
 		}
 
 		const availableAgents = agents.filter((a) => a.available);

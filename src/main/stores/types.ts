@@ -6,6 +6,7 @@
  */
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
+import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -109,6 +110,15 @@ export interface GroupsData {
 
 export interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>; // agentId -> config key-value pairs
+}
+
+// ============================================================================
+// Agent Capabilities Store (per-device snapshot of detected agent state)
+// ============================================================================
+
+export interface AgentCapabilitiesData {
+	/** Map of snapshot key -> snapshot. Key is `agentId` or `agentId:remoteUuid`. */
+	snapshots: AgentCapabilitiesSnapshotMap;
 }
 
 // ============================================================================

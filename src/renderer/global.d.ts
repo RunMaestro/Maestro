@@ -984,6 +984,22 @@ interface MaestroAPI {
 			customPath?: string,
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+
+		// Capability snapshots — persisted per-agent readiness + version info.
+		getSnapshot: (
+			agentId: string,
+			sshRemoteId?: string
+		) => Promise<import('../shared/agentCapabilities').AgentCapabilitiesSnapshot | null>;
+		getAllSnapshots: () => Promise<
+			import('../shared/agentCapabilities').AgentCapabilitiesSnapshotMap
+		>;
+		reprobe: (
+			agentId: string,
+			sshRemoteId?: string
+		) => Promise<import('../shared/agentCapabilities').AgentCapabilitiesSnapshot | null>;
+		onSnapshotUpdated: (
+			callback: (payload: import('../shared/agentCapabilities').SnapshotUpdatedPayload) => void
+		) => () => void;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

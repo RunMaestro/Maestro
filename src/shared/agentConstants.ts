@@ -6,6 +6,7 @@
  */
 
 import type { AgentId } from './agentIds';
+import type { AgentCapabilitiesSnapshot } from './agentCapabilities';
 
 /**
  * Default context window sizes for different agents.
@@ -37,3 +38,29 @@ export const FALLBACK_CONTEXT_WINDOW = 200000;
  * The canonical flag is `usesCombinedContextWindow` in AgentCapabilities.
  */
 export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['codex']);
+
+/**
+ * Resolve the context window size for an agent, preferring a runtime
+ * capability snapshot when available and falling back to the static
+ * `DEFAULT_CONTEXT_WINDOWS` table (and finally `FALLBACK_CONTEXT_WINDOW`).
+ *
+ * Use this anywhere the previous hard-coded `DEFAULT_CONTEXT_WINDOWS[agentId]`
+ * pattern appears so context-window changes shipped by an agent vendor flow
+ * into Maestro automatically once a snapshot has captured them.
+ *
+ * Caller migration of existing readers is deferred to a follow-up PR — this
+ * helper coexists with the old constant readers and is safe to land first.
+ */
+export function getContextWindowForAgent(
+	agentId: AgentId | string,
+	snapshot?: AgentCapabilitiesSnapshot
+): number {
+	if (typeof snapshot?.contextWindow === 'number' && snapshot.contextWindow > 0) {
+		return snapshot.contextWindow;
+	}
+	const fromTable = DEFAULT_CONTEXT_WINDOWS[agentId as AgentId];
+	if (typeof fromTable === 'number') {
+		return fromTable;
+	}
+	return FALLBACK_CONTEXT_WINDOW;
+}

@@ -407,6 +407,13 @@ export interface AgentConfig {
 	capabilities?: AgentCapabilities;
 	yoloModeArgs?: string[];
 	readOnlyCliEnforced?: boolean;
+	/**
+	 * Latest persisted capability snapshot for this agent in the requested
+	 * environment (local or per-SSH-remote). Attached by the IPC handlers
+	 * after stripping non-serializable agent fields. May be absent on first
+	 * boot before any detection has run.
+	 */
+	snapshot?: import('./agentCapabilities').AgentCapabilitiesSnapshot;
 }
 
 // ============================================================================
