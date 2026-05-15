@@ -73,6 +73,8 @@ function TabBarInner({
 	onSendBrowserContentToAgent,
 	colorBlindMode,
 	sshRemote,
+	claudeMode,
+	onCycleClaudeMode,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
@@ -390,6 +392,8 @@ function TabBarInner({
 		onCloseTabsRight: onCloseTabsRight ? handleTabCloseRight : undefined,
 		totalTabs,
 		tabIndex: originalIndex,
+		claudeMode,
+		onCycleClaudeMode,
 	});
 
 	return (

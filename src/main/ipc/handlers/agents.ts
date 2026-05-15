@@ -3,7 +3,7 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, SessionsData, StoredSession } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -257,6 +257,12 @@ export interface AgentsHandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/**
+	 * Sessions store — required for `agents:setClaudeInteractiveMode` to persist
+	 * per-tab Claude headless-mode overrides. Optional so registration doesn't
+	 * break for legacy boot paths that wire only the read-only handlers.
+	 */
+	sessionsStore?: Store<SessionsData>;
 }
 
 /**
@@ -763,7 +769,7 @@ async function discoverOpenCodeSlashCommandsRemote(
 }
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
-	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -1440,6 +1446,82 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					});
 					return null;
 				}
+			}
+		)
+	);
+
+	// Persist a per-tab Claude headless-mode override (used by the AI tab overlay
+	// menu's force-interactive / force-API / auto cycle). The spawner reads this
+	// block via `sessionsStore.get('sessions')` on the next `process:spawn`, so
+	// the renderer is responsible for killing the live process — this handler
+	// just writes the state through.
+	ipcMain.handle(
+		'agents:setClaudeInteractiveMode',
+		withIpcErrorLogging(
+			handlerOpts('setClaudeInteractiveMode'),
+			async (
+				sessionId: string,
+				mode: 'interactive' | 'api',
+				modeReason: 'user' | 'auto' | 'limit'
+			): Promise<boolean> => {
+				if (mode !== 'interactive' && mode !== 'api') {
+					throw new Error(`Invalid mode: ${mode}`);
+				}
+				if (modeReason !== 'user' && modeReason !== 'auto' && modeReason !== 'limit') {
+					throw new Error(`Invalid modeReason: ${modeReason}`);
+				}
+
+				if (!sessionsStore) {
+					logger.warn(
+						`Sessions store unavailable; cannot persist Claude interactive mode for ${sessionId}`,
+						LOG_CONTEXT
+					);
+					return false;
+				}
+
+				const sessions = sessionsStore.get('sessions', []) as StoredSession[];
+				const idx = sessions.findIndex((s) => s.id === sessionId);
+				if (idx === -1) {
+					logger.warn(`Session not found for setClaudeInteractiveMode: ${sessionId}`, LOG_CONTEXT);
+					return false;
+				}
+
+				const current = sessions[idx].claudeInteractive as
+					| { mode?: string; modeReason?: string; lastUsageSnapshotKey?: string }
+					| undefined;
+				if (current && current.mode === mode && current.modeReason === modeReason) {
+					return true;
+				}
+
+				const next: StoredSession = {
+					...sessions[idx],
+					claudeInteractive: {
+						mode,
+						modeReason,
+						// Preserve the last resolved usage snapshot key so the next spawn's
+						// auto-resolver doesn't lose its anchor when the user cycles modes.
+						...(current?.lastUsageSnapshotKey
+							? { lastUsageSnapshotKey: current.lastUsageSnapshotKey }
+							: {}),
+					},
+				};
+				const updated = [...sessions];
+				updated[idx] = next;
+
+				try {
+					sessionsStore.set('sessions', updated);
+				} catch (err) {
+					logger.error(`Failed to persist Claude interactive mode for ${sessionId}`, LOG_CONTEXT, {
+						error: String(err),
+					});
+					return false;
+				}
+
+				logger.info(
+					`Updated Claude interactive mode for ${sessionId}: ${mode} (${modeReason})`,
+					LOG_CONTEXT
+				);
+				return true;
 			}
 		)
 	);

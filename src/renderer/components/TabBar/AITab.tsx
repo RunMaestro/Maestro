@@ -6,6 +6,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
+import type { ClaudeModeCyclePosition } from '../../hooks/agent/useClaudeInteractiveMode';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -71,6 +72,10 @@ export interface AITabProps {
 	totalTabs?: number;
 	/** Tab index in the full list (0-based) */
 	tabIndex?: number;
+	/** Current Claude headless-mode cycle position; only set for Claude Code tabs. */
+	claudeMode?: ClaudeModeCyclePosition;
+	/** Cycle the Claude headless-mode; presence gates the menu item visibility. */
+	onCycleClaudeMode?: () => void;
 }
 
 import { getTabDisplayName } from '../../utils/tabHelpers';
@@ -122,6 +127,8 @@ export const AITab = memo(function AITab({
 	onCloseTabsRight,
 	totalTabs,
 	tabIndex,
+	claudeMode,
+	onCycleClaudeMode,
 }: AITabProps) {
 	const [showCopied, setShowCopied] = useState<'sessionId' | 'deepLink' | false>(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -340,6 +347,11 @@ export const AITab = memo(function AITab({
 		},
 		[onSelect, onCloseTabsRight, tabId, setOverlayOpen]
 	);
+
+	const handleCycleClaudeMode = useCallback(() => {
+		onCycleClaudeMode?.();
+		setOverlayOpen(false);
+	}, [onCycleClaudeMode, setOverlayOpen]);
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
@@ -579,6 +591,8 @@ export const AITab = memo(function AITab({
 							onCloseOtherTabs={onCloseOtherTabs}
 							onCloseTabsLeft={onCloseTabsLeft}
 							onCloseTabsRight={onCloseTabsRight}
+							claudeMode={claudeMode}
+							onCycleClaudeMode={onCycleClaudeMode ? handleCycleClaudeMode : undefined}
 						/>
 					</div>,
 					document.body

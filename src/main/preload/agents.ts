@@ -162,6 +162,21 @@ export function createAgentsApi() {
 			sshRemoteId?: string
 		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
+
+		/**
+		 * Persist a Claude headless-mode override on the given session.
+		 *
+		 * Caller is responsible for killing the live process so the next user
+		 * message respawns under the new mode (the next `process:spawn` will
+		 * read this block via `selectMode()`). Returns false if the session
+		 * doesn't exist or the disk write fails; throws on invalid inputs.
+		 */
+		setClaudeInteractiveMode: (
+			sessionId: string,
+			mode: 'interactive' | 'api',
+			modeReason: 'user' | 'auto' | 'limit'
+		): Promise<boolean> =>
+			ipcRenderer.invoke('agents:setClaudeInteractiveMode', sessionId, mode, modeReason),
 	};
 }
 

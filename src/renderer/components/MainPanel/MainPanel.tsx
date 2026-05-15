@@ -17,6 +17,7 @@ import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
+import { useClaudeInteractiveMode } from '../../hooks/agent/useClaudeInteractiveMode';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
@@ -232,6 +233,15 @@ export const MainPanel = React.memo(
 
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(activeSession?.toolType);
+
+		// Per-tab Claude headless-mode cycle (auto / force-interactive / force-api).
+		// Returns isClaudeCode=false for any non-Claude session so we can skip
+		// wiring the overlay menu item entirely below.
+		const {
+			mode: claudeMode,
+			isClaudeCode,
+			cycle: cycleClaudeMode,
+		} = useClaudeInteractiveMode(activeSession?.id);
 
 		// Model/Effort pills: available options, current values, and agent-level defaults
 		const [pillModels, setPillModels] = useState<string[]>([]);
@@ -811,6 +821,10 @@ export const MainPanel = React.memo(
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
 									sshRemote={Boolean(filePreviewSshRemoteId)}
+									// Claude headless-mode cycle — only wired for Claude Code tabs so
+									// the overlay menu item stays hidden for every other agent.
+									claudeMode={isClaudeCode ? claudeMode : undefined}
+									onCycleClaudeMode={isClaudeCode ? cycleClaudeMode : undefined}
 								/>
 							)}
 
