@@ -888,6 +888,20 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{/* Mixed-mode marker — turns captured via maestro-p driving Claude's TUI. */}
+					{log.renderStyle === 'text-stream' && log.source !== 'user' && (
+						<span
+							className="absolute bottom-2 left-3 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
+							style={{
+								backgroundColor: `${theme.colors.accent}20`,
+								color: theme.colors.accent,
+								opacity: 0.7,
+							}}
+							title="This response was captured via maestro-p driving the Claude TUI (interactive mode) instead of the API"
+						>
+							Captured via interactive TUI
+						</span>
+					)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -1073,6 +1087,7 @@ const LogItemComponent = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&

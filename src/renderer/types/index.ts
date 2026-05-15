@@ -218,6 +218,13 @@ export interface LogEntry {
 			toolName?: string;
 		};
 	};
+	// How this turn was captured. 'structured' (default) is the normal JSON-stream
+	// pipeline from `claude --print`; 'text-stream' marks entries captured during
+	// maestro-p interactive-mode turns. The renderer uses the same tool-card /
+	// code-block / diff pipeline for both — the flag's only visible effect is the
+	// "Captured via interactive TUI" footer pill on non-user entries. Exists as
+	// forward-compatible metadata for any future divergence.
+	renderStyle?: 'structured' | 'text-stream';
 }
 
 // Queued item for the session-level execution queue
