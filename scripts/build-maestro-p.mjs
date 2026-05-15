@@ -37,7 +37,12 @@ async function build() {
 			sourcemap: true,
 			minify: false, // Keep readable for debugging
 			// Shebang lives in src/maestro-p/index.ts; esbuild preserves it.
-			external: [],
+			// node-pty ships a native prebuild that resolves relative to its
+			// own package directory at runtime; bundling it breaks the
+			// relative ./prebuilds/<platform>/pty.node lookup. Leaving it
+			// external means `require('node-pty')` runs against the real
+			// installed package, which finds its prebuild correctly.
+			external: ['node-pty'],
 			define: {
 				__MAESTRO_P_VERSION__: JSON.stringify(cliVersion),
 			},
