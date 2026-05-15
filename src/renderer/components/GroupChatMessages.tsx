@@ -354,7 +354,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 												className="text-sm overflow-hidden"
 												style={{ maxHeight: `${maxOutputLines * 1.5}em` }}
 											>
-												{!isUser && !markdownEditMode ? (
+												{!markdownEditMode ? (
 													<MarkdownRenderer
 														content={displayContent}
 														theme={theme}
@@ -397,7 +397,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 													}
 												}}
 											>
-												{!isUser && !markdownEditMode ? (
+												{!markdownEditMode ? (
 													<MarkdownRenderer
 														content={msg.content}
 														theme={theme}
@@ -424,8 +424,11 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 												Show less
 											</button>
 										</div>
-									) : !isUser && !markdownEditMode ? (
-										// Normal non-collapsed markdown view
+									) : !markdownEditMode ? (
+										// Normal non-collapsed markdown view (#622: user
+										// messages get the same markdown treatment as
+										// assistant messages by default — toggle exposes
+										// the raw view consistently for both)
 										<div className="text-sm">
 											<MarkdownRenderer
 												content={msg.content}
@@ -436,7 +439,9 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 											/>
 										</div>
 									) : (
-										// User message or raw mode
+										// Raw mode — user sees their literal input; for
+										// assistant content we strip markdown so the raw
+										// view is readable as plain text.
 										<div className="text-sm whitespace-pre-wrap">
 											{isUser ? msg.content : stripMarkdown(msg.content)}
 										</div>
@@ -448,68 +453,72 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 										messageAncestorSelector="[data-message-timestamp]"
 										theme={theme}
 									/>
-									{/* Action buttons - bottom right corner (non-user messages only) */}
-									{!isUser && (
-										<div
-											className="absolute bottom-2 right-2 flex items-center gap-1"
-											style={{ transition: 'opacity 0.15s ease-in-out' }}
-										>
-											{/* Markdown toggle button */}
-											{onToggleMarkdownEditMode && (
-												<button
-													onClick={onToggleMarkdownEditMode}
-													className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-													style={{
-														color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
-													}}
-													title={
-														markdownEditMode
-															? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
-															: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
-													}
-												>
-													{markdownEditMode ? (
-														<Eye className="w-4 h-4" />
-													) : (
-														<FileText className="w-4 h-4" />
-													)}
-												</button>
-											)}
-											{/* Copy to Clipboard Button */}
+									{/* Action buttons - bottom right corner. Available on
+									    user messages too so the markdown/raw toggle and
+									    copy behavior is consistent with assistant
+									    messages (#622). */}
+									<div
+										className="absolute bottom-2 right-2 flex items-center gap-1"
+										style={{ transition: 'opacity 0.15s ease-in-out' }}
+									>
+										{/* Markdown toggle button */}
+										{onToggleMarkdownEditMode && (
 											<button
-												onClick={() => copyToClipboard(msg.content)}
+												onClick={onToggleMarkdownEditMode}
 												className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-												style={{ color: theme.colors.textDim }}
-												title="Copy to clipboard"
+												style={{
+													color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
+												}}
+												title={
+													markdownEditMode
+														? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
+														: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
+												}
 											>
-												<Copy className="w-3.5 h-3.5" />
+												{markdownEditMode ? (
+													<Eye className="w-4 h-4" />
+												) : (
+													<FileText className="w-4 h-4" />
+												)}
 											</button>
-											{/* Publish to GitHub Gist */}
-											{ghCliAvailable &&
-												onPublishGist &&
-												(() => {
-													const publishedUrl = publishedGists[msgKey]?.gistUrl;
-													return (
-														<button
-															onClick={() => onPublishGist(msg.content, msgKey)}
-															className={`p-1.5 rounded hover:!opacity-100 ${
-																publishedUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
-															}`}
-															style={{
-																color: publishedUrl ? theme.colors.accent : theme.colors.textDim,
-															}}
-															title={
-																publishedUrl
-																	? `Published as Gist: ${publishedUrl}`
-																	: 'Publish as GitHub Gist'
-															}
-														>
-															<Share2 className="w-3.5 h-3.5" />
-														</button>
-													);
-												})()}
-										</div>
-									)}
+										)}
+										{/* Copy to Clipboard Button */}
+										<button
+											onClick={() => copyToClipboard(msg.content)}
+											className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+											style={{ color: theme.colors.textDim }}
+											title="Copy to clipboard"
+										>
+											<Copy className="w-3.5 h-3.5" />
+										</button>
+										{/* Publish to GitHub Gist (non-user messages only;
+										    users would publish their own input via the
+										    feedback flow instead) */}
+										{!isUser &&
+											ghCliAvailable &&
+											onPublishGist &&
+											(() => {
+												const publishedUrl = publishedGists[msgKey]?.gistUrl;
+												return (
+													<button
+														onClick={() => onPublishGist(msg.content, msgKey)}
+														className={`p-1.5 rounded hover:!opacity-100 ${
+															publishedUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+														}`}
+														style={{
+															color: publishedUrl ? theme.colors.accent : theme.colors.textDim,
+														}}
+														title={
+															publishedUrl
+																? `Published as Gist: ${publishedUrl}`
+																: 'Publish as GitHub Gist'
+														}
+													>
+														<Share2 className="w-3.5 h-3.5" />
+													</button>
+												);
+											})()}
+									</div>
 								</div>
 							</div>
 						);

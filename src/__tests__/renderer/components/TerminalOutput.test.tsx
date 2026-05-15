@@ -1461,7 +1461,7 @@ describe('TerminalOutput', () => {
 			expect(setMarkdownEditMode).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show markdown toggle button for user messages', () => {
+		it('shows markdown toggle button for user messages in AI mode (#622 consistency)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'User message with **markdown**', source: 'user' }),
 			];
@@ -1478,8 +1478,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.queryByTitle(/Show plain text/)).not.toBeInTheDocument();
-			expect(screen.queryByTitle(/Show formatted/)).not.toBeInTheDocument();
+			// Toggle is now exposed on user messages too — consistent with
+			// assistant messages so the user can flip between formatted and
+			// raw text views of their own input.
+			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
 		});
 
 		it('does not show markdown toggle button in terminal mode', () => {

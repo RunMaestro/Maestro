@@ -904,8 +904,9 @@ const LogItemComponent = memo(
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button for AI responses */}
-						{log.source !== 'user' && isAIMode && (
+						{/* Markdown toggle button — available on both user and assistant
+						    messages in AI mode for consistent UX (#622). */}
+						{isAIMode && (
 							<button
 								onClick={onToggleMarkdownEditMode}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
