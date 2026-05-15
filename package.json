@@ -13,7 +13,8 @@
 		"url": "https://github.com/RunMaestro/Maestro.git"
 	},
 	"bin": {
-		"maestro-cli": "./dist/cli/maestro-cli.js"
+		"maestro-cli": "./dist/cli/maestro-cli.js",
+		"maestro-p": "./dist/cli/maestro-p.js"
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
@@ -24,10 +25,11 @@
 		"dev:renderer": "vite",
 		"dev:web": "vite --config vite.config.web.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli && npm run build:maestro-p",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
+		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:renderer": "vite build",
 		"build:web": "vite build --config vite.config.web.mts",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
