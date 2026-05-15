@@ -1276,10 +1276,15 @@ describe('MarkdownRenderer', () => {
 
 		it('keeps paragraph breaks (blank line) regardless of chatLineBreaks', () => {
 			const content = 'paragraph one\n\nparagraph two';
-			const { container } = render(
+
+			const defaultRender = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			expect(defaultRender.container.querySelectorAll('p').length).toBe(2);
+			defaultRender.unmount();
+
+			const chatRender = render(
 				<MarkdownRenderer {...defaultProps} content={content} chatLineBreaks />
 			);
-			expect(container.querySelectorAll('p').length).toBe(2);
+			expect(chatRender.container.querySelectorAll('p').length).toBe(2);
 		});
 	});
 });
