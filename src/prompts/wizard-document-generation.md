@@ -316,6 +316,8 @@ Do NOT apply for:
 
 Use your Write tool to save each phase document immediately after you finish writing it. This way, files appear in real-time for the user.
 
+**The dated playbook folder has already been created for you at `{{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/`.** Write each phase document directly into that folder. Do NOT create any additional nested subdirectories — files placed in a nested folder will not be picked up by the wizard's live preview and will produce broken playbook paths.
+
 File naming convention:
 
 - `{{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/Phase-01-[Description].md`
@@ -323,11 +325,7 @@ File naming convention:
 - Continue the pattern for additional phases...
 - **Always use two-digit phase numbers** (01, 02, etc.) to ensure correct lexicographic sorting
 
-**Multi-phase efforts:** When creating 3 or more phase documents for a single effort, place them in a dedicated subdirectory prefixed with today's date (e.g., `{{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/YYYY-MM-DD-Feature-Name/FEATURE-NAME-01.md`). This allows users to add the entire folder at once and keeps related documents organized with a clear creation date.
-
-**Working Folder**: `{{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/Working/` is **only** for ephemeral scratch a phase may produce at runtime (temp files, intermediate logs, throwaway artifacts). It is a sibling of the dated folders, not a parent.
-
-**Do NOT place the phase documents themselves there.** Phase docs and any durable outputs always go directly into the dated subdirectory at the root of `{{AUTO_RUN_FOLDER_NAME}}/` (e.g., `{{AUTO_RUN_FOLDER_NAME}}/YYYY-MM-DD-Feature-Name/FEATURE-NAME-01.md`) — never `{{AUTO_RUN_FOLDER_NAME}}/Working/YYYY-MM-DD-.../`.
+**Working Folder**: If a phase needs ephemeral scratch space at runtime (temp files, intermediate logs, throwaway artifacts), it may create a `Working/` sibling alongside the phase docs (i.e., `{{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/Working/`). The phase documents themselves NEVER go inside `Working/`.
 
 **IMPORTANT**: Write files one at a time, IN ORDER (Phase-01 first, then Phase-02, etc.). Do NOT wait until you've finished all documents to write them - save each one as soon as it's complete.
 

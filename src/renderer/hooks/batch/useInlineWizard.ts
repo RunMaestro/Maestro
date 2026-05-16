@@ -105,6 +105,13 @@ export interface InlineWizardState {
 	confidence: number;
 	/** Whether the AI is ready to proceed with document generation */
 	ready: boolean;
+	/**
+	 * Short human-readable name for the playbook, extracted from the wizard
+	 * conversation (e.g. "HTML Chat Interface"). Updated as the AI refines its
+	 * understanding. Used to name the playbook subfolder; falls back to
+	 * sessionName when absent so we never block generation on a missing field.
+	 */
+	extractedProjectName: string | null;
 	/** Conversation history for this wizard session */
 	conversationHistory: InlineWizardMessage[];
 	/** Whether documents are being generated */
@@ -338,6 +345,7 @@ const initialState: InlineWizardState = {
 	goal: null,
 	confidence: 0,
 	ready: false,
+	extractedProjectName: null,
 	conversationHistory: [],
 	isGeneratingDocs: false,
 	generatedDocuments: [],
@@ -905,11 +913,15 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					};
 
 					// Update state with response and capture agent session ID if available
+					const incomingProjectName = result.response.projectName?.trim();
 					setTabState(tabId, (prev) => ({
 						...prev,
 						conversationHistory: [...prev.conversationHistory, assistantMessage],
 						confidence: result.response!.confidence,
 						ready: result.response!.ready,
+						// Latest non-empty projectName from the AI wins; keep the previous
+						// value if this turn didn't emit one so we never regress to null.
+						extractedProjectName: incomingProjectName || prev.extractedProjectName,
 						isWaiting: false,
 						// Capture the first agentSessionId we receive (subsequent messages may not have it)
 						agentSessionId: prev.agentSessionId || result.agentSessionId || null,
@@ -1302,11 +1314,16 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			}));
 
 			try {
-				// Call the document generation service with the effective Auto Run folder path
+				// Call the document generation service with the effective Auto Run folder path.
+				// Prefer the AI-extracted project name from the conversation so the playbook
+				// folder reflects the feature (e.g. "HTML Chat Interface") rather than the
+				// agent's tab name (e.g. "rc" — typically a worktree/branch identifier).
+				const projectNameForGeneration =
+					currentState.extractedProjectName?.trim() || currentState.sessionName || 'Project';
 				const result = await generateInlineDocuments({
 					agentType: currentState.agentType,
 					directoryPath: currentState.projectPath || effectiveAutoRunFolderPath,
-					projectName: currentState.sessionName || 'Project',
+					projectName: projectNameForGeneration,
 					conversationHistory: currentState.conversationHistory,
 					existingDocuments: currentState.existingDocuments,
 					mode: currentState.mode === 'iterate' ? 'iterate' : 'new',
