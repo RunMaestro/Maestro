@@ -24,6 +24,7 @@ import { parseArgs, type ParsedArgs } from './args';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { discoverSessionId, cwdSlug } from './session-watcher';
+import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { TuiDriver } from './tui-driver';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
@@ -153,7 +154,24 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		process.exit(1);
 	}
 
-	const prompt = args.prompt;
+	// `--input-format stream-json` mode: parse the Claude envelope Maestro
+	// pipes in, save any embedded base64 images to /tmp, and rewrite the
+	// prompt as `@path` mentions. Without this the JSON+base64 blob would
+	// be typed into the TUI as keystrokes and no image would attach.
+	let prompt = args.prompt;
+	const tempImagePaths: string[] = [];
+	if (args.streamJsonInput) {
+		const translated = translateStreamJsonInput(args.prompt);
+		if (translated) {
+			prompt = translated.prompt;
+			tempImagePaths.push(...translated.imagePaths);
+		} else {
+			process.stderr.write(
+				'maestro-p: --input-format stream-json was set but stdin was not a valid Claude stream-json envelope; treating it as a plain-text prompt.\n'
+			);
+		}
+	}
+
 	const cwd = process.cwd();
 	const configDir = resolveConfigDir();
 	const binPath = resolveBinPath();
@@ -203,6 +221,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		finalized = true;
 		cleanupTimers();
 		tailer?.stop();
+		// Best-effort: synchronous so claude (which has long-since consumed
+		// these via the @path Read tool) doesn't leave them behind.
+		cleanupStreamJsonImages(tempImagePaths);
 
 		// Ensure init is emitted so emitResult doesn't throw on pre-discovery
 		// failure paths (timeout before discovery, etc.).

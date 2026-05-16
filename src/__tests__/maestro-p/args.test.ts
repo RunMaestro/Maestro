@@ -147,11 +147,25 @@ describe('parseArgs', () => {
 			expect(warnSpy).toHaveBeenCalledTimes(1);
 		});
 
-		it('drops --input-format and its value with a stderr warning', () => {
+		it('warns on --input-format text and leaves streamJsonInput false', () => {
 			const result = callArgs(['--input-format', 'text', '-p', 'hi']);
 			expect(result.passThroughArgs).toEqual([]);
+			expect(result.streamJsonInput).toBe(false);
 			expect(warnSpy).toHaveBeenCalledTimes(1);
 			expect(warnSpy.mock.calls[0][0]).toMatch(/--input-format/);
+		});
+
+		it('flips streamJsonInput on --input-format stream-json without forwarding the flag', () => {
+			const result = callArgs(['--input-format', 'stream-json', '-p', 'hi']);
+			expect(result.streamJsonInput).toBe(true);
+			expect(result.passThroughArgs).toEqual([]);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it('accepts --input-format=stream-json (inline form)', () => {
+			const result = callArgs(['--input-format=stream-json', '-p', 'hi']);
+			expect(result.streamJsonInput).toBe(true);
+			expect(result.passThroughArgs).toEqual([]);
 		});
 
 		it('drops --verbose with a stderr warning', () => {
@@ -229,6 +243,22 @@ describe('parseArgs', () => {
 			const result = callArgs(['--resume']);
 			expect(result.resumeSessionId).toBeNull();
 			expect(result.passThroughArgs).toEqual(['--resume']);
+		});
+
+		it('coexists with --input-format stream-json (follow-up image turn)', () => {
+			const fakeEnvelope = JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: [{ type: 'text', text: 'follow up' }] },
+			});
+			const result = callArgs(['--resume', 'session-xyz', '--input-format', 'stream-json'], {
+				stdinIsTTY: false,
+				readStdin: () => fakeEnvelope,
+			});
+			expect(result.resumeSessionId).toBe('session-xyz');
+			expect(result.streamJsonInput).toBe(true);
+			expect(result.prompt).toBe(fakeEnvelope);
+			// --input-format is consumed by maestro-p; only --resume reaches claude.
+			expect(result.passThroughArgs).toEqual(['--resume', 'session-xyz']);
 		});
 	});
 

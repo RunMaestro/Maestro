@@ -40,6 +40,14 @@ export interface ParsedArgs {
 	streamThinking: boolean;
 	maxWaitSeconds: number;
 	resumeSessionId: string | null;
+	/**
+	 * True when invoked with `--input-format stream-json`. Maestro sets this
+	 * whenever it pipes a Claude stream-json envelope on stdin (the only path
+	 * that carries attached images). The runner uses it to JSON-parse stdin
+	 * and rewrite the prompt as `@path` mentions instead of typing the raw
+	 * JSON+base64 blob into the TUI.
+	 */
+	streamJsonInput: boolean;
 }
 
 export interface ParseArgsOptions {
@@ -55,7 +63,11 @@ export const DEFAULT_MAX_WAIT_SECONDS = 300;
 
 const PROMPT_VALUE_FLAGS = new Set(['-p', '--print', '--prompt']);
 const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
-const STRIPPED_VALUE_FLAGS = new Set(['--output-format', '--input-format']);
+// `--input-format` is handled specially below: `stream-json` flips
+// streamJsonInput on so runMode JSON-parses stdin and rewrites the prompt
+// with `@path` image mentions; other values are stripped with a warning
+// (same as the legacy behavior for the rest of the headless-only flags).
+const STRIPPED_VALUE_FLAGS = new Set(['--output-format']);
 const STRIPPED_BOOLEAN_FLAGS = new Set(['--verbose']);
 
 // Long flags that claude treats as booleans — the parser must NOT swallow the
@@ -103,6 +115,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	let streamThinking = false;
 	let maxWaitSeconds = DEFAULT_MAX_WAIT_SECONDS;
 	let resumeSessionId: string | null = null;
+	let streamJsonInput = false;
 	const passThroughArgs: string[] = [];
 
 	let i = 0;
@@ -173,6 +186,25 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			warn(`maestro-p: ignoring ${flag} — headless-mode flag, not forwarded to the TUI.`);
 			if (inlineValue === undefined && i + 1 < argv.length) {
 				i += 1;
+			}
+			i += 1;
+			continue;
+		}
+
+		if (flag === '--input-format') {
+			const value = consumeValue();
+			if (value === 'stream-json') {
+				// Don't forward to the TUI (claude TUI doesn't accept this flag —
+				// it's --print-only). Instead, record the intent so runMode
+				// JSON-parses stdin and rewrites the prompt with @path image
+				// mentions before sending to the TUI.
+				streamJsonInput = true;
+			} else if (value === undefined) {
+				warn(`maestro-p: --input-format requires a value; ignoring.`);
+			} else {
+				warn(
+					`maestro-p: ignoring --input-format ${value} — only stream-json is recognized; stdin will be treated as plain text.`
+				);
 			}
 			i += 1;
 			continue;
@@ -260,5 +292,6 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		streamThinking,
 		maxWaitSeconds,
 		resumeSessionId,
+		streamJsonInput,
 	};
 }
