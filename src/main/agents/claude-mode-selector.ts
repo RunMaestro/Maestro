@@ -15,7 +15,7 @@
  * No side effects. No I/O. Inputs are not mutated.
  */
 
-export const LIMIT_THRESHOLD_PERCENT = 95;
+export const LIMIT_THRESHOLD_PERCENT = 99;
 
 /**
  * A single usage snapshot for one canonical `CLAUDE_CONFIG_DIR` account.

@@ -16,6 +16,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
 import { logger } from '../../utils/logger';
 
@@ -463,32 +464,32 @@ export function AgentConfigPanel({
 				</p>
 			</div>
 
-			{/* Batch Mode toggle — Claude Code only. When enabled, the spawner uses
+			{/* Adaptive Mode toggle — Claude Code only. When enabled, the spawner uses
 			    maestro-p to drive the Claude TUI against your Max plan ("Time Limits")
-			    and auto-falls back to `claude --print` ("API Limits") when the 5-hour
-			    or weekly quota hits 95%. Hidden over SSH — the wrapper needs the real
-			    claude binary on the local machine. */}
+			    and falls back to `claude --print` ("API Limits") when the 5-hour or
+			    weekly window is near exhaustion (>=99%). Holds the fallback until
+			    BOTH windows have reset, then snaps back to Time Limits. Hidden over
+			    SSH — the wrapper needs the real claude binary on the local machine. */}
 			{agent.id === 'claude-code' && !isSshEnabled && onEnableMaestroPChange && (
 				<div
 					className={`${padding} rounded border`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
-					<label
-						className="block text-xs font-medium mb-2 flex items-center justify-between cursor-pointer select-none"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Batch Mode</span>
-						<input
-							type="checkbox"
+					<div className="flex items-center justify-between mb-2">
+						<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
+							Adaptive Mode
+						</span>
+						<ToggleSwitch
 							checked={enableMaestroP}
-							onChange={(e) => onEnableMaestroPChange(e.target.checked)}
-							onClick={(e) => e.stopPropagation()}
-							className="cursor-pointer"
+							onChange={onEnableMaestroPChange}
+							theme={theme}
+							ariaLabel="Adaptive Mode"
 						/>
-					</label>
+					</div>
 					<p className="text-xs opacity-50">
-						Auto-switch between Time Limits (Max plan via maestro-p) and API Limits (
-						<code>claude --print</code>). Falls back to API at 95% quota.
+						Prefer Max plan quota (Time Limits via <code>maestro-p</code>). Falls back to billed API
+						(<code>claude --print</code>) when the 5-hour or weekly window is near exhaustion, and
+						returns to Max plan as soon as both windows have reset.
 					</p>
 					{enableMaestroP && (
 						<div className="mt-3">

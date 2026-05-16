@@ -37,7 +37,7 @@ function buildBatchModeBanner(
 		id: generateId(),
 		timestamp: Date.now(),
 		source: 'system',
-		text: `Batch Mode: switched from ${prevLabel} to ${nextLabel}. ${why}`,
+		text: `Adaptive Mode: switched from ${prevLabel} to ${nextLabel}. ${why}`,
 	};
 }
 

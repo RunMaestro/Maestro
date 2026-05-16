@@ -44,13 +44,13 @@ interface BarRowProps {
 // Mirrors `LIMIT_THRESHOLD_PERCENT` in `src/main/agents/claude-mode-selector.ts`.
 // Duplicated here to keep the renderer bundle free of main-process imports — same
 // rationale as the snapshot shape in `claudeUsageStore.ts`.
-const WARNING_THRESHOLD = 95;
+const WARNING_THRESHOLD = 99;
 const ACCENT_THRESHOLD = 75;
 
 /**
  * Resolve the fill color for a usage bar. Mirrors the limit selector's
  * thresholds so the dashboard surfaces the exact same trigger points the
- * spawner consults on the next turn — at-or-above 95% turns warning, 75-94%
+ * spawner consults on the next turn — at-or-above 99% turns warning, 75-98%
  * turns accent, anything lower stays success.
  */
 function resolveFillColor(percent: number, theme: Theme): string {

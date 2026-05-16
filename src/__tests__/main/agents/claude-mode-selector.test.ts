@@ -50,8 +50,8 @@ function input(overrides: Partial<SelectModeInput> = {}): SelectModeInput {
 
 describe('claude-mode-selector', () => {
 	describe('LIMIT_THRESHOLD_PERCENT', () => {
-		it('is exported as 95', () => {
-			expect(LIMIT_THRESHOLD_PERCENT).toBe(95);
+		it('is exported as 99', () => {
+			expect(LIMIT_THRESHOLD_PERCENT).toBe(99);
 		});
 	});
 
@@ -72,7 +72,7 @@ describe('claude-mode-selector', () => {
 	});
 
 	describe('under threshold', () => {
-		it('both windows under 95% → interactive/auto', () => {
+		it('both windows under 99% → interactive/auto', () => {
 			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 50 }) }))).toEqual({
 				mode: 'interactive',
 				reason: 'auto',
@@ -87,14 +87,14 @@ describe('claude-mode-selector', () => {
 	});
 
 	describe('limit triggers', () => {
-		it('session >= 95% with window open → api/limit', () => {
-			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 95 }) }))).toEqual({
+		it('session >= 99% with window open → api/limit', () => {
+			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99 }) }))).toEqual({
 				mode: 'api',
 				reason: 'limit',
 			});
 		});
 
-		it('week >= 95% with window open → api/limit', () => {
+		it('week >= 99% with window open → api/limit', () => {
 			expect(selectMode(input({ usageSnapshot: snapshot({ weekPercent: 99 }) }))).toEqual({
 				mode: 'api',
 				reason: 'limit',
@@ -103,7 +103,7 @@ describe('claude-mode-selector', () => {
 
 		it('both over threshold → still a single api/limit result', () => {
 			expect(
-				selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 96, weekPercent: 97 }) }))
+				selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99, weekPercent: 100 }) }))
 			).toEqual({ mode: 'api', reason: 'limit' });
 		});
 
@@ -127,15 +127,15 @@ describe('claude-mode-selector', () => {
 	});
 
 	describe('threshold boundary', () => {
-		it('exactly 95% triggers (>=)', () => {
-			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 95 }) }))).toEqual({
+		it('exactly 99% triggers (>=)', () => {
+			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 99 }) }))).toEqual({
 				mode: 'api',
 				reason: 'limit',
 			});
 		});
 
-		it('94.9% does NOT trigger', () => {
-			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 94.9 }) }))).toEqual({
+		it('98.9% does NOT trigger', () => {
+			expect(selectMode(input({ usageSnapshot: snapshot({ sessionPercent: 98.9 }) }))).toEqual({
 				mode: 'interactive',
 				reason: 'auto',
 			});
@@ -206,12 +206,12 @@ describe('claude-mode-selector', () => {
 
 	describe('purity', () => {
 		it('does not mutate input', () => {
-			const snap = Object.freeze(snapshot({ sessionPercent: 95 }));
+			const snap = Object.freeze(snapshot({ sessionPercent: 99 }));
 			expect(() => selectMode(input({ usageSnapshot: snap }))).not.toThrow();
 		});
 
 		it('returns the same result for the same input (determinism)', () => {
-			const inp = input({ usageSnapshot: snapshot({ sessionPercent: 96 }) });
+			const inp = input({ usageSnapshot: snapshot({ sessionPercent: 99 }) });
 			expect(selectMode(inp)).toEqual(selectMode(inp));
 		});
 	});

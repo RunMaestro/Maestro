@@ -651,8 +651,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 
-												{/* Batch Mode usage limits — only for Claude Code tabs that have
-												    opted into Batch Mode AND have a usage snapshot cached. */}
+												{/* Adaptive Mode usage limits — only for Claude Code tabs that have
+												    opted into Adaptive Mode AND have a usage snapshot cached. */}
 												{showBatchUsage && batchUsageSnapshot && (
 													<div
 														className="border-t pt-2 mt-2"
@@ -662,7 +662,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 															className="text-[10px] uppercase font-bold mb-2"
 															style={{ color: theme.colors.textDim }}
 														>
-															Batch Mode
+															Adaptive Mode
 														</div>
 														<div className="flex justify-between items-center mb-2">
 															<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -687,7 +687,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 															const label = key === 'session' ? '5-hour' : 'Weekly';
 															const pct = Math.max(0, Math.min(100, window.percent));
 															const barColor =
-																pct >= 95
+																pct >= 99
 																	? (theme.colors.error ?? theme.colors.warning)
 																	: pct >= 70
 																		? (theme.colors.warning ?? theme.colors.accent)
