@@ -6,14 +6,12 @@
  */
 
 import type { ToolType } from '../types';
-import {
-	DEFAULT_CONTEXT_WINDOWS,
-	COMBINED_CONTEXT_AGENTS,
-	getContextWindowForAgent,
-} from '../../shared/agentConstants';
+import { COMBINED_CONTEXT_AGENTS, getContextWindowForAgent } from '../../shared/agentConstants';
 import { useAgentStore } from '../stores/agentStore';
 
-// Re-export for consumers that import from this module
+// Re-export for consumers that import from this module. The local import
+// was dropped on migration to `getContextWindowForAgent` — the re-export
+// resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
 /** Minimum growth percentage per accumulated turn */
