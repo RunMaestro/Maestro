@@ -10,6 +10,24 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ![Command palette](./screenshots/cmd-k-1.png)
 
+## System-Wide Hotkey (Summon Maestro)
+
+Configure a single OS-level hotkey that summons Maestro — bringing the window to the foreground and focusing it — from any application on macOS, Windows, or Linux. This is the only shortcut in Maestro that fires while the app is in the background; every other shortcut on this page is in-app.
+
+**To configure:**
+
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **General** tab
+2. Find **Global Hotkey to Show Maestro**
+3. Click the key capture button and press your desired combo
+4. Leave it blank to disable the binding
+
+Tips and gotchas:
+
+- Pick a combo with two modifiers (e.g. `Cmd+Shift+M` / `Win+Shift+M`) to avoid clashing with app shortcuts.
+- If the OS or another app already owns the combo, Maestro will surface a registration failure — pick a different binding.
+- `Meta` maps to **Cmd** on macOS and **Win** (Super) on Windows/Linux automatically.
+- The hotkey works even when Maestro is hidden, minimized, or behind other windows.
+
 ## Global Shortcuts
 
 | Action                      | macOS                 | Windows/Linux          |
