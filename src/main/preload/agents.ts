@@ -14,11 +14,14 @@ import {
 	SNAPSHOT_UPDATED_CHANNEL,
 	type AgentCapabilitiesSnapshot,
 	type AgentCapabilitiesSnapshotMap,
-	type AgentStatus,
 	type SnapshotUpdatedPayload,
 } from '../../shared/agentCapabilities';
 
-// Re-export for consumers that import from preload
+// Re-export for consumers that import from preload. `AgentStatus` is
+// re-exported only (no local usage in this file); TypeScript's
+// `export type {...}` resolves it transitively from the source module
+// without needing a separate import. Importing it would trip
+// `@typescript-eslint/no-unused-vars` and TS6133.
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
 export type {
 	AgentCapabilitiesSnapshot,
