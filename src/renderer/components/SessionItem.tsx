@@ -12,7 +12,6 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
-import { ClaudeModeBadge } from './SessionList/ClaudeModeBadge';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
@@ -491,19 +490,8 @@ export const SessionItem = memo(function SessionItem({
 						</GhostIconButton>
 					))}
 
-				{/* Claude headless-mode badge: only renders for Claude Code sessions
-				    that have had their mode resolved at least once. */}
-				{session.toolType === 'claude-code' && session.claudeInteractive && (
-					<ClaudeModeBadge sessionId={session.id} className="ml-auto" />
-				)}
-
-				{/* AI Status Indicator with Unread Badge - aligns to right edge unless
-				    a ClaudeModeBadge already claimed the auto margin above. */}
-				<div
-					className={`relative w-2 h-2 ${
-						session.toolType === 'claude-code' && session.claudeInteractive ? '' : 'ml-auto'
-					}`}
-				>
+				{/* AI Status Indicator with Unread Badge */}
+				<div className="relative w-2 h-2 ml-auto">
 					{/* Pulse ring: only renders for animated states, sits behind the dot */}
 					{statusInfo.animate && (
 						<span

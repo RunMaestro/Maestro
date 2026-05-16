@@ -298,6 +298,16 @@ export interface AgentConfigPanelProps {
 	showBuiltInEnvVars?: boolean;
 	// SSH remote execution enabled for this session
 	isSshEnabled?: boolean;
+	// === Claude Code Batch Mode (claude-code agent only) ===
+	// When true, the spawner auto-switches between maestro-p (Time Limits) and
+	// `claude --print` (API Limits) based on the latest usage snapshot. Off by default.
+	enableMaestroP?: boolean;
+	onEnableMaestroPChange?: (value: boolean) => void;
+	maestroPPath?: string;
+	onMaestroPPathChange?: (value: string) => void;
+	onMaestroPPathBlur?: () => void;
+	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
+	detectedMaestroPPath?: string;
 }
 
 export function AgentConfigPanel({
@@ -328,6 +338,12 @@ export function AgentConfigPanel({
 	compact = false,
 	showBuiltInEnvVars = false,
 	isSshEnabled = false,
+	enableMaestroP = false,
+	onEnableMaestroPChange,
+	maestroPPath = '',
+	onMaestroPPathChange,
+	onMaestroPPathBlur,
+	detectedMaestroPPath,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -446,6 +462,61 @@ export function AgentConfigPanel({
 						: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
 				</p>
 			</div>
+
+			{/* Batch Mode toggle — Claude Code only. When enabled, the spawner uses
+			    maestro-p to drive the Claude TUI against your Max plan ("Time Limits")
+			    and auto-falls back to `claude --print` ("API Limits") when the 5-hour
+			    or weekly quota hits 95%. Hidden over SSH — the wrapper needs the real
+			    claude binary on the local machine. */}
+			{agent.id === 'claude-code' && !isSshEnabled && onEnableMaestroPChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<label
+						className="block text-xs font-medium mb-2 flex items-center justify-between cursor-pointer select-none"
+						style={{ color: theme.colors.textDim }}
+					>
+						<span>Batch Mode</span>
+						<input
+							type="checkbox"
+							checked={enableMaestroP}
+							onChange={(e) => onEnableMaestroPChange(e.target.checked)}
+							onClick={(e) => e.stopPropagation()}
+							className="cursor-pointer"
+						/>
+					</label>
+					<p className="text-xs opacity-50">
+						Auto-switch between Time Limits (Max plan via maestro-p) and API Limits (
+						<code>claude --print</code>). Falls back to API at 95% quota.
+					</p>
+					{enableMaestroP && (
+						<div className="mt-3">
+							<label
+								className="block text-xs font-medium mb-2"
+								style={{ color: theme.colors.textDim }}
+							>
+								Maestro-P Path (optional)
+							</label>
+							<input
+								type="text"
+								value={maestroPPath}
+								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
+								onBlur={onMaestroPPathBlur}
+								onClick={(e) => e.stopPropagation()}
+								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								{detectedMaestroPPath
+									? `Auto-detected: ${detectedMaestroPPath}. Override only if you want a different build.`
+									: 'No bundled maestro-p found. Point this at a built copy or rebuild Maestro.'}
+							</p>
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Custom CLI arguments input */}
 			<div

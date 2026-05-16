@@ -14,13 +14,11 @@ import {
 	ChevronsLeft,
 	ChevronsRight,
 	X,
-	Zap,
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import type { ClaudeModeCyclePosition } from '../../hooks/agent/useClaudeInteractiveMode';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;
@@ -60,14 +58,6 @@ export interface AITabOverlayMenuProps {
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
-	/**
-	 * Current Claude headless-mode cycle position for the session. Only meaningful
-	 * for Claude Code tabs; absent for all other agent types (and the menu item
-	 * is hidden whenever `onCycleClaudeMode` is undefined).
-	 */
-	claudeMode?: ClaudeModeCyclePosition;
-	/** Click handler that advances the cycle one step. Presence gates the menu item. */
-	onCycleClaudeMode?: () => void;
 }
 
 /**
@@ -110,8 +100,6 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
-	claudeMode,
-	onCycleClaudeMode,
 }: AITabOverlayMenuProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
@@ -226,45 +214,6 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 						{tabShortcuts.toggleTabUnread && (
 							<ShortcutHint keys={tabShortcuts.toggleTabUnread.keys} />
 						)}
-					</button>
-				)}
-
-				{/* Claude headless-mode cycle — only for Claude Code tabs.
-				    Three states: auto (defer to global setting + auto-resolver),
-				    force interactive (pin to maestro-p / Max plan), force API
-				    (pin to claude --print / billed). Click advances the cycle. */}
-				{onCycleClaudeMode && claudeMode && (
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							onCycleClaudeMode();
-						}}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-						title={
-							claudeMode === 'auto'
-								? 'Claude mode: auto. Click to pin to interactive.'
-								: claudeMode === 'force-interactive'
-									? 'Claude mode: force interactive (Max plan). Click to pin to API.'
-									: 'Claude mode: force API (billed). Click to return to auto.'
-						}
-					>
-						<Zap
-							className="w-3.5 h-3.5"
-							style={{
-								color:
-									claudeMode === 'force-interactive'
-										? theme.colors.accent
-										: claudeMode === 'force-api'
-											? theme.colors.warning
-											: theme.colors.textDim,
-							}}
-						/>
-						{claudeMode === 'auto'
-							? 'Claude Mode: Auto'
-							: claudeMode === 'force-interactive'
-								? 'Claude Mode: Force Interactive'
-								: 'Claude Mode: Force API'}
 					</button>
 				)}
 

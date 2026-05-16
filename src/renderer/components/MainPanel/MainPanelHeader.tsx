@@ -20,7 +20,6 @@ import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { remoteUrlToBrowserUrl } from '../../../shared/gitUtils';
 import { GitStatusWidget } from '../GitStatusWidget';
-import { ClaudeModeBadge } from '../SessionList/ClaudeModeBadge';
 import { useHoverTooltip } from '../../hooks';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -30,6 +29,8 @@ import { openUrl } from '../../utils/openUrl';
 import { calculateDisplayInputTokens } from '../../utils/contextUsage';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { useClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import { formatRelativeTime } from '../../../shared/formatters';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -96,6 +97,19 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 
+	// Batch Mode usage limits (only meaningful for Claude Code sessions that
+	// have opted in). The snapshot is keyed by canonical CLAUDE_CONFIG_DIR;
+	// the spawner stamps the key onto `claudeInteractive.lastUsageSnapshotKey`
+	// on every spawn, so the popover always reads the same account the spawner
+	// is acting on.
+	const batchUsageSnapshot = useClaudeUsageSnapshot(
+		activeSession?.enableMaestroP
+			? activeSession.claudeInteractive?.lastUsageSnapshotKey
+			: undefined
+	);
+	const showBatchUsage =
+		!!activeSession?.enableMaestroP && activeSession?.toolType === 'claude-code';
+
 	const headerRef = useRef<HTMLDivElement>(null);
 	const gitTooltip = useHoverTooltip(150);
 	const contextTooltip = useHoverTooltip(150);
@@ -115,11 +129,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 					{/* Session name - hidden at narrow widths via CSS container query */}
 					{showAgentName && (
 						<span className="header-session-name truncate">{activeSession.name}</span>
-					)}
-					{/* Claude headless-mode badge: only renders for Claude Code sessions
-					    once their mode has been resolved at least once. */}
-					{activeSession.toolType === 'claude-code' && activeSession.claudeInteractive && (
-						<ClaudeModeBadge sessionId={activeSession.id} />
 					)}
 					{activeSession.bookmarked && (
 						<Bookmark
@@ -639,6 +648,87 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																{activeTabContextUsage}%
 															</span>
 														</div>
+													</div>
+												)}
+
+												{/* Batch Mode usage limits — only for Claude Code tabs that have
+												    opted into Batch Mode AND have a usage snapshot cached. */}
+												{showBatchUsage && batchUsageSnapshot && (
+													<div
+														className="border-t pt-2 mt-2"
+														style={{ borderColor: theme.colors.border }}
+													>
+														<div
+															className="text-[10px] uppercase font-bold mb-2"
+															style={{ color: theme.colors.textDim }}
+														>
+															Batch Mode
+														</div>
+														<div className="flex justify-between items-center mb-2">
+															<span className="text-xs" style={{ color: theme.colors.textDim }}>
+																Current
+															</span>
+															<span
+																className="text-xs font-mono font-bold"
+																style={{
+																	color:
+																		activeSession?.claudeInteractive?.mode === 'interactive'
+																			? (theme.colors.success ?? theme.colors.accent)
+																			: (theme.colors.warning ?? theme.colors.accent),
+																}}
+															>
+																{activeSession?.claudeInteractive?.mode === 'interactive'
+																	? 'Time Limits'
+																	: 'API Limits'}
+															</span>
+														</div>
+														{(['session', 'weekAllModels'] as const).map((key) => {
+															const window = batchUsageSnapshot[key];
+															const label = key === 'session' ? '5-hour' : 'Weekly';
+															const pct = Math.max(0, Math.min(100, window.percent));
+															const barColor =
+																pct >= 95
+																	? (theme.colors.error ?? theme.colors.warning)
+																	: pct >= 70
+																		? (theme.colors.warning ?? theme.colors.accent)
+																		: (theme.colors.success ?? theme.colors.accent);
+															return (
+																<div key={key} className="mb-2 last:mb-0">
+																	<div className="flex justify-between items-center mb-1">
+																		<span
+																			className="text-xs"
+																			style={{ color: theme.colors.textDim }}
+																		>
+																			{label}
+																		</span>
+																		<span
+																			className="text-xs font-mono"
+																			style={{ color: theme.colors.textMain }}
+																		>
+																			{pct.toFixed(0)}%
+																		</span>
+																	</div>
+																	<div
+																		className="h-1.5 rounded-full overflow-hidden"
+																		style={{ backgroundColor: theme.colors.border }}
+																	>
+																		<div
+																			className="h-full transition-all"
+																			style={{
+																				width: `${pct}%`,
+																				backgroundColor: barColor,
+																			}}
+																		/>
+																	</div>
+																	<div
+																		className="text-[10px] mt-0.5 text-right"
+																		style={{ color: theme.colors.textDim, opacity: 0.7 }}
+																	>
+																		Resets {formatRelativeTime(new Date(window.resetsAt).getTime())}
+																	</div>
+																</div>
+															);
+														})}
 													</div>
 												)}
 											</div>

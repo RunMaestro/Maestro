@@ -200,15 +200,21 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
 	const recentClaudeSessions = storedSessions.filter((s) => {
 		if (s?.toolType !== 'claude-code') return false;
+		// Only sample for sessions that have opted into Batch Mode — sampling
+		// `maestro-p --status` for an agent that will never spawn through it
+		// just burns latency on startup.
+		if (s?.enableMaestroP !== true) return false;
 		const createdAt = typeof s.createdAt === 'number' ? s.createdAt : null;
 		if (createdAt === null) return false;
 		return createdAt >= now - STARTUP_SESSION_WINDOW_MS;
 	});
 
 	if (recentClaudeSessions.length === 0) {
-		logger.info('Skipping startup usage sampling: no recent Claude Code sessions', LOG_CONTEXT, {
-			totalSessions: storedSessions.length,
-		});
+		logger.info(
+			'Skipping startup usage sampling: no recent Batch Mode-enabled Claude sessions',
+			LOG_CONTEXT,
+			{ totalSessions: storedSessions.length }
+		);
 		return;
 	}
 

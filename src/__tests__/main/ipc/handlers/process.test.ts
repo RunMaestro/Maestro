@@ -671,6 +671,46 @@ describe('process IPC handlers', () => {
 				})
 			);
 		});
+
+		// Batch Mode default-off: when `enableMaestroP` isn't set on the spawn
+		// config, the resolver is skipped entirely and API-mode args pass through.
+		// (Tests for the toggle-on path live in claude-mode-selector.test.ts and the
+		// integration story for the binary swap is exercised via manual QA — the
+		// swap depends on fs.existsSync + an actual snapshot which is awkward to
+		// stub at the IPC layer.)
+		describe('Batch Mode gating', () => {
+			const claudeCodeAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				command: 'claude',
+				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				apiCommand: 'claude',
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+				requiresPty: true,
+			};
+
+			it('leaves API-mode args intact when Batch Mode is off (default)', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4244, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'session-default',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.args).toContain('--print');
+				expect(spawnCall.args).toContain('--verbose');
+				expect(spawnCall.args).toContain('--output-format');
+				expect(spawnCall.args).toContain('stream-json');
+			});
+		});
 	});
 
 	describe('process:write', () => {

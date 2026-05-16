@@ -13,10 +13,6 @@
 import type Store from 'electron-store';
 
 import type { MaestroSettings } from '../types';
-import { logger } from '../../utils/logger';
-import { runClaudeCodeHeadlessModeAutoMigration } from './claudeCodeHeadlessModeAuto';
-
-const LOG_CONTEXT = '[SettingsMigrations]';
 
 /**
  * Run all registered settings-store migrations once. Safe to call on every
@@ -25,12 +21,6 @@ const LOG_CONTEXT = '[SettingsMigrations]';
  * Any migration that throws is logged at error and swallowed so a buggy
  * migration cannot block startup.
  */
-export function runSettingsMigrations(store: Store<MaestroSettings>): void {
-	try {
-		runClaudeCodeHeadlessModeAutoMigration(store);
-	} catch (err) {
-		logger.error('claudeCodeHeadlessModeAuto migration threw', LOG_CONTEXT, {
-			error: err instanceof Error ? err.message : String(err),
-		});
-	}
+export function runSettingsMigrations(_store: Store<MaestroSettings>): void {
+	// No migrations currently registered.
 }

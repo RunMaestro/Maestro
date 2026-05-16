@@ -160,7 +160,7 @@ import {
 } from './agents/claude-interactive-replay';
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
-import { getMaestroPBinPath } from './agents/claude-usage-startup';
+import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
@@ -671,6 +671,22 @@ app
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
 		}
+
+		// Fire-and-forget: sample `maestro-p --status` for every CLAUDE_CONFIG_DIR
+		// account referenced by a recent Batch Mode-enabled Claude session so the
+		// context-window popover has fresh quota data on first turn. Failures here
+		// are non-fatal — the spawner's resolver tolerates a null snapshot by
+		// defaulting to interactive, and the next sampler refresh will repopulate.
+		void runStartupUsageSampling({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		}).catch((err: unknown) => {
+			logger.warn('Startup Claude usage sampling failed', 'Startup', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({

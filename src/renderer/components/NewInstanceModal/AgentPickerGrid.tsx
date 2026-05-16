@@ -20,6 +20,9 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	customAgentPaths,
 	customAgentArgs,
 	customAgentEnvVars,
+	enableMaestroPByAgent,
+	maestroPPathByAgent,
+	detectedMaestroPPath,
 	agentConfigs,
 	availableModels,
 	loadingModels,
@@ -29,6 +32,8 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	onDismissDebug,
 	onCustomPathChange,
 	onCustomArgsChange,
+	onEnableMaestroPChange,
+	onMaestroPPathChange,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
 	onEnvVarRemove,
@@ -250,6 +255,22 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											onRefreshAgent={() => onRefreshAgent(agent.id)}
 											refreshingAgent={refreshingAgent === agent.id}
 											showBuiltInEnvVars
+											enableMaestroP={enableMaestroPByAgent?.[agent.id] ?? false}
+											onEnableMaestroPChange={
+												onEnableMaestroPChange
+													? (value) => onEnableMaestroPChange(agent.id, value)
+													: undefined
+											}
+											maestroPPath={maestroPPathByAgent?.[agent.id] ?? ''}
+											onMaestroPPathChange={
+												onMaestroPPathChange
+													? (value) => onMaestroPPathChange(agent.id, value)
+													: undefined
+											}
+											onMaestroPPathBlur={() => {
+												/* Saved on agent create */
+											}}
+											detectedMaestroPPath={detectedMaestroPPath}
 										/>
 									</div>
 								)}

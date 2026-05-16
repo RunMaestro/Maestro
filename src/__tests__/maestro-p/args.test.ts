@@ -174,6 +174,45 @@ describe('parseArgs', () => {
 			expect(warnSpy).toHaveBeenCalledTimes(1);
 			expect(warnSpy.mock.calls[0][0]).toMatch(/--verbose/);
 		});
+
+		// Regression: when Maestro forwards its API-mode claude args verbatim
+		// to a custom-path maestro-p (the opt-in route), the argv looks like
+		// `--print --verbose --output-format stream-json --dangerously-skip-permissions <prompt>`.
+		// Before the flag-guard in consumeValue(), --print greedily consumed
+		// --verbose as its prompt value and the real positional prompt was
+		// dropped into passthrough — the TUI then received "--verbose" as the
+		// user message.
+		it('does not consume a flag-looking next token as the prompt value for --print', () => {
+			const result = callArgs([
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+				'real prompt',
+			]);
+			expect(result.prompt).toBe('real prompt');
+			expect(result.passThroughArgs).toEqual(['--dangerously-skip-permissions']);
+			// --output-format is the STRIPPED branch (claude's API-mode flag), not
+			// --input-format, so streamJsonInput stays false here.
+			expect(result.streamJsonInput).toBe(false);
+			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
+			expect(messages).toMatch(/--print requires a value/);
+			expect(messages).toMatch(/--verbose/);
+			expect(messages).toMatch(/--output-format/);
+		});
+
+		it('does not consume a flag-looking next token as the prompt value for -p', () => {
+			const result = callArgs(['-p', '--verbose', 'real prompt']);
+			expect(result.prompt).toBe('real prompt');
+			const messages = warnSpy.mock.calls.map((c) => c[0]).join('\n');
+			expect(messages).toMatch(/-p requires a value/);
+		});
+
+		it('still accepts a flag-looking prompt via the inline form', () => {
+			const result = callArgs(['--prompt=--foo bar', '--dangerously-skip-permissions']);
+			expect(result.prompt).toBe('--foo bar');
+		});
 	});
 
 	describe('--max-wait', () => {

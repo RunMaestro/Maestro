@@ -3,9 +3,9 @@
  *
  * Singleton wrapper around an electron-store namespace that caches the latest
  * `maestro-p --status` snapshot per canonical `CLAUDE_CONFIG_DIR` account. The
- * mode selector consults these snapshots under `headlessMode === 'auto'` to
- * decide whether to fall back from interactive to API when the Max-plan
- * quota is exhausted.
+ * mode selector consults these snapshots whenever the per-agent Batch Mode
+ * toggle is on to decide whether to fall back from interactive (Time Limits)
+ * to API (API Limits) when the Max plan quota is exhausted.
  *
  * Snapshots auto-expire 24 hours after `sampledAt`. Pruning is opportunistic
  * (on read AND write) — no background timer — so the on-disk file stays clean

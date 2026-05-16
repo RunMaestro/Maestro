@@ -42,7 +42,9 @@ export interface AppSessionModalsProps {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -66,7 +68,9 @@ export interface AppSessionModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	editAgentSession: Session | null;
 

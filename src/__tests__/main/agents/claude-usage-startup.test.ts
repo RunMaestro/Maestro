@@ -123,6 +123,9 @@ function recentClaudeSession(overrides: Record<string, unknown> = {}): Record<st
 		cwd: '/var/projects/foo',
 		projectRoot: '/var/projects/foo',
 		createdAt: FROZEN_NOW - 60_000,
+		// Startup sampling now skips sessions without Batch Mode enabled. Every
+		// fixture session represents a Batch-Mode-opted-in agent by default.
+		enableMaestroP: true,
 		...overrides,
 	};
 }
@@ -188,7 +191,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 			expect(loggerInfoMock).toHaveBeenCalledWith(
-				expect.stringContaining('no recent Claude Code sessions'),
+				expect.stringContaining('no recent Batch Mode-enabled Claude sessions'),
 				expect.any(String),
 				expect.any(Object)
 			);
@@ -211,7 +214,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 			expect(loggerInfoMock).toHaveBeenCalledWith(
-				expect.stringContaining('no recent Claude Code sessions'),
+				expect.stringContaining('no recent Batch Mode-enabled Claude sessions'),
 				expect.any(String),
 				expect.any(Object)
 			);

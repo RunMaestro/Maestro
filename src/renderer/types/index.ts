@@ -811,19 +811,22 @@ export interface Session {
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
 
-	// Claude Code interactive-mode state (only set for Claude Code sessions).
-	// `mode` is the resolved spawn mode for the next turn: `interactive` swaps in
-	// maestro-p driving the Claude TUI (preserves Max plan quota); `api` runs
-	// `claude --print` (billed via API).
-	// `modeReason` records why the current mode was chosen so the selector can
-	// distinguish a manual per-tab pin (`user`) from an auto-mode default
-	// (`auto`) or an auto-fallback after hitting a quota wall (`limit`).
-	// `lastUsageSnapshotKey` is the canonical `CLAUDE_CONFIG_DIR` key whose
-	// snapshot was consulted when this state was last resolved — written by the
-	// renderer mirror of `process:claude-mode-resolved`.
+	// Per-session Batch Mode opt-in (Claude Code only). When true, the spawner
+	// auto-switches between maestro-p (Time Limits / Max plan) and `claude
+	// --print` (API Limits / per-token) based on the latest usage snapshot.
+	enableMaestroP?: boolean;
+	// Optional override for the maestro-p binary path. When empty/undefined,
+	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
+	// in packaged builds, `dist/cli/maestro-p.js` in dev).
+	maestroPPath?: string;
+
+	// Last resolved Claude headless-mode state (only meaningful for Claude Code
+	// sessions with `enableMaestroP === true`). The spawner writes this after
+	// each `selectMode()` call so the context-window popover, sticky-limit
+	// logic, and reactive replay all read from a single source of truth.
 	claudeInteractive?: {
 		mode: 'interactive' | 'api';
-		modeReason: 'user' | 'auto' | 'limit';
+		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
 	};
 }

@@ -107,7 +107,9 @@ export interface AppModalsProps {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
@@ -128,7 +130,9 @@ export interface AppModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;

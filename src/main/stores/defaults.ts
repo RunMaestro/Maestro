@@ -82,16 +82,6 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTaperStart: 0,
 	annotatorTaperEnd: 0,
 	globalShowHotkey: [],
-	claudeCode: {
-		// Default `'auto'` (phase 3): try the interactive TUI (maestro-p) first to
-		// preserve the user's Claude Max plan quota, and transparently fall back to
-		// `claude --print` (API billing) when the quota is exhausted. Phase 2 shipped
-		// `'api'` for parity with prior behavior; phase 3 flips the switch. Users who
-		// previously chose `'api'` or `'interactive'` explicitly keep their choice via
-		// the headless-mode migration in `migrations/claudeCodeHeadlessModeAuto.ts`.
-		headlessMode: 'auto',
-		autoFallbackToApiOnLimit: true,
-	},
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

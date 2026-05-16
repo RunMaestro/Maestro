@@ -287,7 +287,7 @@ interface MaestroAPI {
 				sessionId: string,
 				resolution: {
 					mode: 'interactive' | 'api';
-					reason: 'user' | 'auto' | 'limit';
+					reason: 'auto' | 'limit';
 					configDirKey: string;
 				}
 			) => void
@@ -995,11 +995,7 @@ interface MaestroAPI {
 			customPath?: string,
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
-		setClaudeInteractiveMode: (
-			sessionId: string,
-			mode: 'interactive' | 'api',
-			modeReason: 'user' | 'auto' | 'limit'
-		) => Promise<boolean>;
+		getMaestroPDetectedPath: () => Promise<string | null>;
 		getClaudeUsageSnapshots: () => Promise<
 			Record<
 				string,

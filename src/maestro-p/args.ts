@@ -30,6 +30,19 @@
 // that consumption. Short flags (`-x`) are assumed to be booleans (claude's
 // short-flag surface is small and bool-only). Users wanting to disambiguate
 // should reach for `-p / --prompt` explicitly.
+//
+// Flag-guard for value-taking maestro-p flags
+// -------------------------------------------
+// `consumeValue()` (used by `-p`/`--print`/`--prompt`, `--max-wait`, and
+// `--input-format`) refuses to swallow a next-slot token that itself starts
+// with `-`. This is what protects the opt-in maestro-p route: when a user
+// points their Claude Code custom path at `maestro-p`, Maestro spawns it with
+// the full API-mode arg sequence `--print --verbose --output-format
+// stream-json --dangerously-skip-permissions <prompt>` — and without the
+// guard, `--print` greedily eats `--verbose` as its prompt value, the real
+// prompt sloshes into passthrough, and the TUI types "--verbose" as the
+// user message. Callers that genuinely need a flag-looking value must use
+// the inline form (`--prompt=--foo`).
 
 import fs from 'fs';
 
@@ -126,11 +139,22 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		// Pull a value for value-taking flags: prefer the inline `--flag=value`
 		// form, otherwise consume the next argv slot. Returns undefined if
 		// neither is present.
+		//
+		// Flag-guard: refuse to swallow a next-slot token that itself looks
+		// like a flag (`-x` / `--foo`). When Maestro forwards its API-mode
+		// claude args verbatim to a custom-path maestro-p (the opt-in route),
+		// the argv looks like `--print --verbose --output-format stream-json
+		// … <prompt>`. Without this guard, `--print` greedily consumes
+		// `--verbose` as its prompt value and the real positional prompt
+		// gets dropped into passthrough. Callers that legitimately need a
+		// flag-looking value must use the inline `--flag=value` form.
 		const consumeValue = (): string | undefined => {
 			if (inlineValue !== undefined) return inlineValue;
 			if (i + 1 >= argv.length) return undefined;
+			const next = argv[i + 1];
+			if (next.startsWith('-') && next.length > 1) return undefined;
 			i += 1;
-			return argv[i];
+			return next;
 		};
 
 		if (flag === '--status') {

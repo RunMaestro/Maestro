@@ -3,7 +3,7 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentConfigsData, SessionsData, StoredSession } from '../../stores/types';
+import type { AgentConfigsData, SessionsData } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -28,7 +28,7 @@ import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
-import { runStartupUsageSampling } from '../../agents/claude-usage-startup';
+import { runStartupUsageSampling, getMaestroPBinPath } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -261,9 +261,10 @@ export interface AgentsHandlerDependencies {
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
 	/**
-	 * Sessions store — required for `agents:setClaudeInteractiveMode` to persist
-	 * per-tab Claude headless-mode overrides. Optional so registration doesn't
-	 * break for legacy boot paths that wire only the read-only handlers.
+	 * Sessions store — required for handlers that need to read or persist
+	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
+	 * specific tab). Optional so registration doesn't break for legacy boot
+	 * paths that wire only the read-only handlers.
 	 */
 	sessionsStore?: Store<SessionsData>;
 }
@@ -1453,78 +1454,17 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Persist a per-tab Claude headless-mode override (used by the AI tab overlay
-	// menu's force-interactive / force-API / auto cycle). The spawner reads this
-	// block via `sessionsStore.get('sessions')` on the next `process:spawn`, so
-	// the renderer is responsible for killing the live process — this handler
-	// just writes the state through.
+	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
+	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
+	// Returns null when no bundled script can be located — usually means the user
+	// is running a dev build without `npm run build` having produced
+	// `dist/cli/maestro-p.js`.
 	ipcMain.handle(
-		'agents:setClaudeInteractiveMode',
+		'agents:getMaestroPDetectedPath',
 		withIpcErrorLogging(
-			handlerOpts('setClaudeInteractiveMode'),
-			async (
-				sessionId: string,
-				mode: 'interactive' | 'api',
-				modeReason: 'user' | 'auto' | 'limit'
-			): Promise<boolean> => {
-				if (mode !== 'interactive' && mode !== 'api') {
-					throw new Error(`Invalid mode: ${mode}`);
-				}
-				if (modeReason !== 'user' && modeReason !== 'auto' && modeReason !== 'limit') {
-					throw new Error(`Invalid modeReason: ${modeReason}`);
-				}
-
-				if (!sessionsStore) {
-					logger.warn(
-						`Sessions store unavailable; cannot persist Claude interactive mode for ${sessionId}`,
-						LOG_CONTEXT
-					);
-					return false;
-				}
-
-				const sessions = sessionsStore.get('sessions', []) as StoredSession[];
-				const idx = sessions.findIndex((s) => s.id === sessionId);
-				if (idx === -1) {
-					logger.warn(`Session not found for setClaudeInteractiveMode: ${sessionId}`, LOG_CONTEXT);
-					return false;
-				}
-
-				const current = sessions[idx].claudeInteractive as
-					| { mode?: string; modeReason?: string; lastUsageSnapshotKey?: string }
-					| undefined;
-				if (current && current.mode === mode && current.modeReason === modeReason) {
-					return true;
-				}
-
-				const next: StoredSession = {
-					...sessions[idx],
-					claudeInteractive: {
-						mode,
-						modeReason,
-						// Preserve the last resolved usage snapshot key so the next spawn's
-						// auto-resolver doesn't lose its anchor when the user cycles modes.
-						...(current?.lastUsageSnapshotKey
-							? { lastUsageSnapshotKey: current.lastUsageSnapshotKey }
-							: {}),
-					},
-				};
-				const updated = [...sessions];
-				updated[idx] = next;
-
-				try {
-					sessionsStore.set('sessions', updated);
-				} catch (err) {
-					logger.error(`Failed to persist Claude interactive mode for ${sessionId}`, LOG_CONTEXT, {
-						error: String(err),
-					});
-					return false;
-				}
-
-				logger.info(
-					`Updated Claude interactive mode for ${sessionId}: ${mode} (${modeReason})`,
-					LOG_CONTEXT
-				);
-				return true;
+			handlerOpts('getMaestroPDetectedPath'),
+			async (): Promise<string | null> => {
+				return getMaestroPBinPath();
 			}
 		)
 	);

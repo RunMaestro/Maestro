@@ -330,7 +330,7 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
-		setClaudeInteractiveMode: vi.fn().mockResolvedValue(true),
+		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},

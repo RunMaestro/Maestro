@@ -86,11 +86,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
-		// Claude headless mode (maestro-p)
-		claudeCodeHeadlessMode,
-		setClaudeCodeHeadlessMode,
-		claudeCodeAutoFallbackToApiOnLimit,
-		setClaudeCodeAutoFallbackToApiOnLimit,
 		// Spell check
 		spellCheck,
 		setSpellCheck,
@@ -934,15 +929,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					/>
 				</div>
 			</div>
-
-			{/* Claude Interactive Mode (maestro-p headless mode + Max plan snapshots) */}
-			<ClaudeInteractiveModeSection
-				theme={theme}
-				headlessMode={claudeCodeHeadlessMode}
-				onHeadlessModeChange={setClaudeCodeHeadlessMode}
-				autoFallbackToApiOnLimit={claudeCodeAutoFallbackToApiOnLimit}
-				onAutoFallbackToApiOnLimitChange={setClaudeCodeAutoFallbackToApiOnLimit}
-			/>
 
 			{/* Tab Behavior */}
 			<div data-setting-id="general-tab-behavior">

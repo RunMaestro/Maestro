@@ -302,7 +302,7 @@ export function createProcessApi() {
 				sessionId: string,
 				resolution: {
 					mode: 'interactive' | 'api';
-					reason: 'user' | 'auto' | 'limit';
+					reason: 'auto' | 'limit';
 					configDirKey: string;
 				}
 			) => void
@@ -312,7 +312,7 @@ export function createProcessApi() {
 				sessionId: string,
 				resolution: {
 					mode: 'interactive' | 'api';
-					reason: 'user' | 'auto' | 'limit';
+					reason: 'auto' | 'limit';
 					configDirKey: string;
 				}
 			) => callback(sessionId, resolution);

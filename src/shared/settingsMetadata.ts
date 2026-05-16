@@ -620,22 +620,6 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'file-indexing',
 	},
 
-	// --- Claude headless mode (maestro-p) ---
-	'claudeCode.headlessMode': {
-		description:
-			"Claude headless mode. `api` runs Claude with --print (billed via API). `interactive` runs maestro-p, which drives Claude's TUI to preserve your Max plan quota. `auto` tries interactive first and falls back to api when limits are hit. Allowed values: interactive, api, auto.",
-		type: 'string',
-		default: 'auto',
-		category: 'advanced',
-	},
-	'claudeCode.autoFallbackToApiOnLimit': {
-		description:
-			'Auto-fall back to API when Claude limits hit. When `auto` mode is active and the Claude Max quota is exhausted, transparently switch the next turn to API mode.',
-		type: 'boolean',
-		default: true,
-		category: 'advanced',
-	},
-
 	// --- Auto Run ---
 	autoRunDisabled: {
 		description:

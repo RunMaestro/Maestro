@@ -18,8 +18,17 @@ import { memo, useCallback, useMemo } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
-import { deriveAccountShortName } from '../SessionList/ClaudeModeBadge';
 import { formatRelativeTime } from '../../../shared/formatters';
+
+function deriveAccountShortName(configDirKey: string | undefined): string {
+	if (!configDirKey) return 'default';
+	const trimmed = configDirKey.replace(/\/+$/, '');
+	const basename = trimmed.slice(trimmed.lastIndexOf('/') + 1);
+	if (!basename || basename === '.claude') return 'default';
+	if (basename.startsWith('.claude-')) return basename.slice('.claude-'.length);
+	if (basename.startsWith('.claude')) return basename.slice('.claude'.length) || 'default';
+	return basename;
+}
 
 interface ClaudePlanUsageProps {
 	theme: Theme;

@@ -3,8 +3,8 @@
  *
  * Wraps a `maestro-p --status` spawn into a swallow-everything async function
  * that returns a `UsageSnapshot` (the camelCase store shape) or `null` on any
- * failure. The mode selector consults the snapshot under
- * `headlessMode === 'auto'`; the snapshot store caches it per canonical
+ * failure. The mode selector consults the snapshot whenever the per-agent
+ * Batch Mode toggle is on; the snapshot store caches it per canonical
  * `CLAUDE_CONFIG_DIR` key.
  *
  * Design choices baked in:

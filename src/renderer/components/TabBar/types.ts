@@ -1,5 +1,4 @@
 import type { AITab, Theme, UnifiedTab } from '../../types';
-import type { ClaudeModeCyclePosition } from '../../hooks/agent/useClaudeInteractiveMode';
 
 export interface TabBarProps {
 	tabs: AITab[];
@@ -96,14 +95,4 @@ export interface TabBarProps {
 
 	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
 	sshRemote?: boolean;
-
-	// === Claude Headless-Mode Toggle (Phase 2: maestro-p integration) ===
-	/**
-	 * Current Claude headless-mode cycle position. Only meaningful for Claude
-	 * Code tabs; absent for all other agent types. When `onCycleClaudeMode`
-	 * is undefined, the overlay menu hides the toggle entirely.
-	 */
-	claudeMode?: ClaudeModeCyclePosition;
-	/** Cycle handler — advances `auto → force-interactive → force-api → auto`. */
-	onCycleClaudeMode?: () => void;
 }

@@ -36,7 +36,7 @@ import {
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
 import type { SettingsStore } from '../../stores/settingsStore';
-import type { ClaudeHeadlessMode, DocumentGraphLayoutType } from '../../stores/settingsStore';
+import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
@@ -413,12 +413,6 @@ export interface UseSettingsReturn {
 	// Spell check
 	spellCheck: boolean;
 	setSpellCheck: (value: boolean) => void;
-
-	// Claude headless mode (maestro-p) — see ClaudeHeadlessMode for the union.
-	claudeCodeHeadlessMode: ClaudeHeadlessMode;
-	setClaudeCodeHeadlessMode: (value: ClaudeHeadlessMode) => void;
-	claudeCodeAutoFallbackToApiOnLimit: boolean;
-	setClaudeCodeAutoFallbackToApiOnLimit: (value: boolean) => void;
 }
 
 // PERF: Identity selector reused across renders so the hook doesn't allocate a new

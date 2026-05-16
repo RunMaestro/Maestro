@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
 import * as os from 'os';
+import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
@@ -9,6 +10,12 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
+import { selectMode } from '../../agents/claude-mode-selector';
+import { getMaestroPBinPath } from '../../agents/claude-usage-startup';
+import {
+	getSnapshot as getUsageSnapshot,
+	resolveConfigDirKey,
+} from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb, captureException } from '../../utils/sentry';
@@ -140,6 +147,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Batch Mode (Claude Code only). When true and a maestro-p binary resolves,
+				// the spawner picks between maestro-p (Time Limits / Max plan) and
+				// claude --print (API Limits) based on the latest usage snapshot.
+				enableMaestroP?: boolean;
+				// Optional override for the maestro-p binary path. When unset/empty, the
+				// spawner falls back to the bundled `getMaestroPBinPath()` script.
+				maestroPPath?: string;
 				// System prompt delivery (separate from user message for token efficiency)
 				appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
 				// Stats tracking options
@@ -185,11 +199,94 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						: null,
 				});
-				// Claude Code's `maestro-p` interactive wrapper is opt-in only: users who
-				// want it set their Claude Code custom path to point at `maestro-p` directly.
-				// Maestro never auto-routes claude spawns through it.
+				// Claude Code's `maestro-p` interactive wrapper is opt-in per-session via
+				// the Batch Mode toggle in AgentConfigPanel. When the toggle is on AND a
+				// maestro-p binary resolves (per-session override OR bundled auto-detect),
+				// the auto-resolver picks between maestro-p (interactive / Time Limits)
+				// and `claude --print` (api / API Limits) based on the latest usage
+				// snapshot. When the toggle is off, the spawner stays on the api path
+				// regardless of usage state. SSH-enabled tabs always skip interactive —
+				// the wrapper needs the real claude binary on the local machine.
+				let claudeResolvedMode: 'interactive' | 'api' = 'api';
+				let claudeResolvedReason: 'auto' | 'limit' = 'auto';
+				let resolvedMaestroPBinPath: string | null = null;
+				let resolvedConfigDirKey: string | undefined;
+				const isClaudeCode =
+					agent?.id === 'claude-code' &&
+					!!agent?.interactiveCommand &&
+					!!agent?.interactiveModeArgs;
+				const isSshEnabled = !!config.sessionSshRemoteConfig?.enabled;
+				if (isClaudeCode && config.enableMaestroP && !isSshEnabled) {
+					const candidate =
+						(config.maestroPPath && config.maestroPPath.trim()) || getMaestroPBinPath();
+					if (candidate && fs.existsSync(candidate)) {
+						resolvedMaestroPBinPath = candidate;
+
+						// Look up the per-session usage snapshot under its CLAUDE_CONFIG_DIR.
+						// Build a minimal env that mirrors the spawn env precedence
+						// (session > agent defaults > process.env).
+						const claudeEnvForKey: NodeJS.ProcessEnv = {
+							...(process.env as NodeJS.ProcessEnv),
+							...(agent?.defaultEnvVars ?? {}),
+							...(config.sessionCustomEnvVars ?? {}),
+						};
+						resolvedConfigDirKey = resolveConfigDirKey(claudeEnvForKey);
+						const snapshot = getUsageSnapshot(resolvedConfigDirKey);
+
+						const persistedSessions = deps.sessionsStore.get('sessions', []) as Array<{
+							id?: string;
+							claudeInteractive?: {
+								mode?: 'interactive' | 'api';
+								modeReason?: 'auto' | 'limit';
+							};
+						}>;
+						const perTab = persistedSessions.find(
+							(s) => s?.id === config.sessionId
+						)?.claudeInteractive;
+						const decision = selectMode({
+							perTabReason: perTab?.modeReason === 'limit' ? 'limit' : 'auto',
+							usageSnapshot: snapshot,
+							now: new Date(),
+						});
+						claudeResolvedMode = decision.mode;
+						claudeResolvedReason = decision.reason;
+					} else {
+						logger.warn(
+							'Batch Mode enabled but no maestro-p binary found — falling back to API mode',
+							LOG_CONTEXT,
+							{ sessionId: config.sessionId, override: config.maestroPPath }
+						);
+					}
+				}
+
+				// Pick the binary and arg list based on the resolved mode. Interactive
+				// uses maestro-p (a Node script) invoked through `process.execPath`, so
+				// the OS shebang is irrelevant and the script's basename never has to
+				// be on `$PATH`. API mode stays on the original command/args.
+				let effectiveCommand = config.command;
+				let effectiveSessionCustomPath: string | undefined = config.sessionCustomPath;
+				let baseArgsForSpawn = config.args;
+				let claudeRealBinPath: string | undefined;
+				if (
+					claudeResolvedMode === 'interactive' &&
+					resolvedMaestroPBinPath &&
+					agent?.interactiveModeArgs
+				) {
+					// Preserve the original claude path so maestro-p can find the TUI binary.
+					claudeRealBinPath = config.sessionCustomPath || config.command;
+					effectiveCommand = process.execPath;
+					effectiveSessionCustomPath = undefined;
+					baseArgsForSpawn = [resolvedMaestroPBinPath, ...agent.interactiveModeArgs];
+					logger.debug('Spawning Claude Code in interactive mode (maestro-p)', LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						maestroPBin: resolvedMaestroPBinPath,
+						claudeRealBin: claudeRealBinPath,
+						configDirKey: resolvedConfigDirKey,
+					});
+				}
+
 				let finalArgs = buildAgentArgs(agent, {
-					baseArgs: config.args,
+					baseArgs: baseArgsForSpawn,
 					prompt: config.prompt,
 					cwd: config.cwd,
 					readOnlyMode: config.readOnlyMode,
@@ -464,17 +561,84 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// so PATH and other environment variables are available. This ensures cross-platform
 				// compatibility and correct agent behavior.
 				// ========================================================================
-				let commandToSpawn = config.sessionCustomPath || config.command;
+				let commandToSpawn = effectiveSessionCustomPath || effectiveCommand;
 				let argsToSpawn = finalArgs;
 				let useShell = false;
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 				let sshStdinScript: string | undefined;
 
-				if (config.sessionCustomPath) {
+				// When interactive mode resolved, thread the underlying claude binary
+				// through `MAESTRO_CLAUDE_BIN` so maestro-p knows which TUI to drive.
+				if (claudeRealBinPath) {
+					customEnvVarsToPass = {
+						...(customEnvVarsToPass ?? {}),
+						MAESTRO_CLAUDE_BIN: claudeRealBinPath,
+					};
+				}
+
+				// Persist the resolved Claude headless-mode state back to the session
+				// record and notify the renderer. Skip when Batch Mode is off (we don't
+				// want to clobber prior state for tabs that just lost their toggle —
+				// the renderer hides the popover row anyway when `enableMaestroP` is
+				// false, so stale state is harmless).
+				if (isClaudeCode && config.enableMaestroP && resolvedConfigDirKey) {
+					try {
+						const allSessions = deps.sessionsStore.get('sessions', []) as Array<
+							Record<string, unknown>
+						>;
+						let mutated = false;
+						const nextSessions = allSessions.map((s) => {
+							if (s?.id !== config.sessionId) return s;
+							const current = s.claudeInteractive as
+								| {
+										mode?: string;
+										modeReason?: string;
+										lastUsageSnapshotKey?: string;
+								  }
+								| undefined;
+							if (
+								current?.mode === claudeResolvedMode &&
+								current?.modeReason === claudeResolvedReason &&
+								current?.lastUsageSnapshotKey === resolvedConfigDirKey
+							) {
+								return s;
+							}
+							mutated = true;
+							return {
+								...s,
+								claudeInteractive: {
+									mode: claudeResolvedMode,
+									modeReason: claudeResolvedReason,
+									lastUsageSnapshotKey: resolvedConfigDirKey,
+								},
+							};
+						});
+						if (mutated) {
+							deps.sessionsStore.set('sessions', nextSessions);
+						}
+					} catch (err) {
+						logger.warn('Failed to persist resolved Claude mode', LOG_CONTEXT, {
+							sessionId: config.sessionId,
+							error: err instanceof Error ? err.message : String(err),
+						});
+					}
+
+					// Mirror to the renderer so the popover updates without a refetch.
+					const mainWindow = getMainWindow();
+					if (mainWindow && isWebContentsAvailable(mainWindow)) {
+						mainWindow.webContents.send('process:claude-mode-resolved', config.sessionId, {
+							mode: claudeResolvedMode,
+							reason: claudeResolvedReason,
+							configDirKey: resolvedConfigDirKey,
+						});
+					}
+				}
+
+				if (effectiveSessionCustomPath) {
 					logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
-						customPath: config.sessionCustomPath,
-						originalCommand: config.command,
+						customPath: effectiveSessionCustomPath,
+						originalCommand: effectiveCommand,
 					});
 				}
 
@@ -702,6 +866,87 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						sshRemoteName: sshRemoteUsed.name,
 					}),
 				});
+
+				// Arm the interactive-mode replay controller when this turn ran
+				// through maestro-p. If the wrapper exits with code 2 (Max-plan
+				// quota hit mid-turn), the controller re-spawns the same prompt
+				// under `claude --print` so the user sees one continuous response
+				// after a single visible mode switch.
+				if (
+					claudeResolvedMode === 'interactive' &&
+					resolvedMaestroPBinPath &&
+					resolvedConfigDirKey &&
+					deps.interactiveReplayController &&
+					agent
+				) {
+					const replayPrompt = config.prompt ?? '';
+					const originalConfig = config;
+					const originalAgent = agent;
+					const originalEffectivePrompt = effectivePrompt;
+					const originalCustomEnvVars = effectiveCustomEnvVars;
+					const originalContextWindow = contextWindow;
+
+					deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
+						configDirKey: resolvedConfigDirKey,
+						prompt: replayPrompt,
+						buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
+							// Pull the freshest agentSessionId for this session/tab off the
+							// sessions store — maestro-p's session-id watcher may have stamped
+							// one between spawn and exit.
+							let freshAgentSessionId: string | undefined = originalConfig.agentSessionId;
+							try {
+								const sessions = deps.sessionsStore.get('sessions', []) as Array<{
+									id?: string;
+									aiTabs?: Array<{ id?: string; agentSessionId?: string | null }>;
+								}>;
+								const ownerSession = sessions.find((s) => s?.id === originalConfig.sessionId);
+								const targetTab = ownerSession?.aiTabs?.find((t) => t?.id === originalConfig.tabId);
+								if (targetTab?.agentSessionId) {
+									freshAgentSessionId = targetTab.agentSessionId;
+								}
+							} catch {
+								// Best-effort: stale agentSessionId is fine; resume will fall back to a new session.
+							}
+
+							const apiArgs = buildAgentArgs(originalAgent, {
+								baseArgs: originalAgent.apiModeArgs ?? originalConfig.args,
+								prompt,
+								cwd: originalConfig.cwd,
+								readOnlyMode: originalConfig.readOnlyMode,
+								modelId: originalConfig.modelId,
+								yoloMode: originalConfig.yoloMode,
+								agentSessionId: freshAgentSessionId,
+							});
+
+							const replayEnv = originalCustomEnvVars ? { ...originalCustomEnvVars } : undefined;
+							if (replayEnv) {
+								delete replayEnv.MAESTRO_CLAUDE_BIN;
+							}
+
+							const apiCommand = originalAgent.apiCommand ?? 'claude';
+							const apiCommandToSpawn = originalConfig.sessionCustomPath || apiCommand;
+
+							return {
+								sessionId: originalConfig.sessionId,
+								toolType: originalConfig.toolType,
+								cwd: originalConfig.cwd,
+								command: apiCommandToSpawn,
+								args: apiArgs,
+								prompt: originalEffectivePrompt,
+								requiresPty: originalAgent.requiresPty,
+								contextWindow: originalContextWindow,
+								customEnvVars: replayEnv,
+								imageArgs: originalAgent.imageArgs,
+								imagePromptBuilder: originalAgent.imagePromptBuilder,
+								promptArgs: originalAgent.promptArgs,
+								noPromptSeparator: originalAgent.noPromptSeparator,
+								projectPath: originalConfig.cwd,
+								querySource: originalConfig.querySource,
+								tabId: originalConfig.tabId,
+							};
+						},
+					});
+				}
 
 				// Temp file cleanup is scheduled at creation time (30s safety net)
 				// so it's cleaned up even if spawn fails above.

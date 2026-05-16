@@ -57,14 +57,14 @@ export interface InteractiveReplayContext<TSpawnConfig> {
 /** State mutation written through to the persistent session record. */
 export interface SessionInteractiveUpdate {
 	mode: 'interactive' | 'api';
-	modeReason: 'user' | 'auto' | 'limit';
+	modeReason: 'auto' | 'limit';
 	lastUsageSnapshotKey: string;
 }
 
 /** Payload re-emitted on `process:claude-mode-resolved` after the fallback. */
 export interface ResolvedResolution {
 	mode: 'interactive' | 'api';
-	reason: 'user' | 'auto' | 'limit';
+	reason: 'auto' | 'limit';
 	configDirKey: string;
 }
 

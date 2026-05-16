@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 
 import {
 	getDefaultShell,
@@ -148,10 +148,6 @@ describe('stores/defaults', () => {
 
 		it('should have null installationId by default', () => {
 			expect(SETTINGS_DEFAULTS.installationId).toBeNull();
-		});
-
-		it("should have 'auto' as claudeCode.headlessMode default (phase 3 flip)", () => {
-			expect(SETTINGS_DEFAULTS.claudeCode.headlessMode).toBe('auto');
 		});
 	});
 
