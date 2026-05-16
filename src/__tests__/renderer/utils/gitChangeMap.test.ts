@@ -7,36 +7,35 @@ import {
 import type { GitFileChange } from '../../../renderer/hooks';
 
 describe('classifyGitStatus', () => {
+	// `useGitStatusPolling` stores `file.status.trim()` on GitFileChange, so the
+	// trimmed forms below are what callers see in production. The function also
+	// accepts the raw 2-char porcelain codes (covered separately below).
 	it('maps untracked files to added', () => {
 		expect(classifyGitStatus('??')).toBe('added');
 	});
 
-	it('maps modified-in-worktree to modified', () => {
-		expect(classifyGitStatus(' M')).toBe('modified');
+	it('maps modified-in-worktree (trimmed " M" → "M") to modified', () => {
+		expect(classifyGitStatus('M')).toBe('modified');
 	});
 
-	it('maps modified-in-index to modified', () => {
-		expect(classifyGitStatus('M ')).toBe('modified');
+	it('maps modified-in-index ("M") to modified', () => {
+		expect(classifyGitStatus('M')).toBe('modified');
 	});
 
-	it('maps added-in-index to added', () => {
-		expect(classifyGitStatus('A ')).toBe('added');
+	it('maps added-in-index (trimmed "A " → "A") to added', () => {
+		expect(classifyGitStatus('A')).toBe('added');
 	});
 
-	it('maps deleted-in-worktree to deleted', () => {
-		expect(classifyGitStatus(' D')).toBe('deleted');
+	it('maps deleted-in-worktree (trimmed " D" → "D") to deleted', () => {
+		expect(classifyGitStatus('D')).toBe('deleted');
 	});
 
-	it('maps deleted-in-index to deleted', () => {
-		expect(classifyGitStatus('D ')).toBe('deleted');
-	});
-
-	it('treats added-then-deleted as deleted (file is gone on disk)', () => {
+	it('treats added-then-deleted ("AD") as deleted (file is gone on disk)', () => {
 		expect(classifyGitStatus('AD')).toBe('deleted');
 	});
 
-	it('treats renamed as modified', () => {
-		expect(classifyGitStatus('R ')).toBe('modified');
+	it('treats renamed (trimmed "R " → "R") as modified', () => {
+		expect(classifyGitStatus('R')).toBe('modified');
 	});
 
 	it('treats merge conflicts (UU) as modified', () => {
@@ -45,6 +44,16 @@ describe('classifyGitStatus', () => {
 
 	it('falls back to modified for unknown codes', () => {
 		expect(classifyGitStatus('XY')).toBe('modified');
+	});
+
+	it('accepts raw untrimmed porcelain codes the same as trimmed ones', () => {
+		// Defensive: callers shouldn't need to remember whether their producer
+		// trimmed the status; both forms classify identically.
+		expect(classifyGitStatus(' M')).toBe('modified');
+		expect(classifyGitStatus('M ')).toBe('modified');
+		expect(classifyGitStatus(' D')).toBe('deleted');
+		expect(classifyGitStatus('A ')).toBe('added');
+		expect(classifyGitStatus(' ??')).toBe('added');
 	});
 });
 
@@ -65,11 +74,11 @@ describe('buildFileChangeMap', () => {
 		expect(buildFileChangeMap([]).size).toBe(0);
 	});
 
-	it('keys by full relative path and classifies each entry', () => {
+	it('keys by full relative path and classifies each entry (trimmed codes as produced by useGitStatusPolling)', () => {
 		const map = buildFileChangeMap([
-			mkChange('src/index.ts', ' M'),
+			mkChange('src/index.ts', 'M'),
 			mkChange('README.md', '??'),
-			mkChange('old.txt', ' D'),
+			mkChange('old.txt', 'D'),
 		]);
 		expect(map.get('src/index.ts')).toBe('modified');
 		expect(map.get('README.md')).toBe('added');
@@ -78,7 +87,7 @@ describe('buildFileChangeMap', () => {
 	});
 
 	it('skips entries with empty paths', () => {
-		expect(buildFileChangeMap([mkChange('', ' M')]).size).toBe(0);
+		expect(buildFileChangeMap([mkChange('', 'M')]).size).toBe(0);
 	});
 });
 

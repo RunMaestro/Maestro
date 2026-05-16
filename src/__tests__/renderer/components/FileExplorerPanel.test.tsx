@@ -1261,8 +1261,10 @@ describe('FileExplorerPanel', () => {
 		const findIndicator = (row: HTMLElement | undefined) =>
 			row?.querySelector('[data-testid="git-change-indicator"]') as HTMLElement | undefined;
 
-		it('renders a change indicator for modified files (porcelain " M")', () => {
-			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+		it('renders a change indicator for modified files (trimmed porcelain "M")', () => {
+			// `useGitStatusPolling` stores trimmed status codes, so production
+			// values look like `"M"` rather than `" M"`. We match that here.
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const indicator = findIndicator(findRowFor(container, 'package.json'));
@@ -1280,8 +1282,8 @@ describe('FileExplorerPanel', () => {
 			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.success });
 		});
 
-		it('renders a change indicator for deleted files (porcelain " D")', () => {
-			mockFileChanges = [{ path: 'package.json', status: ' D' }];
+		it('renders a change indicator for deleted files (trimmed porcelain "D")', () => {
+			mockFileChanges = [{ path: 'package.json', status: 'D' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const indicator = findIndicator(findRowFor(container, 'package.json'));
@@ -1292,7 +1294,7 @@ describe('FileExplorerPanel', () => {
 		it('matches the full relative path, not a substring of the file name (#611)', () => {
 			// File "package.json" should NOT light up when a different file under
 			// src/ happens to contain "package" in its full path.
-			mockFileChanges = [{ path: 'src/package-loader.ts', status: ' M' }];
+			mockFileChanges = [{ path: 'src/package-loader.ts', status: 'M' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			expect(findIndicator(findRowFor(container, 'package.json'))).toBeNull();
@@ -1304,7 +1306,7 @@ describe('FileExplorerPanel', () => {
 			const expandedSession = createMockSession({
 				fileExplorerExpanded: ['src', 'src/utils'],
 			});
-			mockFileChanges = [{ path: 'src/utils/helpers.ts', status: ' M' }];
+			mockFileChanges = [{ path: 'src/utils/helpers.ts', status: 'M' }];
 			const { container } = render(
 				<FileExplorerPanel {...defaultProps} session={expandedSession} />
 			);
@@ -1321,7 +1323,7 @@ describe('FileExplorerPanel', () => {
 
 		it('does not tint the file icon (icons stay consistent regardless of state)', () => {
 			// Per #611 follow-up, the icon should not change for added/modified/deleted.
-			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			// The mocked icon distinguishes types via test ids ('added-icon',
@@ -1333,7 +1335,7 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('applies bold font to changed file names', () => {
-			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const boldItems = container.querySelectorAll('.font-medium');
@@ -1341,11 +1343,33 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('applies textMain color to changed file rows', () => {
-			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			mockFileChanges = [{ path: 'package.json', status: 'M' }];
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const row = findRowFor(container, 'package.json');
 			expect(row).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('uses the colorblind-safe palette when colorBlindMode is enabled', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({ rightPanelWidth: 500, colorBlindMode: true });
+
+			mockFileChanges = [
+				{ path: 'package.json', status: 'M' },
+				{ path: 'README.md', status: '??' },
+			];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			// Modified → orange (#EE7733), Added → teal (#009988)
+			expect(findIndicator(findRowFor(container, 'package.json'))).toHaveStyle({
+				backgroundColor: '#EE7733',
+			});
+			expect(findIndicator(findRowFor(container, 'README.md'))).toHaveStyle({
+				backgroundColor: '#009988',
+			});
+
+			// Restore default for subsequent tests.
+			useSettingsStore.setState({ colorBlindMode: false });
 		});
 	});
 

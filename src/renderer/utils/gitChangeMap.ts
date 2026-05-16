@@ -10,13 +10,16 @@ import type { GitFileChange } from '../hooks';
  * - any `A` in either position → `added`
  * - everything else (M, R, C, T, U…) → `modified`
  *
- * Designed to be permissive: unknown codes fall through as `modified` so a
- * dirty file is still surfaced rather than silently dropped.
+ * Accepts both raw porcelain (` M`, ` D`) and the trimmed form (`M`, `D`)
+ * that `useGitStatusPolling` stores on {@link GitFileChange}. Unknown codes
+ * fall through as `modified` so a dirty file is still surfaced rather than
+ * silently dropped.
  */
 export function classifyGitStatus(status: string): FileChangeType {
-	if (status === '??') return 'added';
-	if (status.includes('D')) return 'deleted';
-	if (status.includes('A')) return 'added';
+	const normalized = status.trim();
+	if (normalized === '??') return 'added';
+	if (normalized.includes('D')) return 'deleted';
+	if (normalized.includes('A')) return 'added';
 	return 'modified';
 }
 

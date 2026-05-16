@@ -36,6 +36,7 @@ import {
 } from '../utils/fileExplorer';
 import { getExplorerFileIcon, getExplorerFolderIcon } from '../utils/theme';
 import { buildChangedAncestors, buildFileChangeMap } from '../utils/gitChangeMap';
+import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { useGitDetail } from '../contexts/GitStatusContext';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -1104,13 +1105,20 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			// Folders highlight when any descendant is changed (VSCode-style walk).
 			const folderHasChange = isFolder && changedAncestors.has(fullPath);
 			const hasChange = !!changeType || folderHasChange;
+			// Use the colorblind-safe status palette (teal/orange/vermillion) when
+			// the user has enabled colorBlindMode, mirroring how the default file
+			// icon already swaps its tint via the same palette. Keeps the dot
+			// distinguishable for protanopia/deuteranopia/tritanopia.
+			const successColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
+			const warningColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
+			const errorColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
 			const changeColor =
 				changeType === 'added'
-					? theme.colors.success
+					? successColor
 					: changeType === 'deleted'
-						? theme.colors.error
+						? errorColor
 						: changeType === 'modified'
-							? theme.colors.warning
+							? warningColor
 							: undefined;
 			const expandedSet = new Set(session.fileExplorerExpanded || []);
 			const isExpanded = expandedSet.has(fullPath);
