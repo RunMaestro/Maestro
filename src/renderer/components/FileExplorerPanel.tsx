@@ -25,7 +25,7 @@ import {
 	Search,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
-import type { Session, Theme, FocusArea } from '../types';
+import type { Session, Theme, FocusArea, FileChangeType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import {
@@ -35,6 +35,8 @@ import {
 	countNodesInTree,
 } from '../utils/fileExplorer';
 import { getExplorerFileIcon, getExplorerFolderIcon } from '../utils/theme';
+import { buildChangedAncestors, buildFileChangeMap } from '../utils/gitChangeMap';
+import { useGitDetail } from '../contexts/GitStatusContext';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
@@ -520,6 +522,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+
+	// Live git status comes from GitStatusProvider, which polls per session via
+	// useGitStatusPolling. The legacy session.changedFiles field is never
+	// populated, so consume the context directly here (#611).
+	const { getFileDetails } = useGitDetail();
+	const fileChanges = getFileDetails(session.id)?.fileChanges;
+	const changeMap = useMemo(() => buildFileChangeMap(fileChanges), [fileChanges]);
+	const changedAncestors = useMemo(() => buildChangedAncestors(changeMap.keys()), [changeMap]);
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
@@ -1087,8 +1097,21 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		}) => {
 			const { node, path: fullPath, depth, globalIndex } = item;
 			const absolutePath = `${session.fullPath}/${fullPath}`;
-			const change = session.changedFiles?.find((f) => f.path.includes(node.name));
 			const isFolder = node.type === 'folder';
+			// Match against the full relative path — `path.includes(node.name)` used
+			// to false-match files with identical leaf names. (#611)
+			const changeType: FileChangeType | undefined = isFolder ? undefined : changeMap.get(fullPath);
+			// Folders highlight when any descendant is changed (VSCode-style walk).
+			const folderHasChange = isFolder && changedAncestors.has(fullPath);
+			const hasChange = !!changeType || folderHasChange;
+			const changeColor =
+				changeType === 'added'
+					? theme.colors.success
+					: changeType === 'deleted'
+						? theme.colors.error
+						: changeType === 'modified'
+							? theme.colors.warning
+							: undefined;
 			const expandedSet = new Set(session.fileExplorerExpanded || []);
 			const isExpanded = expandedSet.has(fullPath);
 			// Check active file tab for selection highlighting
@@ -1124,7 +1147,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						height: `${virtualRow.size}px`,
 						transform: `translateY(${virtualRow.start}px)`,
 						paddingLeft: `${8 + depth * 20}px`,
-						color: change ? theme.colors.textMain : theme.colors.textDim,
+						color: hasChange ? theme.colors.textMain : theme.colors.textDim,
 						borderLeftColor: isKeyboardSelected ? theme.colors.accent : 'transparent',
 						backgroundColor: isKeyboardSelected
 							? theme.colors.bgActivity
@@ -1172,44 +1195,41 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							: getExplorerFileIcon(
 									node.name,
 									theme,
-									change?.type,
+									// Per #611 follow-up: don't tint the icon based on change
+									// state — let the dot + filename color carry that signal so
+									// the icon set stays visually consistent across themes.
+									undefined,
 									fileExplorerIconTheme,
 									colorBlindMode
 								)}
 					</span>
 					<span
-						className={`truncate min-w-0 flex-1 ${change ? 'font-medium' : ''}`}
+						className={`truncate min-w-0 flex-1 ${changeType ? 'font-medium' : ''}`}
 						title={node.name}
+						style={changeColor ? { color: changeColor } : undefined}
 					>
 						{node.name}
 					</span>
-					{change && (
+					{hasChange && (
 						<span
-							className="flex-shrink-0 text-[9px] px-1 rounded uppercase"
+							data-testid="git-change-indicator"
+							data-change-type={changeType ?? 'descendant'}
+							aria-label={changeType ? `${changeType} file` : 'contains changed files'}
+							title={changeType ?? 'contains changed files'}
+							className="flex-shrink-0 inline-block w-2 h-2 rounded-full"
 							style={{
-								backgroundColor:
-									change.type === 'added'
-										? theme.colors.success + '20'
-										: change.type === 'deleted'
-											? theme.colors.error + '20'
-											: theme.colors.warning + '20',
-								color:
-									change.type === 'added'
-										? theme.colors.success
-										: change.type === 'deleted'
-											? theme.colors.error
-											: theme.colors.warning,
+								backgroundColor: changeColor ?? theme.colors.textDim,
+								opacity: changeType ? 1 : 0.55,
 							}}
-						>
-							{change.type}
-						</span>
+						/>
 					)}
 				</div>
 			);
 		},
 		[
 			session.fullPath,
-			session.changedFiles,
+			changeMap,
+			changedAncestors,
 			session.fileExplorerExpanded,
 			session.id,
 			session.activeFileTabId,
@@ -1226,6 +1246,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			handleFileClick,
 			fileTreeFilter,
 			fileExplorerIconTheme,
+			colorBlindMode,
 			handleContextMenu,
 		]
 	);

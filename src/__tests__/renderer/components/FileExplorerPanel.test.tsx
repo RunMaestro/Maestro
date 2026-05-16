@@ -224,6 +224,27 @@ vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
 	},
 }));
 
+// Mock GitStatusContext so we can inject fileChanges for the active session
+// (FileExplorerPanel reads from useGitDetail for #611 git change indicators).
+let mockFileChanges: { path: string; status: string }[] = [];
+vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
+	useGitDetail: () => ({
+		getFileDetails: () => ({
+			fileChanges: mockFileChanges.map((c) => ({
+				path: c.path,
+				status: c.status,
+				additions: 0,
+				deletions: 0,
+				modified: c.status.includes('M'),
+			})),
+			totalAdditions: 0,
+			totalDeletions: 0,
+			modifiedCount: 0,
+		}),
+		refreshGitStatus: vi.fn().mockResolvedValue(undefined),
+	}),
+}));
+
 // Create mock theme
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
@@ -276,6 +297,7 @@ describe('FileExplorerPanel', () => {
 	beforeEach(async () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		mockFileChanges = [];
 
 		// Force non-compact toolbar so RefreshCw icon renders. Default
 		// rightPanelWidth (384) is below RIGHT_PANEL_COMPACT_THRESHOLD (420),
@@ -1232,84 +1254,98 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Changed Files Display', () => {
-		it('displays change badge for modified files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		const findRowFor = (container: HTMLElement, label: string) =>
+			Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(label)
+			) as HTMLElement | undefined;
+		const findIndicator = (row: HTMLElement | undefined) =>
+			row?.querySelector('[data-testid="git-change-indicator"]') as HTMLElement | undefined;
 
-			expect(screen.getByText('modified')).toBeInTheDocument();
+		it('renders a change indicator for modified files (porcelain " M")', () => {
+			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toBeDefined();
+			expect(indicator).toHaveAttribute('data-change-type', 'modified');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
 		});
 
-		it('displays change badge for added files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'added' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('renders a change indicator for added files (untracked "??")', () => {
+			mockFileChanges = [{ path: 'package.json', status: '??' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			expect(screen.getByText('added')).toBeInTheDocument();
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toHaveAttribute('data-change-type', 'added');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.success });
 		});
 
-		it('displays change badge for deleted files', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'deleted' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('renders a change indicator for deleted files (porcelain " D")', () => {
+			mockFileChanges = [{ path: 'package.json', status: ' D' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			expect(screen.getByText('deleted')).toBeInTheDocument();
+			const indicator = findIndicator(findRowFor(container, 'package.json'));
+			expect(indicator).toHaveAttribute('data-change-type', 'deleted');
+			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.error });
 		});
 
-		it('applies success color to added badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'added' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('matches the full relative path, not a substring of the file name (#611)', () => {
+			// File "package.json" should NOT light up when a different file under
+			// src/ happens to contain "package" in its full path.
+			mockFileChanges = [{ path: 'src/package-loader.ts', status: ' M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			const badge = screen.getByText('added');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.success });
+			expect(findIndicator(findRowFor(container, 'package.json'))).toBeNull();
 		});
 
-		it('applies warning color to modified badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
+		it('highlights ancestor folders containing changed descendants', () => {
+			// Need to expand src/ so its descendants render; otherwise only the
+			// folder row appears.
+			const expandedSession = createMockSession({
+				fileExplorerExpanded: ['src', 'src/utils'],
 			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+			mockFileChanges = [{ path: 'src/utils/helpers.ts', status: ' M' }];
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={expandedSession} />
+			);
 
-			const badge = screen.getByText('modified');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.warning });
+			// The src/ folder row shows the descendant-style indicator
+			const srcIndicator = findIndicator(findRowFor(container, 'src'));
+			expect(srcIndicator).toBeDefined();
+			expect(srcIndicator).toHaveAttribute('data-change-type', 'descendant');
+
+			// The leaf file itself shows the modified-type indicator
+			const helpersIndicator = findIndicator(findRowFor(container, 'helpers.ts'));
+			expect(helpersIndicator).toHaveAttribute('data-change-type', 'modified');
 		});
 
-		it('applies error color to deleted badge', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'deleted' }],
-			});
-			render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('does not tint the file icon (icons stay consistent regardless of state)', () => {
+			// Per #611 follow-up, the icon should not change for added/modified/deleted.
+			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			const badge = screen.getByText('deleted');
-			expect(badge).toHaveStyle({ color: mockTheme.colors.error });
+			// The mocked icon distinguishes types via test ids ('added-icon',
+			// 'modified-icon', 'deleted-icon'); the plain 'file-icon' is the
+			// untinted form. Asserting on it pins down that we no longer pass
+			// the change type into getExplorerFileIcon.
+			expect(container.querySelector('[data-testid="modified-icon"]')).toBeNull();
+			expect(container.querySelector('[data-testid="file-icon"]')).not.toBeNull();
 		});
 
 		it('applies bold font to changed file names', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
 			const boldItems = container.querySelectorAll('.font-medium');
 			expect(boldItems.length).toBeGreaterThan(0);
 		});
 
-		it('applies textMain color to changed file names', () => {
-			const session = createMockSession({
-				changedFiles: [{ path: '/Users/test/project/package.json', type: 'modified' }],
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+		it('applies textMain color to changed file rows', () => {
+			mockFileChanges = [{ path: 'package.json', status: ' M' }];
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 
-			// Find item with package.json
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			expect(fileItem).toHaveStyle({ color: mockTheme.colors.textMain });
+			const row = findRowFor(container, 'package.json');
+			expect(row).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 	});
 
@@ -1717,11 +1753,13 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByText('src')).toBeInTheDocument();
 		});
 
-		it('handles undefined changedFiles', () => {
-			const session = createMockSession({ changedFiles: undefined as any });
+		it('handles missing fileChanges from git context', () => {
+			mockFileChanges = [];
+			const session = createMockSession();
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
 
-			// Should render without crashing (fixed with optional chaining at line 201)
+			// No indicators should render when there are no changes.
+			expect(container.querySelector('[data-testid="git-change-indicator"]')).toBeNull();
 			expect(container).toBeTruthy();
 		});
 
