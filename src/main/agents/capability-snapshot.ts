@@ -55,7 +55,15 @@ export class CapabilitySnapshotManager {
 		this.store = store;
 		this.broadcaster = broadcaster ?? null;
 		const persisted = store.get('snapshots', {});
-		this.cache = { ...persisted };
+		// Defensively drop any `probing` entries we find on disk: that status
+		// is transient and should never survive a process exit. Crashes during
+		// a reprobe would otherwise leave the UI stuck on a spinning pill.
+		this.cache = {};
+		for (const [key, snap] of Object.entries(persisted)) {
+			if (snap && snap.status !== 'probing') {
+				this.cache[key] = snap;
+			}
+		}
 		const count = Object.keys(this.cache).length;
 		if (count > 0) {
 			logger.info(`Hydrated ${count} capability snapshot(s) from disk`, LOG_CONTEXT);
@@ -101,7 +109,19 @@ export class CapabilitySnapshotManager {
 
 	/** Binary wasn't on PATH and no usable custom path. */
 	markNotInstalled(agentId: string, remoteId?: string | null): AgentCapabilitiesSnapshot {
-		return this.write(agentId, { status: 'not_installed', lastError: undefined }, remoteId);
+		// Wipe path/version/models from a previous `ok` snapshot — otherwise
+		// the UI would show a stale binary path beneath the red pill.
+		return this.write(
+			agentId,
+			{
+				status: 'not_installed',
+				path: undefined,
+				version: undefined,
+				models: undefined,
+				lastError: undefined,
+			},
+			remoteId
+		);
 	}
 
 	/** Spawn failed with an auth-related error pattern. Tracked reactively. */
@@ -126,15 +146,20 @@ export class CapabilitySnapshotManager {
 		return this.write(agentId, { status: 'failed', lastError: error }, remoteId);
 	}
 
-	/** Transient — used by `reprobe` so the UI can show a spinner. */
+	/**
+	 * Transient — used by `reprobe` so the UI can show a spinner.
+	 * Intentionally does NOT persist: if the app exits mid-probe we never
+	 * want to hydrate a stuck `probing` pill on next launch.
+	 */
 	markProbing(agentId: string, remoteId?: string | null): AgentCapabilitiesSnapshot {
-		return this.write(agentId, { status: 'probing' }, remoteId);
+		return this.write(agentId, { status: 'probing' }, remoteId, { skipPersist: true });
 	}
 
 	private write(
 		agentId: string,
 		patch: Partial<AgentCapabilitiesSnapshot> & { status: AgentStatus },
-		remoteId?: string | null
+		remoteId?: string | null,
+		options?: { skipPersist?: boolean }
 	): AgentCapabilitiesSnapshot {
 		const key = buildSnapshotKey(agentId, remoteId);
 		const previous = this.cache[key];
@@ -145,7 +170,9 @@ export class CapabilitySnapshotManager {
 			remoteId: remoteId ?? undefined,
 		};
 		this.cache[key] = next;
-		this.persist();
+		if (!options?.skipPersist) {
+			this.persist();
+		}
 		this.emit({ key, agentId, remoteId: remoteId ?? undefined, snapshot: next });
 		return next;
 	}

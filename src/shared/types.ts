@@ -454,6 +454,14 @@ export interface AgentError {
 	/** The session ID where the error occurred (if applicable) */
 	sessionId?: string;
 
+	/**
+	 * Stable UUID of the SSH remote this error fired against, when the
+	 * spawning session was an SSH-backed session. Used by listeners (notably
+	 * `capabilitySnapshots.markAuthRequired`) so that per-remote status pills
+	 * flip independently of the local snapshot. Absent on local-spawn errors.
+	 */
+	sshRemoteId?: string;
+
 	/** Timestamp when the error occurred */
 	timestamp: number;
 

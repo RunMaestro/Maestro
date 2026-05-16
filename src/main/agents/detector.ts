@@ -200,16 +200,23 @@ export class AgentDetector {
 			// Mirror detection into the capability snapshot store so the
 			// renderer has a persisted readiness pill for every agent. Skip
 			// the internal `terminal` agent — it isn't user-facing.
+			//
+			// Each agent is only written when its observed state actually
+			// changed (status differs, or the detected path differs). This
+			// keeps full-detection runs (incl. reprobe-driven ones) from
+			// firing `snapshot-updated` broadcasts for every unchanged agent.
 			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id);
 				if (detection.exists) {
 					// Preserve any reactive auth_required state set by a recent
 					// spawn failure — detection alone shouldn't clear it. The
 					// next successful spawn (or explicit re-probe) flips it back.
-					const existing = capabilitySnapshots.get(agentDef.id);
-					if (existing?.status !== 'auth_required') {
+					if (existing?.status === 'auth_required') {
+						// no-op: leave reactive state intact
+					} else if (existing?.status !== 'ok' || existing.path !== detection.path) {
 						capabilitySnapshots.markOk(agentDef.id, { path: detection.path });
 					}
-				} else {
+				} else if (existing?.status !== 'not_installed') {
 					capabilitySnapshots.markNotInstalled(agentDef.id);
 				}
 			}

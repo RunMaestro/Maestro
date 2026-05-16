@@ -398,13 +398,18 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 
 			// Mirror remote detection into the snapshot store, keyed by the
 			// stable SSH remote UUID so each host has its own readiness pill.
+			// Skip when the observed state matches the existing snapshot —
+			// otherwise an `agents:reprobe` for a single agent would emit
+			// snapshot-updated broadcasts for every other agent on the host.
 			if (agentDef.id !== 'terminal') {
+				const existing = capabilitySnapshots.get(agentDef.id, sshRemote.id);
 				if (available) {
-					const existing = capabilitySnapshots.get(agentDef.id, sshRemote.id);
-					if (existing?.status !== 'auth_required') {
+					if (existing?.status === 'auth_required') {
+						// no-op: reactive auth_required state stays intact
+					} else if (existing?.status !== 'ok' || existing.path !== path) {
 						capabilitySnapshots.markOk(agentDef.id, { path }, sshRemote.id);
 					}
-				} else if (!connectionError) {
+				} else if (!connectionError && existing?.status !== 'not_installed') {
 					capabilitySnapshots.markNotInstalled(agentDef.id, sshRemote.id);
 				}
 			}
@@ -1524,6 +1529,12 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:reprobe',
 		withIpcErrorLogging(handlerOpts('reprobe'), async (agentId: string, sshRemoteId?: string) => {
+			// `terminal` is internal — detection paths intentionally skip it,
+			// so a probe call would leave the snapshot stuck at `probing` forever.
+			if (agentId === 'terminal') {
+				return null;
+			}
+
 			capabilitySnapshots.clear(agentId, sshRemoteId);
 
 			if (sshRemoteId) {
@@ -1537,7 +1548,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
 				}
 				capabilitySnapshots.markProbing(agentId, sshRemoteId);
-				// Re-run remote detection so the snapshot is rewritten by detectAgentsRemote.
+				// `detectAgentsRemote` enumerates every agent on the remote in
+				// one SSH round-trip per binary. Other agents' snapshots only
+				// flip when their detected state actually changes (see
+				// `markOk` + detector's change-suppression logic) so the
+				// requested agent is the dominant signal.
 				await detectAgentsRemote(sshConfig);
 				return capabilitySnapshots.get(agentId, sshRemoteId) ?? null;
 			}

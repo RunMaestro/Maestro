@@ -30,6 +30,7 @@ import type {
 	AgentCapabilitiesSnapshot,
 	AgentCapabilitiesSnapshotMap,
 } from '../../shared/agentCapabilities';
+import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -202,8 +203,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	loadCapabilitySnapshots: async () => {
-		const snapshots = await window.maestro.agents.getAllSnapshots();
-		set({ capabilitySnapshots: snapshots, capabilitySnapshotsLoaded: true });
+		// Always flip `loaded` true so the UI never gets stuck on "Loading…"
+		// when the IPC call rejects (renderer disposal, main-process crash).
+		// Errors still bubble up so Sentry / ErrorBoundary can record them.
+		try {
+			const snapshots = await window.maestro.agents.getAllSnapshots();
+			set({ capabilitySnapshots: snapshots, capabilitySnapshotsLoaded: true });
+		} catch (err) {
+			set({ capabilitySnapshotsLoaded: true });
+			throw err;
+		}
 
 		// Wire the live update subscription exactly once. Subsequent calls
 		// (e.g. across hot reloads) reuse the existing listener; calling
@@ -225,8 +234,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	getCapabilitySnapshot: (agentId, remoteId) => {
-		const key = remoteId ? `${agentId}:${remoteId}` : agentId;
-		return get().capabilitySnapshots[key];
+		// Delegate to the shared key builder so this never drifts from the
+		// main-process snapshot store's key format.
+		return get().capabilitySnapshots[buildSnapshotKey(agentId, remoteId)];
 	},
 
 	reprobeAgent: async (agentId, sshRemoteId) => {

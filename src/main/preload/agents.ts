@@ -14,6 +14,7 @@ import {
 	SNAPSHOT_UPDATED_CHANNEL,
 	type AgentCapabilitiesSnapshot,
 	type AgentCapabilitiesSnapshotMap,
+	type AgentStatus,
 	type SnapshotUpdatedPayload,
 } from '../../shared/agentCapabilities';
 

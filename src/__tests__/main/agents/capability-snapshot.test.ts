@@ -78,16 +78,23 @@ describe('CapabilitySnapshotManager', () => {
 		expect(payload.snapshot?.status).toBe('ok');
 	});
 
-	it('markNotInstalled overwrites existing path data and clears errors', () => {
+	it('markNotInstalled wipes stale path/version/models from a previous ok snapshot', () => {
 		manager.init(store, broadcast);
-		manager.markOk('claude-code', { path: '/usr/bin/claude' });
+		manager.markOk('claude-code', {
+			path: '/usr/bin/claude',
+			version: '1.4.2',
+			models: ['sonnet'],
+		});
 		const result = manager.markNotInstalled('claude-code');
 
 		expect(result.status).toBe('not_installed');
 		expect(result.lastError).toBeUndefined();
-		// Previous path is preserved on the cache (the manager only sets new fields),
-		// which is fine — the UI keys off `status`, not `path`. We just verify the
-		// status flipped and the broadcast fired.
+		// The previous binary path must NOT survive — otherwise the UI shows a
+		// red "Not installed" pill alongside a valid-looking path. Same for
+		// version / models, which would all be stale.
+		expect(result.path).toBeUndefined();
+		expect(result.version).toBeUndefined();
+		expect(result.models).toBeUndefined();
 		expect(broadcast).toHaveBeenCalledTimes(2);
 	});
 
@@ -130,11 +137,28 @@ describe('CapabilitySnapshotManager', () => {
 		expect(store.set).not.toHaveBeenCalled();
 	});
 
-	it('markProbing produces a transient probing snapshot', () => {
+	it('markProbing is transient: in-memory only, not persisted to disk', () => {
 		manager.init(store, broadcast);
+		store.set.mockClear();
 		const result = manager.markProbing('claude-code');
+
 		expect(result.status).toBe('probing');
 		expect(manager.get('claude-code')?.status).toBe('probing');
+		// Broadcast still fires so the UI can show a spinner live…
+		expect(broadcast).toHaveBeenCalledTimes(1);
+		// …but persist must NOT happen: a crash during reprobe would otherwise
+		// hydrate a stuck "Probing…" pill on next launch.
+		expect(store.set).not.toHaveBeenCalled();
+	});
+
+	it('hydrate() drops any persisted `probing` entries left over from a prior crash', () => {
+		const seeded = makeFakeStore({
+			'claude-code': { status: 'ok', path: '/usr/bin/claude', lastProbedAt: 1000 },
+			codex: { status: 'probing', lastProbedAt: 2000 },
+		});
+		manager.init(seeded);
+		expect(manager.get('claude-code')?.status).toBe('ok');
+		expect(manager.get('codex')).toBeUndefined();
 	});
 
 	it('markFailed records the error and keeps the snapshot', () => {

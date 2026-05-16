@@ -374,6 +374,13 @@ export class StdoutHandler {
 			if (agentError) {
 				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
+				// Tag the error with the remote UUID so downstream listeners
+				// (capabilitySnapshots.markAuthRequired) can flip the
+				// per-remote pill rather than the local one. Undefined for
+				// local-spawn sessions, which keeps prior behavior.
+				if (managedProcess.sshRemoteId) {
+					agentError.sshRemoteId = managedProcess.sshRemoteId;
+				}
 
 				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
 					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "claude login" to re-authenticate.`;
@@ -398,6 +405,7 @@ export class StdoutHandler {
 					recoverable: sshError.recoverable,
 					agentId: toolType,
 					sessionId,
+					sshRemoteId: managedProcess.sshRemoteId,
 					timestamp: Date.now(),
 					raw: { errorLine: line },
 				};

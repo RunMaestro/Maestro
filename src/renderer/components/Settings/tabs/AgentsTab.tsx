@@ -82,7 +82,7 @@ export function AgentsTab({ theme }: AgentsTabProps) {
 	);
 
 	return (
-		<div className="space-y-3">
+		<div className="space-y-3 select-none">
 			<div>
 				<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 					Agents

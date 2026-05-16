@@ -36,9 +36,15 @@ export function setupErrorListener(
 		// Reactive capability classification: an auth-expired event means the
 		// binary is present (otherwise we wouldn't have spawned it) but the
 		// user needs to re-authenticate. Snapshot stays auth_required until a
-		// subsequent successful detect / spawn clears it.
+		// subsequent successful detect / spawn clears it. When the spawn was
+		// SSH-backed, the AgentError payload carries the remote UUID so the
+		// per-remote pill flips, not the local one.
 		if (agentError.type === 'auth_expired' && agentError.agentId) {
-			capabilitySnapshots.markAuthRequired(agentError.agentId, agentError.message);
+			capabilitySnapshots.markAuthRequired(
+				agentError.agentId,
+				agentError.message,
+				agentError.sshRemoteId
+			);
 		}
 	});
 }
