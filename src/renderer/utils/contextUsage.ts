@@ -142,18 +142,29 @@ export function estimateContextUsage(
 		cacheCreationInputTokens?: number;
 		contextWindow?: number;
 	},
-	agentId?: ToolType | string
+	agentId?: ToolType | string,
+	/**
+	 * SSH remote UUID when the session is running against a remote host.
+	 * Lets the snapshot lookup pick the per-remote `agentId:remoteId`
+	 * key — otherwise SSH sessions fall back to the local snapshot and
+	 * then the static table, which can be wrong when remote models differ.
+	 */
+	sshRemoteId?: string
 ): number | null {
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
 
 	// Determine effective context window: runtime-reported stats win, then
-	// the agent's persisted capability snapshot, then the static table.
+	// the agent's persisted capability snapshot for this environment
+	// (local OR specific remote), then the static table.
 	const effectiveContextWindow =
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? getContextWindowForAgent(agentId, useAgentStore.getState().getCapabilitySnapshot(agentId))
+				? getContextWindowForAgent(
+						agentId,
+						useAgentStore.getState().getCapabilitySnapshot(agentId, sshRemoteId)
+					)
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {

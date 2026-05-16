@@ -41,7 +41,13 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			if (!sessionForUsage) return;
 
 			const agentToolType = sessionForUsage.toolType;
-			const contextPercentage = estimateContextUsage(usageStats, agentToolType);
+			// Per-session SSH config wins over the legacy session-wide field;
+			// pass the remote UUID so the snapshot lookup hits the correct
+			// `agentId:remoteId` key instead of falling back to local.
+			const sessionRemoteId = sessionForUsage.sessionSshRemoteConfig?.enabled
+				? (sessionForUsage.sessionSshRemoteConfig.remoteId ?? undefined)
+				: sessionForUsage.sshRemoteId;
+			const contextPercentage = estimateContextUsage(usageStats, agentToolType, sessionRemoteId);
 
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
@@ -57,7 +63,7 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 							: agentToolType
 								? getContextWindowForAgent(
 										agentToolType,
-										useAgentStore.getState().getCapabilitySnapshot(agentToolType)
+										useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
 									)
 								: 0;
 					const estimated = estimateAccumulatedGrowth(
