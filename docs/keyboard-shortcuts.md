@@ -90,8 +90,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
 | Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
 | Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
-| Toggle Tab Unread      | `Opt+Shift+U`  | `Alt+Shift+U`   |
-| Filter Unread Agents   | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Toggle Tab Unread      | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Filter Unread Agents   | `Opt+U`        | `Alt+U`         |
 | Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
 | Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
 | Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |

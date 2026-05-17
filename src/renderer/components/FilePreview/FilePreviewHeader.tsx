@@ -150,8 +150,9 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 						</div>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
-						{/* Save button - shown in edit mode with changes for any editable text file */}
-						{isEditableText && markdownEditMode && onSave && (
+						{/* Save button - shown in edit mode, or in preview when unsaved edits remain
+						    (the user can flip to preview while dirty and still needs Save). */}
+						{isEditableText && (markdownEditMode || hasChanges) && onSave && (
 							<HoverTooltip
 								theme={theme}
 								label={hasChanges ? 'Save changes' : 'No changes to save'}

@@ -18,6 +18,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { formatFutureTime } from '../../../shared/formatters';
 
 function deriveAccountShortName(configDirKey: string | undefined): string {
@@ -28,6 +29,20 @@ function deriveAccountShortName(configDirKey: string | undefined): string {
 	if (basename.startsWith('.claude-')) return basename.slice('.claude-'.length);
 	if (basename.startsWith('.claude')) return basename.slice('.claude'.length) || 'default';
 	return basename;
+}
+
+/**
+ * Lightweight renderer-side mirror of `resolveConfigDirKey` from the main
+ * store. Strips trailing slashes so two spellings of the same path collapse
+ * to one tab. Full `path.resolve()` semantics (`..` normalization, separator
+ * canonicalization) live on the main side; user-configured CLAUDE_CONFIG_DIR
+ * values are clean absolute paths in practice, so a string-level normalize
+ * is enough here. If a renderer-derived key ever drifts from a main-side
+ * snapshot key the tab simply shows the "Refresh to sample" CTA instead of
+ * bars — graceful degradation rather than a crash.
+ */
+function normalizeConfigDirKey(value: string): string {
+	return value.replace(/\/+$/, '');
 }
 
 interface ClaudePlanUsageProps {
@@ -66,12 +81,15 @@ const BarRow = memo(function BarRow({ label, percent, resetsAt, theme }: BarRowP
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-3">
-			<div className="w-32 text-sm truncate flex-shrink-0" style={{ color: theme.colors.textMain }}>
+		<div className="flex items-center gap-4">
+			<div
+				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				style={{ color: theme.colors.textMain }}
+			>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative"
+				className="flex-1 h-7 rounded overflow-hidden relative max-w-2xl"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -115,8 +133,8 @@ const BarRow = memo(function BarRow({ label, percent, resetsAt, theme }: BarRowP
 				)}
 			</div>
 			<div
-				className="w-32 text-xs text-right flex-shrink-0"
-				style={{ color: theme.colors.textDim }}
+				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
+				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
 				title={`Resets at ${new Date(resetsAt).toLocaleString()}`}
 			>
 				resets {formatFutureTime(resetsAt)}
@@ -197,30 +215,77 @@ const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: A
 export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
 	const refreshing = useClaudeUsageStore((s) => s.refreshing);
+	const sessions = useSessionStore((s) => s.sessions);
 
-	const entries = useMemo(
-		() =>
-			Object.entries(snapshots).sort(([a], [b]) =>
-				deriveAccountShortName(a).localeCompare(deriveAccountShortName(b))
-			),
-		[snapshots]
-	);
+	// Agent-level customEnvVars for claude-code. Fetched once on mount via
+	// IPC; updates are rare (Settings → Agents) so we don't subscribe to a
+	// live channel — the user can hit Refresh to re-pull.
+	const [agentLevelEnvVars, setAgentLevelEnvVars] = useState<Record<string, string>>({});
+	useEffect(() => {
+		let cancelled = false;
+		window.maestro.agents
+			.getCustomEnvVars('claude-code')
+			.then((env) => {
+				if (!cancelled && env) setAgentLevelEnvVars(env);
+			})
+			.catch(() => {
+				// Best-effort; agent-level vars are optional context. The
+				// session-level fallback below still produces a usable tab list.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Account list derived from configured agents/sessions, NOT from snapshot
+	// keys. This way the dashboard shows every account the user has explicitly
+	// wired up — including ones that haven't been sampled yet — and the
+	// per-tab UI can guide them to hit Refresh.
+	//
+	// Sourcing rule mirrors the main-side sampler (claude-usage-startup.ts):
+	// merge agent-level + session-level customEnvVars (session wins) and
+	// require an explicit `CLAUDE_CONFIG_DIR`. Sessions without one are
+	// skipped — we never guess the default account.
+	const configuredAccountKeys = useMemo(() => {
+		const keys = new Set<string>();
+		for (const s of sessions) {
+			if (s.toolType !== 'claude-code') continue;
+			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
+			const merged = { ...agentLevelEnvVars, ...sessionEnv };
+			const dir = merged.CLAUDE_CONFIG_DIR;
+			if (typeof dir === 'string' && dir.length > 0) {
+				keys.add(normalizeConfigDirKey(dir));
+			}
+		}
+		// Also include any snapshot key that didn't surface in session config —
+		// e.g. an account that was sampled in a previous app run but whose
+		// session has since been deleted. Keeping the tab lets the user still
+		// see the cached data instead of it vanishing.
+		for (const key of Object.keys(snapshots)) {
+			keys.add(normalizeConfigDirKey(key));
+		}
+		return Array.from(keys).sort((a, b) =>
+			deriveAccountShortName(a).localeCompare(deriveAccountShortName(b))
+		);
+	}, [sessions, agentLevelEnvVars, snapshots]);
 
 	// Sub-tab selection by configDirKey. Defaults to the first account on
-	// mount; clamps back to the first whenever the selected key disappears
-	// from the snapshot map (account removed mid-session).
+	// mount; clamps back to the first whenever the selected key disappears.
 	const [selectedKey, setSelectedKey] = useState<string | null>(null);
 	useEffect(() => {
-		if (entries.length === 0) {
+		if (configuredAccountKeys.length === 0) {
 			if (selectedKey !== null) setSelectedKey(null);
 			return;
 		}
-		if (selectedKey === null || !entries.some(([k]) => k === selectedKey)) {
-			setSelectedKey(entries[0][0]);
+		if (selectedKey === null || !configuredAccountKeys.includes(selectedKey)) {
+			setSelectedKey(configuredAccountKeys[0]);
 		}
-	}, [entries, selectedKey]);
+	}, [configuredAccountKeys, selectedKey]);
 
-	const selectedEntry = entries.find(([k]) => k === selectedKey) ?? entries[0];
+	const effectiveSelectedKey = selectedKey ?? configuredAccountKeys[0] ?? null;
+	const selectedSnapshot: ClaudeUsageSnapshot | null = effectiveSelectedKey
+		? (snapshots[effectiveSelectedKey] ?? null)
+		: null;
 
 	const handleRefresh = useCallback(async () => {
 		if (refreshing) return;
@@ -264,9 +329,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 				</button>
 			</div>
 
-			{/* Account tab bar — renders only when 2+ accounts are present.
+			{/* Account tab bar — renders only when 2+ accounts are configured.
 			    A single account doesn't need tabs; an empty state needs none. */}
-			{entries.length > 1 && (
+			{configuredAccountKeys.length > 1 && (
 				<div
 					className="flex items-center gap-1 mb-4 border-b"
 					style={{ borderColor: theme.colors.border }}
@@ -274,10 +339,12 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 					aria-label="Claude account selector"
 					data-testid="claude-plan-account-tabs"
 				>
-					{entries.map(([configDirKey, snapshot]) => {
+					{configuredAccountKeys.map((configDirKey) => {
 						const shortName = deriveAccountShortName(configDirKey);
-						const isActive = selectedEntry?.[0] === configDirKey;
-						const isUnauth = snapshot.authState === 'unauthenticated';
+						const isActive = effectiveSelectedKey === configDirKey;
+						const tabSnapshot = snapshots[configDirKey];
+						const isUnauth = tabSnapshot?.authState === 'unauthenticated';
+						const hasSnapshot = !!tabSnapshot;
 						return (
 							<button
 								key={configDirKey}
@@ -295,7 +362,11 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 							>
 								<span className="flex items-center gap-1.5">
 									{shortName}
-									{isUnauth && (
+									{/* Status dot:
+									    - warning = "not logged in"
+									    - dim     = "no snapshot yet, hit Refresh"
+									    - none    = snapshot present + authenticated */}
+									{isUnauth ? (
 										<span
 											className="text-[10px]"
 											style={{ color: theme.colors.warning ?? theme.colors.accent }}
@@ -303,7 +374,15 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 										>
 											●
 										</span>
-									)}
+									) : !hasSnapshot ? (
+										<span
+											className="text-[10px]"
+											style={{ color: theme.colors.textDim, opacity: 0.6 }}
+											title="No snapshot yet — hit Refresh"
+										>
+											○
+										</span>
+									) : null}
 								</span>
 							</button>
 						);
@@ -311,23 +390,58 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 				</div>
 			)}
 
-			{entries.length === 0 ? (
+			{configuredAccountKeys.length === 0 ? (
 				<div
-					className="flex items-center justify-center h-24 text-sm"
+					className="flex items-center justify-center h-24 text-sm text-center px-4"
 					style={{ color: theme.colors.textDim }}
 					data-testid="claude-plan-empty"
 				>
-					No Claude Max plan snapshots yet. Set CLAUDE_CONFIG_DIR on a Claude Code session (or the
-					agent) and hit Refresh — we sample only explicitly-configured accounts so we never trigger
-					a browser OAuth prompt.
+					No Claude accounts configured. Set CLAUDE_CONFIG_DIR on a Claude Code session (or the
+					agent) — we sample only explicitly-configured accounts so we never trigger a browser OAuth
+					prompt.
 				</div>
-			) : selectedEntry ? (
+			) : effectiveSelectedKey && selectedSnapshot ? (
 				<AccountRow
-					key={selectedEntry[0]}
-					configDirKey={selectedEntry[0]}
-					snapshot={selectedEntry[1]}
+					key={effectiveSelectedKey}
+					configDirKey={effectiveSelectedKey}
+					snapshot={selectedSnapshot}
 					theme={theme}
 				/>
+			) : effectiveSelectedKey ? (
+				// Account is configured but no snapshot in the store yet — guide
+				// the user to hit Refresh rather than silently rendering nothing.
+				<div
+					className="space-y-2"
+					data-testid={`claude-plan-row-${deriveAccountShortName(effectiveSelectedKey)}-pending`}
+				>
+					<div className="flex items-center gap-2">
+						<div
+							className="text-sm font-medium"
+							style={{ color: theme.colors.textMain }}
+							title={effectiveSelectedKey}
+						>
+							{deriveAccountShortName(effectiveSelectedKey)}
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+							{effectiveSelectedKey}
+						</div>
+					</div>
+					<div
+						className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+						style={{
+							backgroundColor: `${theme.colors.accent}10`,
+							color: theme.colors.textMain,
+							border: `1px solid ${theme.colors.accent}30`,
+						}}
+					>
+						<span style={{ color: theme.colors.accent }}>○</span>
+						<span>
+							No snapshot cached for this account yet. Hit{' '}
+							<strong style={{ color: theme.colors.accent }}>Refresh</strong> to run{' '}
+							<code style={{ color: theme.colors.accent }}>maestro-p --status</code> against it.
+						</span>
+					</div>
+				</div>
 			) : null}
 
 			<p

@@ -979,7 +979,12 @@ export const FilePreview = React.memo(
 			) {
 				e.preventDefault();
 				e.stopPropagation();
-				setShowTocOverlay((v) => !v);
+				setShowTocOverlay((v) => {
+					// Restore focus to the preview container when closing so subsequent
+					// shortcuts keep firing (heading button is about to unmount).
+					if (v) containerRef.current?.focus();
+					return !v;
+				});
 			} else if (e.key === 'ArrowUp') {
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)

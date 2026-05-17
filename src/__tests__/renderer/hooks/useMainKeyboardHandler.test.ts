@@ -2076,7 +2076,7 @@ describe('useMainKeyboardHandler', () => {
 				expect(mockToggleUnreadFilter).toHaveBeenCalled();
 			});
 
-			it('Alt+Shift+U toggles tab unread from terminal mode', () => {
+			it('Cmd+Shift+U toggles tab unread from terminal mode', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
 				const mockToggleTabUnread = vi.fn();
@@ -2091,7 +2091,7 @@ describe('useMainKeyboardHandler', () => {
 					window.dispatchEvent(
 						new KeyboardEvent('keydown', {
 							key: 'u',
-							altKey: true,
+							metaKey: true,
 							shiftKey: true,
 							bubbles: true,
 						})
@@ -2491,7 +2491,7 @@ describe('useMainKeyboardHandler', () => {
 	});
 
 	describe('filterUnreadAgents shortcut', () => {
-		it('should toggle unread agents filter on Cmd+Shift+U', () => {
+		it('should toggle unread agents filter on Opt+U', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 			const mockToggle = vi.fn();
 
@@ -2507,8 +2507,7 @@ describe('useMainKeyboardHandler', () => {
 				window.dispatchEvent(
 					new KeyboardEvent('keydown', {
 						key: 'u',
-						metaKey: true,
-						shiftKey: true,
+						altKey: true,
 						bubbles: true,
 					})
 				);

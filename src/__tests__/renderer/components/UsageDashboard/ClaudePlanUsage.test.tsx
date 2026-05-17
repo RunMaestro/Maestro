@@ -14,26 +14,31 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
 
 const refreshClaudeUsageSnapshotsMock = vi.fn();
 const getClaudeUsageSnapshotsMock = vi.fn();
+const getCustomEnvVarsMock = vi.fn();
 
 beforeEach(() => {
 	refreshClaudeUsageSnapshotsMock.mockReset().mockResolvedValue({ refreshed: 1 });
 	getClaudeUsageSnapshotsMock.mockReset().mockResolvedValue({});
+	getCustomEnvVarsMock.mockReset().mockResolvedValue({});
 
 	(global as any).window = (global as any).window ?? {};
 	(window as any).maestro = {
 		agents: {
 			getClaudeUsageSnapshots: getClaudeUsageSnapshotsMock,
 			refreshClaudeUsageSnapshots: refreshClaudeUsageSnapshotsMock,
+			getCustomEnvVars: getCustomEnvVarsMock,
 		},
 	};
 
 	useClaudeUsageStore.getState().__resetForTests();
+	useSessionStore.setState({ sessions: [] } as any);
 	cleanup();
 });
 
@@ -41,11 +46,64 @@ function seedSnapshots(snapshots: Record<string, any>) {
 	useClaudeUsageStore.setState({ snapshots, loaded: true, refreshing: false } as any);
 }
 
+function seedSessions(configDirs: string[]) {
+	// Build minimal claude-code session records that carry the requested
+	// CLAUDE_CONFIG_DIR values via customEnvVars — that's all the dashboard
+	// needs to enumerate them as configured accounts.
+	const sessions = configDirs.map((dir, i) => ({
+		id: `sess-${i}`,
+		name: `sess-${i}`,
+		toolType: 'claude-code',
+		cwd: '/tmp',
+		customEnvVars: { CLAUDE_CONFIG_DIR: dir },
+	}));
+	useSessionStore.setState({ sessions } as any);
+}
+
 describe('ClaudePlanUsage — empty state', () => {
-	it('renders the empty message when no snapshots are cached', () => {
+	it('renders the empty message when no accounts are configured and no snapshots cached', () => {
 		render(<ClaudePlanUsage theme={theme} />);
 		expect(screen.getByTestId('claude-plan-empty')).toBeInTheDocument();
 		expect(screen.queryByTestId('claude-plan-row-default')).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage — configured account without snapshot', () => {
+	it('renders a "hit Refresh" CTA for a session-configured account that has no snapshot yet', () => {
+		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty —
+		// the tab list should still surface the account, and the per-tab body
+		// should guide the user to hit Refresh instead of showing nothing.
+		seedSessions(['/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+	});
+
+	it('mixes a configured-but-empty tab with an authenticated one', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+		seedSessions(['/Users/me/.claude', '/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		// Both tabs render.
+		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-tab-pending')).toBeInTheDocument();
+
+		// Switch to the pending tab — CTA visible, no bars.
+		fireEvent.click(screen.getByTestId('claude-plan-tab-pending'));
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 	});
 });
 

@@ -516,6 +516,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setShowHiddenFiles,
 		onFocusFileInGraph,
 		onOpenBrowserTabAt,
+		fileTreeContainerRef,
 	} = props;
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
@@ -978,7 +979,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// Closing the filter via Escape: if the user clicked a result first, expand
 	// its ancestor folders and queue a scroll-into-view so the search payoff
-	// actually lands on something they can see and act on.
+	// actually lands on something they can see and act on. Move DOM focus to
+	// the tree container — otherwise the browser restores focus to whatever
+	// was focused before the filter opened (typically FilePreview), and that
+	// component's onKeyDown swallows Cmd+F before our window-level shortcut
+	// handler can route it back to the file panel.
 	const handleFilterEscape = useCallback(() => {
 		const clickedPath = lastClickedUnderFilterRef.current;
 		lastClickedUnderFilterRef.current = null;
@@ -1006,7 +1011,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 		setFileTreeFilterOpen(false);
 		setFileTreeFilter('');
-	}, [session.id, setSessions, setFileTreeFilterOpen, setFileTreeFilter]);
+		fileTreeContainerRef?.current?.focus();
+	}, [session.id, setSessions, setFileTreeFilterOpen, setFileTreeFilter, fileTreeContainerRef]);
 
 	// Register layer when filter is open
 	useEffect(() => {

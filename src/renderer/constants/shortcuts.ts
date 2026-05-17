@@ -92,7 +92,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
-		keys: ['Meta', 'Shift', 'u'],
+		keys: ['Alt', 'u'],
 	},
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
@@ -226,7 +226,7 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	toggleTabUnread: {
 		id: 'toggleTabUnread',
 		label: 'Toggle Tab Unread',
-		keys: ['Alt', 'Shift', 'u'],
+		keys: ['Meta', 'Shift', 'u'],
 	},
 	goToTab1: { id: 'goToTab1', label: 'Go to Tab 1', keys: ['Meta', '1'] },
 	goToTab2: { id: 'goToTab2', label: 'Go to Tab 2', keys: ['Meta', '2'] },

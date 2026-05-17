@@ -656,7 +656,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 
 												{/* TUI usage limits — shown for Claude Code tabs driving the TUI
 												    (Adaptive Mode toggle OR static maestro-p Path) when a usage
-												    snapshot is cached. */}
+												    snapshot is cached. Bar color rules match the Usage Dashboard
+												    so the same percent reads the same way in both places:
+												    accent at low, warning at 75%, error at 99%. */}
 												{showBatchUsage && batchUsageSnapshot && (
 													<div
 														className="border-t pt-2 mt-2"
@@ -666,18 +668,18 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 															className="text-[10px] uppercase font-bold mb-2"
 															style={{ color: theme.colors.textDim }}
 														>
-															TUI Usage
+															Max Plan Usage
 														</div>
 														<div className="flex justify-between items-center mb-2">
 															<span className="text-xs" style={{ color: theme.colors.textDim }}>
-																Current
+																Mode
 															</span>
 															<span
 																className="text-xs font-mono font-bold"
 																style={{
 																	color:
 																		activeSession?.claudeInteractive?.mode === 'interactive'
-																			? (theme.colors.success ?? theme.colors.accent)
+																			? theme.colors.accent
 																			: (theme.colors.warning ?? theme.colors.accent),
 																}}
 															>
@@ -686,53 +688,77 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																	: 'API Limits'}
 															</span>
 														</div>
-														{(['session', 'weekAllModels'] as const).map((key) => {
-															const window = batchUsageSnapshot[key];
-															const label = key === 'session' ? '5-hour' : 'Weekly';
-															const pct = Math.max(0, Math.min(100, window.percent));
-															const barColor =
-																pct >= 99
-																	? (theme.colors.error ?? theme.colors.warning)
-																	: pct >= 70
-																		? (theme.colors.warning ?? theme.colors.accent)
-																		: (theme.colors.success ?? theme.colors.accent);
-															return (
-																<div key={key} className="mb-2 last:mb-0">
-																	<div className="flex justify-between items-center mb-1">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			{label}
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{pct.toFixed(0)}%
-																		</span>
-																	</div>
-																	<div
-																		className="h-1.5 rounded-full overflow-hidden"
-																		style={{ backgroundColor: theme.colors.border }}
-																	>
+														{batchUsageSnapshot.authState === 'unauthenticated' ? (
+															<div
+																className="flex items-center gap-2 px-2 py-1.5 rounded text-[11px]"
+																style={{
+																	backgroundColor: `${theme.colors.warning ?? theme.colors.accent}15`,
+																	color: theme.colors.textMain,
+																	border: `1px solid ${theme.colors.warning ?? theme.colors.accent}40`,
+																}}
+															>
+																<span
+																	style={{
+																		color: theme.colors.warning ?? theme.colors.accent,
+																	}}
+																>
+																	●
+																</span>
+																<span>
+																	Not logged in — run{' '}
+																	<code style={{ color: theme.colors.accent }}>/login</code>.
+																</span>
+															</div>
+														) : (
+															(['session', 'weekAllModels'] as const).map((key) => {
+																const window = batchUsageSnapshot[key];
+																const label = key === 'session' ? '5-hour' : 'Weekly';
+																const pct = Math.max(0, Math.min(100, window.percent));
+																const barColor =
+																	pct >= 99
+																		? (theme.colors.error ?? theme.colors.warning)
+																		: pct >= 75
+																			? theme.colors.warning
+																			: theme.colors.accent;
+																return (
+																	<div key={key} className="mb-2 last:mb-0">
+																		<div className="flex justify-between items-center mb-1">
+																			<span
+																				className="text-xs"
+																				style={{ color: theme.colors.textDim }}
+																			>
+																				{label}
+																			</span>
+																			<span
+																				className="text-xs font-mono"
+																				style={{ color: theme.colors.textMain }}
+																			>
+																				{pct.toFixed(0)}%
+																			</span>
+																		</div>
 																		<div
-																			className="h-full transition-all"
-																			style={{
-																				width: `${pct}%`,
-																				backgroundColor: barColor,
-																			}}
-																		/>
+																			className="h-1.5 rounded-full overflow-hidden"
+																			style={{ backgroundColor: theme.colors.border }}
+																		>
+																			<div
+																				className="h-full transition-all"
+																				style={{
+																					width: `${pct}%`,
+																					backgroundColor: barColor,
+																					opacity: 0.9,
+																				}}
+																			/>
+																		</div>
+																		<div
+																			className="text-[10px] mt-0.5 text-right"
+																			style={{ color: theme.colors.textDim, opacity: 0.7 }}
+																		>
+																			Resets {formatFutureTime(window.resetsAt)}
+																		</div>
 																	</div>
-																	<div
-																		className="text-[10px] mt-0.5 text-right"
-																		style={{ color: theme.colors.textDim, opacity: 0.7 }}
-																	>
-																		Resets {formatFutureTime(window.resetsAt)}
-																	</div>
-																</div>
-															);
-														})}
+																);
+															})
+														)}
 													</div>
 												)}
 											</div>
