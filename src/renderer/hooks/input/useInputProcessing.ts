@@ -15,6 +15,7 @@ import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
  * Default prompt used when user sends only an image without text.
@@ -410,9 +411,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Write mode tabs must wait for any busy tab to finish
 				// EXCEPTION: Write commands bypass queue when all running/queued items are read-only
 				// ALSO: Always queue write commands when AutoRun is active (to prevent file conflicts)
-				const shouldQueue = isReadOnlyMode
-					? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-					: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
+				// Forced parallel: user explicitly chose to bypass queue via modifier shortcut
+				const forceParallel = options?.forceParallel === true
+					&& useSettingsStore.getState().forcedParallelExecution;
+
+				const shouldQueue = forceParallel
+					? false
+					: isReadOnlyMode
+						? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+						: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				console.log('[processInput] Queue decision:', {
@@ -421,6 +428,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					tabState: activeTab?.state,
 					isReadOnlyMode,
 					isAutoRunActive,
+					forceParallel,
 					shouldQueue,
 					queueLength: activeSession.executionQueue.length,
 				});
