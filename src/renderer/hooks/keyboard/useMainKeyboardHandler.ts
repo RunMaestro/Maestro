@@ -589,6 +589,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
 				trackShortcut('usageDashboard');
+			} else if (ctx.isShortcut(e, 'executionQueue')) {
+				e.preventDefault();
+				ctx.handleOpenQueueBrowser();
+				trackShortcut('executionQueue');
 			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);

@@ -290,6 +290,26 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Symphony registry URLs
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
+		// File Edit & Preview settings
+		fileEditWordWrap: true,
+		setFileEditWordWrap: vi.fn(),
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: vi.fn(),
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));

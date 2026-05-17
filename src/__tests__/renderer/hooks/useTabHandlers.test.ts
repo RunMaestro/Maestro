@@ -1250,6 +1250,51 @@ describe('useTabHandlers', () => {
 			expect(getSession().aiTabs[0].showThinking).toBe('off');
 		});
 
+		it('handleToggleTabEnterToSend flips the effective value into a per-tab override', () => {
+			// Global default is true (enterToSendAI)
+			useSettingsStore.setState({ enterToSendAI: true } as any);
+			const tab = createMockAITab({ id: 'tab-1' });
+			const { result } = renderWithSession([tab]);
+
+			// undefined override + global true => first toggle stores false
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(false);
+
+			// flipping again stores true
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(true);
+		});
+
+		it('handleToggleTabEnterToSend respects current global default on first toggle', () => {
+			// Global default is false now
+			useSettingsStore.setState({ enterToSendAI: false } as any);
+			const tab = createMockAITab({ id: 'tab-1' });
+			const { result } = renderWithSession([tab]);
+
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			// Effective was false (global), so toggling stores true
+			expect(getSession().aiTabs[0].enterToSend).toBe(true);
+		});
+
+		it('handleToggleTabEnterToSend leaves other tabs untouched', () => {
+			useSettingsStore.setState({ enterToSendAI: true } as any);
+			const tabA = createMockAITab({ id: 'tab-a' });
+			const tabB = createMockAITab({ id: 'tab-b' });
+			const { result } = renderWithSession([tabA, tabB], [], 'tab-a');
+
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(false);
+			expect(getSession().aiTabs[1].enterToSend).toBeUndefined();
+		});
+
 		it('handleUpdateTabByClaudeSessionId updates tab by agent session id', () => {
 			const tab = createMockAITab({
 				id: 'tab-1',

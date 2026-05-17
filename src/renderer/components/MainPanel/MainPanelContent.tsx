@@ -213,10 +213,13 @@ export interface MainPanelContentProps {
 	onPublishGist?: () => void;
 	hasGist?: boolean;
 	onOpenInGraph?: () => void;
+	/** Open the currently previewed file in a new Maestro browser tab. */
+	onOpenInBrowser?: () => void;
 	onPublishMessageGist?: (text: string, messageId?: string) => void;
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 
 	// Wizard callbacks
 	onWizardComplete?: () => void;
@@ -367,10 +370,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onPublishGist,
 		hasGist,
 		onOpenInGraph,
+		onOpenInBrowser,
 		onPublishMessageGist,
 		onToggleTabReadOnlyMode,
 		onToggleTabSaveToHistory,
 		onToggleTabShowThinking,
+		onToggleTabEnterToSend,
 		onWizardComplete,
 		onWizardCompleteAndStartAutoRun,
 		onWizardDocumentSelect,
@@ -479,6 +484,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onPublishGist={onPublishGist}
 						hasGist={hasGist}
 						onOpenInGraph={onOpenInGraph}
+						onOpenInBrowser={onOpenInBrowser}
 						sshRemoteId={filePreviewSshRemoteId}
 						// Pass external edit content for persistence across tab switches
 						externalEditContent={activeFileTab.editContent}
@@ -619,8 +625,12 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									theme={theme}
 									inputValue={inputValue}
 									setInputValue={setInputValue}
-									enterToSend={enterToSendAI}
-									setEnterToSend={useSettingsStore.getState().setEnterToSendAI}
+									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
+									setEnterToSend={
+										onToggleTabEnterToSend
+											? () => onToggleTabEnterToSend()
+											: useSettingsStore.getState().setEnterToSendAI
+									}
 									stagedImages={stagedImages}
 									setStagedImages={setStagedImages}
 									setLightboxImage={setLightboxImage}

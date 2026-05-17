@@ -668,6 +668,47 @@ describe('Enter-to-send', () => {
 
 		expect(deps.processInput).not.toHaveBeenCalled();
 	});
+
+	it('tab-level enterToSend=false overrides global enterToSendAI=true', () => {
+		useSettingsStore.setState({ enterToSendAI: true } as any);
+		setActiveSession({
+			activeTabId: 'tab-1',
+			aiTabs: [{ id: 'tab-1', enterToSend: false }],
+		});
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		// Plain Enter on a tab that overrides to Cmd+Enter mode — should NOT send
+		const plain = createKeyEvent('Enter');
+		act(() => {
+			result.current.handleInputKeyDown(plain);
+		});
+		expect(deps.processInput).not.toHaveBeenCalled();
+
+		// Cmd+Enter on the same tab — SHOULD send
+		const withMeta = createKeyEvent('Enter', { metaKey: true });
+		act(() => {
+			result.current.handleInputKeyDown(withMeta);
+		});
+		expect(deps.processInput).toHaveBeenCalled();
+	});
+
+	it('tab-level enterToSend=true overrides global enterToSendAI=false', () => {
+		useSettingsStore.setState({ enterToSendAI: false } as any);
+		setActiveSession({
+			activeTabId: 'tab-1',
+			aiTabs: [{ id: 'tab-1', enterToSend: true }],
+		});
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter');
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(deps.processInput).toHaveBeenCalled();
+	});
 });
 
 // ============================================================================

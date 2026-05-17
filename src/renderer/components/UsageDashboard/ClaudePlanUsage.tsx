@@ -15,11 +15,12 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { formatFutureTime } from '../../../shared/formatters';
+import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 
 function deriveAccountShortName(configDirKey: string | undefined): string {
 	if (!configDirKey) return 'default';
@@ -89,7 +90,7 @@ const BarRow = memo(function BarRow({ label, percent, resetsAt, theme }: BarRowP
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative max-w-2xl"
+				className="flex-1 h-7 rounded overflow-hidden relative"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -237,15 +238,28 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 		};
 	}, []);
 
+	// Home dir for resolving the implicit default `~/.claude` account. The
+	// renderer doesn't have direct fs access; cached IPC fetch via homeDir.ts
+	// returns synchronously on subsequent renders.
+	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
+	useEffect(() => {
+		if (!homeDir) {
+			getHomeDirAsync()?.then(setHomeDir);
+		}
+	}, [homeDir]);
+	const defaultConfigDirKey = homeDir ? normalizeConfigDirKey(`${homeDir}/.claude`) : null;
+
 	// Account list derived from configured agents/sessions, NOT from snapshot
 	// keys. This way the dashboard shows every account the user has explicitly
 	// wired up — including ones that haven't been sampled yet — and the
 	// per-tab UI can guide them to hit Refresh.
 	//
 	// Sourcing rule mirrors the main-side sampler (claude-usage-startup.ts):
-	// merge agent-level + session-level customEnvVars (session wins) and
-	// require an explicit `CLAUDE_CONFIG_DIR`. Sessions without one are
-	// skipped — we never guess the default account.
+	// merge agent-level + session-level customEnvVars (session wins). Sessions
+	// without an explicit CLAUDE_CONFIG_DIR fall back to the implicit default
+	// (`~/.claude`) so the user can still see that account is in use even when
+	// it hasn't been sampled (sampling the default is a deliberate skip on the
+	// main side — see `buildTarget` in claude-usage-startup.ts).
 	const configuredAccountKeys = useMemo(() => {
 		const keys = new Set<string>();
 		for (const s of sessions) {
@@ -255,6 +269,8 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 			const dir = merged.CLAUDE_CONFIG_DIR;
 			if (typeof dir === 'string' && dir.length > 0) {
 				keys.add(normalizeConfigDirKey(dir));
+			} else if (defaultConfigDirKey) {
+				keys.add(defaultConfigDirKey);
 			}
 		}
 		// Also include any snapshot key that didn't surface in session config —
@@ -267,7 +283,7 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 		return Array.from(keys).sort((a, b) =>
 			deriveAccountShortName(a).localeCompare(deriveAccountShortName(b))
 		);
-	}, [sessions, agentLevelEnvVars, snapshots]);
+	}, [sessions, agentLevelEnvVars, snapshots, defaultConfigDirKey]);
 
 	// Sub-tab selection by configDirKey. Defaults to the first account on
 	// mount; clamps back to the first whenever the selected key disappears.
@@ -287,8 +303,17 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 
+	// Visual gate that keeps the spinning state on-screen long enough for the
+	// eye to register it, even when the IPC round-trip returns in <100ms.
+	// Independent of `refreshing` so a fast sample still animates the button
+	// for a full beat instead of flashing.
+	const [visualBusy, setVisualBusy] = useState(false);
+
 	const handleRefresh = useCallback(async () => {
-		if (refreshing) return;
+		if (refreshing || visualBusy) return;
+		setVisualBusy(true);
+		const minVisibleMs = 900;
+		const start = Date.now();
 		try {
 			await window.maestro.agents.refreshClaudeUsageSnapshots();
 		} catch {
@@ -296,7 +321,14 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 			// map rather than blowing up the dashboard.
 		}
 		await useClaudeUsageStore.getState().refresh();
-	}, [refreshing]);
+		const elapsed = Date.now() - start;
+		if (elapsed < minVisibleMs) {
+			await new Promise((r) => setTimeout(r, minVisibleMs - elapsed));
+		}
+		setVisualBusy(false);
+	}, [refreshing, visualBusy]);
+
+	const isBusy = refreshing || visualBusy;
 
 	return (
 		<div
@@ -311,27 +343,47 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 				<button
 					type="button"
 					onClick={handleRefresh}
-					disabled={refreshing}
-					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed"
+					disabled={isBusy}
+					className="relative flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed overflow-hidden"
 					style={{
-						color: refreshing ? theme.colors.bgMain : theme.colors.accent,
-						backgroundColor: refreshing ? theme.colors.accent : `${theme.colors.accent}15`,
+						color: isBusy ? theme.colors.bgMain : theme.colors.accent,
+						backgroundColor: isBusy ? theme.colors.accent : `${theme.colors.accent}15`,
 						border: `1px solid ${theme.colors.accent}40`,
+						minWidth: '7.25rem',
 					}}
 					data-testid="claude-plan-refresh"
 					aria-label="Refresh Claude usage snapshots"
+					aria-busy={isBusy}
 				>
-					<RefreshCw
-						className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
-						aria-hidden="true"
-					/>
-					{refreshing ? 'Sampling…' : 'Refresh'}
+					{isBusy ? (
+						<>
+							{/* Indeterminate progress sweep across the button body —
+							    bigger visual change than just a spinning icon, so a sub-second
+							    refresh still reads as "the panel is working" instead of a
+							    flicker. */}
+							<span
+								className="absolute inset-0 pointer-events-none claude-plan-refresh-sweep"
+								style={{
+									backgroundImage: `linear-gradient(90deg, transparent 0%, ${theme.colors.bgMain}66 50%, transparent 100%)`,
+								}}
+								aria-hidden="true"
+							/>
+							<Loader2 className="w-3.5 h-3.5 animate-spin relative" aria-hidden="true" />
+							<span className="relative">Sampling…</span>
+						</>
+					) : (
+						<>
+							<RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+							<span>Refresh</span>
+						</>
+					)}
 				</button>
 			</div>
 
-			{/* Account tab bar — renders only when 2+ accounts are configured.
-			    A single account doesn't need tabs; an empty state needs none. */}
-			{configuredAccountKeys.length > 1 && (
+			{/* Account tab bar — renders whenever at least one account is
+			    configured so the structure stays consistent when accounts are
+			    added/removed. A bare empty state still hides the bar. */}
+			{configuredAccountKeys.length >= 1 && (
 				<div
 					className="flex items-center gap-1 mb-4 border-b"
 					style={{ borderColor: theme.colors.border }}

@@ -88,6 +88,7 @@ export interface AppUtilityModalsProps {
 	onRenameTab: () => void;
 	onToggleReadOnlyMode: () => void;
 	onToggleTabShowThinking: () => void;
+	onToggleTabEnterToSend: () => void;
 	onOpenTabSwitcher: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
@@ -326,6 +327,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onRenameTab,
 	onToggleReadOnlyMode,
 	onToggleTabShowThinking,
+	onToggleTabEnterToSend,
 	onOpenTabSwitcher,
 	// Bulk tab close operations
 	onCloseAllTabs,
@@ -518,6 +520,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onRenameTab={onRenameTab}
 					onToggleReadOnlyMode={onToggleReadOnlyMode}
 					onToggleTabShowThinking={onToggleTabShowThinking}
+					onToggleTabEnterToSend={onToggleTabEnterToSend}
 					onOpenTabSwitcher={onOpenTabSwitcher}
 					onCloseAllTabs={onCloseAllTabs}
 					onCloseOtherTabs={onCloseOtherTabs}

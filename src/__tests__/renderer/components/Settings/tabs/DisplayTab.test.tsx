@@ -49,6 +49,9 @@ const mockSetSshReduceEntryCapEnabled = vi.fn();
 const mockSetSshReduceEntryCapFraction = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
 const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
+const mockSetFileEditWordWrap = vi.fn();
+const mockSetFileEditShowLineNumbers = vi.fn();
+const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -108,6 +111,25 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter: false,
 		setShowFilePreviewsInUnreadFilter: mockSetShowFilePreviewsInUnreadFilter,
+		fileEditWordWrap: true,
+		setFileEditWordWrap: mockSetFileEditWordWrap,
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: mockSetFileEditShowLineNumbers,
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: mockSetFilePreviewToolbarButtonVisibility,
 		...mockUseSettingsOverrides,
 	}),
 }));

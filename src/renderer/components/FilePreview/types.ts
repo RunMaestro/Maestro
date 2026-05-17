@@ -52,6 +52,12 @@ export interface FilePreviewProps {
 	hasGist?: boolean;
 	/** Callback to open Document Graph focused on this file */
 	onOpenInGraph?: () => void;
+	/**
+	 * Callback to open the current file in a new Maestro browser tab. Wired only
+	 * for HTML files — the sandboxed preview iframe can't run JS-heavy local
+	 * dashboards, but the full webview can.
+	 */
+	onOpenInBrowser?: () => void;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
 	/** Current edit content (used for file tab persistence) - if provided, overrides internal state */

@@ -20,8 +20,10 @@
  * cheap synchronous reads from React components.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
+import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
+import type { Session } from '../types';
 
 /**
  * Snapshot shape mirrors `UsageSnapshot` in `src/main/agents/claude-mode-selector.ts`.
@@ -110,4 +112,92 @@ export function useClaudeUsageSnapshot(
 
 	if (!configDirKey) return null;
 	return snapshots[configDirKey] ?? null;
+}
+
+/**
+ * Module-level cache for the claude-code agent's `customEnvVars`. One IPC
+ * fetch per renderer process; subsequent consumers read the same Promise. The
+ * agent-level vars rarely change at runtime (Settings → Agents) so we don't
+ * subscribe to a live channel — call sites just need a stable reference for
+ * deriving `CLAUDE_CONFIG_DIR` per session.
+ */
+let cachedClaudeAgentEnv: Record<string, string> | undefined;
+let claudeAgentEnvPromise: Promise<Record<string, string>> | undefined;
+
+function fetchClaudeAgentEnv(): Promise<Record<string, string>> {
+	if (claudeAgentEnvPromise) return claudeAgentEnvPromise;
+	const bridge = (window as any)?.maestro?.agents?.getCustomEnvVars;
+	if (typeof bridge !== 'function') {
+		claudeAgentEnvPromise = Promise.resolve({});
+		return claudeAgentEnvPromise;
+	}
+	claudeAgentEnvPromise = Promise.resolve(bridge('claude-code'))
+		.then((env: Record<string, string> | null | undefined) => {
+			const safe = env ?? {};
+			cachedClaudeAgentEnv = safe;
+			return safe;
+		})
+		.catch(() => {
+			cachedClaudeAgentEnv = {};
+			return {};
+		});
+	return claudeAgentEnvPromise;
+}
+
+/**
+ * Resolve the canonical `CLAUDE_CONFIG_DIR` key for a Claude Code session
+ * the same way the main-side spawner does: session env wins over agent env,
+ * with the implicit default `~/.claude` as the final fallback. Returns
+ * `undefined` only when the session isn't a Claude Code session, when no
+ * useful resolution is possible yet (no home dir, no env vars, no
+ * pre-stamped key), or when the inputs explicitly disable resolution.
+ */
+function resolveSessionConfigDirKey(
+	session: Session | null | undefined,
+	agentEnv: Record<string, string>,
+	homeDir: string | undefined
+): string | undefined {
+	if (!session || session.toolType !== 'claude-code') return undefined;
+	// The spawner stamps the canonical key onto claudeInteractive when it
+	// resolves the mode. Prefer that — it's already canonicalized via
+	// `path.resolve()` on the main side.
+	const stamped = session.claudeInteractive?.lastUsageSnapshotKey;
+	if (typeof stamped === 'string' && stamped.length > 0) {
+		return stamped.replace(/\/+$/, '');
+	}
+	const sessionEnv = (session.customEnvVars ?? {}) as Record<string, string>;
+	const explicit = sessionEnv.CLAUDE_CONFIG_DIR ?? agentEnv.CLAUDE_CONFIG_DIR;
+	if (typeof explicit === 'string' && explicit.length > 0) {
+		return explicit.replace(/\/+$/, '');
+	}
+	if (homeDir) return `${homeDir.replace(/\/+$/, '')}/.claude`;
+	return undefined;
+}
+
+/**
+ * Hook variant of `resolveSessionConfigDirKey` — pairs the lazy agent-env
+ * fetch with React state so consumers re-render once the IPC resolves and
+ * the implicit default key becomes derivable.
+ */
+export function useResolvedClaudeConfigDirKey(
+	session: Session | null | undefined
+): string | undefined {
+	const [agentEnv, setAgentEnv] = useState<Record<string, string>>(
+		() => cachedClaudeAgentEnv ?? {}
+	);
+	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
+
+	useEffect(() => {
+		if (!cachedClaudeAgentEnv) {
+			void fetchClaudeAgentEnv().then((env) => setAgentEnv(env));
+		}
+	}, []);
+
+	useEffect(() => {
+		if (!homeDir) {
+			getHomeDirAsync()?.then(setHomeDir);
+		}
+	}, [homeDir]);
+
+	return resolveSessionConfigDirKey(session ?? null, agentEnv, homeDir);
 }

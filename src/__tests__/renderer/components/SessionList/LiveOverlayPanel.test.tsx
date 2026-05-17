@@ -157,8 +157,9 @@ describe('LiveOverlayPanel', () => {
 
 		it('disables toggle when tunnel is starting', () => {
 			render(<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'starting' })} />);
-			const toggleBtn = screen.getByTitle('Enable remote control');
+			const toggleBtn = screen.getByTitle('Starting tunnel…');
 			expect(toggleBtn).toBeDisabled();
+			expect(toggleBtn.getAttribute('aria-busy')).toBe('true');
 		});
 
 		it('shows loading spinner when tunnel is starting', () => {
@@ -166,6 +167,13 @@ describe('LiveOverlayPanel', () => {
 				<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'starting' })} />
 			);
 			expect(container.querySelector('.animate-spin')).toBeTruthy();
+		});
+
+		it('shows inline starting status with live region when tunnel is starting', () => {
+			render(<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'starting' })} />);
+			const status = screen.getByRole('status');
+			expect(status.textContent).toMatch(/Starting tunnel/i);
+			expect(status.getAttribute('aria-live')).toBe('polite');
 		});
 
 		it('displays tunnel error message', () => {

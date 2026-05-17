@@ -15,6 +15,7 @@ import {
 	AppWindow,
 	Database,
 	Eye,
+	FileText,
 	FolderSearch,
 	HelpCircle,
 	WrapText,
@@ -24,6 +25,10 @@ import {
 	Palette,
 	Sparkles,
 } from 'lucide-react';
+import {
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS,
+	type FilePreviewToolbarButton,
+} from '../../../stores/settingsStore';
 import { useSettings } from '../../../hooks';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import type { Theme } from '../../../types';
@@ -41,6 +46,21 @@ import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
 import { isMacOSPlatform } from '../../../utils/platformUtils';
 
 const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
+
+const TOOLBAR_BUTTON_LABELS: Record<FilePreviewToolbarButton, string> = {
+	save: 'Save',
+	wordWrap: 'Word wrap',
+	remoteImages: 'Show remote images',
+	htmlRender: 'Render HTML',
+	previewTier: 'Preview tier chip',
+	editToggle: 'Edit / preview toggle',
+	copyContent: 'Copy content',
+	publishGist: 'Publish as gist',
+	documentGraph: 'Document graph',
+	openInBrowser: 'Open in Maestro browser',
+	openInDefault: 'Open in default app',
+	copyPath: 'Copy file path',
+};
 
 export interface DisplayTabProps {
 	theme: Theme;
@@ -98,6 +118,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowLeftPanelCueIndicator,
 		showLeftPanelStartupCommandIndicator,
 		setShowLeftPanelStartupCommandIndicator,
+		fileEditWordWrap,
+		setFileEditWordWrap,
+		fileEditShowLineNumbers,
+		setFileEditShowLineNumbers,
+		filePreviewToolbarVisibility,
+		setFilePreviewToolbarButtonVisibility,
 		documentGraphShowExternalLinks,
 		setDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes,
@@ -724,6 +750,133 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 								}`}
 							/>
 						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* File Edit & Preview */}
+			<div data-setting-id="display-file-edit-preview">
+				<SettingsSectionHeading icon={FileText}>File Edit & Preview</SettingsSectionHeading>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{/* Line numbers */}
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show line numbers in the editor
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Render a line-number gutter on the left edge of the file editor. Right-clicking a
+								line copies a maestro:// deep link to that line.
+							</p>
+						</div>
+						<button
+							onClick={() => setFileEditShowLineNumbers(!fileEditShowLineNumbers)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: fileEditShowLineNumbers
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={fileEditShowLineNumbers}
+							aria-label="Show line numbers in the editor"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									fileEditShowLineNumbers ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Word wrap default */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Wrap long lines in the editor
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When on, long lines wrap at whitespace. When off, the editor scrolls horizontally.
+								Toggle live from the editor toolbar.
+							</p>
+						</div>
+						<button
+							onClick={() => setFileEditWordWrap(!fileEditWordWrap)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: fileEditWordWrap ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={fileEditWordWrap}
+							aria-label="Wrap long lines in the editor"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									fileEditWordWrap ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Toolbar button visibility */}
+					<div className="pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+						<p className="text-sm" style={{ color: theme.colors.textMain }}>
+							Toolbar buttons
+						</p>
+						<p className="text-xs opacity-50 mt-0.5">
+							Hide buttons you never use. Hidden actions stay reachable via command palette and
+							keyboard shortcuts.
+						</p>
+						<div className="grid grid-cols-2 gap-2 mt-3">
+							{FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.map((key) => {
+								const label = TOOLBAR_BUTTON_LABELS[key];
+								const enabled = filePreviewToolbarVisibility[key];
+								return (
+									<label
+										key={key}
+										className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/5 transition-colors"
+									>
+										<span className="text-xs" style={{ color: theme.colors.textMain }}>
+											{label}
+										</span>
+										<button
+											type="button"
+											onClick={() =>
+												setFilePreviewToolbarButtonVisibility(
+													key as FilePreviewToolbarButton,
+													!enabled
+												)
+											}
+											className="relative w-8 h-4 rounded-full transition-colors flex-shrink-0 outline-none"
+											tabIndex={0}
+											style={{
+												backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
+											}}
+											role="switch"
+											aria-checked={enabled}
+											aria-label={`Show ${label} button`}
+										>
+											<span
+												className={`absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+													enabled ? 'translate-x-4' : 'translate-x-0.5'
+												}`}
+											/>
+										</button>
+									</label>
+								);
+							})}
+						</div>
 					</div>
 				</div>
 			</div>

@@ -2008,36 +2008,47 @@ export const TerminalOutput = memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<div className="flex items-center gap-2">
-							<input
-								type="text"
-								value={outputSearchQuery}
-								onChange={(e) => setOutputSearchQuery(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter' && !e.shiftKey) {
-										e.preventDefault();
-										goToNextMatch();
-									} else if (e.key === 'Enter' && e.shiftKey) {
-										e.preventDefault();
-										goToPrevMatch();
+							<div className="relative flex-1">
+								<input
+									type="text"
+									value={outputSearchQuery}
+									onChange={(e) => setOutputSearchQuery(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											goToNextMatch();
+										} else if (e.key === 'Enter' && e.shiftKey) {
+											e.preventDefault();
+											goToPrevMatch();
+										}
+									}}
+									placeholder={
+										outputSearchRegex
+											? 'Regex search... (Enter: next, Shift+Enter: prev)'
+											: 'Search output... (Enter: next, Shift+Enter: prev)'
 									}
-								}}
-								placeholder={
-									outputSearchRegex
-										? 'Regex search... (Enter: next, Shift+Enter: prev)'
-										: 'Search output... (Enter: next, Shift+Enter: prev)'
-								}
-								className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
-								style={{
-									borderColor: regexError ? theme.colors.error : theme.colors.accent,
-									color: theme.colors.textMain,
-									backgroundColor: theme.colors.bgSidebar,
-									fontFamily: outputSearchRegex
-										? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-										: undefined,
-								}}
-								spellCheck={outputSearchRegex ? false : undefined}
-								autoFocus
-							/>
+									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
+									style={{
+										borderColor: regexError ? theme.colors.error : theme.colors.accent,
+										color: theme.colors.textMain,
+										backgroundColor: theme.colors.bgSidebar,
+										fontFamily: outputSearchRegex
+											? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+											: undefined,
+									}}
+									spellCheck={outputSearchRegex ? false : undefined}
+									autoFocus
+								/>
+								<div
+									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textDim,
+									}}
+								>
+									ESC
+								</div>
+							</div>
 							<button
 								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
 								className="flex items-center justify-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch min-w-[7rem]"

@@ -199,6 +199,39 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	fileEditWordWrap: {
+		description:
+			'Wrap long lines in the file editor at whitespace boundaries instead of scrolling horizontally.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	fileEditShowLineNumbers: {
+		description: 'Show the line-number gutter in the file editor.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	filePreviewToolbarVisibility: {
+		description:
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+		type: 'object',
+		default: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',

@@ -129,6 +129,7 @@ export interface TabHandlersReturn {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 
 	// File Tab handlers
 	handleOpenFileTab: (
@@ -1664,6 +1665,21 @@ export function useTabHandlers(): TabHandlersReturn {
 		});
 	}, []);
 
+	const handleToggleTabEnterToSend = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			// Flip the *effective* value (override if set, otherwise global default).
+			// Result becomes a sticky per-tab override; future tabs still follow the
+			// global default until they're toggled themselves.
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
+	}, []);
+
 	// ========================================================================
 	// Scroll State
 	// ========================================================================
@@ -1887,6 +1903,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 
 		// File Tab handlers
 		handleOpenFileTab,

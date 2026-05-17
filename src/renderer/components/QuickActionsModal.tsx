@@ -15,6 +15,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { getAllFolderPaths } from '../utils/fileExplorer';
 import { useModalStore } from '../stores/modalStore';
 import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -170,6 +171,7 @@ interface QuickActionsModalProps {
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onOpenTabSwitcher?: () => void;
 	tabShortcuts?: Record<string, Shortcut>;
 	isAiMode?: boolean;
@@ -299,6 +301,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onRenameTab,
 		onToggleReadOnlyMode,
 		onToggleTabShowThinking,
+		onToggleTabEnterToSend,
 		onOpenTabSwitcher,
 		tabShortcuts,
 		isAiMode,
@@ -373,6 +376,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setIdleNotificationEnabled = useSettingsStore((s) => s.setIdleNotificationEnabled);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
+	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -740,25 +744,27 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				]
 			: []),
 		{ id: 'createGroup', label: 'Create New Group', action: handleCreateGroup },
-		...(groups.some((g) => g.collapsed)
+		...(groups.some((g) => g.collapsed) || ungroupedCollapsed
 			? [
 					{
 						id: 'expandAllGroups',
 						label: 'Expand All Agent Groups',
 						action: () => {
 							setGroups((prev) => prev.map((g) => (g.collapsed ? { ...g, collapsed: false } : g)));
+							setUngroupedCollapsed(false);
 							setQuickActionOpen(false);
 						},
 					},
 				]
 			: []),
-		...(groups.some((g) => !g.collapsed)
+		...(groups.some((g) => !g.collapsed) || !ungroupedCollapsed
 			? [
 					{
 						id: 'collapseAllGroups',
 						label: 'Collapse All Agent Groups',
 						action: () => {
 							setGroups((prev) => prev.map((g) => (g.collapsed ? g : { ...g, collapsed: true })));
+							setUngroupedCollapsed(true);
 							setQuickActionOpen(false);
 						},
 					},
@@ -800,6 +806,48 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		...(() => {
+			if (!activeSession?.fileTree?.length) return [] as QuickAction[];
+			const allFolderPaths = getAllFolderPaths(activeSession.fileTree);
+			if (allFolderPaths.length === 0) return [] as QuickAction[];
+			const expanded = activeSession.fileExplorerExpanded ?? [];
+			const expandedSet = new Set(expanded);
+			const hasUnexpanded = allFolderPaths.some((p) => !expandedSet.has(p));
+			const hasExpanded = expanded.length > 0;
+			const sessionId = activeSession.id;
+			const items: QuickAction[] = [];
+			if (hasUnexpanded) {
+				items.push({
+					id: 'expandAllFolders',
+					label: 'Expand All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId ? { ...s, fileExplorerExpanded: allFolderPaths } : s
+							)
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			if (hasExpanded) {
+				items.push({
+					id: 'collapseAllFolders',
+					label: 'Collapse All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) => (s.id === sessionId ? { ...s, fileExplorerExpanded: [] } : s))
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			return items;
+		})(),
 		{
 			id: 'toggleSidebar',
 			label: 'Toggle Sidebar',
@@ -911,6 +959,25 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						},
 					},
 				]
+			: []),
+		...(isAiMode && onToggleTabEnterToSend
+			? (() => {
+					const activeTab = activeSession?.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					const effective = activeTab?.enterToSend ?? enterToSendAI;
+					return [
+						{
+							id: 'toggleEnterToSend',
+							label: 'Toggle Enter to Send',
+							subtext: effective
+								? 'Currently: Enter sends · click to switch this tab to Cmd+Enter'
+								: 'Currently: Cmd+Enter sends · click to switch this tab to Enter',
+							action: () => {
+								onToggleTabEnterToSend();
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
 			: []),
 		...(isAiMode && onToggleMarkdownEditMode
 			? [

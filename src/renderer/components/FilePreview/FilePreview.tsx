@@ -44,6 +44,8 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isImageFile } from '../../../shared/gitUtils';
@@ -115,6 +117,7 @@ export const FilePreview = React.memo(
 			onPublishGist,
 			hasGist,
 			onOpenInGraph,
+			onOpenInBrowser,
 			sshRemoteId,
 			externalEditContent,
 			onEditContentChange,
@@ -158,6 +161,11 @@ export const FilePreview = React.memo(
 		const [showJqHelp, setShowJqHelp] = useState(false);
 		const [jqError, setJqError] = useState<string | null>(null);
 		const jqHelpRef = useRef<HTMLDivElement>(null);
+		const [lineCtxMenu, setLineCtxMenu] = useState<{
+			lineNumber: number;
+			x: number;
+			y: number;
+		} | null>(null);
 
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
@@ -372,6 +380,10 @@ export const FilePreview = React.memo(
 		const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 		const spellCheckEnabled = useSettingsStore((s) => s.spellCheck);
+		const fileEditWordWrap = useSettingsStore((s) => s.fileEditWordWrap);
+		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
+		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
+		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -853,6 +865,38 @@ export const FilePreview = React.memo(
 			}
 		};
 
+		// Copy a maestro:// deep link that points to the current file at a
+		// specific line. Bound to the right-click handler on the editor's line
+		// gutter. The link includes the session ID so it reopens in the same
+		// agent context where it was captured.
+		const copyDeepLinkToLine = useCallback(
+			async (lineNumber: number) => {
+				if (!file) return;
+				const sessionId = useSessionStore.getState().activeSessionId;
+				if (!sessionId) {
+					notifyToast({
+						type: 'error',
+						title: 'No active agent',
+						message: 'Deep links need an active agent to scope the file to. Select one first.',
+					});
+					return;
+				}
+				const url = buildFileDeepLink(sessionId, file.path, lineNumber);
+				try {
+					const ok = await safeClipboardWrite(url);
+					if (ok) {
+						flashCopiedToClipboard(url, `Deep Link Copied (L${lineNumber})`);
+					} else {
+						failClipboardToast('Failed to Copy Deep Link');
+					}
+				} catch (err) {
+					captureException(err);
+					failClipboardToast('Failed to Copy Deep Link');
+				}
+			},
+			[file]
+		);
+
 		const copyContentToClipboard = async () => {
 			if (!file) return;
 			if (isImage) {
@@ -1131,6 +1175,7 @@ export const FilePreview = React.memo(
 					onPublishGist={onPublishGist}
 					hasGist={hasGist}
 					onOpenInGraph={onOpenInGraph}
+					onOpenInBrowser={onOpenInBrowser}
 					sshRemoteId={sshRemoteId}
 					copyContentToClipboard={copyContentToClipboard}
 					copyPathToClipboard={copyPathToClipboard}
@@ -1150,6 +1195,9 @@ export const FilePreview = React.memo(
 					autoTier={autoTier}
 					previewTierOverride={previewTierOverride}
 					onPreviewTierChange={onPreviewTierChange}
+					wordWrap={fileEditWordWrap}
+					setWordWrap={setFileEditWordWrap}
+					toolbarVisibility={filePreviewToolbarVisibility}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1438,6 +1486,15 @@ export const FilePreview = React.memo(
 							language={language}
 							theme={theme}
 							spellCheck={spellCheckEnabled}
+							wrap={fileEditWordWrap}
+							showLineNumbers={fileEditShowLineNumbers}
+							onLineNumberContextMenu={(lineNumber, event) => {
+								setLineCtxMenu({
+									lineNumber,
+									x: event.clientX,
+									y: event.clientY,
+								});
+							}}
 							onKeyDown={(e) => {
 								// Handle Cmd+S for save
 								if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
@@ -1861,6 +1918,43 @@ export const FilePreview = React.memo(
 							You have unsaved changes. Are you sure you want to close without saving?
 						</p>
 					</Modal>
+				)}
+
+				{/* Line-number gutter right-click menu. Single action: copy a
+				    maestro:// deep link pointing at this exact line. */}
+				{lineCtxMenu && (
+					<>
+						<div
+							className="fixed inset-0 z-40"
+							onClick={() => setLineCtxMenu(null)}
+							onContextMenu={(e) => {
+								e.preventDefault();
+								setLineCtxMenu(null);
+							}}
+						/>
+						<div
+							className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+							style={{
+								left: lineCtxMenu.x,
+								top: lineCtxMenu.y,
+								backgroundColor: theme.colors.bgSidebar,
+								borderColor: theme.colors.border,
+								minWidth: '14rem',
+							}}
+						>
+							<button
+								type="button"
+								onClick={() => {
+									copyDeepLinkToLine(lineCtxMenu.lineNumber);
+									setLineCtxMenu(null);
+								}}
+								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								Copy deep link to line {lineCtxMenu.lineNumber}
+							</button>
+						</div>
+					</>
 				)}
 			</div>
 		);

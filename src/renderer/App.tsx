@@ -835,6 +835,7 @@ function MaestroConsoleInner() {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 		handleOpenFileTab,
 		handleSelectFileTab,
 		handleCloseFileTab,
@@ -2030,6 +2031,7 @@ function MaestroConsoleInner() {
 	// Quick Actions modal handlers — extracted to useQuickActionsHandlers hook
 	const {
 		handleQuickActionsToggleReadOnlyMode,
+		handleQuickActionsToggleTabEnterToSend,
 		handleQuickActionsToggleTabShowThinking,
 		handleQuickActionsRefreshGitFileState,
 		handleQuickActionsDebugReleaseQueuedItem,
@@ -2218,6 +2220,9 @@ function MaestroConsoleInner() {
 		// Edit agent modal
 		setEditAgentSession,
 		setEditAgentModalOpen,
+
+		// Execution queue browser (Cmd+Shift+X)
+		handleOpenQueueBrowser,
 
 		// Auto Run state for keyboard handler
 		activeBatchRunState,
@@ -2414,6 +2419,7 @@ function MaestroConsoleInner() {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 		toggleUnreadFilter,
 		handleOpenTabSearch,
 		handleOpenOutputSearch,
@@ -2487,6 +2493,10 @@ function MaestroConsoleInner() {
 		setGraphFocusFilePath: useFileExplorerStore.getState().focusFileInGraph,
 		setLastGraphFocusFilePath: () => {}, // no-op: focusFileInGraph sets both atomically
 		setIsGraphViewOpen: useFileExplorerStore.getState().setIsGraphViewOpen,
+
+		// "Open in Maestro Browser" toolbar button on FilePreview routes through
+		// the same handler the file-tree context menu uses.
+		handleOpenBrowserTabAt,
 
 		// Wizard callbacks
 		generateInlineWizardDocuments,
@@ -2843,6 +2853,7 @@ function MaestroConsoleInner() {
 					onQuickActionsRenameTab={handleQuickActionsRenameTab}
 					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
 					onQuickActionsToggleTabShowThinking={handleQuickActionsToggleTabShowThinking}
+					onQuickActionsToggleTabEnterToSend={handleQuickActionsToggleTabEnterToSend}
 					onQuickActionsOpenTabSwitcher={handleQuickActionsOpenTabSwitcher}
 					onCloseAllTabs={handleCloseAllTabs}
 					onCloseOtherTabs={handleCloseOtherTabs}

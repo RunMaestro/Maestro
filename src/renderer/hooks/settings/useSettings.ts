@@ -36,7 +36,11 @@ import {
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
 import type { SettingsStore } from '../../stores/settingsStore';
-import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
+import type {
+	DocumentGraphLayoutType,
+	FilePreviewToolbarButton,
+	FilePreviewToolbarVisibility,
+} from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
@@ -395,6 +399,14 @@ export interface UseSettingsReturn {
 	setShowLeftPanelCueIndicator: (value: boolean) => void;
 	showLeftPanelStartupCommandIndicator: boolean;
 	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	setFileEditWordWrap: (value: boolean) => void;
+	fileEditShowLineNumbers: boolean;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 
 	// Group Chat settings
 	moderatorStandingInstructions: string;

@@ -165,7 +165,11 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
 	});
 
-	it('does not render the tab bar when only one account exists', () => {
+	it('renders the tab bar even when only one account exists', () => {
+		// Tab bar stays visible for single-account configurations so the user
+		// always sees the account picker structure (they explicitly want to
+		// enumerate accounts even when there's just one today, in case they
+		// add more later).
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -178,7 +182,8 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		expect(screen.queryByTestId('claude-plan-account-tabs')).toBeNull();
+		expect(screen.getByTestId('claude-plan-account-tabs')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
 	});
 

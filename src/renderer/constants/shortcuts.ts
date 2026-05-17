@@ -65,6 +65,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', 'Meta', 'p'],
 	},
 	usageDashboard: { id: 'usageDashboard', label: 'Usage Dashboard', keys: ['Alt', 'Meta', 'u'] },
+	executionQueue: {
+		id: 'executionQueue',
+		label: 'View Execution Queue',
+		keys: ['Meta', 'Shift', 'x'],
+	},
 	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },

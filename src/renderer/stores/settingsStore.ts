@@ -211,6 +211,34 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	maestroCue: false,
 };
 
+// File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
+// Settings → Display → File Edit & Preview. Buttons can be hidden but the
+// underlying actions stay reachable via the command palette and hotkeys.
+export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
+	'save',
+	'wordWrap',
+	'remoteImages',
+	'htmlRender',
+	'previewTier',
+	'editToggle',
+	'copyContent',
+	'publishGist',
+	'documentGraph',
+	'openInBrowser',
+	'openInDefault',
+	'copyPath',
+] as const;
+
+export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
+
+export type FilePreviewToolbarVisibility = Record<FilePreviewToolbarButton, boolean>;
+
+export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibility =
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.reduce((acc, k) => {
+		acc[k] = true;
+		return acc;
+	}, {} as FilePreviewToolbarVisibility);
+
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
@@ -379,6 +407,10 @@ export interface SettingsStoreState {
 	showLeftPanelGitIndicator: boolean;
 	showLeftPanelCueIndicator: boolean;
 	showLeftPanelStartupCommandIndicator: boolean;
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	fileEditShowLineNumbers: boolean;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
@@ -500,6 +532,9 @@ export interface SettingsStoreActions {
 	setShowLeftPanelGitIndicator: (value: boolean) => void;
 	setShowLeftPanelCueIndicator: (value: boolean) => void;
 	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+	setFileEditWordWrap: (value: boolean) => void;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
@@ -701,6 +736,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showLeftPanelGitIndicator: true,
 		showLeftPanelCueIndicator: true,
 		showLeftPanelStartupCommandIndicator: true,
+		fileEditWordWrap: true,
+		fileEditShowLineNumbers: true,
+		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
@@ -1321,6 +1359,25 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowLeftPanelStartupCommandIndicator: (value) => {
 			set({ showLeftPanelStartupCommandIndicator: value });
 			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
+		},
+
+		setFileEditWordWrap: (value) => {
+			set({ fileEditWordWrap: value });
+			window.maestro.settings.set('fileEditWordWrap', value);
+		},
+
+		setFileEditShowLineNumbers: (value) => {
+			set({ fileEditShowLineNumbers: value });
+			window.maestro.settings.set('fileEditShowLineNumbers', value);
+		},
+
+		setFilePreviewToolbarButtonVisibility: (button, value) => {
+			const next: FilePreviewToolbarVisibility = {
+				...get().filePreviewToolbarVisibility,
+				[button]: value,
+			};
+			set({ filePreviewToolbarVisibility: next });
+			window.maestro.settings.set('filePreviewToolbarVisibility', next);
 		},
 
 		setModeratorStandingInstructions: (value) => {
@@ -2520,6 +2577,21 @@ export async function loadAllSettings(): Promise<void> {
 				'showLeftPanelStartupCommandIndicator'
 			] as boolean;
 
+		if (allSettings['fileEditWordWrap'] !== undefined)
+			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
+
+		if (allSettings['fileEditShowLineNumbers'] !== undefined)
+			patch.fileEditShowLineNumbers = allSettings['fileEditShowLineNumbers'] as boolean;
+
+		// Toolbar visibility merges with defaults so new buttons added in a
+		// future release default to visible even for users with persisted state.
+		if (allSettings['filePreviewToolbarVisibility'] !== undefined) {
+			patch.filePreviewToolbarVisibility = {
+				...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY,
+				...(allSettings['filePreviewToolbarVisibility'] as Partial<FilePreviewToolbarVisibility>),
+			};
+		}
+
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
@@ -2701,6 +2773,9 @@ export function getSettingsActions() {
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
 		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setFileEditWordWrap: state.setFileEditWordWrap,
+		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
+		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,

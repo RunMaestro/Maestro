@@ -29,7 +29,10 @@ import { openUrl } from '../../utils/openUrl';
 import { calculateDisplayInputTokens } from '../../utils/contextUsage';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { safeClipboardWrite } from '../../utils/clipboard';
-import { useClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
+import {
+	useClaudeUsageSnapshot,
+	useResolvedClaudeConfigDirKey,
+} from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
 
 export interface MainPanelHeaderProps {
@@ -97,21 +100,17 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 
-	// TUI usage limits (5-hour / weekly Max plan windows). Shown whenever the
-	// spawner is driving the Claude TUI — either via Adaptive Mode (toggle on)
-	// or via a static maestro-p binary set as the agent's Path. The snapshot is
-	// keyed by canonical CLAUDE_CONFIG_DIR; the spawner stamps the key onto
-	// `claudeInteractive.lastUsageSnapshotKey` on every spawn, so the popover
-	// always reads the same account the spawner is acting on.
-	const isInteractiveResolved = activeSession?.claudeInteractive?.mode === 'interactive';
-	const isAdaptiveOn = !!activeSession?.enableMaestroP;
-	const batchUsageSnapshot = useClaudeUsageSnapshot(
-		isAdaptiveOn || isInteractiveResolved
-			? activeSession?.claudeInteractive?.lastUsageSnapshotKey
-			: undefined
-	);
-	const showBatchUsage =
-		(isAdaptiveOn || isInteractiveResolved) && activeSession?.toolType === 'claude-code';
+	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
+	// Code session — the source account is always derivable from session env
+	// vars (override > agent default > implicit ~/.claude), so the popover
+	// doesn't need a separate account picker. The snapshot is keyed by
+	// canonical CLAUDE_CONFIG_DIR. When the spawner has already stamped
+	// `claudeInteractive.lastUsageSnapshotKey` (Adaptive Mode / interactive
+	// path), we prefer that exact key; otherwise we derive it from session +
+	// agent env + home dir.
+	const resolvedConfigDirKey = useResolvedClaudeConfigDirKey(activeSession);
+	const batchUsageSnapshot = useClaudeUsageSnapshot(resolvedConfigDirKey);
+	const showBatchUsage = activeSession?.toolType === 'claude-code';
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	const gitTooltip = useHoverTooltip(150);
@@ -514,7 +513,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 										{...contextTooltip.contentHandlers}
 									/>
 									<div
-										className="absolute top-full right-0 pt-2 w-64 z-50 pointer-events-auto"
+										className={`absolute top-full right-0 pt-2 z-50 pointer-events-auto ${
+											showBatchUsage && batchUsageSnapshot ? 'w-[32rem]' : 'w-64'
+										}`}
 										{...contextTooltip.contentHandlers}
 									>
 										<div

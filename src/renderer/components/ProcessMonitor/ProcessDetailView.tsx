@@ -128,9 +128,10 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 				    Tiles use col-span-{1,2,4} to pack short fields into shared rows
 				    and reserve full width for long/wrapping content. */}
 				<div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-					{/* Process Session ID — full width (can run 80+ chars with -ai-<tabId> suffix) */}
+					{/* Process Session ID — half width; wraps to two lines for the long -ai-<tabId> form,
+					    but that's preferable to leaving the row half-empty */}
 					<div
-						className="col-span-2 lg:col-span-4 p-4 rounded-lg"
+						className="col-span-2 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<div className="flex items-center gap-2 mb-2">
@@ -148,6 +149,25 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						>
 							{detail.processSessionId}
 						</code>
+					</div>
+
+					{/* Started At — paired with Process Session ID on the top row */}
+					<div
+						className="col-span-2 p-4 rounded-lg"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<div className="flex items-center gap-2 mb-2">
+							<Clock className="w-4 h-4" style={{ color: theme.colors.accent }} />
+							<span
+								className="text-xs font-medium uppercase tracking-wide"
+								style={{ color: theme.colors.textDim }}
+							>
+								Started At
+							</span>
+						</div>
+						<span className="text-sm" style={{ color: theme.colors.textMain }}>
+							{new Date(detail.startTime).toLocaleString()}
+						</span>
 					</div>
 
 					{/* Agent Session ID — half width (UUID, ~36 chars) */}
@@ -479,25 +499,6 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 							</div>
 						</div>
 					)}
-
-					{/* Started At — half width */}
-					<div
-						className="col-span-2 p-4 rounded-lg"
-						style={{ backgroundColor: theme.colors.bgMain }}
-					>
-						<div className="flex items-center gap-2 mb-2">
-							<Clock className="w-4 h-4" style={{ color: theme.colors.accent }} />
-							<span
-								className="text-xs font-medium uppercase tracking-wide"
-								style={{ color: theme.colors.textDim }}
-							>
-								Started At
-							</span>
-						</div>
-						<span className="text-sm" style={{ color: theme.colors.textMain }}>
-							{new Date(detail.startTime).toLocaleString()}
-						</span>
-					</div>
 				</div>
 			</div>
 

@@ -36,6 +36,8 @@ vi.mock('lucide-react', () => ({
 	Sparkles: () => <span data-testid="sparkles-icon">Sparkles</span>,
 	Zap: () => <span data-testid="zap-icon">Zap</span>,
 	Database: () => <span data-testid="database-icon">Database</span>,
+	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
+	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
 }));
 
 // Mock react-markdown

@@ -657,13 +657,17 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group';
-	/** Maestro session ID (for action: 'session') */
+	action: 'focus' | 'session' | 'group' | 'file';
+	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
 	tabId?: string;
 	/** Group ID (for action: 'group') */
 	groupId?: string;
+	/** Absolute filesystem path (for action: 'file') */
+	filePath?: string;
+	/** 1-based line number within the file (for action: 'file', optional) */
+	line?: number;
 }
 
 // ============================================================================

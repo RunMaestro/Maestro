@@ -207,6 +207,7 @@ export interface AppModalsProps {
 	onQuickActionsRenameTab: () => void;
 	onQuickActionsToggleReadOnlyMode: () => void;
 	onQuickActionsToggleTabShowThinking: () => void;
+	onQuickActionsToggleTabEnterToSend: () => void;
 	onQuickActionsOpenTabSwitcher: () => void;
 	// Bulk tab close operations (for QuickActionsModal)
 	onCloseAllTabs?: () => void;
@@ -634,6 +635,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsRenameTab,
 		onQuickActionsToggleReadOnlyMode,
 		onQuickActionsToggleTabShowThinking,
+		onQuickActionsToggleTabEnterToSend,
 		onQuickActionsOpenTabSwitcher,
 		// Bulk tab close operations
 		onCloseAllTabs,
@@ -976,6 +978,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onRenameTab={onQuickActionsRenameTab}
 				onToggleReadOnlyMode={onQuickActionsToggleReadOnlyMode}
 				onToggleTabShowThinking={onQuickActionsToggleTabShowThinking}
+				onToggleTabEnterToSend={onQuickActionsToggleTabEnterToSend}
 				onOpenTabSwitcher={onQuickActionsOpenTabSwitcher}
 				onCloseAllTabs={onCloseAllTabs}
 				onCloseOtherTabs={onCloseOtherTabs}
