@@ -40,7 +40,7 @@ export interface InputKeyDownDeps {
 	/** Sync file tree to highlight the tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 	/** Process and send the current input */
-	processInput: () => void;
+	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (input: string) => TabCompletionSuggestion[];
 	/** Ref to the input textarea */
@@ -55,6 +55,25 @@ export interface InputKeyDownDeps {
 
 export interface InputKeyDownReturn {
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+const MODIFIER_KEYS = ['Meta', 'Ctrl', 'Alt', 'Shift'] as const;
+
+function matchesShortcut(e: React.KeyboardEvent, keys: string[]): boolean {
+	const required = new Set(keys.filter((k) => (MODIFIER_KEYS as readonly string[]).includes(k)));
+	const mainKey = keys.find((k) => !(MODIFIER_KEYS as readonly string[]).includes(k));
+	if (!mainKey) return false;
+
+	if (required.has('Meta') !== e.metaKey) return false;
+	if (required.has('Ctrl') !== e.ctrlKey) return false;
+	if (required.has('Alt') !== e.altKey) return false;
+	if (required.has('Shift') !== e.shiftKey) return false;
+
+	return mainKey.toLowerCase() === e.key.toLowerCase();
 }
 
 // ============================================================================
@@ -237,6 +256,18 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const enterToSendTerminal = settings.enterToSendTerminal;
 
 			if (e.key === 'Enter') {
+				// Forced parallel send (AI mode only) — bypasses queue when settings allow.
+				// Checked BEFORE the regular Enter/Cmd+Enter logic since Cmd+Shift+Enter
+				// would otherwise match the !enterToSend Cmd+Enter branch below.
+				if (activeSession?.inputMode !== 'terminal' && settings.forcedParallelExecution) {
+					const fpShortcut = settings.shortcuts?.forcedParallelSend;
+					if (fpShortcut && matchesShortcut(e, fpShortcut.keys)) {
+						e.preventDefault();
+						processInput(undefined, { forceParallel: true });
+						return;
+					}
+				}
+
 				const currentEnterToSend =
 					activeSession?.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI;
 
