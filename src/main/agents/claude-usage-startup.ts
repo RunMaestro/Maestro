@@ -143,7 +143,11 @@ export function getMaestroPBinPath(): string | null {
  */
 export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
 	if (!binaryPath) return false;
-	const base = path.basename(binaryPath).toLowerCase();
+	// Split on both `/` and `\` so a Windows-style path resolves correctly
+	// when this code runs on POSIX (path.basename on POSIX doesn't treat `\`
+	// as a separator, which would otherwise leave the whole `C:\…` string as
+	// the "basename" and miss the match).
+	const base = (binaryPath.split(/[\\/]/).pop() ?? '').toLowerCase();
 	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
 }
 

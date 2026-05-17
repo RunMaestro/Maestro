@@ -333,6 +333,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:isTerminalBusy',
 				'process:spawnTerminalTab',
 				'process:runCommand',
 			];

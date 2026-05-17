@@ -158,6 +158,7 @@ describe('claude-usage-sampler', () => {
 			expect(snap).toEqual({
 				sampledAt: new Date(FROZEN_NOW).toISOString(),
 				configDirKey: '/Users/test/.claude',
+				authState: 'authenticated',
 				session: { percent: 42, resetsAt: '2026-05-15T17:00:00.000Z' },
 				weekAllModels: { percent: 73, resetsAt: '2026-05-22T12:00:00.000Z' },
 				weekSonnetOnly: { percent: 19, resetsAt: '2026-05-22T12:00:00.000Z' },

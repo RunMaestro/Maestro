@@ -5,9 +5,10 @@
  * the session has active Cue subscriptions, with correct tooltip text.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SessionItem } from '../../../renderer/components/SessionItem';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -80,6 +81,19 @@ const defaultProps = {
 };
 
 describe('SessionItem Cue Indicator', () => {
+	beforeEach(() => {
+		// CueIndicator is gated on both the Encore Feature flag and the
+		// per-user Left Bar toggle. Default settings have maestroCue=false,
+		// which would hide the indicator under test — enable both here.
+		useSettingsStore.setState({
+			encoreFeatures: {
+				...useSettingsStore.getState().encoreFeatures,
+				maestroCue: true,
+			},
+			showLeftPanelCueIndicator: true,
+		});
+	});
+
 	it('shows Zap icon when cueSubscriptionCount > 0', () => {
 		render(
 			<SessionItem {...defaultProps} session={createMockSession()} cueSubscriptionCount={3} />
