@@ -333,6 +333,7 @@ export interface SettingsStoreState {
 	colorBlindMode: boolean;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
+	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -454,6 +455,7 @@ export interface SettingsStoreActions {
 	setColorBlindMode: (value: boolean) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -653,6 +655,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		colorBlindMode: false,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
+		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -1074,6 +1077,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowFilePreviewsInUnreadFilter: (value) => {
 			set({ showFilePreviewsInUnreadFilter: value });
 			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
+		},
+
+		setUseCmd0AsLastTab: (value) => {
+			set({ useCmd0AsLastTab: value });
+			window.maestro.settings.set('useCmd0AsLastTab', value);
 		},
 
 		setDocumentGraphShowExternalLinks: (value) => {
@@ -2275,6 +2283,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.showFilePreviewsInUnreadFilter = allSettings[
 				'showFilePreviewsInUnreadFilter'
 			] as boolean;
+
+		if (allSettings['useCmd0AsLastTab'] !== undefined)
+			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)

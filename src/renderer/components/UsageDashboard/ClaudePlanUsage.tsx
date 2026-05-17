@@ -14,11 +14,11 @@
  * the store in a single click.
  */
 
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
-import { formatRelativeTime } from '../../../shared/formatters';
+import { formatFutureTime } from '../../../shared/formatters';
 
 function deriveAccountShortName(configDirKey: string | undefined): string {
 	if (!configDirKey) return 'default';
@@ -44,35 +44,35 @@ interface BarRowProps {
 // Mirrors `LIMIT_THRESHOLD_PERCENT` in `src/main/agents/claude-mode-selector.ts`.
 // Duplicated here to keep the renderer bundle free of main-process imports — same
 // rationale as the snapshot shape in `claudeUsageStore.ts`.
-const WARNING_THRESHOLD = 99;
-const ACCENT_THRESHOLD = 75;
+const LIMIT_THRESHOLD = 99;
+const WARNING_THRESHOLD = 75;
 
 /**
- * Resolve the fill color for a usage bar. Mirrors the limit selector's
- * thresholds so the dashboard surfaces the exact same trigger points the
- * spawner consults on the next turn — at-or-above 99% turns warning, 75-98%
- * turns accent, anything lower stays success.
+ * Resolve the fill color for a usage bar. The base fill is the theme's
+ * accent color so the widget reads as part of the surrounding chrome rather
+ * than landing as a bright traffic-light gradient; the threshold cliffs only
+ * kick in once usage is genuinely a concern (75% warning, 99% hard limit).
  */
 function resolveFillColor(percent: number, theme: Theme): string {
+	if (percent >= LIMIT_THRESHOLD) return theme.colors.error ?? theme.colors.warning;
 	if (percent >= WARNING_THRESHOLD) return theme.colors.warning;
-	if (percent >= ACCENT_THRESHOLD) return theme.colors.accent;
-	return theme.colors.success;
+	return theme.colors.accent;
 }
 
 const BarRow = memo(function BarRow({ label, percent, resetsAt, theme }: BarRowProps) {
 	const clampedPercent = Math.min(100, Math.max(0, percent));
 	const fillColor = resolveFillColor(clampedPercent, theme);
-	const showInsideLabel = clampedPercent >= 20;
+	const showInsideLabel = clampedPercent >= 22;
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
 		<div className="flex items-center gap-3">
-			<div className="w-32 text-xs truncate flex-shrink-0" style={{ color: theme.colors.textDim }}>
+			<div className="w-32 text-sm truncate flex-shrink-0" style={{ color: theme.colors.textMain }}>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-6 rounded overflow-hidden"
-				style={{ backgroundColor: `${theme.colors.border}30` }}
+				className="flex-1 h-7 rounded overflow-hidden relative"
+				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
 				aria-valuenow={displayPercent}
@@ -84,26 +84,42 @@ const BarRow = memo(function BarRow({ label, percent, resetsAt, theme }: BarRowP
 					style={{
 						width: `${Math.max(clampedPercent, 2)}%`,
 						backgroundColor: fillColor,
-						opacity: 0.85,
+						opacity: 0.9,
 						transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
 					}}
 				>
 					{showInsideLabel && (
 						<span
-							className="text-xs font-medium px-2 text-white"
-							style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
+							className="text-sm font-semibold px-2"
+							style={{
+								color: theme.colors.bgMain,
+								textShadow: '0 1px 2px rgba(0,0,0,0.15)',
+							}}
 						>
 							{displayPercent}%
 						</span>
 					)}
 				</div>
+				{!showInsideLabel && (
+					// Low-percent fallback: print the number to the right of the
+					// fill at the same baseline so 0-21% rows aren't unreadable.
+					<span
+						className="absolute top-1/2 -translate-y-1/2 text-sm font-medium"
+						style={{
+							left: `calc(${Math.max(clampedPercent, 2)}% + 8px)`,
+							color: theme.colors.textMain,
+						}}
+					>
+						{displayPercent}%
+					</span>
+				)}
 			</div>
 			<div
-				className="w-24 text-xs text-right flex-shrink-0"
+				className="w-32 text-xs text-right flex-shrink-0"
 				style={{ color: theme.colors.textDim }}
-				title={`Resets ${resetsAt}`}
+				title={`Resets at ${new Date(resetsAt).toLocaleString()}`}
 			>
-				resets {formatRelativeTime(resetsAt)}
+				resets {formatFutureTime(resetsAt)}
 			</div>
 		</div>
 	);
@@ -190,6 +206,22 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 		[snapshots]
 	);
 
+	// Sub-tab selection by configDirKey. Defaults to the first account on
+	// mount; clamps back to the first whenever the selected key disappears
+	// from the snapshot map (account removed mid-session).
+	const [selectedKey, setSelectedKey] = useState<string | null>(null);
+	useEffect(() => {
+		if (entries.length === 0) {
+			if (selectedKey !== null) setSelectedKey(null);
+			return;
+		}
+		if (selectedKey === null || !entries.some(([k]) => k === selectedKey)) {
+			setSelectedKey(entries[0][0]);
+		}
+	}, [entries, selectedKey]);
+
+	const selectedEntry = entries.find(([k]) => k === selectedKey) ?? entries[0];
+
 	const handleRefresh = useCallback(async () => {
 		if (refreshing) return;
 		try {
@@ -215,18 +247,69 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 					type="button"
 					onClick={handleRefresh}
 					disabled={refreshing}
-					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:cursor-not-allowed"
 					style={{
-						color: theme.colors.textMain,
-						backgroundColor: `${theme.colors.accent}15`,
+						color: refreshing ? theme.colors.bgMain : theme.colors.accent,
+						backgroundColor: refreshing ? theme.colors.accent : `${theme.colors.accent}15`,
+						border: `1px solid ${theme.colors.accent}40`,
 					}}
 					data-testid="claude-plan-refresh"
 					aria-label="Refresh Claude usage snapshots"
 				>
-					<RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
-					{refreshing ? 'Refreshing…' : 'Refresh'}
+					<RefreshCw
+						className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
+						aria-hidden="true"
+					/>
+					{refreshing ? 'Sampling…' : 'Refresh'}
 				</button>
 			</div>
+
+			{/* Account tab bar — renders only when 2+ accounts are present.
+			    A single account doesn't need tabs; an empty state needs none. */}
+			{entries.length > 1 && (
+				<div
+					className="flex items-center gap-1 mb-4 border-b"
+					style={{ borderColor: theme.colors.border }}
+					role="tablist"
+					aria-label="Claude account selector"
+					data-testid="claude-plan-account-tabs"
+				>
+					{entries.map(([configDirKey, snapshot]) => {
+						const shortName = deriveAccountShortName(configDirKey);
+						const isActive = selectedEntry?.[0] === configDirKey;
+						const isUnauth = snapshot.authState === 'unauthenticated';
+						return (
+							<button
+								key={configDirKey}
+								type="button"
+								role="tab"
+								aria-selected={isActive}
+								onClick={() => setSelectedKey(configDirKey)}
+								className="px-3 py-1.5 text-sm font-medium transition-colors relative -mb-px"
+								style={{
+									color: isActive ? theme.colors.accent : theme.colors.textDim,
+									borderBottom: `2px solid ${isActive ? theme.colors.accent : 'transparent'}`,
+								}}
+								title={configDirKey}
+								data-testid={`claude-plan-tab-${shortName}`}
+							>
+								<span className="flex items-center gap-1.5">
+									{shortName}
+									{isUnauth && (
+										<span
+											className="text-[10px]"
+											style={{ color: theme.colors.warning ?? theme.colors.accent }}
+											title="Not logged in"
+										>
+											●
+										</span>
+									)}
+								</span>
+							</button>
+						);
+					})}
+				</div>
+			)}
 
 			{entries.length === 0 ? (
 				<div
@@ -238,18 +321,14 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 					agent) and hit Refresh — we sample only explicitly-configured accounts so we never trigger
 					a browser OAuth prompt.
 				</div>
-			) : (
-				<div className="space-y-5">
-					{entries.map(([configDirKey, snapshot]) => (
-						<AccountRow
-							key={configDirKey}
-							configDirKey={configDirKey}
-							snapshot={snapshot}
-							theme={theme}
-						/>
-					))}
-				</div>
-			)}
+			) : selectedEntry ? (
+				<AccountRow
+					key={selectedEntry[0]}
+					configDirKey={selectedEntry[0]}
+					snapshot={selectedEntry[1]}
+					theme={theme}
+				/>
+			) : null}
 
 			<p
 				className="mt-4 text-xs"

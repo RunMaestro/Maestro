@@ -49,8 +49,8 @@ describe('ClaudePlanUsage — empty state', () => {
 	});
 });
 
-describe('ClaudePlanUsage — multi-row rendering', () => {
-	it('renders one row per snapshot with account-short-name derivation', () => {
+describe('ClaudePlanUsage — multi-account tabs', () => {
+	it('renders a tab per account but only one row at a time (selected tab)', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -70,13 +70,58 @@ describe('ClaudePlanUsage — multi-row rendering', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		// `.claude` → `default`, `.claude-gmail` → `gmail`
-		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
+		// Both account tabs render.
+		expect(screen.getByTestId('claude-plan-account-tabs')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-tab-gmail')).toBeInTheDocument();
 
-		// Each row renders three progressbar bars (session, week all, week sonnet).
-		const bars = screen.getAllByRole('progressbar');
-		expect(bars).toHaveLength(6);
+		// Only the first tab's row is visible (entries sort by short name; "default" wins).
+		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-row-gmail')).toBeNull();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+	});
+
+	it('switches the visible row when a different tab is clicked', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 97, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 80, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		fireEvent.click(screen.getByTestId('claude-plan-tab-gmail'));
+
+		expect(screen.queryByTestId('claude-plan-row-default')).toBeNull();
+		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
+	});
+
+	it('does not render the tab bar when only one account exists', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.queryByTestId('claude-plan-account-tabs')).toBeNull();
+		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
 	});
 
 	it('exposes percent values via aria-valuenow on each bar', () => {
@@ -120,7 +165,7 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 		expect(screen.getByText(/\/login/i)).toBeInTheDocument();
 	});
 
-	it('still renders bars for authenticated snapshots alongside unauthenticated ones', () => {
+	it('renders the unauthenticated CTA when its tab is selected', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -142,9 +187,18 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		// Authenticated account renders 3 bars; unauthenticated renders the CTA.
-		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+		// Both tabs render. Entries sort by deriveAccountShortName; "0din" (digit '0',
+		// charcode 48) sorts before "default" (letter 'd'), so the unauthenticated
+		// tab is the initial selection.
+		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-tab-0din')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
+		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+
+		// Switch to the authenticated tab — CTA disappears, three bars appear.
+		fireEvent.click(screen.getByTestId('claude-plan-tab-default'));
+		expect(screen.queryByTestId('claude-plan-row-0din-unauthenticated')).toBeNull();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
 	});
 
 	it('treats missing authState as authenticated for back-compat', () => {
@@ -202,6 +256,6 @@ describe('ClaudePlanUsage — refresh wiring', () => {
 		render(<ClaudePlanUsage theme={theme} />);
 		const button = screen.getByTestId('claude-plan-refresh') as HTMLButtonElement;
 		expect(button.disabled).toBe(true);
-		expect(button.textContent).toContain('Refreshing');
+		expect(button.textContent).toContain('Sampling');
 	});
 });

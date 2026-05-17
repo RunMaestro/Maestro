@@ -16,6 +16,7 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -369,21 +370,22 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
-						{/* Group badge (only in bookmark variant when session belongs to a group) */}
-						{variant === 'bookmark' && group && (
-							<span
-								className="text-[9px] px-1 py-0.5 rounded"
-								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							>
-								{group.name}
-							</span>
-						)}
 					</div>
 				)}
 			</div>
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{/* Group badge (only in bookmark variant when session belongs to a group) */}
+				{variant === 'bookmark' && group && (
+					<span
+						className="text-[9px] px-1 py-0.5 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title={group.name}
+					>
+						{abbreviateGroupName(group.name)}
+					</span>
+				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{showLeftPanelGitIndicator &&
 					leftSidebarOpen &&
@@ -492,7 +494,7 @@ export const SessionItem = memo(function SessionItem({
 								e.stopPropagation();
 								onToggleBookmark();
 							}}
-							className={`p-0.5 rounded hover:bg-white/10 transition-all ${session.bookmarked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+							className="p-0.5 rounded hover:bg-white/10 transition-all"
 							title={session.bookmarked ? 'Remove bookmark' : 'Add bookmark'}
 						>
 							<Bookmark

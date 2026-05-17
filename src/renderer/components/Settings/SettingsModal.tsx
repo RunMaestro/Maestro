@@ -52,6 +52,27 @@ type SettingsTabId =
 	| 'encore'
 	| 'prompts';
 
+// Alphabetized by label (case-insensitive) so the sidebar reads predictably
+// regardless of which tabs ship. Mount-time default is still 'general' —
+// that's enforced by the useState init below, not by list position.
+const TAB_ITEMS: Array<{
+	id: SettingsTabId;
+	label: string;
+	icon: typeof Settings;
+}> = [
+	{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
+	{ id: 'display', label: 'Display', icon: Monitor },
+	{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
+	{ id: 'environment', label: 'Environment', icon: Globe },
+	{ id: 'general', label: 'General', icon: Settings },
+	...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
+	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
+	{ id: 'notifications', label: 'Notifications', icon: Bell },
+	{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+	{ id: 'ssh', label: 'SSH Hosts', icon: Server },
+	{ id: 'theme', label: 'Themes', icon: Palette },
+];
+
 // In-memory only — last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
 // `initialTab` prop (e.g. when a caller deep-links into a specific tab).
@@ -299,44 +320,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen) return;
 
 		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs: Array<
-				| 'general'
-				| 'display'
-				| 'llm'
-				| 'shortcuts'
-				| 'theme'
-				| 'notifications'
-				| 'aicommands'
-				| 'ssh'
-				| 'environment'
-				| 'encore'
-				| 'prompts'
-			> = FEATURE_FLAGS.LLM_SETTINGS
-				? [
-						'general',
-						'display',
-						'llm',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'prompts',
-						'ssh',
-						'environment',
-						'encore',
-					]
-				: [
-						'general',
-						'display',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'prompts',
-						'ssh',
-						'environment',
-						'encore',
-					];
+			const tabs = TAB_ITEMS.map((t) => t.id);
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
@@ -468,25 +452,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	};
 
 	if (!isOpen) return null;
-
-	const TAB_ITEMS: Array<{
-		id: typeof activeTab;
-		label: string;
-		icon: typeof Settings;
-		featureFlag?: boolean;
-	}> = [
-		{ id: 'general', label: 'General', icon: Settings },
-		{ id: 'display', label: 'Display', icon: Monitor },
-		...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
-		{ id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
-		{ id: 'theme', label: 'Themes', icon: Palette },
-		{ id: 'notifications', label: 'Notifications', icon: Bell },
-		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
-		{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
-		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
-		{ id: 'environment', label: 'Environment', icon: Globe },
-		{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
-	];
 
 	return (
 		<div

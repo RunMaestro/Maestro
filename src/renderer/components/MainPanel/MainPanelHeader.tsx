@@ -30,7 +30,7 @@ import { calculateDisplayInputTokens } from '../../utils/contextUsage';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
-import { formatRelativeTime } from '../../../shared/formatters';
+import { formatFutureTime } from '../../../shared/formatters';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -728,7 +728,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																		className="text-[10px] mt-0.5 text-right"
 																		style={{ color: theme.colors.textDim, opacity: 0.7 }}
 																	>
-																		Resets {formatRelativeTime(new Date(window.resetsAt).getTime())}
+																		Resets {formatFutureTime(window.resetsAt)}
 																	</div>
 																</div>
 															);

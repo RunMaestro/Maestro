@@ -22,6 +22,7 @@
  * - formatTimestamp: Format timestamps in various styles (time, datetime, smart, full)
  * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
  * - truncateCommand: Truncate command text for display with ellipsis
+ * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
 /**
@@ -121,6 +122,68 @@ export function formatRelativeTime(
 	if (diffDays < 7) return `${diffDays}d ago`;
 	// Show compact date format (e.g., "Dec 3") for older dates
 	return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Format a future timestamp as a forward-looking relative string.
+ *
+ * `formatRelativeTime` only models the past — every future timestamp collapses
+ * to "just now" because the `diffMins < 1` branch fires on negative diffs. This
+ * helper is the symmetric forward variant for things like quota reset times.
+ *
+ * Output ladder, chosen to mirror Anthropic's `/usage` web panel ("Resets in
+ * 43 min" / "Resets Thu 10:00 AM"):
+ *   - < 1 minute   → "in <1m"
+ *   - < 60 minutes → "in 43m"
+ *   - same calendar day in user's locale → "today at 7:00 PM"
+ *   - within 7 days → "Thu 10:00 AM"
+ *   - beyond a week → "May 22 at 10:00 AM"
+ *
+ * If `timestamp` is already past `now` (sample is older than the reset),
+ * returns "just now" — same calling-site sentinel as `formatRelativeTime`'s
+ * floor so consumers don't need to special-case stale snapshots.
+ */
+export function formatFutureTime(dateOrTimestamp: Date | number | string): string {
+	let timestamp: number;
+	if (typeof dateOrTimestamp === 'number') {
+		timestamp = dateOrTimestamp;
+	} else if (typeof dateOrTimestamp === 'string') {
+		timestamp = new Date(dateOrTimestamp).getTime();
+	} else {
+		timestamp = dateOrTimestamp.getTime();
+	}
+
+	const now = Date.now();
+	const diffMs = timestamp - now;
+	if (diffMs <= 0) return 'just now';
+
+	const diffMins = Math.floor(diffMs / 60000);
+	const diffHours = Math.floor(diffMs / 3_600_000);
+	const diffDays = Math.floor(diffMs / 86_400_000);
+
+	if (diffMins < 1) return 'in <1m';
+	if (diffMins < 60) return `in ${diffMins}m`;
+
+	const target = new Date(timestamp);
+	const nowDate = new Date(now);
+	const sameDay =
+		target.getFullYear() === nowDate.getFullYear() &&
+		target.getMonth() === nowDate.getMonth() &&
+		target.getDate() === nowDate.getDate();
+
+	const timeStr = target.toLocaleTimeString('en-US', {
+		hour: 'numeric',
+		minute: '2-digit',
+	});
+
+	if (sameDay) return `today at ${timeStr}`;
+	if (diffHours < 24) return `in ${diffHours}h`;
+	if (diffDays < 7) {
+		const weekday = target.toLocaleDateString('en-US', { weekday: 'short' });
+		return `${weekday} ${timeStr}`;
+	}
+	const dateStr = target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	return `${dateStr} at ${timeStr}`;
 }
 
 /**
@@ -395,6 +458,55 @@ export function formatDurationDecimal(ms: number): string {
 export function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 	return Math.ceil(totalChars / 4);
+}
+
+/**
+ * Cleverly shorten a group name so it fits in a small badge/pill.
+ *
+ * Strategy ladder — first rung that meets `max` wins:
+ *   1. Already short enough → return as-is.
+ *   2. Contains "&" or " and " conjunction → acronym joined by "&"
+ *      ("Amini & Conant" → "A&C", "Foo and Bar and Baz" → "F&B&B").
+ *   3. Multi-word (split on whitespace, "_", "-", "/") → initials ("Acme Corp" → "AC").
+ *   4. Single long word → strip vowels keeping the first character
+ *      ("Engineering" → "Engnrng", "Documentation" → "Dcmnttn").
+ *   5. Still too long → hard-truncate the devoweled form.
+ *
+ * Aim for `target` chars, accept up to `max`. Defaults match the bookmark
+ * badge in the Left Bar (target 8, allow 10).
+ */
+export function abbreviateGroupName(
+	name: string,
+	options?: { target?: number; max?: number }
+): string {
+	const max = options?.max ?? 10;
+	const trimmed = name.trim();
+	if (!trimmed) return trimmed;
+	if (trimmed.length <= max) return trimmed;
+
+	// Acronym joined by "&" — handles "A & B" and "A and B" forms.
+	const conjunctionParts = trimmed
+		.split(/\s*&\s*|\s+and\s+/i)
+		.map((p) => p.trim())
+		.filter(Boolean);
+	if (conjunctionParts.length >= 2) {
+		const acronym = conjunctionParts.map((p) => p.charAt(0).toUpperCase()).join('&');
+		if (acronym.length <= max) return acronym;
+	}
+
+	// Plain initials for multi-word names.
+	const words = trimmed.split(/[\s_\-/]+/).filter(Boolean);
+	if (words.length >= 2) {
+		const initials = words.map((w) => w.charAt(0).toUpperCase()).join('');
+		if (initials.length <= max) return initials;
+		return initials.slice(0, max);
+	}
+
+	// Single word: drop vowels but preserve the first character so "Amini" → "Amn", not "mn".
+	const first = trimmed.charAt(0);
+	const devoweled = first + trimmed.slice(1).replace(/[aeiouAEIOU]/g, '');
+	if (devoweled.length <= max) return devoweled;
+	return devoweled.slice(0, max);
 }
 
 /**

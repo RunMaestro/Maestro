@@ -1612,6 +1612,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{flattenedTree.length > 0 && (
 						<div
 							ref={parentRef}
+							data-file-list-scroll
 							className="flex-1 overflow-auto"
 							style={{ height: 'calc(100vh - 200px)' }}
 						>

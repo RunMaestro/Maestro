@@ -38,6 +38,7 @@ import { logger } from '../../../utils/logger';
 import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
+import { isMacOSPlatform } from '../../../utils/platformUtils';
 
 const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
 
@@ -71,6 +72,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter,
 		setShowFilePreviewsInUnreadFilter,
+		useCmd0AsLastTab,
+		setUseCmd0AsLastTab,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -794,6 +797,41 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									showFilePreviewsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Treat Command+0 as Last Tab */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Treat {isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 as the last tab
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Maestro-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–9 jump to tabs 1–9, and{' '}
+								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+0 jumps to the last tab. Disable to use
+								browser-style: {isMacOSPlatform() ? 'Command' : 'Ctrl'}+1–8 jump to tabs 1–8, and{' '}
+								{isMacOSPlatform() ? 'Command' : 'Ctrl'}+9 jumps to the last tab.
+							</p>
+						</div>
+						<button
+							onClick={() => setUseCmd0AsLastTab(!useCmd0AsLastTab)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: useCmd0AsLastTab ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={useCmd0AsLastTab}
+							aria-label="Treat Command+0 as the last tab"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									useCmd0AsLastTab ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

@@ -255,6 +255,8 @@ export interface UseSettingsReturn {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	useCmd0AsLastTab: boolean;
+	setUseCmd0AsLastTab: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;

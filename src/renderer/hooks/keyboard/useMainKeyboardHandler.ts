@@ -1010,7 +1010,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Cmd+1-9, Cmd+0 — Jump to tab by index in unified order.
 				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches
 				// the Nth tab currently shown in the tab bar (not the Nth tab overall).
-				for (let i = 1; i <= 9; i++) {
+				// When useCmd0AsLastTab is off, fall back to browser-style mapping:
+				// Cmd+1-8 jump to tabs 1-8, Cmd+9 jumps to the last tab, Cmd+0 is unused.
+				const useCmd0AsLastTab = useSettingsStore.getState().useCmd0AsLastTab;
+				const maxNumberedTab = useCmd0AsLastTab ? 9 : 8;
+				for (let i = 1; i <= maxNumberedTab; i++) {
 					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
 						e.preventDefault();
 						ctx.setSessions((prev: Session[]) => {
@@ -1024,7 +1028,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						break;
 					}
 				}
-				if (ctx.isTabShortcut(e, 'goToLastTab')) {
+				const lastTabActionId = useCmd0AsLastTab ? 'goToLastTab' : 'goToTab9';
+				if (ctx.isTabShortcut(e, lastTabActionId)) {
 					e.preventDefault();
 					ctx.setSessions((prev: Session[]) => {
 						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
