@@ -35,10 +35,12 @@ import {
 	ExternalLink,
 	Keyboard,
 	Trash2,
+	AlertTriangle,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
-import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
+import { formatMetaKey, formatEnterToSend, formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { ForcedParallelWarningModal } from '../../ForcedParallelWarningModal';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
@@ -73,6 +75,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnterToSendAI,
 		enterToSendTerminal,
 		setEnterToSendTerminal,
+		forcedParallelExecution,
+		setForcedParallelExecution,
+		forcedParallelAcknowledged,
+		setForcedParallelAcknowledged,
+		shortcuts,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
 		defaultShowThinking,
@@ -113,6 +120,27 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		wakatimeDetailedTracking,
 		setWakatimeDetailedTracking,
 	} = useSettings();
+
+	// Forced parallel execution warning modal state
+	const [showForcedParallelWarning, setShowForcedParallelWarning] = useState(false);
+
+	const handleForcedParallelToggle = () => {
+		if (!forcedParallelExecution && !forcedParallelAcknowledged) {
+			setShowForcedParallelWarning(true);
+		} else {
+			setForcedParallelExecution(!forcedParallelExecution);
+		}
+	};
+
+	const handleForcedParallelConfirm = () => {
+		setForcedParallelAcknowledged(true);
+		setForcedParallelExecution(true);
+		setShowForcedParallelWarning(false);
+	};
+
+	const handleForcedParallelCancel = () => {
+		setShowForcedParallelWarning(false);
+	};
 
 	// Shell state
 	const [shells, setShells] = useState<ShellInfo[]>([]);
@@ -698,7 +726,74 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
 				</div>
+
+				{/* Forced Parallel Execution */}
+				<div
+					className="mt-4 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="text-sm font-medium">Forced Parallel Execution</div>
+						<div className="flex items-center gap-2">
+							<span
+								className="px-2 py-1 rounded text-xs font-mono"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textMain,
+									border: `1px solid ${theme.colors.border}`,
+									opacity: forcedParallelExecution ? 1 : 0.5,
+								}}
+							>
+								{shortcuts.forcedParallelSend
+									? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
+									: formatShortcutKeys(['Meta', 'Shift', 'Enter'])}
+							</span>
+							<button
+								onClick={handleForcedParallelToggle}
+								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+								style={{
+									backgroundColor: forcedParallelExecution
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={forcedParallelExecution}
+								aria-label="Enable Forced Parallel Execution"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										forcedParallelExecution ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+					</div>
+					<div
+						className="flex items-start gap-2 text-xs"
+						style={{
+							color: theme.colors.warning,
+							opacity: forcedParallelExecution ? 1 : 0.5,
+						}}
+					>
+						<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+						<p>
+							When enabled, use{' '}
+							{shortcuts.forcedParallelSend
+								? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
+								: formatShortcutKeys(['Meta', 'Shift', 'Enter'])}{' '}
+							to send messages even while the agent is busy. Parallel writes to the same files may
+							cause one to overwrite the other.
+						</p>
+					</div>
+				</div>
 			</div>
+
+			<ForcedParallelWarningModal
+				isOpen={showForcedParallelWarning}
+				onConfirm={handleForcedParallelConfirm}
+				onCancel={handleForcedParallelCancel}
+				theme={theme}
+			/>
 
 			{/* Default History Toggle */}
 			<SettingCheckbox

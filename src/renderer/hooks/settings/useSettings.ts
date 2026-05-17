@@ -82,6 +82,10 @@ export interface UseSettingsReturn {
 	setEnterToSendAI: (value: boolean) => void;
 	enterToSendTerminal: boolean;
 	setEnterToSendTerminal: (value: boolean) => void;
+	forcedParallelExecution: boolean;
+	setForcedParallelExecution: (value: boolean) => void;
+	forcedParallelAcknowledged: boolean;
+	setForcedParallelAcknowledged: (value: boolean) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
 
