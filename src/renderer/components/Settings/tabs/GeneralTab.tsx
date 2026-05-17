@@ -47,7 +47,6 @@ import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
-import { ClaudeInteractiveModeSection } from '../ClaudeInteractiveModeSection';
 import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
