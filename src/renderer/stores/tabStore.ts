@@ -25,7 +25,7 @@
  */
 
 import { create } from 'zustand';
-import type { AITab, FilePreviewTab, Session } from '../types';
+import type { AITab, FilePreviewTab, Session, LogEntry } from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
 	createTab as createTabHelper,
@@ -63,7 +63,17 @@ import { useSessionStore, selectActiveSession } from './sessionStore';
 
 export interface TabStoreState {
 	// Gist publishing state (moved from App.tsx local state)
-	tabGistContent: { filename: string; content: string; messageId?: string } | null;
+	tabGistContent: {
+		filename: string;
+		content: string;
+		messageId?: string;
+		/**
+		 * Raw log entries that produced `content`. When present, the publish modal
+		 * can re-format the body (e.g. to opt in to reasoning/thinking blocks)
+		 * without going back through the caller.
+		 */
+		sourceLogs?: LogEntry[];
+	} | null;
 	fileGistUrls: Record<string, GistInfo>;
 	/**
 	 * Pending terminal buffer content queued for "Send to Agent".
@@ -77,9 +87,7 @@ export interface TabStoreState {
 export interface TabStoreActions {
 	// === Gist UI state ===
 
-	setTabGistContent: (
-		content: { filename: string; content: string; messageId?: string } | null
-	) => void;
+	setTabGistContent: (content: TabStoreState['tabGistContent']) => void;
 	setPendingTerminalBufferSend: (pending: { content: string; sourceName: string } | null) => void;
 	setFileGistUrls: (urls: Record<string, GistInfo>) => void;
 	setFileGistUrl: (path: string, info: GistInfo) => void;

@@ -12,7 +12,7 @@
 import { useCallback } from 'react';
 import type { Session, Theme, AITab } from '../../types';
 import { useTabStore } from '../../stores/tabStore';
-import { formatLogsForClipboard } from '../../utils/contextExtractor';
+import { formatLogsForClipboard, hasThinkingEntries } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { logger } from '../../utils/logger';
@@ -37,9 +37,17 @@ export interface UseTabExportHandlersDeps {
 // Return type
 // ============================================================================
 
+export interface CopyContextOptions {
+	/** Include reasoning/thinking blocks in the copied text. Defaults to false. */
+	includeThinking?: boolean;
+}
+
 export interface UseTabExportHandlersReturn {
-	/** Copy tab conversation to clipboard */
-	handleCopyContext: (tabId: string) => void;
+	/**
+	 * Copy tab conversation to clipboard.
+	 * Pass `{ includeThinking: true }` to include reasoning/thinking blocks.
+	 */
+	handleCopyContext: (tabId: string, options?: CopyContextOptions) => void;
 	/** Export tab as HTML file download */
 	handleExportHtml: (tabId: string) => Promise<void>;
 	/** Open Gist publish modal with tab content */
@@ -71,11 +79,16 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		return { session: currentSession, tab };
 	};
 
-	const handleCopyContext = useCallback((tabId: string) => {
+	const handleCopyContext = useCallback((tabId: string, options?: CopyContextOptions) => {
 		const resolved = resolveSessionAndTab(tabId);
 		if (!resolved) return;
 
-		const text = formatLogsForClipboard(resolved.tab.logs);
+		const includeThinking = options?.includeThinking ?? false;
+		// Only claim "with reasoning" when the tab actually has reasoning entries —
+		// the flag alone isn't enough, since a caller could opt in to thinking on
+		// a tab whose reasoning blocks have all been cleared.
+		const hadThinking = includeThinking && hasThinkingEntries(resolved.tab.logs);
+		const text = formatLogsForClipboard(resolved.tab.logs, { includeThinking });
 		if (!text.trim()) {
 			notifyToast({
 				type: 'warning',
@@ -88,7 +101,10 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		navigator.clipboard
 			.writeText(text)
 			.then(() => {
-				flashCopiedToClipboard(undefined, 'Conversation Copied');
+				flashCopiedToClipboard(
+					undefined,
+					hadThinking ? 'Conversation Copied (with reasoning)' : 'Conversation Copied'
+				);
 			})
 			.catch((err) => {
 				logger.error('Failed to copy context:', undefined, err);
@@ -152,8 +168,8 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			resolved.tab.name || (resolved.tab.agentSessionId?.slice(0, 8) ?? 'conversation');
 		const filename = `${tabName.replace(/[^a-zA-Z0-9-_]/g, '_')}_context.md`;
 
-		// Set content and open the modal
-		useTabStore.getState().setTabGistContent({ filename, content });
+		// Set content (with raw logs so the modal can re-format on toggle) and open the modal
+		useTabStore.getState().setTabGistContent({ filename, content, sourceLogs: resolved.tab.logs });
 		setGistPublishModalOpen(true);
 	}, []);
 

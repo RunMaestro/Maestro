@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from '
 import { createPortal } from 'react-dom';
 import { X, Star, Pencil, Loader2, AlertCircle } from 'lucide-react';
 import type { AITab as AITabType, Theme } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
@@ -42,8 +43,8 @@ export interface AITabProps {
 	onSendToAgent?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onSummarizeAndContinue?: (tabId: string) => void;
-	/** Stable callback - receives tabId */
-	onCopyContext?: (tabId: string) => void;
+	/** Stable callback - receives tabId (and optional CopyContextOptions for variants like "with reasoning") */
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Stable callback - receives tabId */
 	onExportHtml?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -279,6 +280,15 @@ export const AITab = memo(function AITab({
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
 			onCopyContext?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onCopyContext, tabId, setOverlayOpen]
+	);
+
+	const handleCopyContextWithReasoningClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyContext?.(tabId, { includeThinking: true });
 			setOverlayOpen(false);
 		},
 		[onCopyContext, tabId, setOverlayOpen]
@@ -558,6 +568,7 @@ export const AITab = memo(function AITab({
 							onMarkUnreadClick={handleMarkUnreadClick}
 							onExportHtmlClick={handleExportHtmlClick}
 							onCopyContextClick={handleCopyContextClick}
+							onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 							onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
 							onMergeWithClick={handleMergeWithClick}
 							onSendToAgentClick={handleSendToAgentClick}

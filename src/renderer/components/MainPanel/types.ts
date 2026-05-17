@@ -10,6 +10,7 @@ import type {
 	AgentError,
 	QueuedItem,
 } from '../../types';
+import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 
 export interface SlashCommand {
 	command: string;
@@ -258,7 +259,7 @@ export interface MainPanelProps {
 	onSummarizeAndContinue?: (tabId: string) => void;
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
-	onCopyContext?: (tabId: string) => void;
+	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (wired by MainPanel for terminal buffer actions). */
