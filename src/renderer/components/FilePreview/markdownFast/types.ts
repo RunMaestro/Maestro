@@ -103,6 +103,7 @@ export interface LinkDescriptor {
  */
 export type LinkAction =
 	| { kind: 'maestro-file'; path: string; openInNewTab: boolean }
+	| { kind: 'maestro-deep-link'; href: string }
 	| { kind: 'external'; href: string; openInNewTab: boolean }
 	| { kind: 'anchor'; hash: string }
 	| { kind: 'none' };

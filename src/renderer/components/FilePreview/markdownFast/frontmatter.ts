@@ -1,4 +1,8 @@
 import { escapeHtml } from './escapeHtml';
+import {
+	parseYamlKeyValues as sharedParseYamlKeyValues,
+	type FrontmatterEntry,
+} from '../../../utils/frontmatterYamlParser';
 
 /**
  * Frontmatter handling for the Fast tier.
@@ -15,42 +19,22 @@ import { escapeHtml } from './escapeHtml';
 /** Matches a YAML frontmatter block at the very start of a document. */
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
-export interface FrontmatterEntry {
-	key: string;
-	value: string;
-}
+export type { FrontmatterEntry };
 
 /**
- * Parse simple `key: value` lines from a YAML frontmatter block.
- *
- * Intentionally minimal — no nested objects, lists, or anchors. Matches the
- * behavior of the Rich-path's remarkFrontmatterTable.parseYamlKeyValues.
- * Lines that are blank or start with `#` are skipped; values surrounded by
- * matching single or double quotes have those quotes stripped.
+ * Re-exported for callers (and tests) that depended on the previous location.
+ * Delegates to the shared parser used by the Rich tier so both stay in lockstep.
  */
-export function parseYamlKeyValues(yaml: string): FrontmatterEntry[] {
-	const entries: FrontmatterEntry[] = [];
-	for (const raw of yaml.split('\n')) {
-		const line = raw.trim();
-		if (!line || line.startsWith('#')) continue;
-		const colon = line.indexOf(':');
-		if (colon <= 0) continue;
-		const key = line.slice(0, colon).trim();
-		let value = line.slice(colon + 1).trim();
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
-		entries.push({ key, value });
-	}
-	return entries;
-}
+export const parseYamlKeyValues = sharedParseYamlKeyValues;
 
 /** A YAML value is treated as a URL when it begins with http:// or https://. */
 function isUrl(value: string): boolean {
 	return /^https?:\/\//.test(value);
+}
+
+/** Escape HTML, then convert newlines into <br> so multi-line block scalars render. */
+function escapeMultiline(value: string): string {
+	return escapeHtml(value).replace(/\n/g, '<br>');
 }
 
 /**
@@ -70,7 +54,7 @@ export function renderFrontmatterHtml(entries: FrontmatterEntry[]): string | nul
 					display
 				)}</a>`;
 			} else {
-				valueCell = escapeHtml(value);
+				valueCell = escapeMultiline(value);
 			}
 			return `<tr><td><strong>${escapeHtml(key)}</strong></td><td>${valueCell}</td></tr>`;
 		})

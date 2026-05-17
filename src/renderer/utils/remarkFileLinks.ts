@@ -27,6 +27,7 @@ import {
 	ABSOLUTE_PATH_PATTERN,
 	IMAGE_EMBED_PATTERN,
 	INLINE_CODE_EXT_PATTERN,
+	MAESTRO_DEEP_LINK_PATTERN,
 	PATH_PATTERN,
 	TILDE_PATH_PATTERN,
 	WIKI_LINK_PATTERN,
@@ -98,7 +99,22 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			}
 			const matches: Match[] = [];
 
-			// Find image embeds first (before wiki-links, since ![[...]] contains [[...]])
+			// Find bare maestro:// deep link URLs so they auto-linkify in plain text.
+			let deepLinkMatch;
+			MAESTRO_DEEP_LINK_PATTERN.lastIndex = 0;
+			while ((deepLinkMatch = MAESTRO_DEEP_LINK_PATTERN.exec(text)) !== null) {
+				const url = deepLinkMatch[0];
+				matches.push({
+					start: deepLinkMatch.index,
+					end: deepLinkMatch.index + url.length,
+					display: url,
+					resolvedPath: url,
+					type: 'link',
+					absoluteUrl: url,
+				});
+			}
+
+			// Find image embeds (before wiki-links, since ![[...]] contains [[...]])
 			let imageMatch;
 			IMAGE_EMBED_PATTERN.lastIndex = 0;
 			while ((imageMatch = IMAGE_EMBED_PATTERN.exec(text)) !== null) {
@@ -472,10 +488,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'link', (node: Link) => {
 			const href = node.url;
 
-			// Skip if already processed, external URL, or anchor link
+			// Skip if already processed, external URL, deep link, or anchor link
 			if (
 				!href ||
 				href.startsWith('maestro-file://') ||
+				href.startsWith('maestro://') ||
 				href.startsWith('http://') ||
 				href.startsWith('https://') ||
 				href.startsWith('mailto:') ||

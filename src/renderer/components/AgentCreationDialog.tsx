@@ -303,7 +303,7 @@ export function AgentCreationDialog({
 				aria-modal="true"
 				aria-labelledby="agent-creation-dialog-title"
 				tabIndex={-1}
-				className="w-[660px] max-w-[95vw] max-h-[90vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="modal-w-lg max-h-[90vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Header */}

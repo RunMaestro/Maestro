@@ -611,6 +611,30 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		...(sessions.some((s) => s.bookmarked)
+			? [
+					{
+						id: 'clearAllBookmarks',
+						label: 'Clear All Bookmarks',
+						action: () => {
+							const bookmarkedCount = sessions.filter((s) => s.bookmarked).length;
+							setQuickActionOpen(false);
+							useModalStore.getState().openModal('confirm', {
+								title: 'Clear All Bookmarks',
+								message: `Remove bookmarks from ${bookmarkedCount} agent${
+									bookmarkedCount === 1 ? '' : 's'
+								}?`,
+								destructive: true,
+								onConfirm: () => {
+									setSessions((prev) =>
+										prev.map((s) => (s.bookmarked ? { ...s, bookmarked: false } : s))
+									);
+								},
+							});
+						},
+					},
+				]
+			: []),
 		...(activeSession?.groupId
 			? [
 					{
@@ -2150,7 +2174,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				<div

@@ -147,3 +147,40 @@ Access Director's Notes settings via **Settings > Encore Features** (enable Dire
 - **Right-click the activity graph** to quickly change the time window without scrolling
 - **Save or copy the synopsis** to include in standup notes, PRs, or project documentation
 - **Session navigation** lets you jump directly from a history entry to the agent that produced it — great for resuming or reviewing work
+
+## Pulling Notes from the CLI
+
+The same unified history and AI synopsis are available from [`maestro-cli`](./cli#directors-notes), so you can pipe Director's Notes into shell scripts, cron jobs, or your own reporting tools without opening the app.
+
+```bash
+# Plain-text recap of the last 3 days
+maestro-cli director-notes history -d 3
+
+# Markdown recap of the last day, ready to paste into a doc or PR
+maestro-cli director-notes history -f markdown -d 1
+
+# Only the work you initiated (skip AUTO entries from Auto Run)
+maestro-cli director-notes history --filter user -l 50
+
+# JSON for piping into jq, a dashboard, or your own tooling
+maestro-cli director-notes history --json -d 7
+
+# AI synopsis of the past day (requires the desktop app to be running)
+maestro-cli director-notes synopsis -d 1
+```
+
+### Generating a weekly report
+
+Combine `synopsis` with a redirect (or your favorite scheduler) to produce a self-serve weekly report:
+
+```bash
+# Write this week's synopsis to a dated markdown file
+maestro-cli director-notes synopsis -d 7 -f markdown \
+  > ~/Documents/maestro-weekly-$(date +%Y-%m-%d).md
+```
+
+Schedule it with `cron`, `launchd`, or [Maestro Cue](./maestro-cue) on a weekly interval to wake up to a fresh status report every Monday. Pair it with `maestro-cli notify toast --open-file <path>` if you want a clickable in-app reminder when the report lands.
+
+<Note>
+`history` reads directly from disk and works offline. `synopsis` needs the Maestro desktop app running because it dispatches the prompt through your configured AI provider.
+</Note>

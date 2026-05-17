@@ -25,6 +25,8 @@ import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
 import { SyntaxHighlightBoundary } from './SyntaxHighlightBoundary';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
+import { openMaestroLink } from '../utils/openMaestroLink';
+import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -412,6 +414,7 @@ export const MarkdownRenderer = memo(
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
 					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute
@@ -433,8 +436,11 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openUrl; file:// URLs via openPath
-											if (/^file:\/\//.test(href)) {
+											// Open http/https URLs via openUrl; file:// URLs via openPath;
+											// maestro:// URLs route through the in-app deep link handler.
+											if (href.startsWith('maestro://')) {
+												openMaestroLink(href);
+											} else if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
 												openUrl(href, { ctrlKey: e.ctrlKey });

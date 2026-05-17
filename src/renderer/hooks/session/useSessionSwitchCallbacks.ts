@@ -20,6 +20,8 @@ import type { Session, LogEntry, UsageStats } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
+import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
+import type { ParsedDeepLink } from '../../../shared/types';
 
 /** Helper: update a single session by ID using an updater function */
 function updateSession(sessionId: string, updater: (s: Session) => Session): void {
@@ -159,9 +161,9 @@ export function useSessionSwitchCallbacks(
 	);
 
 	// Deep link navigation handler - processes maestro:// URLs from OS notifications,
-	// external apps, and CLI commands
+	// external apps, CLI commands, AND in-renderer markdown link clicks.
 	useEffect(() => {
-		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+		const handleDeepLink = (deepLink: ParsedDeepLink) => {
 			if (deepLink.action === 'focus') {
 				// Window already brought to foreground by main process
 				return;
@@ -185,8 +187,13 @@ export function useSessionSwitchCallbacks(
 					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
 				);
 			}
-		});
-		return unsubscribe;
+		};
+		const unsubscribeIpc = window.maestro.app.onDeepLink(handleDeepLink);
+		const unsubscribeInApp = subscribeToInAppDeepLinks(handleDeepLink);
+		return () => {
+			unsubscribeIpc();
+			unsubscribeInApp();
+		};
 	}, [handleToastSessionClick, setGroups]);
 
 	// Open a closed named session from the agent session browser

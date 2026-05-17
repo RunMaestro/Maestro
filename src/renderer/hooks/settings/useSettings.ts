@@ -459,11 +459,14 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Apply font size to HTML root element so rem-based Tailwind classes scale
+	// Apply font size to HTML root element so rem-based Tailwind classes scale.
+	// Also expose --font-scale so fixed-width modals can scale proportionally
+	// (see .modal-w-* utility classes in index.css). 14px is the design baseline.
 	// Only apply after settings are loaded to prevent layout shift from default->saved font size
 	useEffect(() => {
 		if (store.settingsLoaded) {
 			document.documentElement.style.fontSize = `${store.fontSize}px`;
+			document.documentElement.style.setProperty('--font-scale', String(store.fontSize / 14));
 		}
 	}, [store.fontSize, store.settingsLoaded]);
 

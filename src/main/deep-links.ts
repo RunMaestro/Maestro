@@ -21,6 +21,7 @@ import { app, BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
 import { isWebContentsAvailable } from './utils/safe-send';
 import type { ParsedDeepLink } from '../shared/types';
+import { parseMaestroDeepLink } from '../shared/deep-link-urls';
 import { captureException } from './utils/sentry';
 
 // ============================================================================
@@ -44,36 +45,17 @@ let pendingDeepLinkUrl: string | null = null;
 /**
  * Parse a maestro:// URL into a structured deep link object.
  * Returns null for malformed or unrecognized URLs.
+ *
+ * Wraps the pure shared parser with Sentry/log instrumentation so we keep
+ * visibility into malformed URLs reaching the main process.
  */
 export function parseDeepLink(url: string): ParsedDeepLink | null {
 	try {
-		// Normalize: strip protocol prefix (handles both maestro:// and maestro: on Windows)
-		const normalized = url.replace(/^maestro:\/\//, '').replace(/^maestro:/, '');
-		const parts = normalized.split('/').filter(Boolean);
-
-		if (parts.length === 0) return { action: 'focus' };
-
-		const [resource, id, sub, subId] = parts;
-
-		if (resource === 'focus') return { action: 'focus' };
-
-		if (resource === 'session' && id) {
-			if (sub === 'tab' && subId) {
-				return {
-					action: 'session',
-					sessionId: decodeURIComponent(id),
-					tabId: decodeURIComponent(subId),
-				};
-			}
-			return { action: 'session', sessionId: decodeURIComponent(id) };
+		const parsed = parseMaestroDeepLink(url);
+		if (!parsed) {
+			logger.warn(`Unrecognized deep link URL: ${url}`, 'DeepLink');
 		}
-
-		if (resource === 'group' && id) {
-			return { action: 'group', groupId: decodeURIComponent(id) };
-		}
-
-		logger.warn(`Unrecognized deep link resource: ${resource}`, 'DeepLink');
-		return null;
+		return parsed;
 	} catch (error) {
 		void captureException(error);
 		logger.error('Failed to parse deep link URL', 'DeepLink', { url, error: String(error) });

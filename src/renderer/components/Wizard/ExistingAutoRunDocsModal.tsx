@@ -90,7 +90,7 @@ export function ExistingAutoRunDocsModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="w-[520px] border rounded-xl shadow-2xl overflow-hidden"
+				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}

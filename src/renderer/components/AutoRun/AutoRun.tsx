@@ -8,6 +8,7 @@ import {
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
 // Module-level constant — react-markdown re-parses the document if rehypePlugins
@@ -28,6 +29,7 @@ const MemoizedMarkdownPreview = memo(function MemoizedMarkdownPreview(props: {
 		<ReactMarkdown
 			remarkPlugins={props.remarkPlugins}
 			rehypePlugins={REHYPE_PLUGINS}
+			urlTransform={urlTransformAllowingMaestro}
 			components={props.components}
 		>
 			{props.content}

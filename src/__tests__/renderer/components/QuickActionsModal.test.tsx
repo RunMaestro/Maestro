@@ -302,6 +302,22 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('BUSY')).toBeInTheDocument();
 		});
+
+		it('does not render Clear All Bookmarks when no sessions are bookmarked', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Clear All Bookmarks')).not.toBeInTheDocument();
+		});
+
+		it('renders Clear All Bookmarks when at least one session is bookmarked', () => {
+			const props = createDefaultProps({
+				sessions: [createMockSession({ bookmarked: true })],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Clear All Bookmarks')).toBeInTheDocument();
+		});
 	});
 
 	describe('Session actions', () => {

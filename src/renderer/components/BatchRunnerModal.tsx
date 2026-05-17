@@ -454,7 +454,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			tabIndex={-1}
 		>
 			<div
-				className="w-[700px] max-h-[85vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="modal-w-lg max-h-[85vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}

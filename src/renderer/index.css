@@ -718,6 +718,30 @@ textarea::placeholder {
 	background-color: rgba(0, 0, 0, 0.85);
 }
 
+/* Modal width utilities — scale with the Cmd+= font-size setting via --font-scale
+ * (set in useSettings.ts; 14px is the design baseline → scale = 1). Use these
+ * instead of w-[Npx] on modal containers so contents that grow with rem
+ * (pills, headers, buttons) don't wrap into a fixed-width shell. The 95vw
+ * clamp keeps modals usable on narrow windows and at max font size. */
+.modal-w-xs {
+	width: min(calc(400px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-sm {
+	width: min(calc(480px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-md {
+	width: min(calc(600px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-lg {
+	width: min(calc(720px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-xl {
+	width: min(calc(960px * var(--font-scale, 1)), 95vw);
+}
+.modal-w-2xl {
+	width: min(calc(1200px * var(--font-scale, 1)), 95vw);
+}
+
 /* Document Graph - Search highlight animation for matching nodes */
 @keyframes search-highlight-glow {
 	0% {

@@ -625,7 +625,7 @@ export function HistoryDetailModal({
 				>
 					<div className="absolute inset-0 bg-black/60" />
 					<div
-						className="relative w-[400px] border rounded-lg shadow-2xl overflow-hidden"
+						className="relative modal-w-xs border rounded-lg shadow-2xl overflow-hidden"
 						style={{
 							backgroundColor: theme.colors.bgSidebar,
 							borderColor: theme.colors.border,

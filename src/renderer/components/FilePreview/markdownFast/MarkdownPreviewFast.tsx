@@ -11,6 +11,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { buildBlocks } from './pipeline';
 import { sanitizeBlock } from './sanitize';
 import { resolveLinkAction } from './linkRouter';
+import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { createCodeHighlighter } from './codeHighlighter';
 import { createMermaidRenderer } from './mermaidRenderer';
 import { findHits } from './searchHits';
@@ -191,6 +192,10 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 					case 'maestro-file':
 						event.preventDefault();
 						onFileClick?.(action.path, { openInNewTab: action.openInNewTab });
+						return;
+					case 'maestro-deep-link':
+						event.preventDefault();
+						openMaestroLink(action.href);
 						return;
 					case 'external':
 						event.preventDefault();

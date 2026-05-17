@@ -452,7 +452,7 @@ export function AutoRunDocumentSelector({
 					}}
 				>
 					<div
-						className="w-[400px] border rounded-lg shadow-2xl overflow-hidden"
+						className="modal-w-xs border rounded-lg shadow-2xl overflow-hidden"
 						style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 						onClick={(e) => e.stopPropagation()}
 					>

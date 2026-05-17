@@ -14,40 +14,8 @@
  */
 
 import { visit } from 'unist-util-visit';
-import type { Root, Table, TableRow, TableCell, Link, Text, Paragraph, Strong } from 'mdast';
-
-/**
- * Parse simple YAML key-value pairs from frontmatter content.
- * Handles basic YAML syntax (key: value on each line).
- */
-function parseYamlKeyValues(yamlContent: string): Array<{ key: string; value: string }> {
-	const lines = yamlContent.split('\n');
-	const entries: Array<{ key: string; value: string }> = [];
-
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith('#')) continue;
-
-		// Match key: value pattern
-		const colonIndex = trimmed.indexOf(':');
-		if (colonIndex > 0) {
-			const key = trimmed.substring(0, colonIndex).trim();
-			let value = trimmed.substring(colonIndex + 1).trim();
-
-			// Remove surrounding quotes if present
-			if (
-				(value.startsWith('"') && value.endsWith('"')) ||
-				(value.startsWith("'") && value.endsWith("'"))
-			) {
-				value = value.slice(1, -1);
-			}
-
-			entries.push({ key, value });
-		}
-	}
-
-	return entries;
-}
+import type { Root, Table, TableRow, TableCell, Link, Text, Paragraph, Strong, Break } from 'mdast';
+import { parseYamlKeyValues } from './frontmatterYamlParser';
 
 /**
  * Check if a value looks like a URL
@@ -59,11 +27,22 @@ function isUrl(value: string): boolean {
 /**
  * Create a table cell with the given content
  */
-function createCell(content: (Text | Link | Strong)[]): TableCell {
+function createCell(content: (Text | Link | Strong | Break)[]): TableCell {
 	return {
 		type: 'tableCell',
 		children: content,
 	};
+}
+
+/** Split a multi-line value into text + break nodes so cell rendering preserves line boundaries. */
+function multilineToNodes(value: string): (Text | Break)[] {
+	const parts = value.split('\n');
+	const nodes: (Text | Break)[] = [];
+	parts.forEach((part, idx) => {
+		if (idx > 0) nodes.push({ type: 'break' } as Break);
+		nodes.push({ type: 'text', value: part } as Text);
+	});
+	return nodes;
 }
 
 /**
@@ -103,7 +82,7 @@ function generateTableNode(entries: Array<{ key: string; value: string }>): Tabl
 				} as Link,
 			]);
 		} else {
-			valueCell = createCell([{ type: 'text', value }]);
+			valueCell = createCell(multilineToNodes(value));
 		}
 
 		return createRow([keyCell, valueCell]);

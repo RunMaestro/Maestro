@@ -270,7 +270,7 @@ export function SymphonyModal({
 				aria-modal="true"
 				aria-labelledby="symphony-modal-title"
 				tabIndex={-1}
-				className="w-[1200px] max-w-[95vw] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none select-none"
+				className="modal-w-2xl rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh] outline-none select-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Detail view for projects */}

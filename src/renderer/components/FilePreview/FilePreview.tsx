@@ -10,6 +10,7 @@ import React, {
 	Suspense,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -136,8 +137,10 @@ export const FilePreview = React.memo(
 		const [tokenCount, setTokenCount] = useState<number | null>(null);
 		const [showRemoteImages, setShowRemoteImages] = useState(false);
 		const [showFullContent, setShowFullContent] = useState(false);
-		// Edit mode state - use external content when provided (for file tab persistence)
-		const [internalEditContent, setInternalEditContent] = useState('');
+		// Edit mode state - use external content when provided (for file tab persistence).
+		// Initialize from file.content so hasChanges isn't a false positive on first render
+		// (effect below keeps it in sync when the file changes).
+		const [internalEditContent, setInternalEditContent] = useState(file?.content ?? '');
 		// Computed edit content - prefer external if provided
 		const editContent = externalEditContent ?? internalEditContent;
 		// Wrapper to update both internal state and notify parent
@@ -227,8 +230,9 @@ export const FilePreview = React.memo(
 			[]
 		);
 
-		// Track if content has been modified
-		const hasChanges = markdownEditMode && editContent !== file?.content;
+		// Track if content has been modified. Not gated on markdownEditMode so the
+		// user can save unsaved edits after toggling back to preview (Cmd+S, etc.).
+		const hasChanges = editContent !== (file?.content ?? '');
 
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
@@ -945,8 +949,14 @@ export const FilePreview = React.memo(
 				// adapter so the count + navigation flow through the same UI.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
-			} else if (e.key === 's' && (e.metaKey || e.ctrlKey) && isEditableText && markdownEditMode) {
-				// Cmd+S to save in edit mode
+			} else if (
+				e.key === 's' &&
+				(e.metaKey || e.ctrlKey) &&
+				isEditableText &&
+				(markdownEditMode || hasChanges)
+			) {
+				// Cmd+S to save — works in edit mode, and also in preview when there
+				// are still unsaved edits from a prior edit session.
 				e.preventDefault();
 				e.stopPropagation();
 				handleSave();
@@ -1629,6 +1639,7 @@ export const FilePreview = React.memo(
 							<ReactMarkdown
 								remarkPlugins={remarkPlugins}
 								rehypePlugins={rehypePlugins}
+								urlTransform={urlTransformAllowingMaestro}
 								components={markdownComponents}
 							>
 								{file.content}
