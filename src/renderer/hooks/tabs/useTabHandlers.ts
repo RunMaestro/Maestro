@@ -89,6 +89,9 @@ interface FileTabOpenParams {
 	isLoading?: boolean;
 	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
 	loadRequestId?: string;
+	/** If set, FilePreview flips to edit mode and scrolls the editor to this
+	 *  1-based line on next render. Set by maestro://file/...#L<n> deep links. */
+	pendingScrollToLine?: number;
 }
 
 export interface TabHandlersReturn {
@@ -288,6 +291,12 @@ export function useTabHandlers(): TabHandlersReturn {
 										lastModified: file.lastModified ?? tab.lastModified,
 										isLoading: file.isLoading ?? false,
 										loadRequestId: file.isLoading ? file.loadRequestId : undefined,
+										// Only overwrite when the caller is explicitly requesting
+										// a jump; otherwise keep whatever was there.
+										pendingScrollToLine:
+											file.pendingScrollToLine !== undefined
+												? file.pendingScrollToLine
+												: tab.pendingScrollToLine,
 									}
 								: tab
 						);
@@ -370,6 +379,7 @@ export function useTabHandlers(): TabHandlersReturn {
 								loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
+								pendingScrollToLine: file.pendingScrollToLine,
 							};
 						});
 						return {
@@ -402,6 +412,7 @@ export function useTabHandlers(): TabHandlersReturn {
 						loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
+						pendingScrollToLine: file.pendingScrollToLine,
 					};
 
 					// Create the unified tab reference. Insert directly to the right of the

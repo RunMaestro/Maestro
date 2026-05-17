@@ -508,6 +508,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onHtmlRenderModeChange={(value) =>
 							useTabStore.getState().setFileTabHtmlRenderMode(activeFileTabId, value)
 						}
+						// Transient deep-link scroll target. FilePreview clears this
+						// via onPendingScrollToLineConsumed once the editor has
+						// jumped, so subsequent re-renders don't re-scroll.
+						pendingScrollToLine={activeFileTab.pendingScrollToLine}
+						onPendingScrollToLineConsumed={() =>
+							useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)
+						}
 					/>
 				</div>
 			) : (

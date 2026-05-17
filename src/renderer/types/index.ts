@@ -514,6 +514,11 @@ export interface FilePreviewTab {
 	// renders the document in a sandboxed iframe instead of showing source.
 	// Toggled via the Globe icon in the FilePreview header.
 	htmlRenderMode?: boolean;
+	// Transient request to scroll the file editor to a specific 1-based line on
+	// next render. Set when a maestro://file/...#L<n> deep link opens this tab;
+	// FilePreview consumes it (flips to edit mode if needed, scrolls + places
+	// the caret) and then clears it.
+	pendingScrollToLine?: number;
 }
 
 /**

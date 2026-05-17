@@ -95,6 +95,12 @@ export interface FilePreviewProps {
 	htmlRenderMode?: boolean;
 	/** Setter for the HTML render toggle. Persisted per-tab via the tab store. */
 	onHtmlRenderModeChange?: (value: boolean) => void;
+	/** 1-based line that the editor should jump to on next render. Set by
+	 *  maestro://file/...#L<n> deep links and consumed exactly once. */
+	pendingScrollToLine?: number;
+	/** Called after FilePreview has scrolled to pendingScrollToLine so the
+	 *  caller can clear it (otherwise we'd re-jump every render). */
+	onPendingScrollToLineConsumed?: () => void;
 }
 
 export interface FilePreviewHandle {

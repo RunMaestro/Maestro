@@ -132,6 +132,8 @@ export const FilePreview = React.memo(
 			onPreviewTierChange,
 			htmlRenderMode = false,
 			onHtmlRenderModeChange,
+			pendingScrollToLine,
+			onPendingScrollToLineConsumed,
 		},
 		ref
 	) {
@@ -242,6 +244,46 @@ export const FilePreview = React.memo(
 		// Track if content has been modified. Not gated on markdownEditMode so the
 		// user can save unsaved edits after toggling back to preview (Cmd+S, etc.).
 		const hasChanges = editContent !== (file?.content ?? '');
+
+		// Deep-link scroll-to-line. Fires when a maestro://file/...#L<n> link
+		// opens this file: flip to edit mode, scroll the textarea to that line,
+		// place the caret there, then notify the parent so it clears the
+		// transient flag (otherwise we'd re-jump on every render).
+		useEffect(() => {
+			if (!pendingScrollToLine || !file) return;
+			// We need the textarea, which only exists in edit mode. If we're
+			// still in preview, flip to edit first — the next render will land
+			// us back in this effect with the textarea mounted.
+			if (!markdownEditMode) {
+				setMarkdownEditMode(true);
+				return;
+			}
+			const textarea = textareaRef.current;
+			if (!textarea) return;
+			const lines = (file.content ?? '').split('\n');
+			const targetLine = Math.min(Math.max(1, pendingScrollToLine), lines.length);
+			// Compute character offset of the start of the target line.
+			let offset = 0;
+			for (let i = 0; i < targetLine - 1; i++) {
+				offset += lines[i].length + 1; // +1 for the newline
+			}
+			// Place caret at line start, then scroll. setSelectionRange focuses
+			// at the target offset; we follow up with explicit scroll math so
+			// the line lands a third down the viewport (matches how editors
+			// like VS Code reveal navigated lines).
+			textarea.focus();
+			textarea.setSelectionRange(offset, offset);
+			const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 21;
+			const desiredTop = Math.max(0, (targetLine - 1) * lineHeight - textarea.clientHeight / 3);
+			textarea.scrollTop = desiredTop;
+			onPendingScrollToLineConsumed?.();
+		}, [
+			pendingScrollToLine,
+			markdownEditMode,
+			setMarkdownEditMode,
+			onPendingScrollToLineConsumed,
+			file,
+		]);
 
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
