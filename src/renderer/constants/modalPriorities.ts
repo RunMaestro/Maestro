@@ -29,6 +29,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Forced parallel execution warning - one-time acknowledgment */
+	FORCED_PARALLEL_WARNING: 1005,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
