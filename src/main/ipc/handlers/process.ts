@@ -11,7 +11,7 @@ import type { InteractiveReplayController } from '../../agents/claude-interactiv
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
 import { selectMode } from '../../agents/claude-mode-selector';
-import { getMaestroPBinPath } from '../../agents/claude-usage-startup';
+import { getMaestroPBinPath, isMaestroPBinaryPath } from '../../agents/claude-usage-startup';
 import {
 	getSnapshot as getUsageSnapshot,
 	resolveConfigDirKey,
@@ -255,6 +255,60 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							'Batch Mode enabled but no maestro-p binary found — falling back to API mode',
 							LOG_CONTEXT,
 							{ sessionId: config.sessionId, override: config.maestroPPath }
+						);
+					}
+				} else if (
+					isClaudeCode &&
+					!isSshEnabled &&
+					isMaestroPBinaryPath(config.sessionCustomPath)
+				) {
+					// Power-user setup: the agent's `Path` field points directly at a
+					// maestro-p binary instead of `claude`. Adaptive Mode's auto-resolver
+					// is off (we'd have taken the branch above), but maestro-p is what
+					// will actually run — so reflect that in the resolved mode so the
+					// TUI/API pill and the streamed renderStyle tag match reality. The
+					// spawn itself is left alone: the user opted in by pointing at the
+					// binary directly, so we don't wrap through `process.execPath` or
+					// thread `MAESTRO_CLAUDE_BIN` like the toggled-on path does.
+					claudeResolvedMode = 'interactive';
+					claudeResolvedReason = 'auto';
+					const claudeEnvForKey: NodeJS.ProcessEnv = {
+						...(process.env as NodeJS.ProcessEnv),
+						...(agent?.defaultEnvVars ?? {}),
+						...(config.sessionCustomEnvVars ?? {}),
+					};
+					resolvedConfigDirKey = resolveConfigDirKey(claudeEnvForKey);
+					logger.debug(
+						'Detected maestro-p binary in session custom path — tagging as interactive',
+						LOG_CONTEXT,
+						{ sessionId: config.sessionId, customPath: config.sessionCustomPath }
+					);
+				} else if (isClaudeCode && !isSshEnabled) {
+					// Stale-state cleanup. Neither Adaptive Mode nor a direct maestro-p
+					// Path applies, but this session may still carry `claudeInteractive
+					// .mode === 'interactive'` persisted from a prior turn (toggle was
+					// later flipped off, or the Path was switched back to vanilla
+					// claude). The renderer's renderStyle tagger reads that field
+					// every batch — leaving the stale value there would tag this
+					// API-mode spawn's output as TUI. Compute the config-dir key so
+					// the persistence/emit block downstream can write 'api' back.
+					const persistedSessions = deps.sessionsStore.get('sessions', []) as Array<{
+						id?: string;
+						claudeInteractive?: { mode?: 'interactive' | 'api' };
+					}>;
+					const persistedMode = persistedSessions.find((s) => s?.id === config.sessionId)
+						?.claudeInteractive?.mode;
+					if (persistedMode === 'interactive') {
+						const claudeEnvForKey: NodeJS.ProcessEnv = {
+							...(process.env as NodeJS.ProcessEnv),
+							...(agent?.defaultEnvVars ?? {}),
+							...(config.sessionCustomEnvVars ?? {}),
+						};
+						resolvedConfigDirKey = resolveConfigDirKey(claudeEnvForKey);
+						logger.debug(
+							'Clearing stale claudeInteractive=interactive — neither Adaptive Mode nor maestro-p Path active',
+							LOG_CONTEXT,
+							{ sessionId: config.sessionId }
 						);
 					}
 				}
@@ -578,11 +632,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				}
 
 				// Persist the resolved Claude headless-mode state back to the session
-				// record and notify the renderer. Skip when Batch Mode is off (we don't
-				// want to clobber prior state for tabs that just lost their toggle —
-				// the renderer hides the popover row anyway when `enableMaestroP` is
-				// false, so stale state is harmless).
-				if (isClaudeCode && config.enableMaestroP && resolvedConfigDirKey) {
+				// record and notify the renderer. Fires when:
+				//   - Adaptive Mode's auto-resolver ran (toggle on), OR
+				//   - The user wired `Path` directly at maestro-p (resolved-interactive
+				//     without the toggle), OR
+				//   - We need to clear stale `mode === 'interactive'` from a prior
+				//     turn (both `resolvedConfigDirKey` above branches resolve it,
+				//     gate on `!== undefined`).
+				// When none of those apply we leave `claudeInteractive` alone — the
+				// popover hides itself anyway when `enableMaestroP` is false.
+				if (isClaudeCode && resolvedConfigDirKey) {
 					try {
 						const allSessions = deps.sessionsStore.get('sessions', []) as Array<
 							Record<string, unknown>
@@ -1090,6 +1149,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			}
 
 			return result;
+		})
+	);
+
+	// Check whether a terminal tab's PTY currently has a non-shell foreground process.
+	// Compares node-pty's `process` (foreground process name) to the basename of the
+	// shell we spawned. Used by Cmd+W to warn before closing a busy terminal.
+	ipcMain.handle(
+		'process:isTerminalBusy',
+		withIpcErrorLogging(handlerOpts('isTerminalBusy'), async (sessionId: string) => {
+			const processManager = requireProcessManager(getProcessManager);
+			const managed = processManager.get(sessionId);
+			if (!managed?.ptyProcess || !managed.command) return false;
+			const foreground = managed.ptyProcess.process;
+			if (!foreground) return false;
+			return path.basename(managed.command) !== foreground;
 		})
 	);
 

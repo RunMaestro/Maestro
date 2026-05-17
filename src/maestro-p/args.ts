@@ -163,6 +163,26 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 
+		// `--` is the POSIX end-of-options marker: every remaining token is a
+		// positional, never a flag. Maestro's API-mode spawn line ends with
+		// `… --dangerously-skip-permissions -- <prompt>`; without this branch
+		// the generic long-flag handler below would treat `--` as an unknown
+		// flag and consume the prompt as its "value", leaving promptFromPositional
+		// empty and the runner aborting with "no prompt provided".
+		if (raw === '--') {
+			i += 1;
+			while (i < argv.length) {
+				const tok = argv[i];
+				if (promptFromPositional === null) {
+					promptFromPositional = tok;
+				} else {
+					passThroughArgs.push(tok);
+				}
+				i += 1;
+			}
+			continue;
+		}
+
 		if (PROMPT_VALUE_FLAGS.has(flag)) {
 			const value = consumeValue();
 			if (value === undefined) {

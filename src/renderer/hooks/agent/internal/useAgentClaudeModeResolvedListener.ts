@@ -84,15 +84,27 @@ export function useAgentClaudeModeResolvedListener(): void {
 						}
 
 						// Detect a meaningful mode flip — this is what triggers the
-						// toast + inline banner.
+						// toast + inline banner. Banners and toasts are framed as
+						// "Adaptive Mode: switched ..." so they only make sense for
+						// sessions that actually have Adaptive Mode on. Sessions that
+						// resolve `interactive` because the user wired `Path` directly
+						// at maestro-p (toggle off), and stale-state cleanup writes,
+						// also flow through this listener but must not fire the
+						// Adaptive-Mode-flavoured UI.
 						const modeChanged = current?.mode !== resolution.mode;
-						if (modeChanged && resolution.mode === 'api' && resolution.reason === 'limit') {
+						const adaptiveModeOn = s.enableMaestroP === true;
+						if (
+							adaptiveModeOn &&
+							modeChanged &&
+							resolution.mode === 'api' &&
+							resolution.reason === 'limit'
+						) {
 							transitionedToLimit = true;
 						}
-						if (modeChanged && resolution.mode === 'interactive') {
+						if (adaptiveModeOn && modeChanged && resolution.mode === 'interactive') {
 							transitionedBackToInteractive = true;
 						}
-						if (modeChanged && bannerEntry === null) {
+						if (adaptiveModeOn && modeChanged && bannerEntry === null) {
 							bannerEntry = buildBatchModeBanner(current?.mode, resolution.mode, resolution.reason);
 						}
 

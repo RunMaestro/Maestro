@@ -114,6 +114,19 @@ const MONTH_INDEX: Record<string, number> = {
 // section can't accidentally swallow the next one.
 const SECTION_WINDOW_CAP = 8;
 
+// "Not logged in" detection. Claude's status bar renders
+// "Not logged in · Run /login" when the active CLAUDE_CONFIG_DIR has no
+// authenticated tokens — instead of the Max-plan window panel we'd normally
+// parse, `/usage` shows the API-billing variant (all $0.00, no percentages).
+// Surfacing this as a distinct snapshot kind (rather than a generic parse
+// failure) lets the dashboard tell the user "run /login here" instead of
+// silently dropping the account.
+//
+// Cursor-positioning damage collapses the inter-word spaces (same mechanism
+// documented at the top of this file), so we match against the same
+// compressed/lowercase view used for section headers: `notloggedin`.
+const NOT_LOGGED_IN_RE = /notloggedin/;
+
 // Inline-scan fallback for percent + first-3-lines reset search.
 const INLINE_SCAN_LINE_COUNT = 3;
 
@@ -130,6 +143,24 @@ interface SectionExtract {
 export function parseUsage(raw: string, nowIso: string, configDir: string): StatusSnapshot | null {
 	const stripped = stripAnsiCodes(raw);
 	const lines = stripped.split(/\r?\n/);
+
+	// "Not logged in" detection runs first: when the active config dir has no
+	// tokens, claude paints a status bar with `Not logged in · Run /login`
+	// and `/usage` renders the API-billing variant rather than the Max-plan
+	// windows we'd normally parse. Returning an `unauthenticated` snapshot
+	// (with placeholder zeros) lets the dashboard surface a "run /login"
+	// CTA for that account instead of silently dropping it.
+	if (lines.some((line) => NOT_LOGGED_IN_RE.test(compressedKey(line)))) {
+		return {
+			type: 'status',
+			auth_state: 'unauthenticated',
+			config_dir: configDir,
+			session: { percent: 0, resets_at: nowIso },
+			week_all_models: { percent: 0, resets_at: nowIso },
+			week_sonnet_only: { percent: 0, resets_at: nowIso },
+		};
+	}
+
 	const markers = findSectionMarkers(lines);
 
 	const sessionExtract = extractSection(
@@ -152,6 +183,12 @@ export function parseUsage(raw: string, nowIso: string, configDir: string): Stat
 
 	const sonnetExtract = resolveSonnet(lines, markers, nowIso, allModelsExtract);
 
+	// `auth_state` intentionally omitted on the authenticated path. Readers
+	// treat absence as `'authenticated'` (see StatusSnapshot in json-emitter.ts
+	// and UsageSnapshot in claude-mode-selector.ts), and dropping it keeps the
+	// wire envelope byte-compatible with snapshots written before this field
+	// existed — fixtures don't need rewriting and on-disk caches don't need a
+	// migration.
 	return {
 		type: 'status',
 		config_dir: configDir,

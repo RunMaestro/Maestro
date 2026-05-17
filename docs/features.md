@@ -17,7 +17,6 @@ icon: sparkles
 - 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
 - 🔐 **[Global Environment Variables](./configuration#global-environment-variables)** - Configure environment variables once in Settings and they apply to all agent processes and terminal sessions. Perfect for API keys, proxy settings, and tool paths.
-- 🔀 **[Claude Adaptive Mode](./claude-interactive-mode)** - Claude Code agents can draw from either token source: prefer your Max plan's flat-rate **Time Limits** (5-hour and 7-day windows, driven via the bundled `maestro-p` TUI wrapper) and fall back automatically to billed **API Limits** (`claude --print`) when the windows are exhausted. Save real dollars on long sessions without leaving the app.
 
 ## Core Features
 

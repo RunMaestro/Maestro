@@ -2501,25 +2501,17 @@ describe('TerminalOutput', () => {
 		});
 	});
 
-	describe('mixed-mode message rendering', () => {
-		it('shows a single "Captured via interactive TUI" pill when structured and text-stream turns coexist', () => {
+	describe('mode pill rendering', () => {
+		it('labels TUI and API turns separately when both render styles coexist', () => {
 			const logs: LogEntry[] = [
-				createLogEntry({
-					id: 'user-1',
-					text: 'first prompt',
-					source: 'user',
-				}),
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
 					id: 'api-resp',
 					text: 'response from API stream',
 					source: 'stdout',
 					renderStyle: 'structured',
 				}),
-				createLogEntry({
-					id: 'user-2',
-					text: 'second prompt',
-					source: 'user',
-				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
 				createLogEntry({
 					id: 'interactive-resp',
 					text: 'response captured from interactive TUI',
@@ -2533,49 +2525,45 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			// Both turns render their content.
-			expect(screen.getByText(/response from API stream/)).toBeInTheDocument();
-			expect(screen.getByText(/response captured from interactive TUI/)).toBeInTheDocument();
-
-			// Exactly one pill should be present (only on the text-stream turn).
-			const pills = screen.getAllByText('Captured via interactive TUI');
-			expect(pills).toHaveLength(1);
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
 		});
 
-		it('does not render the pill on structured-only turns', () => {
+		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
 			const logs: LogEntry[] = [
-				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
 				createLogEntry({
-					id: 'resp-1',
-					text: 'API response only',
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
 					source: 'stdout',
 					renderStyle: 'structured',
-				}),
-				// An untagged entry (renderStyle undefined) should also default to no pill.
-				createLogEntry({
-					id: 'resp-2',
-					text: 'another API response',
-					source: 'stdout',
 				}),
 			];
 
 			const session = createDefaultSession({
+				enableMaestroP: true,
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.queryByText('Captured via interactive TUI')).not.toBeInTheDocument();
+			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
+			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
 		});
 
 		it('does not render the pill on user messages even when tagged text-stream', () => {
-			// User messages are the prompts we sent — never agent output — so the pill
-			// must stay off them even if the renderStyle field is set.
 			const logs: LogEntry[] = [
 				createLogEntry({
 					id: 'user-1',
@@ -2590,13 +2578,31 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			// User message body still renders.
 			expect(screen.getByText('a user prompt')).toBeInTheDocument();
-			// But no pill on the user bubble.
-			expect(screen.queryByText('Captured via interactive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on non-Claude agents', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
 		});
 	});
 });

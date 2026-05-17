@@ -60,7 +60,14 @@ vi.mock('node-pty', () => ({
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
-import { QUIT_GRACE_MS, TuiDriver } from '../../maestro-p/tui-driver';
+import {
+	QUIT_GRACE_MS,
+	READY_MAX_TAPS,
+	READY_TAP_INTERVAL_MS,
+	READY_TIMEOUT_MS,
+	SEND_ENTER_DELAY_MS,
+	TuiDriver,
+} from '../../maestro-p/tui-driver';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -217,6 +224,163 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe("'trust-accepted' event (b')", () => {
+		it('auto-sends Enter and emits trust-accepted when the trust prompt arrives', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			// Claude TUI v2.1.143+ trust prompt — the ANSI-stripped form
+			// collapses cursor-positioning whitespace, so the highlighted
+			// option appears as `❯1.Yes,Itrustthisfolder` with no space.
+			feed(
+				'Accessingworkspace:\n\nQuicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n\n❯1.Yes,Itrustthisfolder\n2.No,exit\n'
+			);
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
+		});
+
+		it('matches the trust prompt even with the raw (un-collapsed) wording', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			feed('Yes, I trust this folder\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
+		});
+
+		it('fires at most once even if the trust line redraws', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			feed('❯1.Yes,Itrustthisfolder\n');
+			feed('❯1.Yes,Itrustthisfolder\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			// Only one Enter written, even with the redraw.
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+		});
+
+		it('does NOT fire on unrelated lines that mention "trust" in passing', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			feed('Building trust between modules...\n');
+			feed('I trust the linter to catch this.\n');
+			expect(trustHandler).not.toHaveBeenCalled();
+		});
+
+		it('does NOT block the ready handshake — both can fire from one feed', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			driver.on('ready', readyHandler);
+			// Trust prompt followed (in the same rolling buffer window) by
+			// the real input indicator. Real captures often coalesce many
+			// redraws across short windows, so both regexes should match.
+			feed('❯1.Yes,Itrustthisfolder\n');
+			feed('\r❯ Try "edit <filepath>"\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('blind-tap fallback + ready-timeout (g)', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('sends Enter every READY_TAP_INTERVAL_MS until ready fires or budget is exhausted', async () => {
+			await makeDriver();
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			// First tap at +1500ms.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenLastCalledWith('\r');
+			// Second tap at +3000ms.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+			// Third (and final) tap at +4500ms.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(READY_MAX_TAPS);
+			// Budget exhausted — no further taps even though ready never matched.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS * 5);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(READY_MAX_TAPS);
+		});
+
+		it('stops tapping the instant READY_REGEX matches', async () => {
+			const driver = await makeDriver();
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			// Real input prompt arrives between tap 1 and tap 2.
+			feed('\r❯ Try "edit <filepath>"\n');
+			// No more taps even though we advance far past the next interval.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS * 5);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			expect(driver).toBeDefined();
+		});
+
+		it('counts the trust-regex fast-path Enter toward the tap budget', async () => {
+			await makeDriver();
+			// Trust prompt arrives immediately — fast-path writes Enter (tap 1/3).
+			feed('❯1.Yes,Itrustthisfolder\n');
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			// Interval still has 2 taps remaining if ready still doesn't match.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(3);
+			// Total budget exhausted.
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS * 5);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(READY_MAX_TAPS);
+		});
+
+		it("emits 'ready-timeout' after READY_TIMEOUT_MS if ready never matches", async () => {
+			const driver = await makeDriver();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(timeoutHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it("does NOT emit 'ready-timeout' if ready fires first", async () => {
+			const driver = await makeDriver();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			feed('\r❯ Try\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+		});
+
+		it("does NOT emit 'ready-timeout' if the PTY exits first", async () => {
+			const driver = await makeDriver();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			triggerExit(0);
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+		});
+
+		it('stops the tap interval on exit so no Enters leak past PTY teardown', async () => {
+			await makeDriver();
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			triggerExit(0);
+			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS * 5);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps the tap window inside the ready-timeout (all taps fire before timeout)', async () => {
+			// Documents the timing contract: by the time 'ready-timeout' fires,
+			// the runner knows every blind tap got its chance.
+			expect(READY_MAX_TAPS * READY_TAP_INTERVAL_MS).toBeLessThan(READY_TIMEOUT_MS);
+		});
+	});
+
 	describe("'limit-hit' event (c)", () => {
 		it('fires on a 5-hour limit message', async () => {
 			const driver = await makeDriver();
@@ -255,10 +419,26 @@ describe('TuiDriver', () => {
 	});
 
 	describe('send()', () => {
-		it('writes text followed by \\r to the PTY', async () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('writes text first and \\r after SEND_ENTER_DELAY_MS', async () => {
 			const driver = await makeDriver();
+			mockPtyProcess.write.mockClear();
 			driver.send('hello world');
-			expect(mockPtyProcess.write).toHaveBeenCalledWith('hello world\r');
+			// First write is the text body alone — no trailing \r, because
+			// claude's TUI swallows a same-chunk \r as a literal newline in its
+			// multi-line input editor and the prompt sits unsubmitted.
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(1, 'hello world');
+			// Enter arrives as a separate write after the delay.
+			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(2, '\r');
 		});
 
 		it('throws if called before start()', () => {
@@ -271,7 +451,20 @@ describe('TuiDriver', () => {
 			triggerExit(0);
 			mockPtyProcess.write.mockClear();
 			driver.send('ignored');
+			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
 			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('skips the trailing \\r if exit fires between writes', async () => {
+			const driver = await makeDriver();
+			mockPtyProcess.write.mockClear();
+			driver.send('hello');
+			// Text write already happened; PTY dies before the deferred Enter.
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
+			triggerExit(1);
+			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
+			// No second write — we'd otherwise be writing to a dead PTY.
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 		});
 	});
 

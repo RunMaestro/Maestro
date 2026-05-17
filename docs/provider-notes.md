@@ -51,7 +51,6 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 **Notes**:
 
 - Claude Code's TUI supports injecting user messages mid-turn (between tool calls in its agentic loop), but this is not available in batch mode (`--print`). Maestro uses batch mode, so new messages are queued and sent after the current turn completes via `--resume`. This is a limitation of the CLI's batch interface, not Maestro.
-- **Adaptive Mode** lets a Claude Code agent prefer Max plan **Time Limits** (via the bundled `maestro-p` TUI driver) and fall back to billed **API Limits** (`claude --print`) only when the 5-hour or 7-day window is exhausted. See [Claude Adaptive Mode](/claude-interactive-mode).
 
 ## Codex (OpenAI)
 

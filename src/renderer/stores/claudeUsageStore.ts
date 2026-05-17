@@ -26,10 +26,16 @@ import { create } from 'zustand';
 /**
  * Snapshot shape mirrors `UsageSnapshot` in `src/main/agents/claude-mode-selector.ts`.
  * Duplicated here to keep the renderer bundle free of main-process imports.
+ *
+ * `authState` is optional for back-compat with snapshots persisted before the
+ * field existed — readers treat absence as `'authenticated'` and only switch
+ * the dashboard row into the "run /login" CTA when it's explicitly
+ * `'unauthenticated'`.
  */
 export interface ClaudeUsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
+	authState?: 'authenticated' | 'unauthenticated';
 	session: { percent: number; resetsAt: string };
 	weekAllModels: { percent: number; resetsAt: string };
 	weekSonnetOnly: { percent: number; resetsAt: string };

@@ -486,11 +486,7 @@ export function AgentConfigPanel({
 							ariaLabel="Adaptive Mode"
 						/>
 					</div>
-					<p className="text-xs opacity-50">
-						Prefer Max plan quota (Time Limits via <code>maestro-p</code>). Falls back to billed API
-						(<code>claude --print</code>) when the 5-hour or weekly window is near exhaustion, and
-						returns to Max plan as soon as both windows have reset.
-					</p>
+					<p className="text-xs opacity-50">Automatically Manage Claude Token Source</p>
 					{enableMaestroP && (
 						<div className="mt-3">
 							<label

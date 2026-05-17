@@ -1712,6 +1712,9 @@ describe('agents IPC handlers', () => {
 			const result = await handler({} as any);
 
 			expect(runSpy).toHaveBeenCalledTimes(1);
+			// Manual refresh must opt into the aggressive sampling path — startup
+			// mode would skip when no maestro-p session exists.
+			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
 			expect(result).toEqual({ refreshed: 2 });
 
 			runSpy.mockRestore();

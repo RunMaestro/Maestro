@@ -91,9 +91,13 @@ export interface SampleUsageOptions {
 /**
  * The wire shape `maestro-p --status` emits on stdout. Local to this module;
  * the store / selector only ever see the canonical camelCase `UsageSnapshot`.
+ *
+ * `auth_state` is optional for back-compat with older maestro-p builds that
+ * didn't emit the field — readers treat its absence as `'authenticated'`.
  */
 interface StatusWireEnvelope {
 	type: 'status';
+	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
 	session: { percent: number; resets_at: string };
 	week_all_models: { percent: number; resets_at: string };
@@ -158,6 +162,7 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	return {
 		sampledAt: new Date().toISOString(),
 		configDirKey: resolveConfigDirKey(childEnv),
+		authState: parsed.auth_state ?? 'authenticated',
 		session: {
 			percent: parsed.session.percent,
 			resetsAt: parsed.session.resets_at,
@@ -197,6 +202,16 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	const e = obj as Record<string, unknown>;
 	if (e.type !== 'status') return false;
 	if (typeof e.config_dir !== 'string') return false;
+	// `auth_state` is optional; when present it must be one of two values.
+	// Anything else is malformed and we reject the whole envelope rather
+	// than coercing — a half-typed wire is worse than a missing sample.
+	if (
+		e.auth_state !== undefined &&
+		e.auth_state !== 'authenticated' &&
+		e.auth_state !== 'unauthenticated'
+	) {
+		return false;
+	}
 	return (
 		isWireWindow(e.session) && isWireWindow(e.week_all_models) && isWireWindow(e.week_sonnet_only)
 	);

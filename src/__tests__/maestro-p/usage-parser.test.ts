@@ -289,3 +289,62 @@ describe('RESET_SPEC_BODY', () => {
 		expect(m?.groups?.ampm?.toLowerCase()).toBe('am');
 	});
 });
+
+describe('parseUsage / not-logged-in detection', () => {
+	const configDir = '/Users/test/.claude-unauth';
+	const nowIso = '2026-05-15T20:00:00Z';
+
+	it('returns an unauthenticated snapshot when the status bar carries "Not logged in"', () => {
+		// Real-capture shape: claude paints `Not logged in · Run /login` in
+		// the status bar and `/usage` renders the API-billing variant
+		// (Totals all 0). Parser should short-circuit to an unauthenticated
+		// snapshot instead of attempting the Max-plan section walk.
+		const raw = [
+			'⏵⏵ auto mode on (shift+tab to cycle) Not logged in · Run /login',
+			'',
+			'Settings  Status  Config  Usage  Stats',
+			'Session',
+			'',
+			'Total cost: $0.0000',
+			'Total duration (API): 0s',
+			'Usage: 0 input, 0 output, 0 cache read, 0 cache write',
+		].join('\n');
+
+		const result = parseUsage(raw, nowIso, configDir);
+
+		expect(result).toEqual({
+			type: 'status',
+			auth_state: 'unauthenticated',
+			config_dir: configDir,
+			session: { percent: 0, resets_at: nowIso },
+			week_all_models: { percent: 0, resets_at: nowIso },
+			week_sonnet_only: { percent: 0, resets_at: nowIso },
+		});
+	});
+
+	it('detects "Not logged in" even when cursor-positioning damage collapses inter-word spaces', () => {
+		// `compressedKey` strips whitespace so `Notloggedin` matches the same
+		// pattern as the well-spaced variant. This is the form we actually
+		// captured from the .claude-0din account on macOS.
+		const raw = '⏵⏵automodeon(shift+tabtocycle)Notloggedin·Run/login';
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.auth_state).toBe('unauthenticated');
+	});
+
+	it('prefers the unauthenticated short-circuit over attempting to parse sections', () => {
+		// Even if the raw output happens to contain Max-plan-shaped section
+		// headers (e.g. from a previous /usage invocation scrolled above the
+		// "Not logged in" status bar), the bar wins — sections from before
+		// a logout no longer represent live state.
+		const raw = [
+			'Current session',
+			'23% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'⏵⏵ Not logged in · Run /login',
+		].join('\n');
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.auth_state).toBe('unauthenticated');
+		expect(result?.session.percent).toBe(0);
+	});
+});

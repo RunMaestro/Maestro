@@ -97,18 +97,21 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 
-	// Batch Mode usage limits (only meaningful for Claude Code sessions that
-	// have opted in). The snapshot is keyed by canonical CLAUDE_CONFIG_DIR;
-	// the spawner stamps the key onto `claudeInteractive.lastUsageSnapshotKey`
-	// on every spawn, so the popover always reads the same account the spawner
-	// is acting on.
+	// TUI usage limits (5-hour / weekly Max plan windows). Shown whenever the
+	// spawner is driving the Claude TUI — either via Adaptive Mode (toggle on)
+	// or via a static maestro-p binary set as the agent's Path. The snapshot is
+	// keyed by canonical CLAUDE_CONFIG_DIR; the spawner stamps the key onto
+	// `claudeInteractive.lastUsageSnapshotKey` on every spawn, so the popover
+	// always reads the same account the spawner is acting on.
+	const isInteractiveResolved = activeSession?.claudeInteractive?.mode === 'interactive';
+	const isAdaptiveOn = !!activeSession?.enableMaestroP;
 	const batchUsageSnapshot = useClaudeUsageSnapshot(
-		activeSession?.enableMaestroP
-			? activeSession.claudeInteractive?.lastUsageSnapshotKey
+		isAdaptiveOn || isInteractiveResolved
+			? activeSession?.claudeInteractive?.lastUsageSnapshotKey
 			: undefined
 	);
 	const showBatchUsage =
-		!!activeSession?.enableMaestroP && activeSession?.toolType === 'claude-code';
+		(isAdaptiveOn || isInteractiveResolved) && activeSession?.toolType === 'claude-code';
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	const gitTooltip = useHoverTooltip(150);
@@ -651,8 +654,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 
-												{/* Adaptive Mode usage limits — only for Claude Code tabs that have
-												    opted into Adaptive Mode AND have a usage snapshot cached. */}
+												{/* TUI usage limits — shown for Claude Code tabs driving the TUI
+												    (Adaptive Mode toggle OR static maestro-p Path) when a usage
+												    snapshot is cached. */}
 												{showBatchUsage && batchUsageSnapshot && (
 													<div
 														className="border-t pt-2 mt-2"
@@ -662,7 +666,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 															className="text-[10px] uppercase font-bold mb-2"
 															style={{ color: theme.colors.textDim }}
 														>
-															Adaptive Mode
+															TUI Usage
 														</div>
 														<div className="flex justify-between items-center mb-2">
 															<span className="text-xs" style={{ color: theme.colors.textDim }}>

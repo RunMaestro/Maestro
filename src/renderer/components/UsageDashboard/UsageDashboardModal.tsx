@@ -61,6 +61,7 @@ import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Section IDs for keyboard navigation
 const OVERVIEW_SECTIONS = [
+	'claude-plan-usage',
 	'year-in-pixels',
 	'summary-cards',
 	'agent-comparison',
@@ -71,12 +72,7 @@ const OVERVIEW_SECTIONS = [
 	'activity-heatmap',
 ] as const;
 const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
-const AGENT_OVERVIEW_SECTIONS = [
-	'session-stats',
-	'claude-plan-usage',
-	'agent-efficiency',
-	'agent-usage',
-] as const;
+const AGENT_OVERVIEW_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
 const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
 
@@ -389,10 +385,20 @@ export function UsageDashboardModal({
 	}, [containerWidth]);
 
 	// Get sections for current view mode
+	// The Claude Plan Usage section is suppressed when no Claude Code sessions
+	// exist (see overview JSX below). Mirror that gate here so keyboard nav
+	// doesn't try to focus an invisible section.
+	const hasClaudeSessions = useMemo(
+		() => sessions.some((s) => s.toolType === 'claude-code'),
+		[sessions]
+	);
+
 	const currentSections = useMemo((): readonly SectionId[] => {
 		switch (viewMode) {
 			case 'overview':
-				return OVERVIEW_SECTIONS;
+				return hasClaudeSessions
+					? OVERVIEW_SECTIONS
+					: OVERVIEW_SECTIONS.filter((id) => id !== 'claude-plan-usage');
 			case 'agents':
 				return AGENTS_SECTIONS;
 			case 'agent-overview':
@@ -408,7 +414,7 @@ export function UsageDashboardModal({
 			default:
 				return OVERVIEW_SECTIONS;
 		}
-	}, [viewMode]);
+	}, [viewMode, hasClaudeSessions]);
 
 	// Fall back to 'overview' if either Encore flag flips off while the Cue tab is active
 	useEffect(() => {
@@ -818,6 +824,34 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
+									{/* Claude Max Plan Usage — per-account quota burndown.
+									    Sits at the top of Overview so the most cost-sensitive
+									    info is visible before scrolling. Suppressed when the
+									    user has no Claude Code sessions, since the widget has
+									    no meaning without a Claude account to sample. */}
+									{sessions.some((s) => s.toolType === 'claude-code') && (
+										<div
+											ref={setSectionRef('claude-plan-usage')}
+											tabIndex={0}
+											role="region"
+											aria-label={getSectionLabel('claude-plan-usage')}
+											onKeyDown={(e) => handleSectionKeyDown(e, 'claude-plan-usage')}
+											className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+											style={{
+												boxShadow:
+													focusedSection === 'claude-plan-usage'
+														? `0 0 0 2px ${theme.colors.accent}`
+														: 'none',
+												animationDelay: '0ms',
+											}}
+											data-testid="section-claude-plan-usage"
+										>
+											<ChartErrorBoundary theme={theme} chartName="Claude Max Plan Usage">
+												<ClaudePlanUsage theme={theme} />
+											</ChartErrorBoundary>
+										</div>
+									)}
+
 									{/* Year-in-pixels hero strip — single-row signature graphic
 									    showing the past 365 days at a glance. Self-hides when the
 									    user has no activity in the lookback window. */}
@@ -1133,31 +1167,6 @@ export function UsageDashboardModal({
 												theme={theme}
 												colorBlindMode={colorBlindMode}
 											/>
-										</ChartErrorBoundary>
-									</div>
-
-									{/* Claude Max Plan Usage — per-account quota burndown for the
-									    Claude Code Max plan. Sits next to SessionStats so quota +
-									    agent-type breakdowns live in the same view. Empty state
-									    covers the no-snapshot case so we render unconditionally. */}
-									<div
-										ref={setSectionRef('claude-plan-usage')}
-										tabIndex={0}
-										role="region"
-										aria-label={getSectionLabel('claude-plan-usage')}
-										onKeyDown={(e) => handleSectionKeyDown(e, 'claude-plan-usage')}
-										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
-										style={{
-											boxShadow:
-												focusedSection === 'claude-plan-usage'
-													? `0 0 0 2px ${theme.colors.accent}`
-													: 'none',
-											animationDelay: '25ms',
-										}}
-										data-testid="section-claude-plan-usage"
-									>
-										<ChartErrorBoundary theme={theme} chartName="Claude Max Plan Usage">
-											<ClaudePlanUsage theme={theme} />
 										</ChartErrorBoundary>
 									</div>
 

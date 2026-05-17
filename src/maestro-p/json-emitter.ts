@@ -44,11 +44,23 @@ export interface EmitResultOptions {
 	totalCostUsd?: number;
 }
 
-// The /usage parser (task 8) produces this shape and emitStatus() ships it
-// to stdout verbatim. Defined here so json-emitter.ts owns the wire-format
-// contract; usage-parser.ts will import from this module.
+// The /usage parser produces this shape and emitStatus() ships it to stdout
+// verbatim. Defined here so json-emitter.ts owns the wire-format contract;
+// usage-parser.ts imports from this module.
+//
+// `auth_state` distinguishes a real measurement from the "Not logged in"
+// stub. When `unauthenticated`, the percent / resets_at fields are placeholder
+// zeros — Claude's `/usage` panel for an unauthenticated config dir is the
+// API-billing variant ($0.00 across the board), which carries no real Max
+// plan signal. Downstream consumers (dashboard, mode selector) key off
+// `auth_state` to decide whether the numbers mean anything.
+//
+// Older callers can omit `auth_state` entirely; readers MUST treat its
+// absence as `'authenticated'` so on-disk snapshots written before this
+// field existed keep deserializing into the live UI.
 export interface StatusSnapshot {
 	type: 'status';
+	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
 	session: { percent: number; resets_at: string };
 	week_all_models: { percent: number; resets_at: string };

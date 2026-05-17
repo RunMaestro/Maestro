@@ -98,6 +98,75 @@ describe('ClaudePlanUsage — multi-row rendering', () => {
 	});
 });
 
+describe('ClaudePlanUsage — unauthenticated row', () => {
+	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
+		seedSnapshots({
+			'/Users/me/.claude-0din': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-0din',
+				authState: 'unauthenticated',
+				session: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekAllModels: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		// CTA element rendered, bars suppressed.
+		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
+		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+		expect(screen.getByText(/Not logged in/i)).toBeInTheDocument();
+		expect(screen.getByText(/\/login/i)).toBeInTheDocument();
+	});
+
+	it('still renders bars for authenticated snapshots alongside unauthenticated ones', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+			'/Users/me/.claude-0din': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-0din',
+				authState: 'unauthenticated',
+				session: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekAllModels: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		// Authenticated account renders 3 bars; unauthenticated renders the CTA.
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
+	});
+
+	it('treats missing authState as authenticated for back-compat', () => {
+		// Snapshots persisted before authState existed must continue to
+		// render as bars, not as the unauthenticated CTA.
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 22, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 8, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
+		expect(screen.queryByTestId('claude-plan-row-default-unauthenticated')).toBeNull();
+	});
+});
+
 describe('ClaudePlanUsage — refresh wiring', () => {
 	it('calls the refresh IPC and re-pulls the store on click', async () => {
 		getClaudeUsageSnapshotsMock.mockResolvedValue({

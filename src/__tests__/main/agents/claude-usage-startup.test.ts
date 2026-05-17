@@ -66,7 +66,10 @@ vi.mock('os', async () => {
 	};
 });
 
-import { runStartupUsageSampling } from '../../../main/agents/claude-usage-startup';
+import {
+	runStartupUsageSampling,
+	isMaestroPBinaryPath,
+} from '../../../main/agents/claude-usage-startup';
 import {
 	clear as clearUsageStore,
 	getSnapshot,
@@ -126,6 +129,11 @@ function recentClaudeSession(overrides: Record<string, unknown> = {}): Record<st
 		// Startup sampling now skips sessions without Batch Mode enabled. Every
 		// fixture session represents a Batch-Mode-opted-in agent by default.
 		enableMaestroP: true,
+		// Sampling now requires an explicitly-configured CLAUDE_CONFIG_DIR
+		// (no default fallback) so fixture sessions carry one by default.
+		// Tests that exercise the "no explicit configDir" path can override
+		// `customEnvVars` to drop / replace it.
+		customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude' },
 		...overrides,
 	};
 }
@@ -170,7 +178,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 			expect(loggerWarnMock).toHaveBeenCalledWith(
 				expect.stringContaining('claude-code agent not detected'),
-				expect.any(String)
+				expect.any(String),
+				expect.objectContaining({ mode: 'startup' })
 			);
 		});
 
@@ -191,7 +200,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 			expect(loggerInfoMock).toHaveBeenCalledWith(
-				expect.stringContaining('no recent Batch Mode-enabled Claude sessions'),
+				expect.stringContaining('no eligible accounts to sample'),
 				expect.any(String),
 				expect.any(Object)
 			);
@@ -214,7 +223,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
 			expect(loggerInfoMock).toHaveBeenCalledWith(
-				expect.stringContaining('no recent Batch Mode-enabled Claude sessions'),
+				expect.stringContaining('no eligible accounts to sample'),
 				expect.any(String),
 				expect.any(Object)
 			);
@@ -224,6 +233,67 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			const deps = {
 				sessionsStore: makeStore({
 					sessions: [{ id: 's-1', toolType: 'claude-code', cwd: '/x' /* no createdAt */ }],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+
+		it('samples sessions with a session-level maestro-p customPath even when Adaptive Mode is off', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							enableMaestroP: false,
+							customPath: '/usr/local/bin/maestro-p',
+						}),
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('samples sessions where the agent-level customPath points to maestro-p', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [recentClaudeSession({ enableMaestroP: false })],
+				}) as never,
+				agentConfigsStore: makeStore({
+					configs: { 'claude-code': { customPath: '/opt/maestro/maestro-p.js' } },
+				}) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('still skips sessions with a non-maestro-p customPath and Adaptive Mode off', async () => {
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						recentClaudeSession({
+							enableMaestroP: false,
+							customPath: '/usr/local/bin/claude',
+						}),
+					],
 				}) as never,
 				agentConfigsStore: makeStore({ configs: {} }) as never,
 				settingsStore: makeStore({}) as never,
@@ -388,7 +458,9 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			sampleUsageMock.mockResolvedValue(makeSnapshot());
 
 			const deps = {
-				sessionsStore: makeStore({ sessions: [recentClaudeSession()] }) as never,
+				sessionsStore: makeStore({
+					sessions: [recentClaudeSession({ customEnvVars: {} })],
+				}) as never,
 				agentConfigsStore: makeStore({
 					configs: {
 						'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-agent' } },
@@ -432,11 +504,18 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			);
 		});
 
-		it('falls back to ~/.claude when neither agent- nor session-level env vars are set', async () => {
+		it('skips sessions with no explicit CLAUDE_CONFIG_DIR (no default fallback)', async () => {
+			// User's directive: never sample a "guessed" account. If neither
+			// the session nor the agent sets CLAUDE_CONFIG_DIR, claude would
+			// inherit the host default (~/.claude) — but that default may not
+			// match the user's Keychain tokens and would trigger an OAuth
+			// browser prompt. Better to skip than to pop a browser.
 			sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: '/Users/test/.claude' }));
 
 			const deps = {
-				sessionsStore: makeStore({ sessions: [recentClaudeSession()] }) as never,
+				sessionsStore: makeStore({
+					sessions: [recentClaudeSession({ customEnvVars: {} })],
+				}) as never,
 				agentConfigsStore: makeStore({ configs: {} }) as never,
 				settingsStore: makeStore({}) as never,
 				agentDetector: makeDetector(FAKE_AGENT) as never,
@@ -444,7 +523,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 
 			await runStartupUsageSampling(deps);
 
-			expect(getSnapshot('/Users/test/.claude')).not.toBeNull();
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+			expect(getSnapshot('/Users/test/.claude')).toBeNull();
 		});
 
 		it('preserves non-CLAUDE_CONFIG_DIR customEnvVars through to sampleUsage', async () => {
@@ -564,6 +644,199 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			await runStartupUsageSampling(deps);
 
 			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("mode: 'manual'", () => {
+		it('samples claude-code sessions that lack enableMaestroP and customPath', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						// No enableMaestroP, no maestro-p customPath, but still a claude-code session.
+						{
+							id: 's-1',
+							toolType: 'claude-code',
+							cwd: '/var/projects/foo',
+							createdAt: FROZEN_NOW - 60_000,
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-x' },
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+			expect(sampleUsageMock).toHaveBeenCalledWith(
+				expect.objectContaining({ configDir: '/Users/test/.claude-x' })
+			);
+		});
+
+		it('samples claude-code sessions that are older than 7 days when CLAUDE_CONFIG_DIR is explicit', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						{
+							id: 's-old',
+							toolType: 'claude-code',
+							cwd: '/var/projects/foo',
+							createdAt: FROZEN_NOW - 30 * 24 * 60 * 60 * 1000, // 30 days old
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-old' },
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('samples claude-code sessions without a createdAt timestamp when CLAUDE_CONFIG_DIR is explicit', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						{
+							id: 's-legacy',
+							toolType: 'claude-code',
+							cwd: '/x',
+							customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-legacy' },
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('does NOT fall back to default ~/.claude when no claude-code sessions exist', async () => {
+			// User's directive: never authenticate ourselves; never guess the
+			// account. With no claude-code session declaring an explicit
+			// CLAUDE_CONFIG_DIR, manual refresh samples nothing.
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({ sessions: [] }) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+
+		it('samples agent-level CLAUDE_CONFIG_DIR when sessions inherit it', async () => {
+			// User has set a project-wide CLAUDE_CONFIG_DIR on the claude-code
+			// agent. Sessions that don't override it inherit. We sample with the
+			// agent-level value — that's explicit configuration.
+			sampleUsageMock.mockResolvedValue(
+				makeSnapshot({ configDirKey: '/Users/test/.claude-agent' })
+			);
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						{
+							id: 's-1',
+							toolType: 'claude-code',
+							cwd: '/x',
+							createdAt: FROZEN_NOW - 60_000,
+							// no session-level customEnvVars
+						},
+					],
+				}) as never,
+				agentConfigsStore: makeStore({
+					configs: {
+						'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-agent' } },
+					},
+				}) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).toHaveBeenCalledWith(
+				expect.objectContaining({ configDir: '/Users/test/.claude-agent' })
+			);
+		});
+
+		it('does NOT sample when only non-claude-code sessions exist', async () => {
+			sampleUsageMock.mockResolvedValue(makeSnapshot());
+
+			const deps = {
+				sessionsStore: makeStore({
+					sessions: [
+						{ id: 's-codex', toolType: 'codex', cwd: '/x', createdAt: FROZEN_NOW },
+						{ id: 's-opencode', toolType: 'opencode', cwd: '/y', createdAt: FROZEN_NOW },
+					],
+				}) as never,
+				agentConfigsStore: makeStore({ configs: {} }) as never,
+				settingsStore: makeStore({}) as never,
+				agentDetector: makeDetector(FAKE_AGENT) as never,
+				mode: 'manual' as const,
+			};
+
+			await runStartupUsageSampling(deps);
+
+			expect(sampleUsageMock).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('isMaestroPBinaryPath', () => {
+		it('matches bundled `maestro-p.js` script', () => {
+			expect(isMaestroPBinaryPath('/Users/x/dist/cli/maestro-p.js')).toBe(true);
+		});
+
+		it('matches bare `maestro-p` executable', () => {
+			expect(isMaestroPBinaryPath('/usr/local/bin/maestro-p')).toBe(true);
+		});
+
+		it('matches Windows `maestro-p.exe` executable', () => {
+			expect(isMaestroPBinaryPath('C:\\Program Files\\Maestro\\maestro-p.exe')).toBe(true);
+		});
+
+		it('is case-insensitive on the basename', () => {
+			expect(isMaestroPBinaryPath('/path/MAESTRO-P.JS')).toBe(true);
+		});
+
+		it('rejects plain `claude` binary', () => {
+			expect(isMaestroPBinaryPath('/Users/x/.local/bin/claude')).toBe(false);
+		});
+
+		it('rejects look-alike prefixes that are not maestro-p', () => {
+			expect(isMaestroPBinaryPath('/path/maestro-pulse')).toBe(false);
+			expect(isMaestroPBinaryPath('/path/maestro-p-wrapper')).toBe(false);
+		});
+
+		it('rejects empty / nullish input', () => {
+			expect(isMaestroPBinaryPath(undefined)).toBe(false);
+			expect(isMaestroPBinaryPath(null)).toBe(false);
+			expect(isMaestroPBinaryPath('')).toBe(false);
 		});
 	});
 });

@@ -20,10 +20,17 @@ export const LIMIT_THRESHOLD_PERCENT = 99;
 /**
  * A single usage snapshot for one canonical `CLAUDE_CONFIG_DIR` account.
  * Sourced from `maestro-p --status` and persisted in `claudeUsageStore`.
+ *
+ * `authState` distinguishes a real measurement from a "Not logged in" stub.
+ * The field is optional purely for back-compat with snapshots persisted
+ * before the field existed — readers MUST treat absence as `'authenticated'`
+ * and only suppress the percentages / show a CTA when it's explicitly
+ * `'unauthenticated'`.
  */
 export interface UsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
+	authState?: 'authenticated' | 'unauthenticated';
 	session: { percent: number; resetsAt: string };
 	weekAllModels: { percent: number; resetsAt: string };
 	weekSonnetOnly: { percent: number; resetsAt: string };

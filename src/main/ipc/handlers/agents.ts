@@ -1518,6 +1518,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					agentConfigsStore,
 					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
 					agentDetector,
+					mode: 'manual',
 				});
 
 				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;

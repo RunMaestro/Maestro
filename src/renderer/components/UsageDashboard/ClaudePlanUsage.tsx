@@ -117,6 +117,7 @@ interface AccountRowProps {
 
 const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: AccountRowProps) {
 	const shortName = deriveAccountShortName(configDirKey);
+	const isUnauthenticated = snapshot.authState === 'unauthenticated';
 
 	return (
 		<div className="space-y-2" data-testid={`claude-plan-row-${shortName}`}>
@@ -132,24 +133,47 @@ const AccountRow = memo(function AccountRow({ configDirKey, snapshot, theme }: A
 					{configDirKey}
 				</div>
 			</div>
-			<BarRow
-				label="Session window"
-				percent={snapshot.session.percent}
-				resetsAt={snapshot.session.resetsAt}
-				theme={theme}
-			/>
-			<BarRow
-				label="Week (all models)"
-				percent={snapshot.weekAllModels.percent}
-				resetsAt={snapshot.weekAllModels.resetsAt}
-				theme={theme}
-			/>
-			<BarRow
-				label="Week (Sonnet only)"
-				percent={snapshot.weekSonnetOnly.percent}
-				resetsAt={snapshot.weekSonnetOnly.resetsAt}
-				theme={theme}
-			/>
+			{isUnauthenticated ? (
+				// Claude's /usage panel for this CLAUDE_CONFIG_DIR rendered
+				// "Not logged in · Run /login". Surface that as a CTA instead
+				// of bars — the percentages would all be 0 and meaningless.
+				<div
+					className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+					style={{
+						backgroundColor: `${theme.colors.warning ?? theme.colors.accent}15`,
+						color: theme.colors.textMain,
+						border: `1px solid ${theme.colors.warning ?? theme.colors.accent}40`,
+					}}
+					data-testid={`claude-plan-row-${shortName}-unauthenticated`}
+				>
+					<span style={{ color: theme.colors.warning ?? theme.colors.accent }}>●</span>
+					<span>
+						Not logged in. Run <code style={{ color: theme.colors.accent }}>/login</code> in a
+						Claude session that uses this account.
+					</span>
+				</div>
+			) : (
+				<>
+					<BarRow
+						label="Session window"
+						percent={snapshot.session.percent}
+						resetsAt={snapshot.session.resetsAt}
+						theme={theme}
+					/>
+					<BarRow
+						label="Week (all models)"
+						percent={snapshot.weekAllModels.percent}
+						resetsAt={snapshot.weekAllModels.resetsAt}
+						theme={theme}
+					/>
+					<BarRow
+						label="Week (Sonnet only)"
+						percent={snapshot.weekSonnetOnly.percent}
+						resetsAt={snapshot.weekSonnetOnly.resetsAt}
+						theme={theme}
+					/>
+				</>
+			)}
 		</div>
 	);
 });
@@ -210,7 +234,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 					style={{ color: theme.colors.textDim }}
 					data-testid="claude-plan-empty"
 				>
-					No Claude Max plan snapshots yet. Auto-mode samples on first spawn.
+					No Claude Max plan snapshots yet. Set CLAUDE_CONFIG_DIR on a Claude Code session (or the
+					agent) and hit Refresh — we sample only explicitly-configured accounts so we never trigger
+					a browser OAuth prompt.
 				</div>
 			) : (
 				<div className="space-y-5">

@@ -346,6 +346,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (finalized) return;
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
 	});
+	driver.on('ready-timeout', () => {
+		if (finalized) return;
+		// Distinct from 'tui_exited': the PTY is still alive, but the
+		// startup handshake (READY_REGEX or blind taps) never cleared
+		// whatever modal the TUI is parked on. finalize() drives quit()
+		// which will SIGTERM the PTY if it doesn't /quit gracefully.
+		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
+	});
 
 	await driver.start();
 

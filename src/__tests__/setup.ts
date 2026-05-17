@@ -232,6 +232,7 @@ const mockMaestro = {
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
+		isTerminalBusy: vi.fn().mockResolvedValue(false),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 	},

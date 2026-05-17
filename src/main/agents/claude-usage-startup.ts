@@ -65,6 +65,21 @@ export interface StartupUsageSamplingDeps {
 	agentDetector: AgentDetector;
 	/** Override for tests; defaults to `Date.now()`. */
 	now?: () => number;
+	/**
+	 * 'startup' (default): strict filter — only sample for sessions that will
+	 * spawn through maestro-p (Adaptive Mode toggle on, or maestro-p set as the
+	 * session-level / agent-level Path) AND were created within the 7-day
+	 * window. Keeps boot snappy — non-maestro-p users don't pay a 30s
+	 * `--status` spawn per account on every launch.
+	 *
+	 * 'manual': aggressive — sample every unique CLAUDE_CONFIG_DIR referenced
+	 * by ANY Claude Code session, ignoring the maestro-p filter and the 7-day
+	 * window. Falls back to the default ~/.claude account when no Claude Code
+	 * sessions exist. Used by the Usage Dashboard Refresh button: the user
+	 * just asked for fresh data, give it to them regardless of how their
+	 * sessions are wired.
+	 */
+	mode?: 'startup' | 'manual';
 }
 
 interface SamplingTarget {
@@ -117,6 +132,22 @@ export function getMaestroPBinPath(): string | null {
 }
 
 /**
+ * Return true when `binaryPath` looks like a maestro-p binary (by basename).
+ *
+ * Recognises the bundled `maestro-p.js` script, a packaged `maestro-p`
+ * executable, and the Windows `.exe` variant. Used by the spawner to detect
+ * power-user setups where the user wired the Claude Code agent's `Path` field
+ * directly at maestro-p (bypassing the Adaptive Mode toggle) — the resolved
+ * mode should still surface as `interactive` so the TUI/API pill reflects
+ * reality.
+ */
+export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
+	if (!binaryPath) return false;
+	const base = path.basename(binaryPath).toLowerCase();
+	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
+}
+
+/**
  * Read the agent-level customEnvVars for `claude-code` from the agent configs
  * store, defaulting to an empty record when nothing has been configured.
  */
@@ -131,14 +162,32 @@ function getAgentLevelEnvVars(agentConfigsStore: Store<AgentConfigsData>): Recor
 }
 
 /**
+ * Read the agent-level customPath for `claude-code` (the agent's `Path` field).
+ * Returns null when nothing's been configured. Used to detect the "static
+ * maestro-p Path" case where the spawner runs through the TUI wrapper even
+ * though Adaptive Mode is off.
+ */
+function getAgentLevelCustomPath(agentConfigsStore: Store<AgentConfigsData>): string | null {
+	const configs = agentConfigsStore.get('configs', {});
+	const customPath = configs['claude-code']?.customPath;
+	return typeof customPath === 'string' && customPath.length > 0 ? customPath : null;
+}
+
+/**
  * Build the per-session sampling target: merge agent-level + session-level
  * customEnvVars (session wins, matching the spawner's runtime precedence),
  * extract `CLAUDE_CONFIG_DIR`, canonicalize, and produce the call shape
  * `sampleUsage()` expects.
  *
- * Returns null when the session has no `cwd` (truly malformed record we
- * should skip rather than fall back to something risky like the user's
- * home directory).
+ * Returns null when:
+ *   - The session has no `cwd` (malformed record).
+ *   - Neither the session nor the agent explicitly sets `CLAUDE_CONFIG_DIR`
+ *     in customEnvVars. We refuse to sample "default" accounts the user
+ *     hasn't explicitly configured: the user may have multiple Anthropic
+ *     accounts on this host, and the default `~/.claude` may not match
+ *     wherever claude's tokens actually live in the Keychain — so a
+ *     "guess the default" sample would trigger an OAuth browser prompt.
+ *     Better to skip than to pop a browser the user didn't ask for.
  */
 function buildTarget(
 	session: Record<string, unknown>,
@@ -160,21 +209,20 @@ function buildTarget(
 		return null;
 	}
 
-	// `resolveConfigDirKey()` takes a full env block. Build a minimal env
-	// carrying just `CLAUDE_CONFIG_DIR` so the resolver applies its
-	// `~/.claude` fallback when neither agent- nor session-level vars set it.
-	const envForKey: NodeJS.ProcessEnv = {};
-	if (customEnvVars.CLAUDE_CONFIG_DIR !== undefined) {
-		envForKey.CLAUDE_CONFIG_DIR = customEnvVars.CLAUDE_CONFIG_DIR;
-	} else if (process.env.CLAUDE_CONFIG_DIR !== undefined) {
-		// Fall back to the host's env if no session/agent override exists, so
-		// the snapshot key matches the spawner's resolution at runtime.
-		envForKey.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+	// Hard requirement: sample only explicitly-configured accounts. If the
+	// user didn't set CLAUDE_CONFIG_DIR anywhere, we don't guess — the
+	// spawn would inherit the default `~/.claude`, which may have stale
+	// `.claude.json` metadata pointing at an account whose Keychain tokens
+	// no longer exist, and that combination triggers a browser OAuth flow.
+	const explicitConfigDir = customEnvVars.CLAUDE_CONFIG_DIR;
+	if (!explicitConfigDir) {
+		return null;
 	}
+	const envForKey: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: explicitConfigDir };
 	const configDirKey = resolveConfigDirKey(envForKey);
 
 	return {
-		configDir: envForKey.CLAUDE_CONFIG_DIR ?? configDirKey,
+		configDir: explicitConfigDir,
 		configDirKey,
 		cwd,
 		customEnvVars,
@@ -183,44 +231,55 @@ function buildTarget(
 
 /**
  * Sample `maestro-p --status` for every unique CLAUDE_CONFIG_DIR account
- * referenced by a recent Claude Code session, and write each result to
+ * referenced by an eligible Claude Code session, and write each result to
  * `claudeUsageStore`. Resolves when every parallel sample has settled.
+ *
+ * Eligibility depends on `deps.mode`:
+ *   - 'startup' (default): only sessions that will spawn through maestro-p
+ *     AND were created within the 7-day window. Keeps boot fast.
+ *   - 'manual': every Claude Code session, ignoring the maestro-p filter and
+ *     7-day window. Falls back to default ~/.claude when no Claude Code
+ *     sessions exist so the Refresh button never returns "nothing happened".
  *
  * Never throws — every failure surfaces as a warn log and a skipped entry.
  */
 export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): Promise<void> {
 	const now = (deps.now ?? Date.now)();
+	const mode = deps.mode ?? 'startup';
 
 	const claudeAgent = await deps.agentDetector.getAgent('claude-code');
 	if (!claudeAgent) {
-		logger.warn('Skipping startup usage sampling: claude-code agent not detected', LOG_CONTEXT);
+		logger.warn('Skipping Claude usage sampling: claude-code agent not detected', LOG_CONTEXT, {
+			mode,
+		});
 		return;
 	}
 
 	const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
-	const recentClaudeSessions = storedSessions.filter((s) => {
+	const agentLevelCustomPath = getAgentLevelCustomPath(deps.agentConfigsStore);
+	const agentLevelIsMaestroP = isMaestroPBinaryPath(agentLevelCustomPath);
+	const eligibleClaudeSessions = storedSessions.filter((s) => {
 		if (s?.toolType !== 'claude-code') return false;
-		// Only sample for sessions that have opted into Batch Mode — sampling
-		// `maestro-p --status` for an agent that will never spawn through it
-		// just burns latency on startup.
-		if (s?.enableMaestroP !== true) return false;
+		if (mode === 'manual') return true;
+		// startup: sample only for sessions that will spawn through maestro-p
+		// (Adaptive Mode toggle, or maestro-p as the session/agent-level Path),
+		// and only when fresh enough to be worth a 30s `--status` spawn on boot.
+		const sessionPath = typeof s?.customPath === 'string' ? s.customPath : null;
+		const usesMaestroP =
+			s?.enableMaestroP === true ||
+			isMaestroPBinaryPath(sessionPath) ||
+			(sessionPath === null && agentLevelIsMaestroP);
+		if (!usesMaestroP) return false;
 		const createdAt = typeof s.createdAt === 'number' ? s.createdAt : null;
 		if (createdAt === null) return false;
 		return createdAt >= now - STARTUP_SESSION_WINDOW_MS;
 	});
 
-	if (recentClaudeSessions.length === 0) {
-		logger.info(
-			'Skipping startup usage sampling: no recent Batch Mode-enabled Claude sessions',
-			LOG_CONTEXT,
-			{ totalSessions: storedSessions.length }
-		);
-		return;
-	}
-
 	const binPath = getMaestroPBinPath();
 	if (!binPath) {
-		logger.warn('Skipping startup usage sampling: bundled maestro-p.js not found', LOG_CONTEXT);
+		logger.warn('Skipping Claude usage sampling: bundled maestro-p.js not found', LOG_CONTEXT, {
+			mode,
+		});
 		return;
 	}
 
@@ -230,7 +289,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	// Anthropic account only sample once. First session wins on cwd / env
 	// shape — the snapshot is a per-account quota, not per-session.
 	const targetsByKey = new Map<string, SamplingTarget>();
-	for (const session of recentClaudeSessions) {
+	for (const session of eligibleClaudeSessions) {
 		const target = buildTarget(session, agentLevelEnvVars);
 		if (!target) continue;
 		if (!targetsByKey.has(target.configDirKey)) {
@@ -239,10 +298,10 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 	}
 
 	if (targetsByKey.size === 0) {
-		logger.info(
-			'Skipping startup usage sampling: no usable sessions after env resolution',
-			LOG_CONTEXT
-		);
+		logger.info('Skipping Claude usage sampling: no eligible accounts to sample', LOG_CONTEXT, {
+			mode,
+			totalSessions: storedSessions.length,
+		});
 		return;
 	}
 

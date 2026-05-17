@@ -206,6 +206,9 @@ interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
+	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	isClaudeCode: boolean;
+	isAdaptiveMode: boolean;
 }
 
 const LogItemComponent = memo(
@@ -251,6 +254,8 @@ const LogItemComponent = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		userMessageAlignment,
+		isClaudeCode,
+		isAdaptiveMode,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
@@ -888,20 +893,31 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
-					{/* Mixed-mode marker — turns captured via maestro-p driving Claude's TUI. */}
-					{log.renderStyle === 'text-stream' && log.source !== 'user' && (
-						<span
-							className="absolute bottom-2 left-3 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
-							style={{
-								backgroundColor: `${theme.colors.accent}20`,
-								color: theme.colors.accent,
-								opacity: 0.7,
-							}}
-							title="This response was captured via maestro-p driving the Claude TUI (interactive mode) instead of the API"
-						>
-							Captured via interactive TUI
-						</span>
-					)}
+					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,
+					    API = claude --print). "Adaptive " prefix indicates the session has
+					    Adaptive Mode enabled (auto-switching between the two). */}
+					{isClaudeCode &&
+						log.source !== 'user' &&
+						(() => {
+							const isTui = log.renderStyle === 'text-stream';
+							const label = `${isAdaptiveMode ? 'Adaptive ' : ''}${isTui ? 'TUI' : 'API'}`;
+							const title = isTui
+								? `Captured via maestro-p driving the Claude TUI${isAdaptiveMode ? ' (Adaptive Mode enabled)' : ''}`
+								: `Captured via claude --print${isAdaptiveMode ? ' (Adaptive Mode enabled — fell back to API)' : ''}`;
+							return (
+								<span
+									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+										opacity: 0.7,
+									}}
+									title={title}
+								>
+									{label}
+								</span>
+							);
+						})()}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -2142,6 +2158,8 @@ export const TerminalOutput = memo(
 							bionifyIntensity={globalBionifyIntensity}
 							bionifyAlgorithm={globalBionifyAlgorithm}
 							userMessageAlignment={userMessageAlignment}
+							isClaudeCode={session.toolType === 'claude-code'}
+							isAdaptiveMode={session.enableMaestroP === true}
 						/>
 					))}
 

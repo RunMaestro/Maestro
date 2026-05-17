@@ -213,6 +213,31 @@ describe('parseArgs', () => {
 			const result = callArgs(['--prompt=--foo bar', '--dangerously-skip-permissions']);
 			expect(result.prompt).toBe('--foo bar');
 		});
+
+		// Regression: Maestro's ChildProcessSpawner appends the prompt after a `--`
+		// end-of-options marker (`… --dangerously-skip-permissions -- <prompt>`).
+		// Without explicit `--` handling, the generic long-flag branch in the
+		// parser swallowed `--` and consumed the prompt as its "value", so the
+		// runner aborted with "no prompt provided".
+		it('treats `--` as the end-of-options marker (full Maestro spawn line)', () => {
+			const result = callArgs([
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+				'--',
+				'howdy',
+			]);
+			expect(result.prompt).toBe('howdy');
+			expect(result.passThroughArgs).toEqual(['--dangerously-skip-permissions']);
+		});
+
+		it('preserves additional positionals after `--` in pass-through, in order', () => {
+			const result = callArgs(['--', 'first prompt', 'extra', 'more']);
+			expect(result.prompt).toBe('first prompt');
+			expect(result.passThroughArgs).toEqual(['extra', 'more']);
+		});
 	});
 
 	describe('--max-wait', () => {

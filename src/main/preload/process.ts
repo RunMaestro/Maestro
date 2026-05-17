@@ -211,6 +211,13 @@ export function createProcessApi() {
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>
 			ipcRenderer.invoke('process:getActiveProcesses'),
 
+		/**
+		 * Check whether a terminal tab's PTY has a non-shell foreground process
+		 * (i.e. is actively running a command). Returns false if no PTY is found.
+		 */
+		isTerminalBusy: (sessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:isTerminalBusy', sessionId),
+
 		// Event listeners
 
 		/**
