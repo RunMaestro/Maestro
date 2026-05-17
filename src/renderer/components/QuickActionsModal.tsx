@@ -249,6 +249,13 @@ interface QuickActionsModalProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Execution Queue Browser
+	onOpenQueueBrowser?: () => void;
+	// New tab creation
+	onNewTab?: () => void;
+	onNewFileTab?: () => void;
+	onNewBrowserTab?: () => void;
+	onNewTerminalTab?: () => void;
 }
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
@@ -348,6 +355,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onConfigureCue,
+		onOpenQueueBrowser,
+		onNewTab,
+		onNewFileTab,
+		onNewBrowserTab,
+		onNewTerminalTab,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -559,6 +571,61 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcut: shortcuts.newInstance,
 			action: addNewSession,
 		},
+		...(activeSession && onNewTab
+			? [
+					{
+						id: 'newAiChat',
+						label: 'New AI Chat',
+						subtext: 'Open a new AI chat tab in the active agent',
+						shortcut: tabShortcuts?.newTab,
+						action: () => {
+							onNewTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewFileTab
+			? [
+					{
+						id: 'newFileTab',
+						label: 'New File',
+						subtext: 'Open a new file tab in the active agent',
+						shortcut: tabShortcuts?.newFileTab,
+						action: () => {
+							onNewFileTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewBrowserTab
+			? [
+					{
+						id: 'newBrowserTab',
+						label: 'New Browser',
+						subtext: 'Open a new browser tab in the active agent',
+						shortcut: tabShortcuts?.newBrowserTab,
+						action: () => {
+							onNewBrowserTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewTerminalTab
+			? [
+					{
+						id: 'newTerminalTab',
+						label: 'New Terminal',
+						subtext: 'Open a new terminal tab in the active agent',
+						action: () => {
+							onNewTerminalTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(openWizard
 			? [
 					{
@@ -792,11 +859,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && onOpenTabSwitcher
+		...(onOpenTabSwitcher && activeSession?.aiTabs
 			? [
 					{
 						id: 'tabSwitcher',
 						label: 'Tab Switcher',
+						subtext: 'Search open tabs across this agent',
 						shortcut: tabShortcuts?.tabSwitcher,
 						action: () => {
 							onOpenTabSwitcher();
@@ -1273,6 +1341,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		...(onOpenQueueBrowser
+			? [
+					{
+						id: 'executionQueue',
+						label: 'View Execution Queue',
+						subtext: 'Browse and manage queued prompts across agents',
+						action: () => {
+							onOpenQueueBrowser();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(setUsageDashboardOpen
 			? [
 					{

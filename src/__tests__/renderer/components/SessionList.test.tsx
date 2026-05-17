@@ -3378,6 +3378,13 @@ describe('SessionList', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
 				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: true,
 			});
 
 			// Mock Cue status to return session with subscriptions
@@ -3411,13 +3418,19 @@ describe('SessionList', () => {
 			);
 		});
 
-		it('shows Zap icon even when Encore Feature is disabled (indicator is not gated)', async () => {
+		it('hides Zap icon when the Cue Encore Feature is disabled', async () => {
 			const session = createMockSession({ id: 's1', name: 'Cue Session' });
 			useSessionStore.setState({ sessions: [session] });
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
 				shortcuts: defaultShortcuts,
-				encoreFeatures: { directorNotes: false, maestroCue: false },
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: false,
+				},
+				showLeftPanelCueIndicator: true,
 			});
 
 			// Mock Cue status to return session with subscriptions
@@ -3439,9 +3452,51 @@ describe('SessionList', () => {
 			const props = createDefaultProps({ sortedSessions: [session] });
 			render(<SessionList {...props} />);
 
-			await waitFor(() => {
-				expect(screen.getByTestId('icon-zap')).toBeInTheDocument();
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
 			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+
+		it('hides Zap icon when the user disables the Cue indicator setting', async () => {
+			const session = createMockSession({ id: 's1', name: 'Cue Session' });
+			useSessionStore.setState({ sessions: [session] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({
+				shortcuts: defaultShortcuts,
+				encoreFeatures: {
+					directorNotes: false,
+					usageStats: true,
+					symphony: true,
+					maestroCue: true,
+				},
+				showLeftPanelCueIndicator: false,
+			});
+
+			(window.maestro as Record<string, unknown>).cue = {
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 4,
+						enabled: true,
+						activeRuns: 0,
+					},
+				]),
+				getActiveRuns: vi.fn().mockResolvedValue([]),
+				getActivityLog: vi.fn().mockResolvedValue([]),
+				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+			};
+
+			const props = createDefaultProps({ sortedSessions: [session] });
+			render(<SessionList {...props} />);
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
 		});
 
 		it('does not show Zap icon for sessions without Cue subscriptions', async () => {

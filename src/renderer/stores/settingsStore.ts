@@ -375,6 +375,9 @@ export interface SettingsStoreState {
 	showWorktreeBranchName: boolean;
 	showLeftPanelGroupMemberCount: boolean;
 	showLeftPanelLocationPills: boolean;
+	showLeftPanelGitIndicator: boolean;
+	showLeftPanelCueIndicator: boolean;
+	showLeftPanelStartupCommandIndicator: boolean;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
@@ -492,6 +495,9 @@ export interface SettingsStoreActions {
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
+	setShowLeftPanelGitIndicator: (value: boolean) => void;
+	setShowLeftPanelCueIndicator: (value: boolean) => void;
+	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
@@ -689,6 +695,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showWorktreeBranchName: false,
 		showLeftPanelGroupMemberCount: false,
 		showLeftPanelLocationPills: true,
+		showLeftPanelGitIndicator: true,
+		showLeftPanelCueIndicator: true,
+		showLeftPanelStartupCommandIndicator: true,
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
@@ -1289,6 +1298,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowLeftPanelLocationPills: (value) => {
 			set({ showLeftPanelLocationPills: value });
 			window.maestro.settings.set('showLeftPanelLocationPills', value);
+		},
+
+		setShowLeftPanelGitIndicator: (value) => {
+			set({ showLeftPanelGitIndicator: value });
+			window.maestro.settings.set('showLeftPanelGitIndicator', value);
+		},
+
+		setShowLeftPanelCueIndicator: (value) => {
+			set({ showLeftPanelCueIndicator: value });
+			window.maestro.settings.set('showLeftPanelCueIndicator', value);
+		},
+
+		setShowLeftPanelStartupCommandIndicator: (value) => {
+			set({ showLeftPanelStartupCommandIndicator: value });
+			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
 		},
 
 		setModeratorStandingInstructions: (value) => {
@@ -2474,6 +2498,17 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showLeftPanelLocationPills'] !== undefined)
 			patch.showLeftPanelLocationPills = allSettings['showLeftPanelLocationPills'] as boolean;
 
+		if (allSettings['showLeftPanelGitIndicator'] !== undefined)
+			patch.showLeftPanelGitIndicator = allSettings['showLeftPanelGitIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelCueIndicator'] !== undefined)
+			patch.showLeftPanelCueIndicator = allSettings['showLeftPanelCueIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelStartupCommandIndicator'] !== undefined)
+			patch.showLeftPanelStartupCommandIndicator = allSettings[
+				'showLeftPanelStartupCommandIndicator'
+			] as boolean;
+
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
@@ -2652,6 +2687,9 @@ export function getSettingsActions() {
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
 		setShowLeftPanelLocationPills: state.setShowLeftPanelLocationPills,
+		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
+		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
+		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,

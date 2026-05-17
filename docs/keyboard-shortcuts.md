@@ -219,14 +219,15 @@ In AI mode, use `@` to reference files in your prompts:
 
 ## File Preview
 
-| Action         | macOS           | Windows/Linux   |
-| -------------- | --------------- | --------------- |
-| Copy File Path | `Cmd+P`         | `Ctrl+P`        |
-| Open Search    | `Cmd+F`         | `Ctrl+F`        |
-| Go Back        | `Cmd+Left`      | `Ctrl+Left`     |
-| Go Forward     | `Cmd+Right`     | `Ctrl+Right`    |
-| Scroll         | `Up/Down Arrow` | `Up/Down Arrow` |
-| Close          | `Esc`           | `Esc`           |
+| Action                              | macOS           | Windows/Linux   |
+| ----------------------------------- | --------------- | --------------- |
+| Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
+| Open Search                         | `Cmd+F`         | `Ctrl+F`        |
+| Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
+| Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
+| Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
+| Close                               | `Esc`           | `Esc`           |
 
 ## Document Graph
 

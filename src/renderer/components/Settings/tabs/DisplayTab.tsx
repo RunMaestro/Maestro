@@ -16,7 +16,6 @@ import {
 	Database,
 	Eye,
 	FolderSearch,
-	GitBranch,
 	HelpCircle,
 	WrapText,
 	ListFilter,
@@ -26,6 +25,7 @@ import {
 	Sparkles,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { WorktreePill } from '../../ui/WorktreePill';
@@ -89,6 +89,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowLeftPanelGroupMemberCount,
 		showLeftPanelLocationPills,
 		setShowLeftPanelLocationPills,
+		showLeftPanelGitIndicator,
+		setShowLeftPanelGitIndicator,
+		showLeftPanelCueIndicator,
+		setShowLeftPanelCueIndicator,
+		showLeftPanelStartupCommandIndicator,
+		setShowLeftPanelStartupCommandIndicator,
 		documentGraphShowExternalLinks,
 		setDocumentGraphShowExternalLinks,
 		documentGraphMaxNodes,
@@ -108,6 +114,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		sshReduceEntryCapFraction,
 		setSshReduceEntryCapFraction,
 	} = useSettings();
+
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -537,27 +545,126 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							/>
 						</button>
 					</div>
-				</div>
-			</div>
 
-			{/* Worktree Display */}
-			<div data-setting-id="display-worktree">
-				<SettingsSectionHeading icon={GitBranch}>Worktree Display</SettingsSectionHeading>
-				<div
-					className="p-3 rounded border space-y-3"
-					style={{
-						borderColor: theme.colors.border,
-						backgroundColor: theme.colors.bgMain,
-					}}
-				>
+					{/* Show git change indicator */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show git change indicator
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the branch icon and dirty file count next to git repository agents.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowLeftPanelGitIndicator(!showLeftPanelGitIndicator)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelGitIndicator
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelGitIndicator}
+							aria-label="Show git change indicator in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelGitIndicator ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show Cue indicator — hidden entirely when the Cue Encore Feature is off */}
+					{maestroCueEnabled && (
+						<div
+							className="flex items-center justify-between pt-3 border-t"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<div>
+								<p className="text-sm" style={{ color: theme.colors.textMain }}>
+									Show Cue indicator
+								</p>
+								<p className="text-xs opacity-50 mt-0.5">
+									Display the lightning-bolt indicator next to agents with active Maestro Cue
+									subscriptions.
+								</p>
+							</div>
+							<button
+								onClick={() => setShowLeftPanelCueIndicator(!showLeftPanelCueIndicator)}
+								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+								tabIndex={0}
+								style={{
+									backgroundColor: showLeftPanelCueIndicator
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={showLeftPanelCueIndicator}
+								aria-label="Show Cue indicator in left side bar"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										showLeftPanelCueIndicator ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+					)}
+
+					{/* Show terminal startup-command indicator */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show terminal startup-command indicator
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display the <span className="font-mono">{'>_'}</span> glyph next to agents that have
+								at least one terminal tab with a saved startup command.
+							</p>
+						</div>
+						<button
+							onClick={() =>
+								setShowLeftPanelStartupCommandIndicator(!showLeftPanelStartupCommandIndicator)
+							}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showLeftPanelStartupCommandIndicator
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showLeftPanelStartupCommandIndicator}
+							aria-label="Show terminal startup-command indicator in left side bar"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showLeftPanelStartupCommandIndicator ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
 					{/* Show WORKTREE pill */}
-					<div className="flex items-center justify-between">
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
 						<div>
 							<p
 								className="text-sm flex items-center gap-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								Show <WorktreePill theme={theme} /> pill in left panel agent list
+								Show <WorktreePill theme={theme} /> pill in subagent list
 							</p>
 							<p className="text-xs opacity-50 mt-0.5">
 								Display the worktree badge next to worktree child agents in the left panel.
@@ -589,7 +696,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					>
 						<div>
 							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								Show branch name in left panel agent list
+								Show worktree branch name in subagent list
 							</p>
 							<p className="text-xs opacity-50 mt-0.5">
 								Display the worktree branch name beneath the agent name in the left panel.

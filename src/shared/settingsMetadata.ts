@@ -178,6 +178,27 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	showLeftPanelGitIndicator: {
+		description:
+			'Show the git change indicator (branch icon + dirty file count) next to agents in the left side bar.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelCueIndicator: {
+		description:
+			'Show the Maestro Cue activity indicator (lightning bolt) next to agents with active Cue subscriptions in the left side bar. Hidden when the Maestro Cue Encore Feature is disabled.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
+	showLeftPanelStartupCommandIndicator: {
+		description:
+			'Show the terminal prompt glyph (>_) next to agents that have at least one terminal tab with a saved startup command.',
+		type: 'boolean',
+		default: true,
+		category: 'appearance',
+	},
 	fileExplorerIconTheme: {
 		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
 		type: 'string',

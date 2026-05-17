@@ -23,6 +23,7 @@ import {
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
+	restoreOrphanedTab,
 } from '../../utils/tabHelpers';
 import {
 	closeTerminalTab as closeTerminalTabHelper,
@@ -452,6 +453,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				// If the requested tab is an orphan (closed while still thinking),
+				// restore it back into aiTabs first so the tab bar shows it and
+				// streaming output resumes routing to the visible tab.
+				if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
+					const restored = restoreOrphanedTab(s, tabId);
+					if (restored) return restored.session;
+				}
 				const result = setActiveTab(s, tabId);
 				return result ? result.session : s;
 			})
@@ -1938,7 +1946,26 @@ export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
 
 	const handleCloseTerminalTab = useCallback(
 		(tabId: string) => {
-			closeTerminalTab(tabId);
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) {
+				closeTerminalTab(tabId);
+				return;
+			}
+			const ptySessionId = getTerminalSessionId(session.id, tabId);
+			window.maestro.process
+				.isTerminalBusy(ptySessionId)
+				.then((busy) => {
+					if (busy) {
+						useModalStore.getState().openModal('confirm', {
+							message: 'This terminal is running a command. Close it and stop the command?',
+							onConfirm: () => closeTerminalTab(tabId),
+							destructive: true,
+						});
+					} else {
+						closeTerminalTab(tabId);
+					}
+				})
+				.catch(() => closeTerminalTab(tabId));
 		},
 		[closeTerminalTab]
 	);

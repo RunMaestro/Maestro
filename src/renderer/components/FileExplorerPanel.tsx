@@ -534,6 +534,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
+	// Path of the row last clicked while the filter was open. When the filter
+	// closes via Escape we expand its ancestor folders and scroll it into view —
+	// otherwise finding a result via search leads nowhere once the filter clears.
+	const lastClickedUnderFilterRef = useRef<string | null>(null);
+	const [pendingRevealPath, setPendingRevealPath] = useState<string | null>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
 
 	// Refresh overlay state
@@ -971,6 +976,38 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		{ enabled: contextMenu !== null }
 	);
 
+	// Closing the filter via Escape: if the user clicked a result first, expand
+	// its ancestor folders and queue a scroll-into-view so the search payoff
+	// actually lands on something they can see and act on.
+	const handleFilterEscape = useCallback(() => {
+		const clickedPath = lastClickedUnderFilterRef.current;
+		lastClickedUnderFilterRef.current = null;
+
+		if (clickedPath) {
+			const parts = clickedPath.split('/').filter(Boolean);
+			const ancestors: string[] = [];
+			for (let i = 1; i < parts.length; i++) {
+				ancestors.push(parts.slice(0, i).join('/'));
+			}
+
+			if (ancestors.length > 0) {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== session.id) return s;
+						const expanded = new Set(s.fileExplorerExpanded ?? []);
+						for (const p of ancestors) expanded.add(p);
+						return { ...s, fileExplorerExpanded: Array.from(expanded) };
+					})
+				);
+			}
+
+			setPendingRevealPath(clickedPath);
+		}
+
+		setFileTreeFilterOpen(false);
+		setFileTreeFilter('');
+	}, [session.id, setSessions, setFileTreeFilterOpen, setFileTreeFilter]);
+
 	// Register layer when filter is open
 	useEffect(() => {
 		if (fileTreeFilterOpen) {
@@ -980,27 +1017,23 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				blocksLowerLayers: false,
 				capturesFocus: true,
 				focusTrap: 'none',
-				onEscape: () => {
-					setFileTreeFilterOpen(false);
-					setFileTreeFilter('');
-				},
+				onEscape: handleFilterEscape,
 				allowClickOutside: true,
 				ariaLabel: 'File Tree Filter',
 			});
 			layerIdRef.current = id;
 			return () => unregisterLayer(id);
 		}
+		// handleFilterEscape intentionally omitted — updateLayerHandler effect below
+		// keeps the registered callback fresh without re-registering the layer.
 	}, [fileTreeFilterOpen, registerLayer, unregisterLayer]);
 
 	// Update handler when dependencies change
 	useEffect(() => {
 		if (fileTreeFilterOpen && layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				setFileTreeFilterOpen(false);
-				setFileTreeFilter('');
-			});
+			updateLayerHandler(layerIdRef.current, handleFilterEscape);
 		}
-	}, [fileTreeFilterOpen, setFileTreeFilterOpen, setFileTreeFilter, updateLayerHandler]);
+	}, [fileTreeFilterOpen, handleFilterEscape, updateLayerHandler]);
 
 	// Filter hidden files from the tree based on showHiddenFiles setting.
 	// Invariant: `.maestro` is ALWAYS visible regardless of the dotfiles toggle —
@@ -1087,6 +1120,23 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		overscan: 10, // Render 10 extra items above/below viewport for smooth scrolling
 	});
 
+	// After Escape expanded ancestor folders, the flattened tree includes the
+	// previously-hidden row — select it, focus the file pane, and scroll it into
+	// view. Defer the scroll to the next frame so the virtualizer has measured
+	// the new row count.
+	useEffect(() => {
+		if (!pendingRevealPath) return;
+		const idx = flattenedTree.findIndex((item) => item.path === pendingRevealPath);
+		if (idx < 0) return;
+		setSelectedFileIndex(idx);
+		setActiveFocus('right');
+		const raf = requestAnimationFrame(() => {
+			virtualizer.scrollToIndex(idx, { align: 'center' });
+		});
+		setPendingRevealPath(null);
+		return () => cancelAnimationFrame(raf);
+	}, [flattenedTree, pendingRevealPath, virtualizer, setSelectedFileIndex, setActiveFocus]);
+
 	// Memoized row renderer
 	const TreeRow = useCallback(
 		({
@@ -1171,6 +1221,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					}}
 					onClick={(e) => {
 						setSelectedFileIndex(globalIndex);
+						if (fileTreeFilter.length > 0) {
+							lastClickedUnderFilterRef.current = fullPath;
+						}
 						// Only change focus if not filtering
 						if (fileTreeFilter.length === 0) {
 							setActiveFocus('right');

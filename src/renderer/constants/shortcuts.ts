@@ -34,6 +34,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	goToHistory: { id: 'goToHistory', label: 'Go to History Tab', keys: ['Meta', 'Shift', 'h'] },
 	goToAutoRun: { id: 'goToAutoRun', label: 'Go to Auto Run Tab', keys: ['Meta', 'Shift', '1'] },
 	copyFilePath: { id: 'copyFilePath', label: 'Copy File Path (in Preview)', keys: ['Meta', 'p'] },
+	toggleFilePreviewToc: {
+		id: 'toggleFilePreviewToc',
+		label: 'Toggle Table of Contents (Markdown Preview)',
+		keys: ['Meta', '\\'],
+	},
 	toggleMarkdownMode: {
 		id: 'toggleMarkdownMode',
 		label: 'Toggle Edit/Preview',

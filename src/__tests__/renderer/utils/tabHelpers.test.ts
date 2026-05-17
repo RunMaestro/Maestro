@@ -565,23 +565,29 @@ describe('tabHelpers', () => {
 			expect(result!.session.activeTabId).toBe('tab-1');
 		});
 
-		it('sets session to idle when closing the last busy tab', () => {
+		it('keeps session busy and tracks the closed tab in orphanedThinkingTabs when its agent is still running', () => {
 			const busyTab = createMockTab({ id: 'tab-busy', state: 'busy' });
 			const idleTab = createMockTab({ id: 'tab-idle', state: 'idle' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab, idleTab],
 				activeTabId: 'tab-busy',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-busy');
 
 			expect(result).not.toBeNull();
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the underlying agent process is still running
+			// even though the tab is no longer visible.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			// The closed busy tab is tracked for the thinking pill.
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-busy');
 		});
 
 		it('keeps session busy when another tab is still busy', () => {
@@ -636,14 +642,15 @@ describe('tabHelpers', () => {
 			expect(result!.session.busySource).toBe('terminal');
 		});
 
-		it('clears session busy state when closing busy tab that was the only tab (fresh tab created)', () => {
+		it('keeps session busy via orphanedThinkingTabs when closing the only (busy) tab and replacing it with a fresh idle tab', () => {
 			const busyTab = createMockTab({ id: 'tab-only', state: 'busy' });
+			const thinkingStartTime = Date.now();
 			const session = createMockSession({
 				aiTabs: [busyTab],
 				activeTabId: 'tab-only',
 				state: 'busy',
 				busySource: 'ai',
-				thinkingStartTime: Date.now(),
+				thinkingStartTime,
 			});
 
 			const result = closeTab(session, 'tab-only');
@@ -652,10 +659,12 @@ describe('tabHelpers', () => {
 			// A fresh idle tab was created to replace the closed one
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].state).toBe('idle');
-			// Session should be idle since the new tab is idle
-			expect(result!.session.state).toBe('idle');
-			expect(result!.session.busySource).toBeUndefined();
-			expect(result!.session.thinkingStartTime).toBeUndefined();
+			// Session stays busy — the orphaned tab is still thinking in the background.
+			expect(result!.session.state).toBe('busy');
+			expect(result!.session.busySource).toBe('ai');
+			expect(result!.session.thinkingStartTime).toBe(thinkingStartTime);
+			expect(result!.session.orphanedThinkingTabs).toHaveLength(1);
+			expect(result!.session.orphanedThinkingTabs![0].id).toBe('tab-only');
 		});
 	});
 

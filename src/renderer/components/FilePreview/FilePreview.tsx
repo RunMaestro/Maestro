@@ -44,6 +44,7 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
@@ -941,12 +942,13 @@ export const FilePreview = React.memo(
 				return;
 			}
 
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
+			if (e.key.toLowerCase() === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				// All three tiers (Rich / Fast / Giant) now share the same search
 				// bar. Giant tier exposes findInContent/scrollToMatch through its
 				// adapter so the count + navigation flow through the same UI.
+				// Cmd+Shift+F is goToFiles — let it bubble to the global handler.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
 			} else if (
@@ -969,10 +971,25 @@ export const FilePreview = React.memo(
 				e.preventDefault();
 				e.stopPropagation();
 				setMarkdownEditMode(!markdownEditMode);
+			} else if (
+				isShortcut(e, 'toggleFilePreviewToc') &&
+				isMarkdown &&
+				!markdownEditMode &&
+				tocEntries.length > 0
+			) {
+				e.preventDefault();
+				e.stopPropagation();
+				setShowTocOverlay((v) => !v);
 			} else if (e.key === 'ArrowUp') {
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)
 				if (isEditableText && markdownEditMode) return;
+
+				// Don't scroll the preview when logical focus is elsewhere (e.g. the
+				// file panel, where the same arrow keys navigate the file list). The
+				// FilePreview container keeps DOM focus across activeFocus changes
+				// because shortcuts like Cmd+Shift+F move logical focus only.
+				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
 				const container = contentRef.current;
@@ -992,6 +1009,8 @@ export const FilePreview = React.memo(
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)
 				if (isEditableText && markdownEditMode) return;
+
+				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
 				const container = contentRef.current;

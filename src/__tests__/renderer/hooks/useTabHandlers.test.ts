@@ -7,7 +7,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { useTabHandlers } from '../../../renderer/hooks/tabs/useTabHandlers';
+import {
+	useTabHandlers,
+	useTerminalTabHandlers,
+} from '../../../renderer/hooks/tabs/useTabHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -2498,5 +2501,97 @@ describe('useTabHandlers', () => {
 			expect(session.filePreviewTabs[0].path).toBe('/test/new.ts');
 			expect(session.filePreviewTabs[0].content).toBe('new content');
 		});
+	});
+});
+
+describe('useTerminalTabHandlers - handleCloseTerminalTab', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '', groups: [] });
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	function setupTerminalSession() {
+		const session = createMockSession({
+			id: 'test-session',
+			terminalTabs: [{ id: 'term-1', name: 'Terminal 1', shellType: 'zsh', pid: 1, cwd: '/' }],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [{ type: 'terminal' as const, id: 'term-1' }],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: 'test-session' });
+	}
+
+	it('closes the terminal tab immediately when the PTY is idle', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockResolvedValue(false);
+		const killSpy = vi.fn().mockResolvedValue(undefined);
+		(window as any).maestro.process.kill = killSpy;
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+		});
+
+		expect((window as any).maestro.process.isTerminalBusy).toHaveBeenCalledWith(
+			'test-session-terminal-term-1'
+		);
+		const session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
+		expect(killSpy).toHaveBeenCalledWith('test-session-terminal-term-1');
+	});
+
+	it('opens a destructive confirm modal and only closes on confirm when the PTY is busy', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockResolvedValue(true);
+		const openModal = vi.spyOn(useModalStore.getState(), 'openModal');
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+		});
+
+		expect(openModal).toHaveBeenCalledWith(
+			'confirm',
+			expect.objectContaining({ destructive: true })
+		);
+		// Tab still present until the user confirms.
+		let session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(1);
+
+		// Invoke onConfirm to perform the close.
+		const [, modalData] = openModal.mock.calls[0];
+		act(() => {
+			(modalData as { onConfirm: () => void }).onConfirm();
+		});
+		session = useSessionStore.getState().sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
+		openModal.mockRestore();
+	});
+
+	it('closes the tab if the busy IPC throws (defensive fallback)', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockRejectedValue(new Error('boom'));
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		const session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
 	});
 });

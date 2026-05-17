@@ -338,10 +338,16 @@ export interface AppModalsProps {
 	promptSupportsThinking: boolean;
 	promptEnterToSend: boolean;
 	onPromptToggleEnterToSend: () => void;
+	onOpenQueueBrowser: () => void;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab?: () => void;
+	onQuickActionsNewFileTab?: () => void;
+	onQuickActionsNewBrowserTab?: () => void;
+	onQuickActionsNewTerminalTab?: () => void;
 
 	// --- AppGroupChatModals props ---
 	onCloseNewGroupChatModal: () => void;
@@ -738,10 +744,15 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		promptSupportsThinking,
 		promptEnterToSend,
 		onPromptToggleEnterToSend,
+		onOpenQueueBrowser,
 		onCloseQueueBrowser,
 		onRemoveQueueItem,
 		onSwitchQueueSession,
 		onReorderQueueItems,
+		onQuickActionsNewTab,
+		onQuickActionsNewFileTab,
+		onQuickActionsNewBrowserTab,
+		onQuickActionsNewTerminalTab,
 		// Group Chat modals
 		onCloseNewGroupChatModal,
 		onCreateGroupChat,
@@ -1078,7 +1089,12 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				promptEnterToSend={promptEnterToSend}
 				onPromptToggleEnterToSend={onPromptToggleEnterToSend}
 				queueBrowserOpen={queueBrowserOpen}
+				onOpenQueueBrowser={onOpenQueueBrowser}
 				onCloseQueueBrowser={onCloseQueueBrowser}
+				onQuickActionsNewTab={onQuickActionsNewTab}
+				onQuickActionsNewFileTab={onQuickActionsNewFileTab}
+				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
+				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
 				onRemoveQueueItem={onRemoveQueueItem}
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}

@@ -254,10 +254,16 @@ export interface AppUtilityModalsProps {
 
 	// ExecutionQueueBrowser
 	queueBrowserOpen: boolean;
+	onOpenQueueBrowser: () => void;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab?: () => void;
+	onQuickActionsNewFileTab?: () => void;
+	onQuickActionsNewBrowserTab?: () => void;
+	onQuickActionsNewTerminalTab?: () => void;
 }
 
 /**
@@ -449,10 +455,16 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onPromptToggleEnterToSend,
 	// ExecutionQueueBrowser
 	queueBrowserOpen,
+	onOpenQueueBrowser,
 	onCloseQueueBrowser,
 	onRemoveQueueItem,
 	onSwitchQueueSession,
 	onReorderQueueItems,
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab,
+	onQuickActionsNewFileTab,
+	onQuickActionsNewBrowserTab,
+	onQuickActionsNewTerminalTab,
 }: AppUtilityModalsProps) {
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
@@ -561,6 +573,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
 					onConfigureCue={onConfigureCue}
+					onOpenQueueBrowser={onOpenQueueBrowser}
+					onNewTab={onQuickActionsNewTab}
+					onNewFileTab={onQuickActionsNewFileTab}
+					onNewBrowserTab={onQuickActionsNewBrowserTab}
+					onNewTerminalTab={onQuickActionsNewTerminalTab}
 				/>
 			)}
 

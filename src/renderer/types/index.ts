@@ -705,6 +705,10 @@ export interface Session {
 	activeTabId: string;
 	// Stack of recently closed tabs for undo (max 25, runtime-only, not persisted)
 	closedTabHistory: ClosedTab[];
+	// Tabs that were closed while still thinking — kept here so the thinking pill
+	// can surface them until the underlying agent process finishes. Runtime-only,
+	// not persisted. Entries are removed by the agent exit/error listeners.
+	orphanedThinkingTabs?: AITab[];
 
 	// File Preview Tabs - in-tab file viewing (coexists with AI tabs and terminal tabs)
 	// Tabs are interspersed visually but stored separately for type safety

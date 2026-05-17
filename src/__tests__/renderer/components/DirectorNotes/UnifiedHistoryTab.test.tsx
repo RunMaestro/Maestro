@@ -1,11 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
+import { UnifiedHistoryTab as RawUnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+
+// Lookback is owned by DirectorNotesModal in real use; tests use this
+// stateful wrapper so we can keep `<UnifiedHistoryTab ... />` ergonomics.
+function UnifiedHistoryTab(
+	props: Omit<
+		React.ComponentProps<typeof RawUnifiedHistoryTab>,
+		'lookbackHours' | 'onLookbackChange'
+	>
+) {
+	const [hours, setHours] = useState<number | null>(() => {
+		const days = mockDirNotesSettings.defaultLookbackDays;
+		if (days <= 0) return null;
+		const target = days * 24;
+		for (const h of [24, 72, 168, 336, 720, 4320, 8760]) {
+			if (h >= target) return h;
+		}
+		return null;
+	});
+	return <RawUnifiedHistoryTab {...props} lookbackHours={hours} onLookbackChange={setHours} />;
+}
 // Mock useSettings hook (mutable so individual tests can override)
 const mockDirNotesSettings = vi.hoisted(() => ({
 	provider: 'claude-code' as const,
