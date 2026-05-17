@@ -17,6 +17,7 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 });
 
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type {
 	Session,
 	AITab,
@@ -1300,6 +1301,107 @@ describe('useInputProcessing', () => {
 
 			// Tab naming was attempted
 			expect(mockGenerateTabName).toHaveBeenCalled();
+		});
+	});
+
+	describe('forced parallel execution', () => {
+		afterEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false } as any);
+		});
+
+		const busyDeps = (overrides: Partial<Parameters<typeof useInputProcessing>[0]> = {}) => {
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+			return createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'parallel message',
+				...overrides,
+			});
+		};
+
+		it('bypasses queue when forceParallel=true and setting is enabled (session busy)', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+			const deps = busyDeps();
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			// spawn was called (message processed immediately) instead of being queued
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.prompt).toContain('parallel message');
+		});
+
+		it('bypasses queue when forceParallel=true and Auto Run is active', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+			const runningBatchState: BatchRunState = {
+				...defaultBatchState,
+				isRunning: true,
+				worktreeActive: true, // not read-only Auto Run
+			};
+			mockGetBatchState.mockReturnValue(runningBatchState);
+
+			const writeTab = createMockTab({
+				readOnlyMode: false,
+				agentSessionId: 'existing-session-123',
+			});
+			const session = createMockSession({
+				aiTabs: [writeTab],
+				activeTabId: writeTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'force during autorun',
+				activeBatchRunState: runningBatchState,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+
+		it('still queues when forceParallel=true but setting is OFF and session is busy', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: false } as any);
+			const deps = busyDeps();
+			const session = deps.activeSession!;
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([session]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].text).toBe('parallel message');
+		});
+
+		it('queues normally when forceParallel is absent and session is busy (even with setting ON)', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+			const deps = busyDeps();
+			const session = deps.activeSession!;
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([session]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
 		});
 	});
 });
