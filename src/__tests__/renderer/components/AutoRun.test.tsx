@@ -3343,7 +3343,7 @@ describe('Expand Button Behavior', () => {
 	it('displays keyboard shortcut in expand button title when available', () => {
 		const onExpand = vi.fn();
 		const shortcuts = {
-			toggleAutoRunExpanded: { keys: ['Meta', 'Shift', '`'], description: 'Toggle expanded' },
+			toggleAutoRunExpanded: { keys: ['Meta', 'Shift', '2'], description: 'Toggle expanded' },
 		};
 		const props = createDefaultProps({ onExpand, shortcuts });
 		renderWithProvider(<AutoRun {...props} />);

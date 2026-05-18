@@ -32,6 +32,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
 import { lookbackHoursToDays } from './lookback';
 import { logger } from '../../utils/logger';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -526,6 +527,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.shiftKey) {
 					e.preventDefault();
 					e.stopPropagation();
+					trackShortcutUsage('searchDirectorNotes');
 					if (searchExpanded) {
 						searchInputRef.current?.focus();
 						searchInputRef.current?.select();

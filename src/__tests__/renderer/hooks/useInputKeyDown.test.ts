@@ -934,6 +934,71 @@ describe('Forced parallel send shortcut', () => {
 		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
 	});
 
+	it('records forcedParallelSend shortcut usage when the shortcut fires', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			forcedParallelExecution: true,
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				forcedParallelSend: {
+					id: 'forcedParallelSend',
+					label: 'Forced Parallel Send',
+					keys: ['Meta', 'Shift', 'Enter'],
+				},
+			},
+			keyboardMasteryStats: {
+				usedShortcuts: [],
+				currentLevel: 0,
+				lastLevelUpTimestamp: 0,
+				lastAcknowledgedLevel: 0,
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', { metaKey: true, shiftKey: true });
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		const used = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+		expect(used).toContain('forcedParallelSend');
+		expect(vi.mocked(window.maestro.stats.recordShortcutUsage)).toHaveBeenCalledWith(
+			expect.any(Number)
+		);
+	});
+
+	it('records forcedParallelSend usage on empty-input force-send-queued path', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			forcedParallelExecution: true,
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				forcedParallelSend: {
+					id: 'forcedParallelSend',
+					label: 'Forced Parallel Send',
+					keys: ['Meta', 'Shift', 'Enter'],
+				},
+			},
+			keyboardMasteryStats: {
+				usedShortcuts: [],
+				currentLevel: 0,
+				lastLevelUpTimestamp: 0,
+				lastAcknowledgedLevel: 0,
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: '' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', { metaKey: true, shiftKey: true });
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		const used = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+		expect(used).toContain('forcedParallelSend');
+	});
+
 	it('Ctrl+Shift+Enter calls processInput with forceParallel in AI mode', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({

@@ -18,6 +18,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 // ============================================================================
 // Dependencies interface
@@ -279,6 +280,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							e.key.toLowerCase() === fpMainKey
 						) {
 							e.preventDefault();
+							trackShortcutUsage('forcedParallelSend');
 							// Empty input + shortcut: open the Force Send confirmation modal for
 							// the most recent eligible queued item (keyboard equivalent of
 							// clicking the per-item Force Send button).

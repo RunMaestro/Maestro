@@ -47,7 +47,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
 		label: 'Auto Run Expanded Preview',
-		keys: ['Meta', 'Shift', '`'],
+		keys: ['Meta', 'Shift', '2'],
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
@@ -128,6 +128,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'focusActiveTab',
 		label: 'Focus Active Tab',
 		keys: ['Alt', 'Meta', 'f'],
+	},
+	toggleFilePreviewToc: {
+		id: 'toggleFilePreviewToc',
+		label: 'Toggle Table of Contents (Markdown Preview)',
+		keys: ['Meta', '\\'],
 	},
 };
 

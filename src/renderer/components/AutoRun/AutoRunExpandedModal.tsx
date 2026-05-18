@@ -16,6 +16,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
@@ -187,6 +188,28 @@ export function AutoRunExpandedModal({
 		}, 50);
 		return () => clearTimeout(timer);
 	}, []);
+
+	// Re-claim focus whenever this modal becomes the topmost layer again — e.g.
+	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
+	// it. Without this, focus falls back to the body and Cmd+E starts targeting
+	// the right-panel AutoRun behind us instead of the expanded view.
+	const layerStack = useLayerStack();
+	const layers = layerStack.getLayers();
+	const topLayer = layers[layers.length - 1];
+	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	useEffect(() => {
+		if (!isTopLayer) return;
+		// Wait a tick so the closing modal has finished tearing down its focus trap.
+		const timer = setTimeout(() => {
+			const active = document.activeElement as HTMLElement | null;
+			// Only steal focus when it's idling on the body (or detached) — don't
+			// yank it out of an input the user has deliberately focused.
+			if (!active || active === document.body) {
+				autoRunRef.current?.focus();
+			}
+		}, 0);
+		return () => clearTimeout(timer);
+	}, [isTopLayer]);
 
 	// Modal-scoped shortcuts: cmd+s saves (when dirty); cmd+o opens the
 	// document selector dropdown. Registered in the capture phase so we run
@@ -383,7 +406,8 @@ export function AutoRunExpandedModal({
 								Run
 							</button>
 						)}
-						{/* PlayBooks button */}
+						{/* Playbook Exchange button — full name fits in the expanded header
+						    (the right-panel AutoRun shortens it to "PlayBooks"). */}
 						{onOpenMarketplace && (
 							<button
 								onClick={onOpenMarketplace}
@@ -393,10 +417,10 @@ export function AutoRunExpandedModal({
 									border: `1px solid ${theme.colors.accent}40`,
 									backgroundColor: `${theme.colors.accent}15`,
 								}}
-								title="Browse PlayBooks - discover and share community playbooks"
+								title="Browse Playbook Exchange - discover and share community playbooks"
 							>
 								<LayoutGrid className="w-3.5 h-3.5" />
-								PlayBooks
+								Playbook Exchange
 							</button>
 						)}
 					</div>

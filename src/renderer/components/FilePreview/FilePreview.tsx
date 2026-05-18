@@ -1071,6 +1071,7 @@ export const FilePreview = React.memo(
 					if (v) containerRef.current?.focus();
 					return !v;
 				});
+				onShortcutUsed?.('toggleFilePreviewToc');
 			} else if (e.key === 'ArrowUp') {
 				// In edit mode, let the textarea handle arrow keys for cursor movement
 				// Only intercept when NOT in edit mode (preview/code view)

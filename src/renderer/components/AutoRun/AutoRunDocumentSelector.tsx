@@ -1,20 +1,5 @@
-import React, {
-	useState,
-	useRef,
-	useEffect,
-	useMemo,
-	useImperativeHandle,
-	forwardRef,
-} from 'react';
-import {
-	ChevronDown,
-	ChevronRight,
-	RefreshCw,
-	FolderOpen,
-	Plus,
-	Folder,
-	Search,
-} from 'lucide-react';
+import { useState, useRef, useEffect, useMemo, useImperativeHandle, forwardRef } from 'react';
+import { ChevronDown, RefreshCw, FolderOpen, Plus, Search } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks';
 import { getExplorerFileIcon } from '../../utils/theme';
@@ -75,7 +60,6 @@ export const AutoRunDocumentSelector = forwardRef<
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [newDocName, setNewDocName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
-	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 	const [selectedCreateFolder, setSelectedCreateFolder] = useState<string>(''); // For creating in subfolder
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const buttonRef = useRef<HTMLButtonElement>(null);
@@ -95,23 +79,27 @@ export const AutoRunDocumentSelector = forwardRef<
 		[]
 	);
 
-	// Reset filter + highlight every time the dropdown opens. The user wants a
-	// clean filter each time, with the first match preselected.
+	// Reset filter every time the dropdown opens. Start the keyboard highlight
+	// on the currently-selected document so the first ArrowUp/Down move feels
+	// natural (and Enter without typing reopens the same doc).
 	useEffect(() => {
 		if (isOpen) {
 			setFilterQuery('');
-			setHighlightedIndex(0);
+			const selectedIdx = selectedDocument ? documents.indexOf(selectedDocument) : -1;
+			setHighlightedIndex(selectedIdx >= 0 ? selectedIdx : 0);
 			// Focus the filter input shortly after open so keystrokes flow into it.
 			requestAnimationFrame(() => {
 				filterInputRef.current?.focus();
 			});
 		}
+		// `documents`/`selectedDocument` intentionally omitted: we only want to
+		// snap the highlight when the dropdown transitions to open, not when
+		// the underlying list mutates while it's already open.
 	}, [isOpen]);
 
-	// Flat, ranked list of documents that match the current filter. Used both
-	// for rendering the filtered view and for arrow-key navigation. When the
-	// filter is empty we return the original document list (the tree view
-	// renders folders/files; this list backs only the flat / filtered view).
+	// Flat, ranked list of documents that match the current filter. Backs both
+	// the rendered list and the arrow-key cursor — empty filter returns every
+	// doc so ArrowUp/Down work immediately on open without typing.
 	const filteredDocuments = useMemo(() => {
 		if (!filterQuery.trim()) return documents;
 		const scored = documents
@@ -130,14 +118,14 @@ export const AutoRunDocumentSelector = forwardRef<
 	}, [filteredDocuments.length, highlightedIndex]);
 
 	// Keep the highlighted row visible inside the scrollable list as the user
-	// arrow-navigates through a long filtered set.
+	// arrow-navigates (whether or not a filter is active).
 	useEffect(() => {
-		if (!isOpen || !filterQuery.trim()) return;
+		if (!isOpen) return;
 		requestAnimationFrame(() => {
 			const el = dropdownRef.current?.querySelector('[data-highlighted="true"]');
 			el?.scrollIntoView({ block: 'nearest' });
 		});
-	}, [highlightedIndex, isOpen, filterQuery]);
+	}, [highlightedIndex, isOpen]);
 
 	// While the dropdown is open we register it as a higher-priority modal
 	// layer than AUTORUN_EXPANDED so an Escape press closes only the dropdown,
@@ -159,19 +147,6 @@ export const AutoRunDocumentSelector = forwardRef<
 		: normalizedNewName;
 	const isDuplicate = !!fullNewPath && documents.some((doc) => doc.toLowerCase() === fullNewPath);
 
-	// Toggle folder expansion
-	const toggleFolder = (folderPath: string) => {
-		setExpandedFolders((prev) => {
-			const next = new Set(prev);
-			if (next.has(folderPath)) {
-				next.delete(folderPath);
-			} else {
-				next.add(folderPath);
-			}
-			return next;
-		});
-	};
-
 	// Get percentage display for a document's task completion
 	const getTaskPercentage = (docPath: string): number | null => {
 		if (!documentTaskCounts) return null;
@@ -185,25 +160,6 @@ export const AutoRunDocumentSelector = forwardRef<
 
 	// Close dropdown when clicking outside
 	useClickOutside(dropdownRef, () => setIsOpen(false), isOpen);
-
-	// Auto-expand folders to reveal the selected document when dropdown opens
-	useEffect(() => {
-		if (isOpen && selectedDocument && selectedDocument.includes('/')) {
-			const parts = selectedDocument.split('/');
-			// Build all ancestor folder paths (e.g., "a", "a/b" for "a/b/file")
-			const folderPaths: string[] = [];
-			for (let i = 1; i < parts.length; i++) {
-				folderPaths.push(parts.slice(0, i).join('/'));
-			}
-			setExpandedFolders((prev) => {
-				const next = new Set(prev);
-				for (const fp of folderPaths) {
-					next.add(fp);
-				}
-				return next;
-			});
-		}
-	}, [isOpen, selectedDocument]);
 
 	// Scroll the selected document into view when dropdown opens
 	useEffect(() => {
@@ -288,75 +244,6 @@ export const AutoRunDocumentSelector = forwardRef<
 	};
 
 	const availableFolders = documentTree ? getFoldersFromTree(documentTree) : [];
-
-	// Render tree node recursively
-	const renderTreeNode = (node: DocTreeNode, depth: number = 0): React.ReactNode => {
-		const isExpanded = expandedFolders.has(node.path);
-		const paddingLeft = depth * 16 + 12;
-
-		if (node.type === 'folder') {
-			return (
-				<div key={node.path}>
-					<button
-						onClick={() => toggleFolder(node.path)}
-						className="w-full flex items-center gap-1.5 py-1.5 text-sm transition-colors hover:bg-white/5"
-						style={{ paddingLeft, color: theme.colors.textDim }}
-					>
-						{isExpanded ? (
-							<ChevronDown className="w-3 h-3 shrink-0" />
-						) : (
-							<ChevronRight className="w-3 h-3 shrink-0" />
-						)}
-						<Folder className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
-						<span className="truncate">{node.name}</span>
-					</button>
-					{isExpanded && node.children && (
-						<div>{node.children.map((child) => renderTreeNode(child, depth + 1))}</div>
-					)}
-				</div>
-			);
-		}
-
-		// File node
-		const isSelected = node.path === selectedDocument;
-		const taskPct = getTaskPercentage(node.path);
-		return (
-			<button
-				key={node.path}
-				onClick={() => handleSelectDocument(node.path)}
-				data-selected={isSelected || undefined}
-				className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
-				style={{
-					paddingLeft,
-					color: isSelected ? theme.colors.accent : theme.colors.textMain,
-					backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
-				}}
-			>
-				{/* Spacer matching chevron width for alignment with folders */}
-				<span className="w-3 shrink-0" />
-				{/* File icon matching the Files tab */}
-				<span
-					className="shrink-0 w-3.5 h-3.5 flex items-center justify-center"
-					style={{ color: theme.colors.textDim }}
-				>
-					{getExplorerFileIcon(`${node.name}.md`, theme)}
-				</span>
-				<span className="truncate">{node.name}.md</span>
-				{/* Task percentage badge - right-aligned */}
-				{taskPct !== null && (
-					<span
-						className="shrink-0 text-xs ml-auto px-1.5 py-0.5 rounded"
-						style={{
-							backgroundColor: taskPct === 100 ? theme.colors.success : theme.colors.accentDim,
-							color: taskPct === 100 ? '#000' : theme.colors.textDim,
-						}}
-					>
-						{taskPct}%
-					</span>
-				)}
-			</button>
-		);
-	};
 
 	return (
 		<>
@@ -463,74 +350,31 @@ export const AutoRunDocumentSelector = forwardRef<
 									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
 										No markdown files found
 									</div>
-								) : filterQuery.trim() ? (
-									// Filtered flat view with keyboard highlight
-									filteredDocuments.length === 0 ? (
-										<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
-											No matches for &ldquo;{filterQuery}&rdquo;
-										</div>
-									) : (
-										filteredDocuments.map((doc, idx) => {
-											const taskPct = getTaskPercentage(doc);
-											const isDocSelected = doc === selectedDocument;
-											const isHighlighted = idx === highlightedIndex;
-											return (
-												<button
-													key={doc}
-													onClick={() => handleSelectDocument(doc)}
-													onMouseEnter={() => setHighlightedIndex(idx)}
-													data-selected={isDocSelected || undefined}
-													data-highlighted={isHighlighted || undefined}
-													className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors"
-													style={{
-														color: isDocSelected ? theme.colors.accent : theme.colors.textMain,
-														backgroundColor: isHighlighted
-															? `${theme.colors.accent}25`
-															: isDocSelected
-																? theme.colors.bgActivity
-																: 'transparent',
-													}}
-												>
-													<span
-														className="shrink-0 w-3.5 h-3.5 flex items-center justify-center"
-														style={{ color: theme.colors.textDim }}
-													>
-														{getExplorerFileIcon(`${doc}.md`, theme)}
-													</span>
-													<span className="truncate">{doc}.md</span>
-													{taskPct !== null && (
-														<span
-															className="shrink-0 text-xs ml-auto px-1.5 py-0.5 rounded"
-															style={{
-																backgroundColor:
-																	taskPct === 100 ? theme.colors.success : theme.colors.accentDim,
-																color: taskPct === 100 ? '#000' : theme.colors.textDim,
-															}}
-														>
-															{taskPct}%
-														</span>
-													)}
-												</button>
-											);
-										})
-									)
-								) : documentTree && documentTree.length > 0 ? (
-									// Render tree structure if available
-									<div className="py-1">{documentTree.map((node) => renderTreeNode(node))}</div>
+								) : filteredDocuments.length === 0 ? (
+									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
+										No matches for &ldquo;{filterQuery}&rdquo;
+									</div>
 								) : (
-									// Fallback to flat list
-									documents.map((doc) => {
+									// Unified flat keyboard-navigable list (empty filter shows all docs).
+									filteredDocuments.map((doc, idx) => {
 										const taskPct = getTaskPercentage(doc);
 										const isDocSelected = doc === selectedDocument;
+										const isHighlighted = idx === highlightedIndex;
 										return (
 											<button
 												key={doc}
 												onClick={() => handleSelectDocument(doc)}
+												onMouseEnter={() => setHighlightedIndex(idx)}
 												data-selected={isDocSelected || undefined}
-												className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors hover:bg-white/5"
+												data-highlighted={isHighlighted || undefined}
+												className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors"
 												style={{
 													color: isDocSelected ? theme.colors.accent : theme.colors.textMain,
-													backgroundColor: isDocSelected ? theme.colors.bgActivity : 'transparent',
+													backgroundColor: isHighlighted
+														? `${theme.colors.accent}25`
+														: isDocSelected
+															? theme.colors.bgActivity
+															: 'transparent',
 												}}
 											>
 												<span

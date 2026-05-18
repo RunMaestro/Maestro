@@ -490,6 +490,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				if (result.newLevel !== null) {
 					deps.onKeyboardMasteryLevelUp(result.newLevel);
 				}
+				// Also bump the daily-firings counter so the Usage Dashboard bar
+				// chart reflects shortcuts handled inside subcomponents (not just
+				// the ones routed through useMainKeyboardHandler).
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),

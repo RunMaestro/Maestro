@@ -77,7 +77,6 @@ export function useKeyboardShortcutHelpers(
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
 			if (mainKey === ',' && (key === ',' || key === '<')) return true;
 			if (mainKey === '.' && (key === '.' || key === '>')) return true;
-			if (mainKey === '`' && (key === '`' || key === '~')) return true;
 			// Handle Shift+number producing symbol (US keyboard layout)
 			// Shift+1='!', Shift+2='@', Shift+3='#', etc.
 			const shiftNumberMap: Record<string, string> = {
@@ -153,7 +152,6 @@ export function useKeyboardShortcutHelpers(
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
 			if (mainKey === ',' && (key === ',' || key === '<')) return true;
 			if (mainKey === '.' && (key === '.' || key === '>')) return true;
-			if (mainKey === '`' && (key === '`' || key === '~')) return true;
 
 			// When Alt is held, e.key may be rewritten by the layout (macOS Alt+t = †;
 			// Windows/Linux AltGr variants). Fall back to e.code for the physical key.

@@ -1131,6 +1131,67 @@ print("world")
 			expect(screen.getByText('Heading 3')).toBeInTheDocument();
 		});
 
+		it('toggles TOC overlay with the toggleFilePreviewToc shortcut and reports usage', () => {
+			const onShortcutUsed = vi.fn();
+			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3';
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: markdownWithHeadings, path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			// First firing opens the overlay and reports usage
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledWith('toggleFilePreviewToc');
+
+			// Second firing closes it
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledTimes(2);
+		});
+
+		it('ignores toggleFilePreviewToc shortcut in edit mode (no TOC available)', () => {
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).not.toHaveBeenCalled();
+		});
+
 		it('keeps TOC overlay open when clicking a heading entry', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2';
 			render(

@@ -63,13 +63,28 @@ export function AgentConfigPanel({
 	const themedInputStyle = getInputStyle(theme);
 	const themedLabelStyle = getLabelStyle(theme);
 
-	// Single-trigger mode: use agent node's inputPrompt (existing behavior)
-	const [localInputPrompt, setLocalInputPrompt] = useState(data.inputPrompt ?? '');
+	// When the agent has exactly one incoming trigger edge, the textarea is
+	// a view onto that edge's prompt (the single source of truth shared with
+	// the multi-trigger `EdgePromptRow` path). Chain-only agents (zero
+	// incoming triggers) and orphans fall back to the node-level inputPrompt
+	// field, which is what the chain-subscription load path populates.
+	//
+	// Why: previously this textarea wrote to `agentData.inputPrompt` while
+	// `pipelineToYaml` read trigger-fed prompts from `edge.prompt` first,
+	// silently dropping the user's edit on save. Binding directly to the
+	// edge makes the write land where the save reads.
+	const singleTriggerEdge =
+		!hasMultipleTriggers && incomingTriggerEdges?.length === 1 && onUpdateEdgePrompt
+			? incomingTriggerEdges[0]
+			: null;
+	const inputSourceValue = singleTriggerEdge ? singleTriggerEdge.prompt : (data.inputPrompt ?? '');
+
+	const [localInputPrompt, setLocalInputPrompt] = useState(inputSourceValue);
 	const [localOutputPrompt, setLocalOutputPrompt] = useState(data.outputPrompt ?? '');
 
 	useEffect(() => {
-		setLocalInputPrompt(data.inputPrompt ?? '');
-	}, [data.inputPrompt]);
+		setLocalInputPrompt(inputSourceValue);
+	}, [inputSourceValue]);
 
 	useEffect(() => {
 		setLocalOutputPrompt(data.outputPrompt ?? '');
@@ -77,8 +92,12 @@ export function AgentConfigPanel({
 
 	const { debouncedCallback: debouncedUpdateInput, flush: flushInput } = useDebouncedCallback(
 		(...args: unknown[]) => {
-			const inputPrompt = args[0] as string;
-			onUpdateNode(node.id, { inputPrompt } as Partial<AgentNodeData>);
+			const value = args[0] as string;
+			if (singleTriggerEdge && onUpdateEdgePrompt) {
+				onUpdateEdgePrompt(singleTriggerEdge.edgeId, value);
+			} else {
+				onUpdateNode(node.id, { inputPrompt: value } as Partial<AgentNodeData>);
+			}
 		},
 		300
 	);

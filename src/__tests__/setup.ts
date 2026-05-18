@@ -517,6 +517,10 @@ const mockMaestro = {
 		recordSessionCreated: vi.fn().mockResolvedValue('lifecycle-id'),
 		recordSessionClosed: vi.fn().mockResolvedValue(true),
 		getSessionLifecycle: vi.fn().mockResolvedValue([]),
+		// Shortcut usage tracking (Usage Dashboard daily bar chart)
+		recordShortcutUsage: vi.fn().mockResolvedValue(null),
+		getShortcutUsageByDay: vi.fn().mockResolvedValue([]),
+		getShortcutUsageTotal: vi.fn().mockResolvedValue(0),
 	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
