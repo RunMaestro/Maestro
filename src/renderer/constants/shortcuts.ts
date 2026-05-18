@@ -129,11 +129,6 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Focus Active Tab',
 		keys: ['Alt', 'Meta', 'f'],
 	},
-	toggleFilePreviewToc: {
-		id: 'toggleFilePreviewToc',
-		label: 'Toggle Table of Contents (Markdown Preview)',
-		keys: ['Meta', '\\'],
-	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)
