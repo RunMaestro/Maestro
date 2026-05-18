@@ -326,6 +326,27 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-html-double-click',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Open HTML files in Maestro Browser on double-click',
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser tab instead of the file preview.',
+		keywords: [
+			'html',
+			'double click',
+			'double-click',
+			'dblclick',
+			'file explorer',
+			'preview',
+			'browser',
+			'open',
+			'render',
+			'webview',
+			'dashboard',
+		],
+	},
+	{
 		id: 'general-storage',
 		tab: 'general',
 		tabLabel: 'General',

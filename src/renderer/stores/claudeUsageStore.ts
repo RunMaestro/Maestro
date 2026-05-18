@@ -97,6 +97,16 @@ export function getAllSnapshots(): Record<string, ClaudeUsageSnapshot> {
  * `null` when the key is missing or undefined. Triggers a lazy first-load
  * fetch the first time any consumer mounts so the badge tooltip has data
  * without each render site having to wire the IPC manually.
+ *
+ * Lookup is forgiving in two specific ways so the popover doesn't silently
+ * hide the gauge when the renderer's derived key drifts from main's canonical
+ * path:
+ *   1. Try the exact key against snapshots (strict match, fastest path).
+ *   2. Try matching by basename (e.g. ".claude-smash"). Two spellings of the
+ *      same dir collapse to the same trailing segment.
+ *   3. If exactly one snapshot exists in the store, use it. Single-account
+ *      installs (the common case) always show their numbers regardless of
+ *      env-var resolution issues.
  */
 export function useClaudeUsageSnapshot(
 	configDirKey: string | undefined
@@ -110,8 +120,21 @@ export function useClaudeUsageSnapshot(
 		}
 	}, [loaded]);
 
-	if (!configDirKey) return null;
-	return snapshots[configDirKey] ?? null;
+	if (configDirKey) {
+		const exact = snapshots[configDirKey];
+		if (exact) return exact;
+		const targetBasename = configDirKey.slice(configDirKey.lastIndexOf('/') + 1);
+		if (targetBasename) {
+			for (const [k, v] of Object.entries(snapshots)) {
+				const basename = k.slice(k.lastIndexOf('/') + 1);
+				if (basename === targetBasename) return v;
+			}
+		}
+	}
+
+	const entries = Object.values(snapshots);
+	if (entries.length === 1) return entries[0];
+	return null;
 }
 
 /**

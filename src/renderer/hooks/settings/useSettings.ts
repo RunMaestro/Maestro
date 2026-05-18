@@ -315,6 +315,8 @@ export interface UseSettingsReturn {
 	setUseSystemBrowser: (value: boolean) => void;
 	browserHomeUrl: string;
 	setBrowserHomeUrl: (value: string) => void;
+	htmlDoubleClickOpensInBrowser: boolean;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;

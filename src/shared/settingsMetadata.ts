@@ -880,6 +880,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'https://runmaestro.ai/#leaderboard',
 		category: 'editor',
 	},
+	htmlDoubleClickOpensInBrowser: {
+		description:
+			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser instead of the file preview.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {

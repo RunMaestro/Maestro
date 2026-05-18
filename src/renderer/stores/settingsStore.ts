@@ -381,6 +381,7 @@ export interface SettingsStoreState {
 	sshRemoteHonorGitignore: boolean;
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
+	htmlDoubleClickOpensInBrowser: boolean;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
@@ -506,6 +507,7 @@ export interface SettingsStoreActions {
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
@@ -710,6 +712,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		sshRemoteHonorGitignore: true,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+		htmlDoubleClickOpensInBrowser: false,
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
 		newBrowserTabPlacement: 'after-current',
@@ -1229,6 +1232,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setBrowserHomeUrl: (value) => {
 			set({ browserHomeUrl: value });
 			window.maestro.settings.set('browserHomeUrl', value);
+		},
+
+		setHtmlDoubleClickOpensInBrowser: (value) => {
+			set({ htmlDoubleClickOpensInBrowser: value });
+			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
 		},
 
 		setAutomaticTabNamingEnabled: (value) => {
@@ -2466,6 +2474,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['browserHomeUrl'] !== undefined)
 			patch.browserHomeUrl = allSettings['browserHomeUrl'] as string;
+
+		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
+			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
 
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;

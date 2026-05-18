@@ -157,19 +157,20 @@ export const HighlightedCodeEditor = forwardRef<HTMLTextAreaElement, Highlighted
 			[onLineNumberContextMenu]
 		);
 
-		const gutterOffsetPx = showLineNumbers ? GUTTER_WIDTH_PX : 0;
 		const textPaddingLeft = showLineNumbers
 			? `${GUTTER_WIDTH_PX + GUTTER_PADDING_RIGHT_PX}px`
 			: padding;
 		const textPaddingRight = padding;
 
-		// When wrap is off we want both layers to allow horizontal overflow so
-		// the textarea's native horizontal scrollbar can render and the overlay
-		// can extend past the visible viewport before transform-translate brings
-		// the relevant portion into view.
-		const overflowMode: React.CSSProperties = wrap
-			? { overflow: 'hidden' }
-			: { overflowX: 'auto', overflowY: 'auto' };
+		// Vertical scroll is always on — even when wrap is on, files taller than
+		// the viewport must scroll. Horizontal scroll switches with `wrap`:
+		// off → textarea's native horizontal scrollbar reveals long lines and
+		// the overlay rides along via transform; on → no horizontal overflow,
+		// content wraps at whitespace.
+		const overflowMode: React.CSSProperties = {
+			overflowX: wrap ? 'hidden' : 'auto',
+			overflowY: 'auto',
+		};
 
 		return (
 			<div className={`relative w-full h-full ${className ?? ''}`} style={{ overflow: 'hidden' }}>
@@ -217,6 +218,11 @@ export const HighlightedCodeEditor = forwardRef<HTMLTextAreaElement, Highlighted
 						</div>
 					</div>
 				)}
+				{/* Overlay anchors at left:0 (matching the textarea wrapper) and
+				    mirrors the textarea's padding inside the SyntaxHighlighter so
+				    glyph positions line up exactly with the (transparent) textarea
+				    text below. Anchoring at the gutter's right edge instead would
+				    introduce an 8px misalignment between caret and colored glyph. */}
 				<div
 					ref={overlayRef}
 					aria-hidden="true"
@@ -224,7 +230,7 @@ export const HighlightedCodeEditor = forwardRef<HTMLTextAreaElement, Highlighted
 					style={{
 						position: 'absolute',
 						top: 0,
-						left: gutterOffsetPx,
+						left: 0,
 						willChange: 'transform',
 					}}
 				>
@@ -236,6 +242,8 @@ export const HighlightedCodeEditor = forwardRef<HTMLTextAreaElement, Highlighted
 							padding: 0,
 							paddingTop: padding,
 							paddingBottom: padding,
+							paddingLeft: textPaddingLeft,
+							paddingRight: textPaddingRight,
 							background: 'transparent',
 							...sharedStyle,
 						}}

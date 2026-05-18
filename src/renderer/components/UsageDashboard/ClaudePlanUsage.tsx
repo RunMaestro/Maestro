@@ -14,7 +14,7 @@
  * the store in a single click.
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClaudeUsageStore, type ClaudeUsageSnapshot } from '../../stores/claudeUsageStore';
@@ -330,6 +330,21 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 
 	const isBusy = refreshing || visualBusy;
 
+	// Auto-sample on first arrival when the dashboard opens with at least one
+	// configured account but no cached snapshots — saves the user a manual
+	// Refresh click. The empty-snapshot CTA still acts as a fallback if the
+	// auto-sample itself fails. Guarded by a ref so React Strict-Mode's
+	// double-mount in dev doesn't fire two samples back-to-back.
+	const autoRefreshFiredRef = useRef(false);
+	useEffect(() => {
+		if (autoRefreshFiredRef.current) return;
+		if (configuredAccountKeys.length === 0) return;
+		if (Object.keys(snapshots).length > 0) return;
+		if (refreshing || visualBusy) return;
+		autoRefreshFiredRef.current = true;
+		void handleRefresh();
+	}, [configuredAccountKeys.length, snapshots, refreshing, visualBusy, handleRefresh]);
+
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -489,21 +504,11 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({ theme }: ClaudePl
 						<span style={{ color: theme.colors.accent }}>○</span>
 						<span>
 							No snapshot cached for this account yet. Hit{' '}
-							<strong style={{ color: theme.colors.accent }}>Refresh</strong> to run{' '}
-							<code style={{ color: theme.colors.accent }}>maestro-p --status</code> against it.
+							<strong style={{ color: theme.colors.accent }}>Refresh</strong>.
 						</span>
 					</div>
 				</div>
 			) : null}
-
-			<p
-				className="mt-4 text-xs"
-				style={{ color: theme.colors.textDim, opacity: 0.8 }}
-				data-testid="claude-plan-caption"
-			>
-				Interactive usage = your Claude Max plan quota burndown. API usage shows accumulated
-				stream-json cost separately (see Claude API row above for that figure).
-			</p>
 		</div>
 	);
 });

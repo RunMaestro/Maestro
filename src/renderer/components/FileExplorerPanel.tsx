@@ -523,6 +523,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
 	// Live git status comes from GitStatusProvider, which polls per session via
@@ -1243,9 +1244,21 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						}
 					}}
 					onDoubleClick={() => {
-						if (!isFolder) {
-							handleFileClick(node, fullPath, session);
+						if (isFolder) return;
+						// Optional shortcut: HTML files can default to opening in the
+						// Maestro browser instead of the preview. SSH skips this (file://
+						// can't reach the remote host); the right-click menu still offers
+						// both paths regardless of the setting.
+						const isHtml = /\.html?$/i.test(node.name);
+						if (htmlDoubleClickOpensInBrowser && isHtml && !sshRemoteId && onOpenBrowserTabAt) {
+							const encodedPath = absolutePath
+								.split('/')
+								.map((seg) => encodeURIComponent(seg))
+								.join('/');
+							onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
+							return;
 						}
+						handleFileClick(node, fullPath, session);
 					}}
 					onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 				>
@@ -1315,6 +1328,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			fileExplorerIconTheme,
 			colorBlindMode,
 			handleContextMenu,
+			htmlDoubleClickOpensInBrowser,
+			onOpenBrowserTabAt,
+			sshRemoteId,
 		]
 	);
 
