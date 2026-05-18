@@ -8,6 +8,7 @@ import type {
 	UsageStats,
 	Group,
 	AutoRunStats,
+	AgentError,
 } from '../../../types';
 import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
 import { gitService } from '../../../services/git';
@@ -16,7 +17,7 @@ import { notifyToast } from '../../../stores/notificationStore';
 import { useBatchStore } from '../../../stores/batchStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { countUnfinishedTasks, uncheckAllTasks } from '../batchUtils';
+import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
 import { buildFinalSummary } from './batchFinalSummary';
@@ -64,6 +65,12 @@ export interface UseBatchRunnerDeps {
 	broadcastAutoRunState: (sessionId: string, state: BatchRunState | null) => void;
 	flushDebouncedUpdate: (sessionId: string) => void;
 	dispatch: (action: BatchAction) => void;
+	pauseBatchOnError: (
+		sessionId: string,
+		error: AgentError,
+		documentIndex: number,
+		taskDescription?: string
+	) => void;
 	timeTracking: UseTimeTrackingReturn;
 	worktreeManager: UseWorktreeManagerReturn;
 	documentProcessor: UseDocumentProcessorReturn;
@@ -105,6 +112,7 @@ export function useBatchRunner({
 	broadcastAutoRunState,
 	flushDebouncedUpdate,
 	dispatch,
+	pauseBatchOnError,
 	timeTracking,
 	worktreeManager,
 	documentProcessor,
@@ -624,6 +632,66 @@ export function useBatchRunner({
 								skipCurrentDocumentAfterError = true;
 								break;
 							}
+
+							// Resume: re-read the document so HITL re-check and processTask
+							// both see whatever the user did during the pause (e.g. ticked
+							// the human-approval checkbox). Without this, an unchanged
+							// `docContent` in memory would either re-pause indefinitely or
+							// hand the agent a stale view of the playbook.
+							const {
+								taskCount: resumedRemaining,
+								checkedCount: resumedChecked,
+								content: resumedContent,
+							} = await readDocAndCountTasks(folderPath, effectiveFilename, sshRemoteId);
+							remainingTasks = resumedRemaining;
+							docCheckedCount = resumedChecked;
+							docContent = resumedContent;
+							if (remainingTasks === 0) break;
+						}
+
+						// HITL gate detection: if the document has a HITL marker positioned
+						// before the next unchecked task with no intervening checked task,
+						// pause the run via the existing error-resolution infrastructure.
+						// Re-uses `pauseBatchOnError` so the AutoRunErrorBanner ("Resume" /
+						// "Abort Run") just works without new UI plumbing.
+						const hitlGate = findPendingHitlGate(docContent);
+						if (hitlGate) {
+							const hitlError: AgentError = {
+								type: 'hitl_gate',
+								message: hitlGate.artifact
+									? `${hitlGate.reason} (artifact: ${hitlGate.artifact})`
+									: hitlGate.reason,
+								recoverable: true,
+								agentId: session.toolType,
+								sessionId,
+								timestamp: Date.now(),
+							};
+							pauseBatchOnError(sessionId, hitlError, docIndex);
+
+							window.maestro.logger.autorun(`HITL gate reached: ${hitlGate.reason}`, session.name, {
+								document: docEntry.filename,
+								reason: hitlGate.reason,
+								artifact: hitlGate.artifact,
+								markerLine: hitlGate.line,
+							});
+
+							// Sticky toast — the user must acknowledge a review gate, so it
+							// should not auto-dismiss. Click jumps to the agent so the user
+							// can see the AutoRunErrorBanner with the Resume/Abort buttons.
+							notifyToast({
+								type: 'info',
+								title: 'Auto Run paused for review',
+								message: hitlGate.artifact
+									? `${docEntry.filename}: ${hitlGate.reason} — review ${hitlGate.artifact}`
+									: `${docEntry.filename}: ${hitlGate.reason}`,
+								project: session.name,
+								sessionId,
+								dismissible: true,
+							});
+
+							// Next loop iteration's await-on-errorResolution block handles
+							// the actual wait — keeps the pause control flow in one place.
+							continue;
 						}
 
 						// Use extracted document processor hook for task processing
@@ -1381,6 +1449,7 @@ export function useBatchRunner({
 			onProcessQueueAfterCompletion,
 			onSpawnAgent,
 			onUpdateSession,
+			pauseBatchOnError,
 			readDocAndCountTasks,
 			sessionsRef,
 			stopRequestedRefs,
