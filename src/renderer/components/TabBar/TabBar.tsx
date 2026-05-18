@@ -97,6 +97,7 @@ function TabBarInner({
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
+	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
@@ -481,8 +482,8 @@ function TabBarInner({
 						// underlying unifiedTabs index.
 						const isLastDisplayed = index === displayedUnifiedTabs.length - 1;
 						const shortcutHint = showUnreadOnly
-							? getShortcutHint(index, isLastDisplayed)
-							: getShortcutHint(originalIndex, isLastTab);
+							? getShortcutHint(index, isLastDisplayed, useCmd0AsLastTab)
+							: getShortcutHint(originalIndex, isLastTab, useCmd0AsLastTab);
 
 						if (unifiedTab.type === 'ai') {
 							return (
@@ -626,8 +627,8 @@ function TabBarInner({
 						// Legacy mode: displayedTabs is the filtered list when unread filter is on.
 						const isLastDisplayed = index === displayedTabs.length - 1;
 						const shortcutHint = showUnreadOnly
-							? getShortcutHint(index, isLastDisplayed)
-							: getShortcutHint(originalIndex, isLastTab);
+							? getShortcutHint(index, isLastDisplayed, useCmd0AsLastTab)
+							: getShortcutHint(originalIndex, isLastTab, useCmd0AsLastTab);
 
 						return (
 							<React.Fragment key={tab.id}>

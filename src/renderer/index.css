@@ -370,6 +370,23 @@ textarea::placeholder {
 	}
 }
 
+/* Claude Plan Usage - in-flight refresh sweep (indeterminate progress).
+   Wider than the button so the gradient enters from offscreen on the left,
+   passes through, and exits offscreen on the right — reads as a recurring
+   light sweep rather than a strobing flash. */
+@keyframes claude-plan-refresh-sweep {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(100%);
+	}
+}
+
+.claude-plan-refresh-sweep {
+	animation: claude-plan-refresh-sweep 1.2s ease-in-out infinite;
+}
+
 /* Usage Dashboard - Skeleton loading animation */
 @keyframes skeleton-shimmer {
 	0% {

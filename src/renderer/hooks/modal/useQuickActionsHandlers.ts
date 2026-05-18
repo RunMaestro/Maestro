@@ -58,6 +58,8 @@ export interface UseQuickActionsHandlersDeps {
 export interface UseQuickActionsHandlersReturn {
 	/** Toggle read-only mode on the active tab */
 	handleQuickActionsToggleReadOnlyMode: () => void;
+	/** Toggle enter-to-send mode on the active AI tab (overrides global default) */
+	handleQuickActionsToggleTabEnterToSend: () => void;
 	/** Cycle thinking mode on the active tab */
 	handleQuickActionsToggleTabShowThinking: () => void;
 	/** Refresh git, file tree, and history */
@@ -153,6 +155,24 @@ export function useQuickActionsHandlers(
 				})
 			);
 		}
+	}, [activeSession]);
+
+	const handleQuickActionsToggleTabEnterToSend = useCallback(() => {
+		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== activeSession.id) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === s.activeTabId
+							? { ...tab, enterToSend: !(tab.enterToSend ?? globalDefault) }
+							: tab
+					),
+				};
+			})
+		);
 	}, [activeSession]);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
@@ -313,6 +333,7 @@ export function useQuickActionsHandlers(
 
 	return {
 		handleQuickActionsToggleReadOnlyMode,
+		handleQuickActionsToggleTabEnterToSend,
 		handleQuickActionsToggleTabShowThinking,
 		handleQuickActionsRefreshGitFileState,
 		handleQuickActionsDebugReleaseQueuedItem,

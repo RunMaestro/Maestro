@@ -303,13 +303,20 @@ describe('app-lifecycle/window-manager', () => {
 			const navigateHandler = guestWebContentsEventHandlers.get('will-navigate');
 			expect(navigateHandler).toBeTruthy();
 
+			// `chrome:` is not in the allowlist (only http/https/file/about:blank are).
 			const blockedEvent = { preventDefault: vi.fn() };
-			navigateHandler?.(blockedEvent as any, 'file:///etc/passwd');
+			navigateHandler?.(blockedEvent as any, 'chrome://settings');
 			expect(blockedEvent.preventDefault).toHaveBeenCalled();
 
 			const allowedEvent = { preventDefault: vi.fn() };
 			navigateHandler?.(allowedEvent as any, 'http://localhost:7100/');
 			expect(allowedEvent.preventDefault).not.toHaveBeenCalled();
+
+			// `file:` is explicitly allowed so users can open locally-generated HTML
+			// (Plotly dashboards, etc.) inside Maestro instead of the system browser.
+			const allowedFileEvent = { preventDefault: vi.fn() };
+			navigateHandler?.(allowedFileEvent as any, 'file:///tmp/dashboard.html');
+			expect(allowedFileEvent.preventDefault).not.toHaveBeenCalled();
 		});
 
 		it('denies browser-tab guest popup requests in the main process', async () => {

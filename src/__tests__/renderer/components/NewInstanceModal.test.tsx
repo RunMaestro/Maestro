@@ -730,7 +730,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -779,7 +781,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -828,7 +832,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -878,7 +884,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -1391,7 +1399,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -1540,7 +1550,9 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{ enabled: false, remoteId: null },
+				expect.objectContaining({ enabled: false, remoteId: null }),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -2691,12 +2703,14 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
-				{
+				expect.objectContaining({
 					enabled: true,
 					remoteId: 'remote-1',
 					syncHistory: false,
 					workingDirOverride: '/test/path',
-				},
+				}),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);
@@ -2924,6 +2938,8 @@ describe('NewInstanceModal', () => {
 					workingDirOverride: '/home/devuser/my-project',
 				}),
 				undefined,
+				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -3035,6 +3051,8 @@ describe('NewInstanceModal', () => {
 					remoteId: 'remote-1',
 					workingDirOverride: '/explicit/override/path',
 				}),
+				undefined,
+				undefined,
 				undefined,
 				undefined
 			);

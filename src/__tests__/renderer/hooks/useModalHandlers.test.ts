@@ -1269,7 +1269,7 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
 		});
 
-		it('handleQuickActionsOpenTabSwitcher opens tab switcher when in AI mode', () => {
+		it('handleQuickActionsOpenTabSwitcher opens tab switcher when session has aiTabs', () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1288,11 +1288,12 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 		});
 
-		it('handleQuickActionsOpenTabSwitcher does nothing when not in AI mode', () => {
+		it('handleQuickActionsOpenTabSwitcher opens tab switcher in shell mode when aiTabs exist', () => {
+			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
 				inputMode: 'terminal' as any,
-				aiTabs: [],
+				aiTabs: [tab],
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
@@ -1303,7 +1304,7 @@ describe('useModalHandlers', () => {
 				result.current.handleQuickActionsOpenTabSwitcher();
 			});
 
-			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(false);
+			expect(useModalStore.getState().isOpen('tabSwitcher')).toBe(true);
 		});
 
 		it('handleQuickActionsStartTour sets tourFromWizard false and opens tour', () => {

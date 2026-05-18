@@ -103,6 +103,35 @@ export interface AgentConfig extends BaseAgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	batchModeEnvVars?: Record<string, string>; // Env vars applied ONLY to CLI batch spawns (maestro-cli send). Not applied to desktop UI or --live path. Use for settings that only make sense in short-lived non-interactive sessions (e.g., disabling background tasks).
+
+	/**
+	 * Binary used when this agent is spawned in API/headless mode (e.g. `claude --print`).
+	 * When set together with `interactiveCommand`, the spawner picks between the two based on
+	 * the per-tab Claude interactive mode resolution. When unset, `command` is the only binary
+	 * (i.e. the agent has no interactive variant). Phase 2 only populates this for `claude-code`.
+	 */
+	apiCommand?: string;
+
+	/**
+	 * Args used in API/headless mode. Composed with custom args, model args, resume args, etc.
+	 * by `buildAgentArgs()` exactly like `args`. Set alongside `apiCommand`.
+	 */
+	apiModeArgs?: string[];
+
+	/**
+	 * Binary used when this agent is spawned in interactive mode. For `claude-code`, this is
+	 * `maestro-p` — a wrapper that drives Claude's TUI to preserve the user's Max plan quota.
+	 * SSH-enabled tabs always skip this and use `apiCommand` instead, since interactive mode
+	 * requires the real claude TUI binary to be present locally.
+	 */
+	interactiveCommand?: string;
+
+	/**
+	 * Args used in interactive mode. Composed with custom args, model args, resume args, etc.
+	 * just like `args`/`apiModeArgs`. For `claude-code`, these are forwarded by `maestro-p`
+	 * into the underlying claude TUI invocation.
+	 */
+	interactiveModeArgs?: string[];
 }
 
 /**
@@ -131,6 +160,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		id: 'claude-code',
 		name: 'Claude Code',
 		binaryName: 'claude',
+		// `command` + `args` remain the API-mode default so non-mode-aware spawn sites continue
+		// to work unchanged. The `apiCommand`/`interactiveCommand` pair is consulted by the
+		// desktop spawner (see `src/main/ipc/handlers/process.ts`) to pick a binary per turn
+		// based on per-tab Claude interactive mode state.
 		command: 'claude',
 		// YOLO mode (--dangerously-skip-permissions) is always enabled - Maestro requires it
 		args: [
@@ -140,7 +173,18 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'stream-json',
 			'--dangerously-skip-permissions',
 		],
-		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
+		apiCommand: 'claude',
+		apiModeArgs: [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--dangerously-skip-permissions',
+		],
+		interactiveCommand: 'maestro-p',
+		// maestro-p forwards these to the underlying claude TUI invocation.
+		interactiveModeArgs: ['--dangerously-skip-permissions'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet

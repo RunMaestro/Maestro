@@ -10,9 +10,11 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentCapabilities, AgentConfig } from '../../shared/types';
+import type { UsageSnapshot } from '../agents/claude-mode-selector';
 
 // Re-export for consumers that import from preload
 export type { AgentCapabilities, AgentConfig } from '../../shared/types';
+export type { UsageSnapshot } from '../agents/claude-mode-selector';
 
 /**
  * Agent refresh result
@@ -162,6 +164,32 @@ export function createAgentsApi() {
 			sshRemoteId?: string
 		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
+
+		/**
+		 * Resolve the auto-detected maestro-p binary path bundled with the app.
+		 * Returns null when no bundled script is present (typical for dev builds
+		 * without an `npm run build` artifact).
+		 */
+		getMaestroPDetectedPath: (): Promise<string | null> =>
+			ipcRenderer.invoke('agents:getMaestroPDetectedPath'),
+
+		/**
+		 * Fetch the live Claude Max-plan usage snapshot map keyed by canonical
+		 * `CLAUDE_CONFIG_DIR`. Used by the renderer-side claudeUsageStore to
+		 * mirror main-process state for the mode badge and Usage Dashboard.
+		 */
+		getClaudeUsageSnapshots: (): Promise<Record<string, UsageSnapshot>> =>
+			ipcRenderer.invoke('agents:getClaudeUsageSnapshots'),
+
+		/**
+		 * Trigger a fresh `runStartupUsageSampling()` pass on main so every known
+		 * `CLAUDE_CONFIG_DIR` account re-samples `maestro-p --status` and the
+		 * snapshot store is rewritten. The dashboard / settings refresh button
+		 * calls this and then pulls the updated map back into the renderer
+		 * mirror via `claudeUsageStore.refresh()`.
+		 */
+		refreshClaudeUsageSnapshots: (): Promise<{ refreshed: number }> =>
+			ipcRenderer.invoke('claude:usage:refresh-all'),
 	};
 }
 

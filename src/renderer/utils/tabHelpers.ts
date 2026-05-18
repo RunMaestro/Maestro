@@ -741,24 +741,76 @@ export function closeTab(
 								unifiedTabOrder: finalUnifiedTabOrder,
 							};
 
-	// If the closed tab was busy and no remaining tabs are busy, clean up
-	// session-level busy state. The background process may still be running,
-	// but the UI should not show a busy indicator for a tab that no longer exists.
+	// If the closed tab was busy, keep tracking it in orphanedThinkingTabs so the
+	// thinking pill stays visible until the underlying agent process actually finishes.
+	// The pill picks these up alongside busy aiTabs. The agent exit/error listeners
+	// drop the orphan once the process is gone.
 	const closedTabWasBusy = tabToClose.state === 'busy';
 	const anyRemainingTabBusy = updatedTabs.some((tab) => tab.state === 'busy');
+	const updatedOrphans: AITab[] | undefined = closedTabWasBusy
+		? [...(session.orphanedThinkingTabs ?? []), tabToClose]
+		: session.orphanedThinkingTabs;
+	const hasOrphans = (updatedOrphans?.length ?? 0) > 0;
+	const sessionWithOrphans: Session =
+		updatedOrphans === session.orphanedThinkingTabs
+			? updatedSession
+			: { ...updatedSession, orphanedThinkingTabs: updatedOrphans };
+	// Only clear session-level busy state when nothing is thinking anywhere —
+	// neither a remaining aiTab nor an orphaned-but-still-running tab.
 	const finalSession =
-		closedTabWasBusy && !anyRemainingTabBusy && updatedSession.busySource === 'ai'
+		closedTabWasBusy &&
+		!anyRemainingTabBusy &&
+		!hasOrphans &&
+		sessionWithOrphans.busySource === 'ai'
 			? {
-					...updatedSession,
+					...sessionWithOrphans,
 					state: 'idle' as const,
 					busySource: undefined,
 					thinkingStartTime: undefined,
 				}
-			: updatedSession;
+			: sessionWithOrphans;
 
 	return {
 		closedTab,
 		session: finalSession,
+	};
+}
+
+/**
+ * Result of restoring an orphaned (still-thinking) tab back into aiTabs.
+ */
+export interface RestoreOrphanedTabResult {
+	tab: AITab;
+	session: Session;
+}
+
+/**
+ * Restore a tab from `orphanedThinkingTabs` back to `aiTabs` and make it active.
+ * Used when the user clicks the thinking pill's tab link for a tab they closed
+ * while its agent was still running — restoring brings it back into the tab bar
+ * so streaming output resumes routing to the visible tab. The tab keeps its
+ * original ID, so the still-running process re-attaches automatically.
+ */
+export function restoreOrphanedTab(
+	session: Session,
+	tabId: string
+): RestoreOrphanedTabResult | null {
+	const orphan = session.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
+	if (!orphan) return null;
+	const remainingOrphans = (session.orphanedThinkingTabs ?? []).filter((tab) => tab.id !== tabId);
+	return {
+		tab: orphan,
+		session: {
+			...session,
+			aiTabs: [...session.aiTabs, orphan],
+			activeTabId: orphan.id,
+			activeFileTabId: null,
+			activeBrowserTabId: null,
+			activeTerminalTabId: null,
+			inputMode: 'ai',
+			unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder || [], 'ai', orphan.id),
+			orphanedThinkingTabs: remainingOrphans.length > 0 ? remainingOrphans : undefined,
+		},
 	};
 }
 
@@ -802,6 +854,26 @@ export function reopenClosedTab(session: Session): ReopenTabResult | null {
 	// Pop the most recently closed tab from history
 	const [closedTabEntry, ...remainingHistory] = session.closedTabHistory;
 	const tabToRestore = closedTabEntry.tab;
+
+	// If this closed tab is still tracked as an orphan (i.e., it was busy when
+	// closed and its agent is still streaming), pull it back from orphans
+	// instead of creating a duplicate tab with a fresh ID. Reusing the original
+	// ID lets the still-running process re-attach to the visible tab.
+	const matchingOrphan = session.orphanedThinkingTabs?.find(
+		(t) =>
+			t.id === tabToRestore.id ||
+			(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+	);
+	if (matchingOrphan) {
+		const restored = restoreOrphanedTab(session, matchingOrphan.id);
+		if (restored) {
+			return {
+				tab: restored.tab,
+				session: { ...restored.session, closedTabHistory: remainingHistory },
+				wasDuplicate: false,
+			};
+		}
+	}
 
 	// Check for duplicate: does a tab with the same agentSessionId already exist?
 	// Note: null agentSessionId (new/empty tabs) are never considered duplicates
@@ -1182,6 +1254,26 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 	if (closedEntry.type === 'ai') {
 		// Restoring an AI tab
 		const tabToRestore = closedEntry.tab;
+
+		// If this closed tab is still tracked as an orphan, restore the orphan
+		// (preserving its original ID so the still-running agent re-attaches)
+		// instead of creating a duplicate tab with a fresh ID.
+		const matchingOrphan = session.orphanedThinkingTabs?.find(
+			(t) =>
+				t.id === tabToRestore.id ||
+				(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+		);
+		if (matchingOrphan) {
+			const restored = restoreOrphanedTab(session, matchingOrphan.id);
+			if (restored) {
+				return {
+					tabType: 'ai',
+					tabId: restored.tab.id,
+					session: { ...restored.session, unifiedClosedTabHistory: remainingHistory },
+					wasDuplicate: false,
+				};
+			}
+		}
 
 		// Check for duplicate: does a tab with the same agentSessionId already exist?
 		if (tabToRestore.agentSessionId !== null) {
@@ -2288,6 +2380,7 @@ export function createMergedSession(
 		unifiedClosedTabHistory: [],
 		// Default Auto Run folder path (user can change later)
 		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
+		claudeInteractive: toolType === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 	};
 
 	return { session, tabId };

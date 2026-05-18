@@ -15,6 +15,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { getAllFolderPaths } from '../utils/fileExplorer';
 import { useModalStore } from '../stores/modalStore';
 import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -170,6 +171,7 @@ interface QuickActionsModalProps {
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onOpenTabSwitcher?: () => void;
 	tabShortcuts?: Record<string, Shortcut>;
 	isAiMode?: boolean;
@@ -249,6 +251,13 @@ interface QuickActionsModalProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Execution Queue Browser
+	onOpenQueueBrowser?: () => void;
+	// New tab creation
+	onNewTab?: () => void;
+	onNewFileTab?: () => void;
+	onNewBrowserTab?: () => void;
+	onNewTerminalTab?: () => void;
 }
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
@@ -292,6 +301,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onRenameTab,
 		onToggleReadOnlyMode,
 		onToggleTabShowThinking,
+		onToggleTabEnterToSend,
 		onOpenTabSwitcher,
 		tabShortcuts,
 		isAiMode,
@@ -348,6 +358,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onConfigureCue,
+		onOpenQueueBrowser,
+		onNewTab,
+		onNewFileTab,
+		onNewBrowserTab,
+		onNewTerminalTab,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -361,6 +376,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setIdleNotificationEnabled = useSettingsStore((s) => s.setIdleNotificationEnabled);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
+	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -559,6 +575,61 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcut: shortcuts.newInstance,
 			action: addNewSession,
 		},
+		...(activeSession && onNewTab
+			? [
+					{
+						id: 'newAiChat',
+						label: 'New AI Chat',
+						subtext: 'Open a new AI chat tab in the active agent',
+						shortcut: tabShortcuts?.newTab,
+						action: () => {
+							onNewTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewFileTab
+			? [
+					{
+						id: 'newFileTab',
+						label: 'New File',
+						subtext: 'Open a new file tab in the active agent',
+						shortcut: tabShortcuts?.newFileTab,
+						action: () => {
+							onNewFileTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewBrowserTab
+			? [
+					{
+						id: 'newBrowserTab',
+						label: 'New Browser',
+						subtext: 'Open a new browser tab in the active agent',
+						shortcut: tabShortcuts?.newBrowserTab,
+						action: () => {
+							onNewBrowserTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewTerminalTab
+			? [
+					{
+						id: 'newTerminalTab',
+						label: 'New Terminal',
+						subtext: 'Open a new terminal tab in the active agent',
+						action: () => {
+							onNewTerminalTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(openWizard
 			? [
 					{
@@ -673,25 +744,27 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				]
 			: []),
 		{ id: 'createGroup', label: 'Create New Group', action: handleCreateGroup },
-		...(groups.some((g) => g.collapsed)
+		...(groups.some((g) => g.collapsed) || ungroupedCollapsed
 			? [
 					{
 						id: 'expandAllGroups',
 						label: 'Expand All Agent Groups',
 						action: () => {
 							setGroups((prev) => prev.map((g) => (g.collapsed ? { ...g, collapsed: false } : g)));
+							setUngroupedCollapsed(false);
 							setQuickActionOpen(false);
 						},
 					},
 				]
 			: []),
-		...(groups.some((g) => !g.collapsed)
+		...(groups.some((g) => !g.collapsed) || !ungroupedCollapsed
 			? [
 					{
 						id: 'collapseAllGroups',
 						label: 'Collapse All Agent Groups',
 						action: () => {
 							setGroups((prev) => prev.map((g) => (g.collapsed ? g : { ...g, collapsed: true })));
+							setUngroupedCollapsed(true);
 							setQuickActionOpen(false);
 						},
 					},
@@ -733,6 +806,48 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		...(() => {
+			if (!activeSession?.fileTree?.length) return [] as QuickAction[];
+			const allFolderPaths = getAllFolderPaths(activeSession.fileTree);
+			if (allFolderPaths.length === 0) return [] as QuickAction[];
+			const expanded = activeSession.fileExplorerExpanded ?? [];
+			const expandedSet = new Set(expanded);
+			const hasUnexpanded = allFolderPaths.some((p) => !expandedSet.has(p));
+			const hasExpanded = expanded.length > 0;
+			const sessionId = activeSession.id;
+			const items: QuickAction[] = [];
+			if (hasUnexpanded) {
+				items.push({
+					id: 'expandAllFolders',
+					label: 'Expand All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId ? { ...s, fileExplorerExpanded: allFolderPaths } : s
+							)
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			if (hasExpanded) {
+				items.push({
+					id: 'collapseAllFolders',
+					label: 'Collapse All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) => (s.id === sessionId ? { ...s, fileExplorerExpanded: [] } : s))
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			return items;
+		})(),
 		{
 			id: 'toggleSidebar',
 			label: 'Toggle Sidebar',
@@ -792,11 +907,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && onOpenTabSwitcher
+		...(onOpenTabSwitcher && activeSession?.aiTabs
 			? [
 					{
 						id: 'tabSwitcher',
 						label: 'Tab Switcher',
+						subtext: 'Search open tabs across this agent',
 						shortcut: tabShortcuts?.tabSwitcher,
 						action: () => {
 							onOpenTabSwitcher();
@@ -843,6 +959,25 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						},
 					},
 				]
+			: []),
+		...(isAiMode && onToggleTabEnterToSend
+			? (() => {
+					const activeTab = activeSession?.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					const effective = activeTab?.enterToSend ?? enterToSendAI;
+					return [
+						{
+							id: 'toggleEnterToSend',
+							label: 'Toggle Enter to Send',
+							subtext: effective
+								? 'Currently: Enter sends · click to switch this tab to Cmd+Enter'
+								: 'Currently: Cmd+Enter sends · click to switch this tab to Enter',
+							action: () => {
+								onToggleTabEnterToSend();
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
 			: []),
 		...(isAiMode && onToggleMarkdownEditMode
 			? [
@@ -1273,6 +1408,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		...(onOpenQueueBrowser
+			? [
+					{
+						id: 'executionQueue',
+						label: 'View Execution Queue',
+						subtext: 'Browse and manage queued prompts across agents',
+						action: () => {
+							onOpenQueueBrowser();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(setUsageDashboardOpen
 			? [
 					{

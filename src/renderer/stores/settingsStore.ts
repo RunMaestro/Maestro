@@ -211,6 +211,34 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	maestroCue: false,
 };
 
+// File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
+// Settings → Display → File Edit & Preview. Buttons can be hidden but the
+// underlying actions stay reachable via the command palette and hotkeys.
+export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
+	'save',
+	'wordWrap',
+	'remoteImages',
+	'htmlRender',
+	'previewTier',
+	'editToggle',
+	'copyContent',
+	'publishGist',
+	'documentGraph',
+	'openInBrowser',
+	'openInDefault',
+	'copyPath',
+] as const;
+
+export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
+
+export type FilePreviewToolbarVisibility = Record<FilePreviewToolbarButton, boolean>;
+
+export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibility =
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.reduce((acc, k) => {
+		acc[k] = true;
+		return acc;
+	}, {} as FilePreviewToolbarVisibility);
+
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
@@ -333,6 +361,7 @@ export interface SettingsStoreState {
 	colorBlindMode: boolean;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
+	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -352,6 +381,7 @@ export interface SettingsStoreState {
 	sshRemoteHonorGitignore: boolean;
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
+	htmlDoubleClickOpensInBrowser: boolean;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
@@ -375,6 +405,13 @@ export interface SettingsStoreState {
 	showWorktreeBranchName: boolean;
 	showLeftPanelGroupMemberCount: boolean;
 	showLeftPanelLocationPills: boolean;
+	showLeftPanelGitIndicator: boolean;
+	showLeftPanelCueIndicator: boolean;
+	showLeftPanelStartupCommandIndicator: boolean;
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	fileEditShowLineNumbers: boolean;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
@@ -451,6 +488,7 @@ export interface SettingsStoreActions {
 	setColorBlindMode: (value: boolean) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -469,6 +507,7 @@ export interface SettingsStoreActions {
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
@@ -492,6 +531,12 @@ export interface SettingsStoreActions {
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
+	setShowLeftPanelGitIndicator: (value: boolean) => void;
+	setShowLeftPanelCueIndicator: (value: boolean) => void;
+	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+	setFileEditWordWrap: (value: boolean) => void;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
@@ -647,6 +692,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		colorBlindMode: false,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
+		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -666,6 +712,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		sshRemoteHonorGitignore: true,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+		htmlDoubleClickOpensInBrowser: false,
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
 		newBrowserTabPlacement: 'after-current',
@@ -689,6 +736,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showWorktreeBranchName: false,
 		showLeftPanelGroupMemberCount: false,
 		showLeftPanelLocationPills: true,
+		showLeftPanelGitIndicator: true,
+		showLeftPanelCueIndicator: true,
+		showLeftPanelStartupCommandIndicator: true,
+		fileEditWordWrap: true,
+		fileEditShowLineNumbers: true,
+		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
@@ -1067,6 +1120,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
 		},
 
+		setUseCmd0AsLastTab: (value) => {
+			set({ useCmd0AsLastTab: value });
+			window.maestro.settings.set('useCmd0AsLastTab', value);
+		},
+
 		setDocumentGraphShowExternalLinks: (value) => {
 			set({ documentGraphShowExternalLinks: value });
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
@@ -1174,6 +1232,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setBrowserHomeUrl: (value) => {
 			set({ browserHomeUrl: value });
 			window.maestro.settings.set('browserHomeUrl', value);
+		},
+
+		setHtmlDoubleClickOpensInBrowser: (value) => {
+			set({ htmlDoubleClickOpensInBrowser: value });
+			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
 		},
 
 		setAutomaticTabNamingEnabled: (value) => {
@@ -1289,6 +1352,40 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowLeftPanelLocationPills: (value) => {
 			set({ showLeftPanelLocationPills: value });
 			window.maestro.settings.set('showLeftPanelLocationPills', value);
+		},
+
+		setShowLeftPanelGitIndicator: (value) => {
+			set({ showLeftPanelGitIndicator: value });
+			window.maestro.settings.set('showLeftPanelGitIndicator', value);
+		},
+
+		setShowLeftPanelCueIndicator: (value) => {
+			set({ showLeftPanelCueIndicator: value });
+			window.maestro.settings.set('showLeftPanelCueIndicator', value);
+		},
+
+		setShowLeftPanelStartupCommandIndicator: (value) => {
+			set({ showLeftPanelStartupCommandIndicator: value });
+			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
+		},
+
+		setFileEditWordWrap: (value) => {
+			set({ fileEditWordWrap: value });
+			window.maestro.settings.set('fileEditWordWrap', value);
+		},
+
+		setFileEditShowLineNumbers: (value) => {
+			set({ fileEditShowLineNumbers: value });
+			window.maestro.settings.set('fileEditShowLineNumbers', value);
+		},
+
+		setFilePreviewToolbarButtonVisibility: (button, value) => {
+			const next: FilePreviewToolbarVisibility = {
+				...get().filePreviewToolbarVisibility,
+				[button]: value,
+			};
+			set({ filePreviewToolbarVisibility: next });
+			window.maestro.settings.set('filePreviewToolbarVisibility', next);
 		},
 
 		setModeratorStandingInstructions: (value) => {
@@ -2252,6 +2349,9 @@ export async function loadAllSettings(): Promise<void> {
 				'showFilePreviewsInUnreadFilter'
 			] as boolean;
 
+		if (allSettings['useCmd0AsLastTab'] !== undefined)
+			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
+
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
 			patch.documentGraphShowExternalLinks = allSettings[
@@ -2375,6 +2475,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['browserHomeUrl'] !== undefined)
 			patch.browserHomeUrl = allSettings['browserHomeUrl'] as string;
 
+		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
+			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
+
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
 
@@ -2473,6 +2576,32 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['showLeftPanelLocationPills'] !== undefined)
 			patch.showLeftPanelLocationPills = allSettings['showLeftPanelLocationPills'] as boolean;
+
+		if (allSettings['showLeftPanelGitIndicator'] !== undefined)
+			patch.showLeftPanelGitIndicator = allSettings['showLeftPanelGitIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelCueIndicator'] !== undefined)
+			patch.showLeftPanelCueIndicator = allSettings['showLeftPanelCueIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelStartupCommandIndicator'] !== undefined)
+			patch.showLeftPanelStartupCommandIndicator = allSettings[
+				'showLeftPanelStartupCommandIndicator'
+			] as boolean;
+
+		if (allSettings['fileEditWordWrap'] !== undefined)
+			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
+
+		if (allSettings['fileEditShowLineNumbers'] !== undefined)
+			patch.fileEditShowLineNumbers = allSettings['fileEditShowLineNumbers'] as boolean;
+
+		// Toolbar visibility merges with defaults so new buttons added in a
+		// future release default to visible even for users with persisted state.
+		if (allSettings['filePreviewToolbarVisibility'] !== undefined) {
+			patch.filePreviewToolbarVisibility = {
+				...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY,
+				...(allSettings['filePreviewToolbarVisibility'] as Partial<FilePreviewToolbarVisibility>),
+			};
+		}
 
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
@@ -2652,6 +2781,12 @@ export function getSettingsActions() {
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
 		setShowLeftPanelLocationPills: state.setShowLeftPanelLocationPills,
+		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
+		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
+		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setFileEditWordWrap: state.setFileEditWordWrap,
+		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
+		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,

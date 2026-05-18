@@ -117,8 +117,9 @@ describe('DirectorNotesModal', () => {
 				expect(screen.getByText('Unified History')).toBeInTheDocument();
 				expect(screen.getByText('AI Overview')).toBeInTheDocument();
 				expect(screen.getByText('Help')).toBeInTheDocument();
-				// Title row with "Director's Notes" heading
-				expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+				// Title includes the lookback cutoff date for the current window
+				// (defaultLookbackDays=7 → "Director's Notes Since <weekday> <month> <day><ordinal>")
+				expect(screen.getByText(/^Director's Notes Since /)).toBeInTheDocument();
 			});
 		});
 
