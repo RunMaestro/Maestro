@@ -952,6 +952,22 @@ export function useBatchRunner({
 									success: false, // Mark as unsuccessful since we couldn't complete
 								});
 
+								// Surface the stall in a toast so the user sees it without having to
+								// open the history panel — pre-toast, silent stalls (token exhaustion,
+								// watchdog timeouts, agents that loop writing "I did nothing" notes)
+								// could go unnoticed for hours. Yellow/warning conveys "we noticed
+								// something is wrong and stopped this doc," click jumps to the session.
+								notifyToast({
+									type: 'warning',
+									title: isWatchdogFailure ? 'Auto Run agent stalled' : 'Auto Run document stalled',
+									message:
+										documents.length > 1
+											? `${docEntry.filename}: ${newRemainingTasks} task${newRemainingTasks === 1 ? '' : 's'} remaining. Skipping to next document.`
+											: `${docEntry.filename}: ${newRemainingTasks} task${newRemainingTasks === 1 ? '' : 's'} remaining. No more documents to process.`,
+									project: session.name,
+									sessionId,
+								});
+
 								// Skip to the next document instead of breaking the entire batch
 								break; // Break out of the inner while loop for this document
 							}
