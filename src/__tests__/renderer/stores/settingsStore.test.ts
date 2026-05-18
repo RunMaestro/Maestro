@@ -41,6 +41,8 @@ function resetStore() {
 		customThemeBaseId: 'dracula',
 		enterToSendAI: false,
 		enterToSendTerminal: true,
+		forcedParallelExecution: false,
+		forcedParallelAcknowledged: false,
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
@@ -140,6 +142,8 @@ describe('settingsStore', () => {
 			expect(state.customThemeBaseId).toBe('dracula');
 			expect(state.enterToSendAI).toBe(false);
 			expect(state.enterToSendTerminal).toBe(true);
+			expect(state.forcedParallelExecution).toBe(false);
+			expect(state.forcedParallelAcknowledged).toBe(false);
 			expect(state.defaultSaveToHistory).toBe(true);
 			expect(state.defaultShowThinking).toBe('off');
 			expect(state.leftSidebarWidth).toBe(256);
@@ -307,6 +311,24 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setEnterToSendTerminal(false);
 				expect(useSettingsStore.getState().enterToSendTerminal).toBe(false);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('enterToSendTerminal', false);
+			});
+
+			it('setForcedParallelExecution updates state and persists', () => {
+				useSettingsStore.getState().setForcedParallelExecution(true);
+				expect(useSettingsStore.getState().forcedParallelExecution).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'forcedParallelExecution',
+					true,
+				);
+			});
+
+			it('setForcedParallelAcknowledged updates state and persists', () => {
+				useSettingsStore.getState().setForcedParallelAcknowledged(true);
+				expect(useSettingsStore.getState().forcedParallelAcknowledged).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'forcedParallelAcknowledged',
+					true,
+				);
 			});
 
 			it('setDefaultSaveToHistory updates state and persists', () => {
