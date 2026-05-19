@@ -17,7 +17,6 @@ import {
 	estimateTokenCount,
 	truncatePath,
 	truncateCommand,
-	abbreviateGroupName,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -495,61 +494,6 @@ describe('shared/formatters', () => {
 			expect(truncateCommand('')).toBe('');
 			expect(truncateCommand('   ')).toBe('');
 			expect(truncateCommand('\n\n')).toBe('');
-		});
-	});
-
-	// ==========================================================================
-	// abbreviateGroupName tests
-	// ==========================================================================
-	describe('abbreviateGroupName', () => {
-		it('returns short names unchanged', () => {
-			expect(abbreviateGroupName('Work')).toBe('Work');
-			expect(abbreviateGroupName('Personal')).toBe('Personal'); // 8 chars
-			expect(abbreviateGroupName('Side Gigs')).toBe('Side Gigs'); // 9 chars, under max
-			expect(abbreviateGroupName('TenChars10')).toBe('TenChars10'); // exactly max
-		});
-
-		it('preserves whitespace trimming', () => {
-			expect(abbreviateGroupName('  Work  ')).toBe('Work');
-		});
-
-		it('handles empty input', () => {
-			expect(abbreviateGroupName('')).toBe('');
-			expect(abbreviateGroupName('   ')).toBe('');
-		});
-
-		it('builds "&"-joined acronym for "X & Y" names', () => {
-			expect(abbreviateGroupName('AMINI & CONANT')).toBe('A&C');
-			expect(abbreviateGroupName('amini & conant')).toBe('A&C');
-			expect(abbreviateGroupName('Amini&Conant')).toBe('A&C');
-			expect(abbreviateGroupName('Foo & Bar & Baz')).toBe('F&B&B');
-		});
-
-		it('treats " and " as a conjunction', () => {
-			expect(abbreviateGroupName('Research and Development')).toBe('R&D');
-			expect(abbreviateGroupName('Sales AND Marketing')).toBe('S&M');
-		});
-
-		it('takes initials for multi-word names without conjunctions', () => {
-			expect(abbreviateGroupName('Acme Corporation Limited')).toBe('ACL');
-			expect(abbreviateGroupName('staging_environment_two')).toBe('SET');
-			expect(abbreviateGroupName('client-facing-team')).toBe('CFT');
-		});
-
-		it('strips vowels from single long words, preserving the first character', () => {
-			expect(abbreviateGroupName('Engineering')).toBe('Engnrng');
-			expect(abbreviateGroupName('Documentation')).toBe('Dcmnttn');
-			expect(abbreviateGroupName('Astonishment')).toBe('Astnshmnt');
-		});
-
-		it('hard-truncates devoweled output that is still too long', () => {
-			// 23 chars, devowels to 19 → truncate at default max (10)
-			expect(abbreviateGroupName('Pneumonoultramicroscop')).toBe('Pnmnltrmcr');
-		});
-
-		it('respects custom target/max', () => {
-			expect(abbreviateGroupName('Engineering', { max: 5 })).toBe('Engnr');
-			expect(abbreviateGroupName('TenChars10', { max: 5 })).toBe('TnChr');
 		});
 	});
 });
