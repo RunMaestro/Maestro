@@ -141,6 +141,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
 	const notificationBtnRef = useRef<HTMLButtonElement>(null);
 
+	// In-memory message history for up/down arrow navigation
+	const inputHistoryRef = useRef<string[]>([]);
+	const historyIndexRef = useRef<number>(-1);
+	const historyDraftRef = useRef<string>('');
+
 	// Build list of mentionable items: groups first, then individual agents
 	// Groups expand into all their member @mentions when selected
 	const mentionItems = useMemo(() => {
@@ -229,7 +234,15 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const handleSend = useCallback(() => {
 		// Allow sending even when busy - messages will be queued in App.tsx
 		if (message.trim()) {
-			onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
+			const trimmed = message.trim();
+			// Record to in-memory history (skip consecutive duplicates)
+			if (inputHistoryRef.current[inputHistoryRef.current.length - 1] !== trimmed) {
+				inputHistoryRef.current.push(trimmed);
+				if (inputHistoryRef.current.length > 100) inputHistoryRef.current.shift();
+			}
+			historyIndexRef.current = -1;
+			historyDraftRef.current = '';
+			onSend(trimmed, stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
 			setMessage('');
 			setStagedImages([]);
 			onDraftChange?.('');
@@ -297,6 +310,72 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				}
 			}
 
+			// ArrowUp at position 0: navigate to previous sent message
+			if (e.key === 'ArrowUp') {
+				const textarea = inputRef.current;
+				if (textarea?.selectionStart === 0) {
+					const history = inputHistoryRef.current;
+					if (history.length > 0) {
+						const currentIndex = historyIndexRef.current;
+						let newIndex: number;
+						if (currentIndex === -1) {
+							// Start navigating — save current draft
+							historyDraftRef.current = textarea.value;
+							newIndex = history.length - 1;
+						} else if (currentIndex > 0) {
+							newIndex = currentIndex - 1;
+						} else {
+							// Already at oldest
+							return;
+						}
+						historyIndexRef.current = newIndex;
+						e.preventDefault();
+						setMessage(history[newIndex]);
+						// Keep cursor at 0 so next ArrowUp immediately triggers again
+						requestAnimationFrame(() => {
+							if (inputRef.current) {
+								inputRef.current.selectionStart = 0;
+								inputRef.current.selectionEnd = 0;
+							}
+						});
+					}
+					return;
+				}
+			}
+
+			// ArrowDown while navigating: go forward, restore draft at the end
+			if (e.key === 'ArrowDown' && historyIndexRef.current !== -1) {
+				const history = inputHistoryRef.current;
+				const currentIndex = historyIndexRef.current;
+				e.preventDefault();
+				if (currentIndex < history.length - 1) {
+					const newIndex = currentIndex + 1;
+					historyIndexRef.current = newIndex;
+					setMessage(history[newIndex]);
+					// Still navigating: keep cursor at 0 so ArrowUp/Down continue to work
+					requestAnimationFrame(() => {
+						if (inputRef.current) {
+							inputRef.current.selectionStart = 0;
+							inputRef.current.selectionEnd = 0;
+						}
+					});
+				} else {
+					// At newest — restore the saved draft
+					const draft = historyDraftRef.current;
+					historyIndexRef.current = -1;
+					historyDraftRef.current = '';
+					setMessage(draft);
+					// Draft restored: move cursor to end for normal editing
+					requestAnimationFrame(() => {
+						if (inputRef.current) {
+							inputRef.current.selectionStart = draft.length;
+							inputRef.current.selectionEnd = draft.length;
+						}
+					});
+				}
+				return;
+			}
+
 			// Handle send based on enterToSend setting (plain Enter, no modifier)
 			if (enterToSend) {
 				if (e.key === 'Enter' && !e.shiftKey) {
@@ -315,6 +394,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			setReadOnlyMode,
 			stagedImages,
 			onOpenLightbox,
+			inputRef,
 		]
 	);
 

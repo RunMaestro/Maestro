@@ -43,3 +43,7 @@ export type { UseInputHandlersDeps, UseInputHandlersReturn } from './useInputHan
 // Input mode toggle (Tier 3A)
 export { useInputMode } from './useInputMode';
 export type { UseInputModeDeps, UseInputModeReturn } from './useInputMode';
+
+// AI message history navigation (up/down arrow)
+export { useAIMessageHistory } from './useAIMessageHistory';
+export type { UseAIMessageHistoryReturn } from './useAIMessageHistory';

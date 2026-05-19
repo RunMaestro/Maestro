@@ -30,6 +30,7 @@ import type { TabCompletionSuggestion } from './useTabCompletion';
 import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { useAIMessageHistory } from './useAIMessageHistory';
 
 // ============================================================================
 // Dependencies interface
@@ -276,6 +277,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Sub-hook calls
 	// ====================================================================
 
+	// AI input history (in-memory, per-session)
+	const {
+		navigateBack: navigateHistoryBack,
+		navigateForward: navigateHistoryForward,
+		recordMessage: recordMessageToHistory,
+		isNavigating: isNavigatingHistory,
+	} = useAIMessageHistory();
+
 	// Input sync handlers
 	const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(activeSession, {
 		setSessions,
@@ -434,6 +443,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		recordMessageToHistory,
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
@@ -459,6 +469,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		getTabCompletionSuggestions,
 		inputRef,
 		terminalOutputRef,
+		navigateHistoryBack,
+		navigateHistoryForward,
+		isNavigatingHistory,
 	});
 
 	// ====================================================================

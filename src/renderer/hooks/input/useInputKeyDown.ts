@@ -50,6 +50,12 @@ export interface InputKeyDownDeps {
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>;
+	/** Navigate backward in AI message history (returns value to set, or null if no-op) */
+	navigateHistoryBack: (sessionId: string, currentValue: string) => string | null;
+	/** Navigate forward in AI message history (returns value to set, or null if not navigating) */
+	navigateHistoryForward: (sessionId: string) => string | null;
+	/** Returns true when the user is mid-navigation (so ArrowDown can be intercepted) */
+	isNavigatingHistory: (sessionId: string) => boolean;
 }
 
 // ============================================================================
@@ -76,6 +82,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		getTabCompletionSuggestions,
 		inputRef,
 		terminalOutputRef,
+		navigateHistoryBack,
+		navigateHistoryForward,
+		isNavigatingHistory,
 	} = deps;
 
 	// --- InputContext state (completion dropdowns) ---
@@ -315,6 +324,41 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setCommandHistoryOpen(true);
 					setCommandHistoryFilter(inputValue);
 					setCommandHistorySelectedIndex(0);
+				} else if (activeSession?.inputMode === 'ai') {
+					const textarea = inputRef.current;
+					if (textarea?.selectionStart === 0) {
+						const prev = navigateHistoryBack(activeSession.id, inputValue);
+						if (prev !== null) {
+							e.preventDefault();
+							setInputValue(prev);
+							// Keep cursor at position 0 so the next ArrowUp immediately
+							// triggers another history step without a wasted press
+							requestAnimationFrame(() => {
+								if (inputRef.current) {
+									inputRef.current.selectionStart = 0;
+									inputRef.current.selectionEnd = 0;
+								}
+							});
+						}
+					}
+				}
+			} else if (e.key === 'ArrowDown') {
+				if (activeSession?.inputMode === 'ai' && isNavigatingHistory(activeSession.id)) {
+					e.preventDefault();
+					const next = navigateHistoryForward(activeSession.id);
+					if (next !== null) {
+						setInputValue(next);
+						// Still navigating: keep cursor at 0 so ArrowUp/Down continue to work
+						// Draft restored (index back to -1): move cursor to end for normal editing
+						const stillNavigating = isNavigatingHistory(activeSession.id);
+						requestAnimationFrame(() => {
+							if (inputRef.current) {
+								const pos = stillNavigating ? 0 : next.length;
+								inputRef.current.selectionStart = pos;
+								inputRef.current.selectionEnd = pos;
+							}
+						});
+					}
 				}
 			} else if (e.key === 'Tab') {
 				e.preventDefault();
@@ -370,6 +414,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			setCommandHistoryOpen,
 			setCommandHistoryFilter,
 			setCommandHistorySelectedIndex,
+			navigateHistoryBack,
+			navigateHistoryForward,
+			isNavigatingHistory,
 		]
 	);
 

@@ -70,6 +70,9 @@ function createMockDeps(overrides: Partial<InputKeyDownDeps> = {}): InputKeyDown
 		getTabCompletionSuggestions: vi.fn().mockReturnValue([]),
 		inputRef: { current: { focus: vi.fn(), blur: vi.fn() } } as any,
 		terminalOutputRef: { current: { focus: vi.fn() } } as any,
+		navigateHistoryBack: vi.fn().mockReturnValue(null),
+		navigateHistoryForward: vi.fn().mockReturnValue(null),
+		isNavigatingHistory: vi.fn().mockReturnValue(false),
 		...overrides,
 	};
 }
