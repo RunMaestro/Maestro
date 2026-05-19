@@ -431,6 +431,7 @@ export interface SettingsStoreState {
 	annotatorTextColor: string;
 	annotatorTextSize: number;
 	annotatorTextFont: string;
+	annotatorTextBgColor: string;
 }
 
 export interface SettingsStoreActions {
@@ -559,6 +560,7 @@ export interface SettingsStoreActions {
 	setAnnotatorTextColor: (value: string) => void;
 	setAnnotatorTextSize: (value: number) => void;
 	setAnnotatorTextFont: (value: string) => void;
+	setAnnotatorTextBgColor: (value: string) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -767,6 +769,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorTextColor: '#9146FF',
 		annotatorTextSize: 24,
 		annotatorTextFont: 'sans-serif',
+		annotatorTextBgColor: '',
 
 		// ============================================================================
 		// Simple Setters
@@ -1494,6 +1497,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAnnotatorTextFont: (value) => {
 			set({ annotatorTextFont: value });
 			window.maestro.settings.set('annotatorTextFont', value);
+		},
+
+		setAnnotatorTextBgColor: (value) => {
+			set({ annotatorTextBgColor: value });
+			window.maestro.settings.set('annotatorTextBgColor', value);
 		},
 
 		// ============================================================================
@@ -2683,6 +2691,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['annotatorTextFont'] !== undefined)
 			patch.annotatorTextFont = allSettings['annotatorTextFont'] as string;
+
+		if (allSettings['annotatorTextBgColor'] !== undefined)
+			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
 
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;

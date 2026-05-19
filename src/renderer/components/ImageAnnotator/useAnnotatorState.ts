@@ -68,6 +68,8 @@ export interface TextStyle {
 	color: string;
 	size: number;
 	font: string;
+	/** Background fill behind the text. `null` means no background (transparent). */
+	bgColor: string | null;
 }
 
 /**

@@ -191,6 +191,7 @@ function ImageAnnotatorContent({
 				open={drawerOpen}
 				onClose={() => setDrawerOpen(false)}
 				theme={theme}
+				state={state}
 			/>
 		</div>
 	);

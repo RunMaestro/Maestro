@@ -84,6 +84,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextColor: '#9146FF',
 	annotatorTextSize: 24,
 	annotatorTextFont: 'sans-serif',
+	annotatorTextBgColor: '',
 	globalShowHotkey: [],
 };
 

@@ -307,6 +307,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'sans-serif',
 		category: 'appearance',
 	},
+	annotatorTextBgColor: {
+		description:
+			'Default background color (hex string) behind image annotator text labels. Empty string means no background.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
 
 	// --- Editor / UI Behavior ---
 	spellCheck: {

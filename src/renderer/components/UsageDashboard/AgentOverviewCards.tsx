@@ -118,6 +118,10 @@ function isSessionHighlighted(session: Session, activeFilterKey: string | null):
 	return !session.parentSessionId && session.toolType === activeFilterKey;
 }
 
+/** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
+ *  (the default sort has no per-card highlight). */
+type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
+
 interface AgentCardProps {
 	session: Session;
 	data: StatsAggregation;
@@ -128,6 +132,9 @@ interface AgentCardProps {
 	isSelected: boolean;
 	/** All visible sessions; needed to disambiguate the provider-fallback count */
 	visibleSessions: Session[];
+	/** Which stat to color-emphasize so it's obvious what the cards are sorted by.
+	 *  `null` (Name sort, the default) leaves all stats in their neutral color. */
+	highlightedStat: HighlightedStat;
 	/** Click handler for the entire card. When provided, the tile becomes a
 	 *  button that opens the per-agent stats sub-modal and gains a hover
 	 *  affordance to signal clickability. */
@@ -141,6 +148,7 @@ const AgentCard = memo(function AgentCard({
 	animationIndex,
 	isSelected,
 	visibleSessions,
+	highlightedStat,
 	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
@@ -255,9 +263,13 @@ const AgentCard = memo(function AgentCard({
 				{ageLabel && (
 					<span
 						className="flex-shrink-0 text-[10px] tabular-nums"
-						style={{ color: theme.colors.textDim }}
+						style={{
+							color: highlightedStat === 'created' ? theme.colors.accent : theme.colors.textDim,
+							fontWeight: highlightedStat === 'created' ? 600 : undefined,
+						}}
 						title={ageTitle}
 						data-testid="agent-card-age"
+						data-highlighted={highlightedStat === 'created' ? 'true' : undefined}
 					>
 						{ageLabel}
 					</span>
@@ -278,14 +290,19 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Queries
 						</span>
 						<span
 							className="text-base font-semibold"
-							style={{ color: theme.colors.textMain }}
+							style={{
+								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textMain,
+							}}
 							data-testid="agent-card-query-count"
+							data-highlighted={highlightedStat === 'queries' ? 'true' : undefined}
 						>
 							{queryCount}
 						</span>
@@ -293,14 +310,19 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Tabs
 						</span>
 						<span
 							className="text-base font-semibold"
-							style={{ color: theme.colors.textMain }}
+							style={{
+								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textMain,
+							}}
 							data-testid="agent-card-tab-count"
+							data-highlighted={highlightedStat === 'tabs' ? 'true' : undefined}
 						>
 							{tabCount}
 						</span>
@@ -308,16 +330,24 @@ const AgentCard = memo(function AgentCard({
 					<div className="flex flex-col min-w-0">
 						<span
 							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
+							style={{
+								color: highlightedStat === 'auto' ? theme.colors.accent : theme.colors.textDim,
+							}}
 						>
 							Auto %
 						</span>
 						<span
 							className="text-base font-semibold"
 							style={{
-								color: autoPercent === null ? theme.colors.textDim : theme.colors.textMain,
+								color:
+									highlightedStat === 'auto' && autoPercent !== null
+										? theme.colors.accent
+										: autoPercent === null
+											? theme.colors.textDim
+											: theme.colors.textMain,
 							}}
 							data-testid="agent-card-auto-pct"
+							data-highlighted={highlightedStat === 'auto' ? 'true' : undefined}
 							title={
 								autoPercent === null
 									? 'No recorded queries'
@@ -480,6 +510,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 						animationIndex={index}
 						isSelected={isSessionHighlighted(session, activeFilterKey)}
 						visibleSessions={activeSessions}
+						highlightedStat={sortMode === 'name' ? null : sortMode}
 						onShowDetails={onShowAgentDetails}
 					/>
 				))}

@@ -182,6 +182,7 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		const textColor = useSettingsStore((s) => s.annotatorTextColor);
 		const textSize = useSettingsStore((s) => s.annotatorTextSize);
 		const textFont = useSettingsStore((s) => s.annotatorTextFont);
+		const textBgColor = useSettingsStore((s) => s.annotatorTextBgColor);
 
 		const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 		const [isShiftHeld, setIsShiftHeld] = useState(false);
@@ -387,7 +388,12 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				if (editingTextId) commitTextEditing();
 				const pt = clientToImage(e.clientX, e.clientY);
 				if (pt) {
-					beginText(pt[0], pt[1], { color: textColor, size: textSize, font: textFont });
+					beginText(pt[0], pt[1], {
+						color: textColor,
+						size: textSize,
+						font: textFont,
+						bgColor: textBgColor === '' ? null : textBgColor,
+					});
 				}
 				return;
 			}
@@ -859,30 +865,55 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		// SVG `<text>` rasterizes cleanly through the composite path; we render
 		// one `<tspan>` per line so newlines survive. `dominant-baseline="hanging"`
 		// makes y the top of the glyphs, matching how the inline editor positions
-		// the textarea.
+		// the textarea. When `bgColor` is set, a rounded `<rect>` is rendered
+		// behind the glyphs using the same approximate bbox we use for the
+		// selection chrome.
 		const renderTextElement = (textBox: TextBox) => {
 			const lines = textBox.value === '' ? [''] : textBox.value.split('\n');
+			const interactionStyle = {
+				pointerEvents: textPointerEvents,
+				cursor: tool === 'text' ? 'move' : tool === 'eraser' ? 'pointer' : 'default',
+				userSelect: 'none' as const,
+			};
+			const onPointerDown = (e: React.PointerEvent<SVGElement>) =>
+				handleTextPointerDown(textBox, e);
+			const bg = textBox.style.bgColor;
+			// Pad the bg slightly past the glyph bbox so descenders / wide chars
+			// don't hug the edge.
+			const pad = Math.max(4, textBox.style.size * 0.18);
+			const { w: bw, h: bh } = textBBoxOf(textBox);
 			return (
-				<text
-					x={textBox.x}
-					y={textBox.y}
-					fill={textBox.style.color}
-					fontSize={textBox.style.size}
-					fontFamily={textBox.style.font}
-					dominantBaseline="hanging"
-					style={{
-						pointerEvents: textPointerEvents,
-						cursor: tool === 'text' ? 'move' : tool === 'eraser' ? 'pointer' : 'default',
-						userSelect: 'none',
-					}}
-					onPointerDown={(e) => handleTextPointerDown(textBox, e)}
-				>
-					{lines.map((line, idx) => (
-						<tspan key={idx} x={textBox.x} dy={idx === 0 ? 0 : textBox.style.size * 1.25}>
-							{line === '' ? ' ' : line}
-						</tspan>
-					))}
-				</text>
+				<g>
+					{bg && (
+						<rect
+							x={textBox.x - pad}
+							y={textBox.y - pad}
+							width={bw + pad * 2}
+							height={bh + pad * 2}
+							fill={bg}
+							rx={pad * 0.6}
+							ry={pad * 0.6}
+							style={interactionStyle}
+							onPointerDown={onPointerDown}
+						/>
+					)}
+					<text
+						x={textBox.x}
+						y={textBox.y}
+						fill={textBox.style.color}
+						fontSize={textBox.style.size}
+						fontFamily={textBox.style.font}
+						dominantBaseline="hanging"
+						style={interactionStyle}
+						onPointerDown={onPointerDown}
+					>
+						{lines.map((line, idx) => (
+							<tspan key={idx} x={textBox.x} dy={idx === 0 ? 0 : textBox.style.size * 1.25}>
+								{line === '' ? ' ' : line}
+							</tspan>
+						))}
+					</text>
+				</g>
 			);
 		};
 
