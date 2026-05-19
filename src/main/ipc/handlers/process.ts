@@ -648,6 +648,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
+				// For local (non-SSH) spawns, prepend the parent dir of the detected
+				// agent binary to PATH. Covers npm-style script agents (codex,
+				// claude, etc.) installed alongside a non-standard `node` that's
+				// outside our hardcoded version-manager paths — the script's
+				// `#!/usr/bin/env node` shebang needs that node on PATH.
+				// SSH path is built separately on the remote and must not inherit
+				// any local directories.
+				const localAgentBinDir =
+					!sshRemoteUsed && agent?.path ? path.dirname(agent.path) : undefined;
+
 				const result = processManager.spawn({
 					...config,
 					command: commandToSpawn,
@@ -679,6 +689,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sshRemoteHost: sshRemoteUsed?.host,
 					// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 					sshStdinScript,
+					// Extra dirs to prepend to spawn PATH (local non-SSH only)
+					extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 				});
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {

@@ -425,6 +425,19 @@ app
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 
+		// Warm the login-shell PATH cache early so the first agent spawn picks up
+		// the user's custom PATH (e.g. node installs outside our hardcoded
+		// version-manager paths). Fire-and-forget: failures are logged inside
+		// path-prober and the spawn flow tolerates a missing cache.
+		void (async () => {
+			try {
+				const { refreshShellPath } = await import('./runtime/getShellPath');
+				await refreshShellPath();
+			} catch {
+				// Probe failures are non-fatal; spawn falls back to hardcoded paths.
+			}
+		})();
+
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
 		// so an unhandled error later in startup can't silently leave maestro-cli
