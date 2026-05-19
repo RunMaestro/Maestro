@@ -47,6 +47,9 @@ export function EditAgentModal({
 	const [customPath, setCustomPath] = useState('');
 	const [customArgs, setCustomArgs] = useState('');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
+	const [enableMaestroP, setEnableMaestroP] = useState(false);
+	const [maestroPPath, setMaestroPPath] = useState('');
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -87,6 +90,15 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+
+	// Resolve the auto-detected maestro-p path so the Batch Mode toggle can show
+	// it as helper text in the path-override input.
+	useEffect(() => {
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
+	}, []);
 
 	// Load agent info, config, custom settings, and models when modal opens or provider changes
 	useEffect(() => {
@@ -223,10 +235,14 @@ export function EditAgentModal({
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setEnableMaestroP(false);
+			setMaestroPPath('');
 		} else {
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
+			setEnableMaestroP(session.enableMaestroP ?? false);
+			setMaestroPPath(session.maestroPPath ?? '');
 		}
 
 		return () => {
@@ -327,7 +343,9 @@ export function EditAgentModal({
 			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
 			modelValue,
 			contextWindowValue,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			enableMaestroP || undefined,
+			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined
 		);
 		onClose();
 	}, [
@@ -338,6 +356,8 @@ export function EditAgentModal({
 		customPath,
 		customArgs,
 		customEnvVars,
+		enableMaestroP,
+		maestroPPath,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -636,6 +656,14 @@ export function EditAgentModal({
 							refreshingAgent={refreshingAgent}
 							showBuiltInEnvVars
 							isSshEnabled={isSshEnabled}
+							enableMaestroP={enableMaestroP}
+							onEnableMaestroPChange={setEnableMaestroP}
+							maestroPPath={maestroPPath}
+							onMaestroPPathChange={setMaestroPPath}
+							onMaestroPPathBlur={() => {
+								/* Saved on modal save */
+							}}
+							detectedMaestroPPath={detectedMaestroPPath}
 						/>
 					</div>
 				)}

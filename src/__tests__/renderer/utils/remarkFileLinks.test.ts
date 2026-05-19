@@ -802,6 +802,29 @@ describe('remarkFileLinks', () => {
 		});
 	});
 
+	describe('bare maestro:// deep links', () => {
+		it('auto-linkifies a bare maestro:// URL in running text', async () => {
+			const result = await processMarkdown(
+				'Go to maestro://session/abc/tab/xyz now.',
+				sampleFileTree,
+				''
+			);
+			// remark-stringify emits CommonMark autolinks as <url> when the link
+			// text equals the URL, which is what we get when we wrap a bare URL.
+			expect(result).toContain('<maestro://session/abc/tab/xyz>');
+		});
+
+		it('does not rewrite an explicit markdown link with a maestro:// href', async () => {
+			const result = await processMarkdown(
+				'See [the agent](maestro://group/grp1).',
+				sampleFileTree,
+				''
+			);
+			expect(result).toContain('[the agent](maestro://group/grp1)');
+			expect(result).not.toContain('maestro-file://');
+		});
+	});
+
 	describe('remarkFileLinks with pre-built indices', () => {
 		it('uses pre-built indices when provided', async () => {
 			const indices = buildFileTreeIndices(sampleFileTree);

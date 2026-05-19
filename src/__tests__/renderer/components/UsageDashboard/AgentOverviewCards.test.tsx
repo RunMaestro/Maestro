@@ -367,6 +367,51 @@ describe('AgentOverviewCards', () => {
 		});
 	});
 
+	describe('Created / age', () => {
+		it('renders an age badge per session when createdAt is set', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 5 * 60_000 }), // 5m
+				buildSession({ id: 's2', name: 'Beta', createdAt: Date.now() - 3 * 86_400_000 }), // 3d
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			const cardByName = (name: string) =>
+				screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
+			const ageIn = (name: string) =>
+				cardByName(name).querySelector('[data-testid="agent-card-age"]') as HTMLElement;
+
+			expect(ageIn('Alpha').textContent).toBe('5m');
+			expect(ageIn('Beta').textContent).toBe('3d');
+		});
+
+		it('omits the age badge when createdAt is missing', () => {
+			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			expect(screen.queryByTestId('agent-card-age')).toBeNull();
+		});
+
+		it('sorts cards by createdAt descending (most recent first)', () => {
+			const now = Date.now();
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Oldest', createdAt: now - 30 * 86_400_000 }),
+				buildSession({ id: 's2', name: 'Newest', createdAt: now - 60_000 }),
+				buildSession({ id: 's3', name: 'Middle', createdAt: now - 86_400_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			fireEvent.click(screen.getByTestId('agent-overview-sort-created'));
+
+			const cards = screen.getAllByTestId('agent-card');
+			expect(cards[0].textContent).toContain('Newest');
+			expect(cards[1].textContent).toContain('Middle');
+			expect(cards[2].textContent).toContain('Oldest');
+		});
+	});
+
 	describe('Auto % column', () => {
 		it('renders the auto-source share for each session from bySessionSource', () => {
 			const sessions: Session[] = [
@@ -420,6 +465,84 @@ describe('AgentOverviewCards', () => {
 			expect(cards[0].textContent).toContain('Beta');
 			expect(cards[1].textContent).toContain('Alpha');
 			expect(cards[2].textContent).toContain('Gamma');
+		});
+	});
+
+	describe('Sort highlight', () => {
+		it('does not highlight any stat under the default Name sort', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 60_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+
+			expect(
+				(screen.getByTestId('agent-card-query-count') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+			expect(
+				(screen.getByTestId('agent-card-tab-count') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+			expect(
+				(screen.getByTestId('agent-card-auto-pct') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+			expect(
+				(screen.getByTestId('agent-card-age') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+		});
+
+		it('highlights the age badge when Created sort is active', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 60_000 }),
+			];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-created'));
+
+			expect((screen.getByTestId('agent-card-age') as HTMLElement).dataset.highlighted).toBe(
+				'true'
+			);
+			expect(
+				(screen.getByTestId('agent-card-query-count') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+		});
+
+		it('highlights the query count when Queries sort is active', () => {
+			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-queries'));
+
+			expect(
+				(screen.getByTestId('agent-card-query-count') as HTMLElement).dataset.highlighted
+			).toBe('true');
+			expect(
+				(screen.getByTestId('agent-card-tab-count') as HTMLElement).dataset.highlighted
+			).toBeUndefined();
+		});
+
+		it('highlights the tab count when Tabs sort is active', () => {
+			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+
+			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-tabs'));
+
+			expect((screen.getByTestId('agent-card-tab-count') as HTMLElement).dataset.highlighted).toBe(
+				'true'
+			);
+		});
+
+		it('highlights the auto % when Auto % sort is active', () => {
+			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+			const data = buildData({
+				bySessionSource: { s1: { user: 30, auto: 70 } },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-auto'));
+
+			expect((screen.getByTestId('agent-card-auto-pct') as HTMLElement).dataset.highlighted).toBe(
+				'true'
+			);
 		});
 	});
 

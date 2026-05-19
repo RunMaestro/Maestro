@@ -3,7 +3,7 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, SessionsData } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -26,6 +26,9 @@ import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../../stores/claudeUsageStore';
+import type { UsageSnapshot } from '../../agents/claude-mode-selector';
+import { runStartupUsageSampling, getMaestroPBinPath } from '../../agents/claude-usage-startup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -257,6 +260,13 @@ export interface AgentsHandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/**
+	 * Sessions store — required for handlers that need to read or persist
+	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
+	 * specific tab). Optional so registration doesn't break for legacy boot
+	 * paths that wire only the read-only handlers.
+	 */
+	sessionsStore?: Store<SessionsData>;
 }
 
 /**
@@ -763,7 +773,7 @@ async function discoverOpenCodeSlashCommandsRemote(
 }
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
-	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -1440,6 +1450,80 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					});
 					return null;
 				}
+			}
+		)
+	);
+
+	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
+	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
+	// Returns null when no bundled script can be located — usually means the user
+	// is running a dev build without `npm run build` having produced
+	// `dist/cli/maestro-p.js`.
+	ipcMain.handle(
+		'agents:getMaestroPDetectedPath',
+		withIpcErrorLogging(
+			handlerOpts('getMaestroPDetectedPath'),
+			async (): Promise<string | null> => {
+				return getMaestroPBinPath();
+			}
+		)
+	);
+
+	// Snapshot mirror for the renderer: returns every non-expired Claude Max-plan
+	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
+	// whenever `process:claude-mode-resolved` arrives (the only signal that
+	// `sampleUsage()` may have refreshed the on-disk map).
+	ipcMain.handle(
+		'agents:getClaudeUsageSnapshots',
+		withIpcErrorLogging(
+			handlerOpts('getClaudeUsageSnapshots'),
+			async (): Promise<Record<string, UsageSnapshot>> => {
+				return getAllClaudeUsageSnapshots();
+			}
+		)
+	);
+
+	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
+	// the boot path calls, so the dashboard / settings refresh button takes the
+	// exact same code path that populated the store on launch. Returns a count
+	// of how many account snapshots are now in the store after sampling — the
+	// renderer surfaces this in the optimistic spinner state.
+	//
+	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
+	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// from blowing up in dev/test contexts where the agents handler was wired
+	// without the full main dependency set.
+	ipcMain.handle(
+		'claude:usage:refresh-all',
+		withIpcErrorLogging(
+			handlerOpts('refreshClaudeUsage'),
+			async (): Promise<{ refreshed: number }> => {
+				const agentDetector = getAgentDetector();
+				if (!agentDetector || !sessionsStore || !settingsStore) {
+					logger.warn(
+						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						LOG_CONTEXT,
+						{
+							hasDetector: !!agentDetector,
+							hasSessionsStore: !!sessionsStore,
+							hasSettingsStore: !!settingsStore,
+						}
+					);
+					return { refreshed: 0 };
+				}
+
+				await runStartupUsageSampling({
+					sessionsStore: sessionsStore as unknown as Store<{ sessions: any[] }>,
+					agentConfigsStore,
+					settingsStore: settingsStore as unknown as Store<MaestroSettings>,
+					agentDetector,
+					mode: 'manual',
+				});
+
+				const refreshed = Object.keys(getAllClaudeUsageSnapshots()).length;
+				logger.info(`Refreshed Claude usage snapshots`, LOG_CONTEXT, { refreshed });
+				return { refreshed };
 			}
 		)
 	);

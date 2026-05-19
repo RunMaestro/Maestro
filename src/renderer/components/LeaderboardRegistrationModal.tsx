@@ -767,7 +767,7 @@ export function LeaderboardRegistrationModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="w-[480px] max-h-[90vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="modal-w-sm max-h-[90vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}

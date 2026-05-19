@@ -30,7 +30,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { getStroke } from 'perfect-freehand';
 import getSvgPathFromStroke from './getSvgPathFromStroke';
-import type { Shape, ShapeKind, ShapeStyle, UseAnnotatorStateReturn } from './useAnnotatorState';
+import type {
+	Shape,
+	ShapeKind,
+	ShapeStyle,
+	TextBox,
+	UseAnnotatorStateReturn,
+} from './useAnnotatorState';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { generateId } from '../../utils/ids';
@@ -77,6 +83,15 @@ type Interaction =
 			origY1: number;
 			origX2: number;
 			origY2: number;
+	  }
+	| {
+			kind: 'text-move';
+			pointerId: number;
+			textId: string;
+			startImgX: number;
+			startImgY: number;
+			origX: number;
+			origY: number;
 	  };
 
 const MIN_SCALE = 0.05;
@@ -127,6 +142,9 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			shapes,
 			currentShape,
 			selectedShapeId,
+			texts,
+			editingTextId,
+			selectedTextId,
 			tool,
 			view,
 			setView,
@@ -141,6 +159,12 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			updateShape,
 			deleteShape,
 			selectShape,
+			beginText,
+			updateTextValue,
+			updateText,
+			commitTextEditing,
+			deleteText,
+			selectText,
 		} = state;
 
 		const wrapperRef = useRef<HTMLDivElement>(null);
@@ -155,6 +179,10 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		const streamline = useSettingsStore((s) => s.annotatorStreamline);
 		const taperStart = useSettingsStore((s) => s.annotatorTaperStart);
 		const taperEnd = useSettingsStore((s) => s.annotatorTaperEnd);
+		const textColor = useSettingsStore((s) => s.annotatorTextColor);
+		const textSize = useSettingsStore((s) => s.annotatorTextSize);
+		const textFont = useSettingsStore((s) => s.annotatorTextFont);
+		const textBgColor = useSettingsStore((s) => s.annotatorTextBgColor);
 
 		const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 		const [isShiftHeld, setIsShiftHeld] = useState(false);
@@ -265,13 +293,23 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				} else if (selectedShapeId) {
 					selectShape(null);
 					e.preventDefault();
+				} else if (selectedTextId) {
+					selectText(null);
+					e.preventDefault();
 				}
 				return;
 			}
-			if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShapeId) {
-				deleteShape(selectedShapeId);
-				e.preventDefault();
-				return;
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				if (selectedShapeId) {
+					deleteShape(selectedShapeId);
+					e.preventDefault();
+					return;
+				}
+				if (selectedTextId) {
+					deleteText(selectedTextId);
+					e.preventDefault();
+					return;
+				}
 			}
 			if (e.metaKey || e.ctrlKey || e.altKey) return;
 			if (e.key === '0') {
@@ -338,6 +376,27 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 
 		const handleSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
 			if (!imgSize || e.button !== 0 || panEnabled) return;
+			// Text — clicking empty area places a new text label at the cursor and
+			// opens its inline editor. Clicks on an existing text are handled by
+			// the text's own pointerdown (which stops propagation).
+			if (tool === 'text') {
+				e.stopPropagation();
+				e.preventDefault();
+				// Commit any in-progress editor first, then place a new label in
+				// the same gesture — typing → click-elsewhere should "finish and
+				// start a new one," not "finish; click again to start a new one."
+				if (editingTextId) commitTextEditing();
+				const pt = clientToImage(e.clientX, e.clientY);
+				if (pt) {
+					beginText(pt[0], pt[1], {
+						color: textColor,
+						size: textSize,
+						font: textFont,
+						bgColor: textBgColor === '' ? null : textBgColor,
+					});
+				}
+				return;
+			}
 			// Pen — freehand stroke.
 			if (tool === 'pen') {
 				e.stopPropagation();
@@ -393,6 +452,15 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 					y1: interaction.origY1 + dy,
 					x2: interaction.origX2 + dx,
 					y2: interaction.origY2 + dy,
+				});
+				return;
+			}
+			if (interaction.kind === 'text-move') {
+				const dx = pt[0] - interaction.startImgX;
+				const dy = pt[1] - interaction.startImgY;
+				updateText(interaction.textId, {
+					x: interaction.origX + dx,
+					y: interaction.origY + dy,
 				});
 				return;
 			}
@@ -496,6 +564,40 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 			};
 		};
 
+		// Click on an existing text label. Behavior depends on the active tool:
+		//   • text tool   → select + start a drag-move; double-click enters edit
+		//   • eraser tool → delete the text
+		//   • anything else → no-op (let the underlying SVG handle it)
+		const handleTextPointerDown = (textBox: TextBox, e: React.PointerEvent<SVGElement>) => {
+			if (e.button !== 0 || panEnabled) return;
+			if (tool === 'eraser') {
+				e.stopPropagation();
+				deleteText(textBox.id);
+				return;
+			}
+			if (tool !== 'text') return;
+			e.stopPropagation();
+			e.preventDefault();
+			if (editingTextId && editingTextId !== textBox.id) {
+				commitTextEditing();
+			}
+			selectText(textBox.id);
+			const svg = svgRef.current;
+			if (!svg) return;
+			svg.setPointerCapture(e.pointerId);
+			const pt = clientToImage(e.clientX, e.clientY);
+			if (!pt) return;
+			interactionRef.current = {
+				kind: 'text-move',
+				pointerId: e.pointerId,
+				textId: textBox.id,
+				startImgX: pt[0],
+				startImgY: pt[1],
+				origX: textBox.x,
+				origY: textBox.y,
+			};
+		};
+
 		// Begin a resize on a selection handle. Stops propagation so we don't
 		// fall through to shape-move or shape-draw.
 		const handleResizeHandlePointerDown = (
@@ -540,13 +642,19 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				? 'crosshair'
 				: SHAPE_TOOLS.has(tool)
 					? 'crosshair'
-					: 'default';
+					: tool === 'text'
+						? 'text'
+						: 'default';
 
 		const strokePointerEvents = tool === 'eraser' ? 'all' : 'none';
 		const svgPointerEvents = panEnabled ? 'none' : 'auto';
 		// Shapes are interactive when a shape tool or eraser is active.
 		const shapePointerEvents: 'auto' | 'none' =
 			SHAPE_TOOLS.has(tool) || tool === 'eraser' ? 'auto' : 'none';
+		// Text labels are interactive in the text tool (select/move/edit) and
+		// the eraser tool (delete-on-click).
+		const textPointerEvents: 'auto' | 'none' =
+			tool === 'text' || tool === 'eraser' ? 'auto' : 'none';
 
 		// Visual sizing for selection handles + fill toggle. We want them to
 		// look ~constant on screen across zoom levels — divide by view.scale.
@@ -735,6 +843,96 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 		};
 
 		const selectedShape = selectedShapeId ? shapes.find((s) => s.id === selectedShapeId) : null;
+		const editingText = editingTextId ? texts.find((t) => t.id === editingTextId) : null;
+		const selectedText = selectedTextId ? texts.find((t) => t.id === selectedTextId) : null;
+
+		// Rough bounding box for a text label, in image space. SVG text doesn't
+		// give us layout-free measurement, so we estimate from line count and
+		// max line length. Good enough for dashed selection chrome and the
+		// editor backing box — pixel-perfect width isn't worth a DOM measure.
+		const textBBoxOf = (textBox: TextBox) => {
+			const lines = textBox.value.split('\n');
+			const longest = lines.reduce(
+				(max, line) => Math.max(max, line.length),
+				// Reserve a sensible minimum so an empty editor has a visible footprint.
+				Math.max(8, lines[0]?.length ?? 0)
+			);
+			const width = Math.max(40, longest * textBox.style.size * 0.6 + textBox.style.size);
+			const height = Math.max(textBox.style.size * 1.4, lines.length * textBox.style.size * 1.25);
+			return { x: textBox.x, y: textBox.y, w: width, h: height };
+		};
+
+		// SVG `<text>` rasterizes cleanly through the composite path; we render
+		// one `<tspan>` per line so newlines survive. `dominant-baseline="hanging"`
+		// makes y the top of the glyphs, matching how the inline editor positions
+		// the textarea. When `bgColor` is set, a rounded `<rect>` is rendered
+		// behind the glyphs using the same approximate bbox we use for the
+		// selection chrome.
+		const renderTextElement = (textBox: TextBox) => {
+			const lines = textBox.value === '' ? [''] : textBox.value.split('\n');
+			const interactionStyle = {
+				pointerEvents: textPointerEvents,
+				cursor: tool === 'text' ? 'move' : tool === 'eraser' ? 'pointer' : 'default',
+				userSelect: 'none' as const,
+			};
+			const onPointerDown = (e: React.PointerEvent<SVGElement>) =>
+				handleTextPointerDown(textBox, e);
+			const bg = textBox.style.bgColor;
+			// Pad the bg slightly past the glyph bbox so descenders / wide chars
+			// don't hug the edge.
+			const pad = Math.max(4, textBox.style.size * 0.18);
+			const { w: bw, h: bh } = textBBoxOf(textBox);
+			return (
+				<g>
+					{bg && (
+						<rect
+							x={textBox.x - pad}
+							y={textBox.y - pad}
+							width={bw + pad * 2}
+							height={bh + pad * 2}
+							fill={bg}
+							rx={pad * 0.6}
+							ry={pad * 0.6}
+							style={interactionStyle}
+							onPointerDown={onPointerDown}
+						/>
+					)}
+					<text
+						x={textBox.x}
+						y={textBox.y}
+						fill={textBox.style.color}
+						fontSize={textBox.style.size}
+						fontFamily={textBox.style.font}
+						dominantBaseline="hanging"
+						style={interactionStyle}
+						onPointerDown={onPointerDown}
+					>
+						{lines.map((line, idx) => (
+							<tspan key={idx} x={textBox.x} dy={idx === 0 ? 0 : textBox.style.size * 1.25}>
+								{line === '' ? ' ' : line}
+							</tspan>
+						))}
+					</text>
+				</g>
+			);
+		};
+
+		const renderTextSelectionOutline = (textBox: TextBox) => {
+			const { x, y, w, h } = textBBoxOf(textBox);
+			return (
+				<rect
+					x={x - 2}
+					y={y - 2}
+					width={w + 4}
+					height={h + 4}
+					fill="none"
+					stroke="#9146FF"
+					strokeWidth={1.5 / view.scale}
+					strokeDasharray={`${4 / view.scale} ${3 / view.scale}`}
+					style={{ pointerEvents: 'none' }}
+				/>
+			);
+		};
 
 		return (
 			<div
@@ -858,6 +1056,14 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 							))}
 							{/* In-progress shape (during a drag-to-draw). */}
 							{currentShape && <g>{renderShape(currentShape, { live: true })}</g>}
+							{/* Text labels. The currently-editing one is rendered transparently
+							    so the editor textarea overlays it without doubled glyphs; on
+							    commit it flips back to full color. */}
+							{texts.map((t) => (
+								<g key={`text-${t.id}`} opacity={editingTextId === t.id ? 0 : 1}>
+									{renderTextElement(t)}
+								</g>
+							))}
 							{/* Selection chrome — render last so handles + toggle stack on
 							    top of the shape body. The `data-annotator-chrome` flag is
 							    used by `compositeAnnotatedImage` to strip these elements
@@ -870,6 +1076,23 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 									{renderFillToggle(selectedShape)}
 								</g>
 							)}
+							{selectedText && !editingText && (
+								<g data-annotator-chrome="true">{renderTextSelectionOutline(selectedText)}</g>
+							)}
+							{/* Inline text editor — a `<foreignObject>` containing a styled
+							    `<textarea>`, positioned in image space so it tracks pan/zoom
+							    along with everything else. Chrome-flagged so it's stripped
+							    from the saved image. */}
+							{editingText && (
+								<g data-annotator-chrome="true">
+									<TextEditor
+										textBox={editingText}
+										onChange={(value) => updateTextValue(editingText.id, value)}
+										onCommit={commitTextEditing}
+										bbox={textBBoxOf(editingText)}
+									/>
+								</g>
+							)}
 						</svg>
 					)}
 				</div>
@@ -879,3 +1102,87 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 );
 
 export default AnnotatorCanvas;
+
+interface TextEditorProps {
+	textBox: TextBox;
+	onChange: (value: string) => void;
+	onCommit: () => void;
+	bbox: { x: number; y: number; w: number; h: number };
+}
+
+/**
+ * Inline editor for a text label. Lives inside the SVG as a `<foreignObject>`
+ * (so it tracks pan/zoom with the rest of the canvas) but is flagged as
+ * annotator chrome so it never bakes into the saved image — the underlying
+ * `<text>` element provides the rendered output.
+ *
+ * Commit happens on blur, Escape, and Cmd/Ctrl+Enter. Backed by `requestAnimationFrame`
+ * + `select()` on mount so the user can immediately type or overwrite the
+ * placeholder without an extra click.
+ */
+function TextEditor({ textBox, onChange, onCommit, bbox }: TextEditorProps) {
+	const setRef = useCallback((el: HTMLTextAreaElement | null) => {
+		if (!el) return;
+		// Defer to next frame so the foreignObject layout has settled before
+		// focusing — otherwise some browsers scroll the SVG container.
+		requestAnimationFrame(() => {
+			el.focus({ preventScroll: true });
+			el.select();
+		});
+	}, []);
+
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			onCommit();
+			return;
+		}
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			e.stopPropagation();
+			onCommit();
+		}
+	};
+
+	return (
+		<foreignObject
+			x={bbox.x - 4}
+			y={bbox.y - 4}
+			width={Math.max(bbox.w + 16, 80)}
+			height={bbox.h + 16}
+			style={{ overflow: 'visible' }}
+		>
+			<textarea
+				ref={setRef}
+				value={textBox.value}
+				onChange={(e) => onChange(e.target.value)}
+				onBlur={onCommit}
+				onKeyDown={handleKeyDown}
+				// Don't let pen/eraser/shape keyboard shortcuts (0, f, etc.) fire
+				// while the user is typing.
+				onKeyUp={(e) => e.stopPropagation()}
+				placeholder="Type…"
+				rows={1}
+				style={{
+					margin: 0,
+					padding: '2px 4px',
+					border: '1px dashed #9146FF',
+					borderRadius: 4,
+					background: 'rgba(255,255,255,0.04)',
+					color: textBox.style.color,
+					fontFamily: textBox.style.font,
+					fontSize: textBox.style.size,
+					lineHeight: 1.25,
+					outline: 'none',
+					resize: 'none',
+					width: '100%',
+					height: '100%',
+					boxSizing: 'border-box',
+					whiteSpace: 'pre',
+					overflow: 'hidden',
+				}}
+			/>
+		</foreignObject>
+	);
+}

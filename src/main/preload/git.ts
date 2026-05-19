@@ -255,15 +255,28 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:getRepoRoot', cwd, sshRemoteId),
 
 		/**
-		 * Setup a worktree (create if needed)
+		 * Setup a worktree (create if needed).
+		 *
+		 * `baseBranch` is honored only when the named branch does not already exist;
+		 * it is forwarded as the third positional arg to `git worktree add -b`.
+		 * Omitting it preserves the historical behavior of branching from the main
+		 * repo's current HEAD.
 		 */
 		worktreeSetup: (
 			mainRepoCwd: string,
 			worktreePath: string,
 			branchName: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			baseBranch?: string
 		): Promise<GitWorktreeSetupResult> =>
-			ipcRenderer.invoke('git:worktreeSetup', mainRepoCwd, worktreePath, branchName, sshRemoteId),
+			ipcRenderer.invoke(
+				'git:worktreeSetup',
+				mainRepoCwd,
+				worktreePath,
+				branchName,
+				sshRemoteId,
+				baseBranch
+			),
 
 		/**
 		 * Checkout a branch in a worktree

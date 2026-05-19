@@ -8,6 +8,9 @@
  *     pre-extraction behavior).
  *   - P / S: switch canvas interaction mode (Pan / Select). Bare keys, ignored
  *     while typing in inputs and when modifier keys are held.
+ *   - + / = / -: zoom the canvas in/out. Bare keys, ignored while typing.
+ *   - F: fit the graph to the window.
+ *   - L: toggle the canvas lock (drag/select/connect disabled while locked).
  */
 
 import { useEffect, type Dispatch, type RefObject, type SetStateAction } from 'react';
@@ -32,6 +35,14 @@ export interface UsePipelineKeyboardParams {
 	setAgentDrawerOpen: (open: boolean) => void;
 	setInteractionMode: Dispatch<SetStateAction<CanvasInteractionMode>>;
 	handleSave: () => void | Promise<void>;
+	/** Zoom the canvas in by one step. */
+	zoomIn: () => void;
+	/** Zoom the canvas out by one step. */
+	zoomOut: () => void;
+	/** Fit the graph to the viewport. */
+	fitView: () => void;
+	/** Toggle the canvas lock (disables drag/select/connect). */
+	setIsLocked: Dispatch<SetStateAction<boolean>>;
 	/**
 	 * Root element of the pipeline editor. Used to distinguish inputs inside
 	 * the editor (where typing should pass through) from inputs behind the
@@ -60,6 +71,10 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 		setAgentDrawerOpen,
 		setInteractionMode,
 		handleSave,
+		zoomIn,
+		zoomOut,
+		fitView,
+		setIsLocked,
 		containerRef,
 	} = params;
 
@@ -115,6 +130,29 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 				setInteractionMode((prev) =>
 					prev === target ? (target === 'hand' ? 'pointer' : 'hand') : target
 				);
+			} else if (
+				(e.key === '+' || e.key === '=' || e.key === '-') &&
+				!e.metaKey &&
+				!e.ctrlKey &&
+				!e.altKey
+			) {
+				// '=' is the unshifted key on US layouts where '+' lives — accept
+				// both so users don't need to hold Shift to zoom in.
+				if (isInputInsideEditor) return;
+				e.preventDefault();
+				e.stopPropagation();
+				if (e.key === '-') zoomOut();
+				else zoomIn();
+			} else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+				if (isInputInsideEditor) return;
+				e.preventDefault();
+				e.stopPropagation();
+				fitView();
+			} else if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+				if (isInputInsideEditor) return;
+				e.preventDefault();
+				e.stopPropagation();
+				setIsLocked((prev) => !prev);
 			}
 		};
 
@@ -138,6 +176,10 @@ export function usePipelineKeyboard(params: UsePipelineKeyboardParams): void {
 		setTriggerDrawerOpen,
 		setAgentDrawerOpen,
 		setInteractionMode,
+		zoomIn,
+		zoomOut,
+		fitView,
+		setIsLocked,
 		containerRef,
 	]);
 }

@@ -408,7 +408,7 @@ export function SendToAgentModal({
 			<ScreenReaderAnnouncement {...announcementProps} />
 
 			<div
-				className="w-[600px] rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
+				className="modal-w-md rounded-xl shadow-2xl border outline-none flex flex-col animate-slide-up"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

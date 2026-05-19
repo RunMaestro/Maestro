@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../types';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { useDebouncedCallback } from '../../../hooks/utils';
+import { registerPendingEdit } from '../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
 interface EdgePromptRowProps {
@@ -42,9 +43,16 @@ export function EdgePromptRow({
 
 	// Flush pending writes on unmount so the last keystroke commits to THIS edge
 	// before the row tears down (row remount when agent selection changes).
+	// Also register with the pending-edits registry so `handleSave` flushes
+	// any in-flight edit before reading pipelineState — clicking Save within
+	// 300ms of a keystroke would otherwise persist the prior (stale) value.
 	useEffect(() => {
+		const unregister = registerPendingEdit(() => {
+			flush();
+		});
 		return () => {
 			flush();
+			unregister();
 		};
 	}, [flush]);
 

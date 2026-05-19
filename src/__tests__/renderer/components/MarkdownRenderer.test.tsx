@@ -1251,4 +1251,40 @@ describe('MarkdownRenderer', () => {
 			expect(link!.getAttribute('href')).toBe('https://example.com');
 		});
 	});
+
+	describe('chatLineBreaks (#622)', () => {
+		// Two lines joined by a single newline. CommonMark treats this as a soft
+		// break (rendered as a space) which flattens multi-line chat messages.
+		// chatLineBreaks must turn the soft break into a hard <br>.
+		const multilineContent = 'first line\nsecond line';
+
+		it('collapses single newlines by default (document semantics)', () => {
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={multilineContent} />
+			);
+			expect(container.querySelector('br')).toBeNull();
+		});
+
+		it('preserves single newlines as <br> when chatLineBreaks is enabled', () => {
+			const { container } = render(
+				<MarkdownRenderer {...defaultProps} content={multilineContent} chatLineBreaks />
+			);
+			expect(container.querySelector('br')).not.toBeNull();
+			expect(screen.getByText(/first line/)).toBeInTheDocument();
+			expect(screen.getByText(/second line/)).toBeInTheDocument();
+		});
+
+		it('keeps paragraph breaks (blank line) regardless of chatLineBreaks', () => {
+			const content = 'paragraph one\n\nparagraph two';
+
+			const defaultRender = render(<MarkdownRenderer {...defaultProps} content={content} />);
+			expect(defaultRender.container.querySelectorAll('p').length).toBe(2);
+			defaultRender.unmount();
+
+			const chatRender = render(
+				<MarkdownRenderer {...defaultProps} content={content} chatLineBreaks />
+			);
+			expect(chatRender.container.querySelectorAll('p').length).toBe(2);
+		});
+	});
 });

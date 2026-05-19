@@ -426,7 +426,8 @@ describe('useAgentSessionManagement', () => {
 			'claude-code',
 			'/test/project',
 			'agent-456',
-			{ offset: 0, limit: 500 }
+			{ offset: 0, limit: 500 },
+			undefined
 		);
 		expect(window.maestro.claude.getSessionOrigins).toHaveBeenCalledOnce();
 		expect(setActiveAgentSessionId).toHaveBeenCalledWith('agent-456');

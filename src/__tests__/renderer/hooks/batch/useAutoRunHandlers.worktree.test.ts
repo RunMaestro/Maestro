@@ -568,7 +568,8 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				'/projects/my-repo',
 				'/projects/worktrees/auto-run-main-0222',
 				'auto-run-main-0222',
-				undefined // no SSH
+				undefined, // no SSH
+				'main' // baseBranch propagated from worktreeTarget
 			);
 		});
 
@@ -605,7 +606,8 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				'/projects/my-repo',
 				'/projects/worktrees/Cue-Dashboard',
 				'Cue-Dashboard',
-				undefined
+				undefined,
+				'main'
 			);
 		});
 
@@ -1547,7 +1549,8 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				'/projects/my-repo',
 				'/projects/worktrees/remote-branch',
 				'remote-branch',
-				'remote-host-1'
+				'remote-host-1',
+				'main'
 			);
 		});
 
@@ -1590,7 +1593,8 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				'/projects/my-repo',
 				'/projects/worktrees/fallback-branch',
 				'fallback-branch',
-				'fallback-host'
+				'fallback-host',
+				'main'
 			);
 		});
 	});
@@ -1647,7 +1651,8 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				'/projects/my-repo',
 				'/projects/worktrees/from-child',
 				'from-child',
-				undefined
+				undefined,
+				'main'
 			);
 
 			const sessions = useSessionStore.getState().sessions;

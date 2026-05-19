@@ -6,6 +6,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
+import { WizardIndicator } from '../SessionList/WizardIndicator';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -462,6 +463,12 @@ export const AITab = memo(function AITab({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 			)}
+
+			{/* Inline wizard indicator - purple wand (sparkles while generating Auto Run docs) */}
+			<WizardIndicator
+				active={!!(tab.wizardState?.isActive || tab.wizardState?.isGeneratingDocs)}
+				generatingDocs={!!tab.wizardState?.isGeneratingDocs}
+			/>
 
 			{/* Generating name indicator - spinning loader while tab name is being generated */}
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}

@@ -556,7 +556,8 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				mainRepoCwd: string,
 				worktreePath: string,
 				branchName: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				baseBranch?: string
 			) => {
 				// SSH remote: dispatch to remote git operations
 				if (sshRemoteId) {
@@ -565,14 +566,15 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 						throw new Error(`SSH remote not found: ${sshRemoteId}`);
 					}
 					logger.debug(
-						`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+						`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 						LOG_CONTEXT
 					);
 					const result = await worktreeSetupRemote(
 						mainRepoCwd,
 						worktreePath,
 						branchName,
-						sshConfig
+						sshConfig,
+						baseBranch
 					);
 					if (!result.success) {
 						throw new Error(result.error || 'Remote worktreeSetup failed');
@@ -582,7 +584,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 				// Local execution (existing code)
 				logger.debug(
-					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 					LOG_CONTEXT
 				);
 
@@ -697,14 +699,24 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 				let createResult;
 				if (branchExists) {
-					// Branch exists, just add worktree pointing to it
+					// Branch exists, just add worktree pointing to it. baseBranch is
+					// ignored here because the existing branch already has its own commit.
 					createResult = await execFileNoThrow(
 						'git',
 						['worktree', 'add', worktreePath, branchName],
 						mainRepoCwd
 					);
+				} else if (baseBranch) {
+					// Branch doesn't exist; create it from the requested base branch.
+					// `git worktree add -b <new> <path> <base>` is the explicit form.
+					createResult = await execFileNoThrow(
+						'git',
+						['worktree', 'add', '-b', branchName, worktreePath, baseBranch],
+						mainRepoCwd
+					);
 				} else {
-					// Branch doesn't exist, create it with -b flag
+					// Branch doesn't exist and no base specified; defaults to current HEAD
+					// of the main repo (preserves pre-baseBranch behavior).
 					createResult = await execFileNoThrow(
 						'git',
 						['worktree', 'add', '-b', branchName, worktreePath],

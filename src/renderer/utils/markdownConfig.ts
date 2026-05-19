@@ -25,6 +25,7 @@ import { SyntaxHighlightBoundary } from '../components/SyntaxHighlightBoundary';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { openUrl } from './openUrl';
+import { openMaestroLink } from './openMaestroLink';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import {
 	INLINE_CODE_CLICK_PROPS,
@@ -558,6 +559,9 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 						e.preventDefault();
 						if (isMaestroFile && filePath && onFileClick) {
 							onFileClick(filePath, { openInNewTab: e.metaKey || e.ctrlKey });
+						} else if (href && href.startsWith('maestro://')) {
+							// Route in-app deep links through the renderer's deep link handler.
+							openMaestroLink(href);
 						} else if (isAnchorLink && anchorId) {
 							// Handle anchor links - scroll to the target element
 							if (onAnchorClick) {

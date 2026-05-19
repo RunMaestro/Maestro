@@ -81,6 +81,10 @@ export interface MaestroSettings {
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
 	spellCheck: boolean;
+	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
+	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
+	// the existing capture helpers; converted to an Electron Accelerator at registration time.
+	globalShowHotkey: string[];
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

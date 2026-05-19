@@ -88,7 +88,9 @@
 							"maestro-cue-configuration",
 							"maestro-cue-events",
 							"maestro-cue-advanced",
-							"maestro-cue-examples"
+							"maestro-cue-examples",
+							"maestro-cue-karpathy-loop",
+							"maestro-cue-marketing-example"
 						]
 					}
 				]

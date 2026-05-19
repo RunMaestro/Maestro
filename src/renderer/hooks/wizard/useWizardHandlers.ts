@@ -1286,6 +1286,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				claudeInteractive:
+					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};
 
 			setSessions((prev) => [...prev, newSession]);

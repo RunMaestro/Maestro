@@ -81,6 +81,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorStreamline: 0.5,
 	annotatorTaperStart: 0,
 	annotatorTaperEnd: 0,
+	annotatorTextColor: '#9146FF',
+	annotatorTextSize: 24,
+	annotatorTextFont: 'sans-serif',
+	annotatorTextBgColor: '',
+	globalShowHotkey: [],
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

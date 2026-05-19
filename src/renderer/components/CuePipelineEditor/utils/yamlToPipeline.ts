@@ -299,6 +299,8 @@ function triggerGroupKey(sub: CueSubscription): string {
 		repo: sub.repo ?? null,
 		poll_minutes: sub.poll_minutes ?? null,
 		gh_state: sub.gh_state ?? null,
+		retrigger_on_comments: sub.retrigger_on_comments ?? null,
+		max_notifications: sub.max_notifications ?? null,
 		label: sub.label ?? null,
 		filter,
 	});
@@ -326,6 +328,8 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 		case 'github.issue':
 			if (sub.repo != null) config.repo = sub.repo;
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
+			if (sub.retrigger_on_comments === true) config.retrigger_on_comments = true;
+			if (sub.max_notifications != null) config.max_notifications = sub.max_notifications;
 			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
@@ -835,17 +839,6 @@ export function subscriptionsToPipelines(
 						continue;
 					}
 
-					// Under the legacy (no-key) path, "this sessionName has
-					// already been mapped to a node" was the signal that the
-					// agent was being reused — i.e. multiple triggers feeding
-					// the same node. Under the keyed path that signal is
-					// "this `target_node_key` already resolves to a node"
-					// (multiple subs intentionally pointing at one shared
-					// visual node). Compute reuse BEFORE calling the resolver
-					// so the per-call create-vs-fetch decision is observable.
-					const isReusedAgent = sub.target_node_key
-						? nodeKeyToNode.has(sub.target_node_key)
-						: sessionToNode.has(targetSessionName);
 					const agentNode = getOrCreateAgentNode(
 						targetSessionName,
 						sessions,
@@ -878,19 +871,16 @@ export function subscriptionsToPipelines(
 						prompt: sub.prompt || undefined,
 					});
 
-					if (!isReusedAgent) {
-						// First incoming trigger — mirror the prompt onto the agent
-						// node so AgentConfigPanel's single-trigger textarea shows
-						// it. This node-level mirror is cleared below as soon as a
-						// second trigger arrives, so it cannot leak.
-						if (sub.prompt) {
-							(agentNode.data as AgentNodeData).inputPrompt = sub.prompt;
-						}
-					} else {
-						// Transition to multi-trigger: clear the node-level prompt.
-						// Every incoming trigger's prompt is already on its edge.
-						(agentNode.data as AgentNodeData).inputPrompt = undefined;
-					}
+					// edge.prompt is the single source of truth for trigger→agent
+					// prompts. AgentConfigPanel reads/writes edge.prompt directly
+					// for both single-trigger (main textarea) and multi-trigger
+					// (EdgePromptRow) cases. Mirroring onto the node's
+					// `inputPrompt` caused silent stale saves: the textarea
+					// wrote inputPrompt while `pipelineToYaml` read edge.prompt
+					// first, so user edits were dropped. `inputPrompt` is now
+					// reserved for chain agents (no incoming trigger edge) where
+					// the chain-subscription load path populates it elsewhere.
+					(agentNode.data as AgentNodeData).inputPrompt = undefined;
 				}
 			} else {
 				// Chain subscription (agent.completed): connect source to target.

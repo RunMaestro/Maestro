@@ -137,6 +137,10 @@ export const MODAL_PRIORITIES = {
 	/** Auto Run search bar (within expanded modal) */
 	AUTORUN_SEARCH: 706,
 
+	/** Auto Run document selector dropdown (above expanded modal so Esc closes
+	 * the dropdown first, leaving the modal open for a second Esc). */
+	AUTORUN_DOC_SELECTOR: 707,
+
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
 

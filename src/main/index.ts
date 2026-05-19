@@ -1,8 +1,9 @@
-import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { app, BrowserWindow, Menu, powerMonitor, protocol } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
@@ -12,6 +13,11 @@ import { getAgentDefinition } from './agents/definitions';
 import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import type { AgentId } from '../shared/agentIds';
+import {
+	initGlobalHotkey,
+	setGlobalShowHotkey,
+	disposeGlobalHotkey,
+} from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import {
@@ -38,6 +44,7 @@ import {
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
 } from './stores';
+import { runSettingsMigrations } from './stores/migrations';
 import {
 	registerGitHandlers,
 	registerAutorunHandlers,
@@ -149,6 +156,14 @@ import { setupProcessListeners as setupProcessListenersModule } from './process-
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
 import { MaestroCliManager } from './maestro-cli-manager';
+import {
+	createInteractiveReplayController,
+	type InteractiveReplayController,
+} from './agents/claude-interactive-replay';
+import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
+import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
+import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
 
 // ============================================================================
@@ -156,6 +171,28 @@ import type { TemplateContext } from '../shared/templateVariables';
 // ============================================================================
 // Store type definitions are imported from ./stores/types.ts
 const isDevelopment = process.env.NODE_ENV === 'development';
+
+// Electron 41 / Chromium 138 forbid ES module imports from `file://` URLs (the
+// production entry chunk loads but its `import { ... } from "./..."` statements
+// fail with "Failed to fetch dynamically imported module" and the React app
+// never mounts). Serve the production renderer through a custom `app://`
+// scheme so static and dynamic ES module imports succeed under a normal
+// http(s)-style origin.
+const RENDERER_SCHEME = 'app';
+if (!isDevelopment) {
+	protocol.registerSchemesAsPrivileged([
+		{
+			scheme: RENDERER_SCHEME,
+			privileges: {
+				standard: true,
+				secure: true,
+				supportFetchAPI: true,
+				corsEnabled: true,
+				stream: true,
+			},
+		},
+	]);
+}
 
 // Capture the production data path before any modification
 // Used for stores that should be shared between dev and prod (e.g., agent configs)
@@ -212,6 +249,11 @@ if (!installationId) {
 	store.set('installationId', installationId);
 	logger.info('Generated new installation ID', 'Startup', { installationId });
 }
+
+// Run one-shot settings-store migrations (idempotent — each migration owns
+// its own marker). Mirrors the installation-ID generator above as the
+// canonical "first thing we do after the settings store is up" hook.
+runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
 const wakatimeManager = new WakaTimeManager(store);
@@ -307,6 +349,7 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -338,7 +381,7 @@ const windowManager = createWindowManager({
 	windowStateStore,
 	isDevelopment,
 	preloadPath: path.join(__dirname, 'preload.js'),
-	rendererPath: path.join(__dirname, '../renderer/index.html'),
+	rendererProductionUrl: `${RENDERER_SCHEME}://app/index.html`,
 	devServerUrl: devServerUrl,
 	useNativeTitleBar,
 	autoHideMenuBar,
@@ -404,6 +447,68 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		// Serve the production renderer over `app://` so static and dynamic ES
+		// module imports succeed on Electron 41 (Chromium 138 blocks both under
+		// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so
+		// we read assets directly via fs and return a Response.
+		if (!isDevelopment) {
+			const rendererRoot = path.resolve(__dirname, '../renderer');
+			const mimeByExt: Record<string, string> = {
+				'.html': 'text/html; charset=utf-8',
+				'.js': 'text/javascript; charset=utf-8',
+				'.mjs': 'text/javascript; charset=utf-8',
+				'.css': 'text/css; charset=utf-8',
+				'.json': 'application/json; charset=utf-8',
+				'.svg': 'image/svg+xml',
+				'.png': 'image/png',
+				'.jpg': 'image/jpeg',
+				'.jpeg': 'image/jpeg',
+				'.gif': 'image/gif',
+				'.ico': 'image/x-icon',
+				'.webp': 'image/webp',
+				'.woff': 'font/woff',
+				'.woff2': 'font/woff2',
+				'.ttf': 'font/ttf',
+				'.otf': 'font/otf',
+				'.map': 'application/json; charset=utf-8',
+			};
+			protocol.handle(RENDERER_SCHEME, async (request) => {
+				const url = new URL(request.url);
+				const requestedPath = decodeURIComponent(url.pathname);
+				const relative =
+					requestedPath === '/' || requestedPath === '' ? '/index.html' : requestedPath;
+				const resolved = path.normalize(path.join(rendererRoot, relative));
+				// path.relative() guards against prefix-traversal that startsWith()
+				// would miss (e.g. `/app/renderer-backup` passing a `/app/renderer`
+				// prefix check). A relative path that starts with `..` or is
+				// absolute means `resolved` escapes `rendererRoot`.
+				const rel = path.relative(rendererRoot, resolved);
+				if (rel.startsWith('..') || path.isAbsolute(rel)) {
+					return new Response('forbidden', { status: 403 });
+				}
+				try {
+					const data = await readFile(resolved);
+					const ext = path.extname(resolved).toLowerCase();
+					const contentType = mimeByExt[ext] ?? 'application/octet-stream';
+					return new Response(new Uint8Array(data), {
+						status: 200,
+						headers: { 'content-type': contentType },
+					});
+				} catch (err) {
+					// Only swallow "file not found" — surface every other fs error
+					// (EACCES, EISDIR, etc.) so Sentry / the renderer can react
+					// instead of silently 404ing on a broken install.
+					if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+						logger.warn(`Renderer asset not found: ${resolved}`, 'Window', {
+							err: String(err),
+						});
+						return new Response('not found', { status: 404 });
+					}
+					throw err;
+				}
+			});
+		}
+
 		// Load logger settings first
 		const logLevel = store.get('logLevel', 'info');
 		logger.setLogLevel(logLevel);
@@ -438,6 +543,64 @@ app
 			}
 		})();
 
+		// Reactive limit replay controller: armed when a Claude tab spawns in
+		// interactive mode, fires the API-mode replay flow on exit code 2.
+		// Decoupled from the process handler so its dependencies (sampleUsage,
+		// snapshot store write, mode-resolved emit, processManager.spawn) live
+		// in one place instead of being threaded through registerProcessHandlers.
+		interactiveReplayController = createInteractiveReplayController<ProcessSpawnConfig>({
+			emitter: processManager,
+			sampleUsage: async (configDirKey) => {
+				// Re-run sampleUsage for the relevant config dir so the renderer's
+				// dashboard reflects the post-fallback quota state.
+				const binPath = getMaestroPBinPath();
+				if (!binPath) return;
+				const snapshot = await sampleClaudeUsage({
+					binPath,
+					configDir: configDirKey,
+					cwd: app.getPath('home'),
+				});
+				if (snapshot) {
+					setClaudeUsageSnapshot(snapshot);
+				}
+			},
+			updateSessionInteractive: (sessionId, update) => {
+				const sessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+				let mutated = false;
+				const next = sessions.map((s) => {
+					if (s?.id !== sessionId) return s;
+					mutated = true;
+					return {
+						...s,
+						claudeInteractive: {
+							mode: update.mode,
+							modeReason: update.modeReason,
+							lastUsageSnapshotKey: update.lastUsageSnapshotKey,
+						},
+					};
+				});
+				if (mutated) {
+					sessionsStore.set('sessions', next);
+				}
+			},
+			emitModeResolved: (sessionId, resolution) => {
+				if (isWebContentsAvailable(mainWindow)) {
+					mainWindow!.webContents.send('process:claude-mode-resolved', sessionId, resolution);
+				}
+			},
+			spawnReplay: (_sessionId, replayConfig) => {
+				processManager?.spawn(replayConfig);
+			},
+			logger: {
+				debug: (message, ...args) =>
+					logger.debug(message, 'ClaudeInteractiveReplay', ...(args as [])),
+				info: (message, ...args) =>
+					logger.info(message, 'ClaudeInteractiveReplay', ...(args as [])),
+				warn: (message, ...args) =>
+					logger.warn(message, 'ClaudeInteractiveReplay', ...(args as [])),
+			},
+		});
+
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
 		// so an unhandled error later in startup can't silently leave maestro-cli
@@ -452,6 +615,10 @@ app
 			settingsStore: store,
 		};
 		await ensureCliServer(cliServerDeps);
+		// Defense in depth: if the initial attempt silently dropped the
+		// discovery file (or any later code deletes / clobbers it), the
+		// watchdog republishes within seconds so maestro-cli works without
+		// the user having to toggle Live Mode to coax it back.
 		startCliDiscoveryWatchdog(cliServerDeps);
 
 		// Initialize core prompts from disk (must happen before features that use them)
@@ -524,6 +691,22 @@ app
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
 		}
+
+		// Fire-and-forget: sample `maestro-p --status` for every CLAUDE_CONFIG_DIR
+		// account referenced by a recent Batch Mode-enabled Claude session so the
+		// context-window popover has fresh quota data on first turn. Failures here
+		// are non-fatal — the spawner's resolver tolerates a null snapshot by
+		// defaulting to interactive, and the next sampler refresh will repopulate.
+		void runStartupUsageSampling({
+			sessionsStore,
+			agentConfigsStore,
+			settingsStore: store,
+			agentDetector,
+		}).catch((err: unknown) => {
+			logger.warn('Startup Claude usage sampling failed', 'Startup', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
@@ -891,6 +1074,28 @@ app
 		logger.info('Creating main window', 'Startup');
 		createWindow();
 
+		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
+		// any) and re-register live when the setting changes from any source
+		// (settings UI, CLI, external file edit).
+		initGlobalHotkey(() => mainWindow);
+		const initialHotkey = store.get('globalShowHotkey', []) as string[];
+		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
+			const ok = setGlobalShowHotkey(initialHotkey);
+			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
+			}
+		}
+		store.onDidChange('globalShowHotkey', (value) => {
+			const keys = Array.isArray(value) ? (value as string[]) : [];
+			const ok = setGlobalShowHotkey(keys);
+			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
+			}
+		});
+		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
+		// behavior survives any future change to that policy.
+		app.on('will-quit', disposeGlobalHotkey);
+
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
 
@@ -1056,6 +1261,7 @@ function setupIpcHandlers() {
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
 		settingsStore: store,
+		sessionsStore,
 	});
 
 	// Process management operations - extracted to src/main/ipc/handlers/process.ts
@@ -1066,6 +1272,7 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		sessionsStore,
+		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
 			// Always query the executor's active process map — processes may still be
 			// running even if the engine has been disabled (in-flight runs complete

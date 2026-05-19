@@ -48,6 +48,8 @@ export interface UseAppRemoteEventListenersDeps {
 			content: string;
 			sshRemoteId?: string;
 			lastModified?: number;
+			/** Optional 1-based line to jump to once the editor mounts (deep links). */
+			pendingScrollToLine?: number;
 		},
 		options?: { targetSessionId?: string }
 	) => void;
@@ -91,10 +93,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
 			sessionId: string;
 			filePath: string;
 			switchToAgent?: boolean;
+			/** Optional 1-based line to jump to once the file is open. Set by
+			 *  maestro://file/...#L<n> deep links. */
+			line?: number;
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -123,6 +128,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						content,
 						lastModified,
 						sshRemoteId,
+						pendingScrollToLine: line,
 					},
 					{ targetSessionId: sessionId }
 				);
@@ -473,12 +479,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					// Build a WorktreeRunTarget from the mobile/web LaunchWorktreeConfig.
 					// Mobile currently only supports create-new; existing-open/closed are
 					// desktop-only flows.
+					//
+					// baseBranch resolution order: explicit `worktree.baseBranch` from the
+					// caller (CLI `--base-branch`, mobile picker) wins. Fall back to
+					// `prTargetBranch` only for older clients that conflated the two, then
+					// to "main" as a final default. This keeps payloads from pre-baseBranch
+					// CLIs working while letting newer callers pick a base independent of
+					// the PR target.
 					const spawnConfig: BatchRunConfig = {
 						...batchConfig,
 						worktreeTarget: {
 							mode: 'create-new',
 							newBranchName: config.worktree.branchName,
-							baseBranch: config.worktree.prTargetBranch || 'main',
+							baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
 							createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
 						},
 					};

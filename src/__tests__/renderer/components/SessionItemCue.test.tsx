@@ -5,9 +5,10 @@
  * the session has active Cue subscriptions, with correct tooltip text.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SessionItem } from '../../../renderer/components/SessionItem';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -80,6 +81,19 @@ const defaultProps = {
 };
 
 describe('SessionItem Cue Indicator', () => {
+	beforeEach(() => {
+		// CueIndicator is gated on both the Encore Feature flag and the
+		// per-user Left Bar toggle. Default settings have maestroCue=false,
+		// which would hide the indicator under test — enable both here.
+		useSettingsStore.setState({
+			encoreFeatures: {
+				...useSettingsStore.getState().encoreFeatures,
+				maestroCue: true,
+			},
+			showLeftPanelCueIndicator: true,
+		});
+	});
+
 	it('shows Zap icon when cueSubscriptionCount > 0', () => {
 		render(
 			<SessionItem {...defaultProps} session={createMockSession()} cueSubscriptionCount={3} />
@@ -216,5 +230,30 @@ describe('SessionItem Cue Indicator', () => {
 
 		// In editing mode, the name row is replaced by an input field
 		expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+	});
+});
+
+describe('SessionItem AUTO Pill', () => {
+	// The AUTO pill (rendered when isInBatch is true) must remain static.
+	// A previous iteration animated it; the constant flicker drew the eye and
+	// fought with the status-dot pulse, so animation classes are forbidden here.
+	it('renders the AUTO pill when isInBatch is true', () => {
+		render(<SessionItem {...defaultProps} session={createMockSession()} isInBatch={true} />);
+
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+	});
+
+	it('does not apply any pulse animation class to the AUTO pill', () => {
+		render(<SessionItem {...defaultProps} session={createMockSession()} isInBatch={true} />);
+
+		const pill = screen.getByText('AUTO').closest('div');
+		expect(pill).not.toBeNull();
+		expect(pill?.className).not.toMatch(/animate-(pulse|status-pulse|ping|bounce|spin)/);
+	});
+
+	it('does not render the AUTO pill when isInBatch is false', () => {
+		render(<SessionItem {...defaultProps} session={createMockSession()} isInBatch={false} />);
+
+		expect(screen.queryByText('AUTO')).not.toBeInTheDocument();
 	});
 });

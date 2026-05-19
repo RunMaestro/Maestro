@@ -36,6 +36,8 @@ vi.mock('lucide-react', () => ({
 	Sparkles: () => <span data-testid="sparkles-icon">Sparkles</span>,
 	Zap: () => <span data-testid="zap-icon">Zap</span>,
 	Database: () => <span data-testid="database-icon">Database</span>,
+	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
+	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
 }));
 
 // Mock react-markdown
@@ -212,11 +214,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(
-				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-			);
-			expect(graphButton).toBeInTheDocument();
-			expect(screen.getByTestId('gitgraph-icon')).toBeInTheDocument();
+			const graphIcon = screen.getByTestId('gitgraph-icon');
+			expect(graphIcon).toBeInTheDocument();
+			expect(graphIcon.closest('button')).toBeInTheDocument();
 		});
 
 		it('calls onOpenInGraph when Document Graph button is clicked', () => {
@@ -229,9 +229,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(
-				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-			);
+			const graphButton = screen.getByTestId('gitgraph-icon').closest('button')!;
 			fireEvent.click(graphButton);
 
 			expect(onOpenInGraph).toHaveBeenCalledOnce();
@@ -245,11 +243,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.queryByTitle(
-					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-				)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('gitgraph-icon')).not.toBeInTheDocument();
 		});
 
 		it('does not show Document Graph button for non-markdown files', () => {
@@ -262,11 +256,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.queryByTitle(
-					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
-				)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('gitgraph-icon')).not.toBeInTheDocument();
 		});
 
 		it('shows Document Graph button for uppercase .MD extension', () => {
@@ -279,9 +269,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(
-				screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTestId('gitgraph-icon')).toBeInTheDocument();
 		});
 	});
 
@@ -289,9 +277,9 @@ describe('FilePreview', () => {
 		it('shows Open in Default App button with ExternalLink icon', () => {
 			render(<FilePreview {...defaultProps} />);
 
-			const button = screen.getByTitle('Open in Default App');
-			expect(button).toBeInTheDocument();
-			expect(screen.getByTestId('external-link-icon')).toBeInTheDocument();
+			const icon = screen.getByTestId('external-link-icon');
+			expect(icon).toBeInTheDocument();
+			expect(icon.closest('button')).toBeInTheDocument();
 		});
 
 		it('calls shell.openPath with file path when clicked', () => {
@@ -302,7 +290,7 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const button = screen.getByTitle('Open in Default App');
+			const button = screen.getByTestId('external-link-icon').closest('button')!;
 			fireEvent.click(button);
 
 			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md');
@@ -311,7 +299,7 @@ describe('FilePreview', () => {
 		it('hides Open in Default App button for SSH remote sessions', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
-			expect(screen.queryByTitle('Open in Default App')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1141,6 +1129,67 @@ print("world")
 			expect(screen.getByText('Heading 1')).toBeInTheDocument();
 			expect(screen.getByText('Heading 2')).toBeInTheDocument();
 			expect(screen.getByText('Heading 3')).toBeInTheDocument();
+		});
+
+		it('toggles TOC overlay with the toggleFilePreviewToc shortcut and reports usage', () => {
+			const onShortcutUsed = vi.fn();
+			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3';
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: markdownWithHeadings, path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			// First firing opens the overlay and reports usage
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledWith('toggleFilePreviewToc');
+
+			// Second firing closes it
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).toHaveBeenCalledTimes(2);
+		});
+
+		it('ignores toggleFilePreviewToc shortcut in edit mode (no TOC available)', () => {
+			const onShortcutUsed = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+					shortcuts={{
+						toggleFilePreviewToc: {
+							id: 'toggleFilePreviewToc',
+							label: 'Toggle Table of Contents (Markdown Preview)',
+							keys: ['Meta', '\\'],
+						},
+					}}
+					onShortcutUsed={onShortcutUsed}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			expect(onShortcutUsed).not.toHaveBeenCalled();
 		});
 
 		it('keeps TOC overlay open when clicking a heading entry', () => {

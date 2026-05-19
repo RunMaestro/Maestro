@@ -118,6 +118,9 @@ interface RightPanelProps {
 
 	// Document Graph handlers
 	onFocusFileInGraph?: (relativePath: string) => void;
+
+	// Browser tab handler — used by file-tree "Open in Maestro Browser"
+	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
 export const RightPanel = memo(
@@ -201,6 +204,7 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onFocusFileInGraph,
+			onOpenBrowserTabAt,
 		} = props;
 
 		// === Values derived from session ===
@@ -535,6 +539,7 @@ export const RightPanel = memo(
 							fileExplorerIconTheme={fileExplorerIconTheme}
 							setShowHiddenFiles={setShowHiddenFiles}
 							onFocusFileInGraph={onFocusFileInGraph}
+							onOpenBrowserTabAt={onOpenBrowserTabAt}
 						/>
 					</div>
 

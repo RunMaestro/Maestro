@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PreviewTierChip } from '../../../../renderer/components/FilePreview/PreviewTierChip';
@@ -273,8 +272,13 @@ describe('PreviewTierChip', () => {
 					headerIconClass="header-icon"
 				/>
 			);
+			// iconOnly mode renders the tooltip via <HoverTooltip>, which mounts
+			// its content into a portal only after mouseenter — so hover the
+			// wrapper, then assert the portaled tooltip text.
 			const btn = screen.getByTestId('preview-tier-chip-button');
-			expect(btn.getAttribute('title')).toContain('Forced');
+			fireEvent.mouseEnter(btn.parentElement as HTMLElement);
+			const tip = screen.getByRole('tooltip');
+			expect(tip.textContent).toContain('Forced');
 		});
 	});
 });

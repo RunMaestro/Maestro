@@ -2144,4 +2144,200 @@ Some text with [x] in it that's not a checkbox
 			expect(result.error).toMatch(/Unsupported agent type/);
 		});
 	});
+
+	describe('spawnAgent: appendSystemPrompt', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('passes the Maestro system prompt to Claude via --append-system-prompt (non-Windows)', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			try {
+				const p = spawnAgent('claude-code', '/p', 'user msg', undefined, {
+					appendSystemPrompt: 'maestro context here',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { args } = spawnCall();
+				const flagIdx = args.indexOf('--append-system-prompt');
+				expect(flagIdx).toBeGreaterThanOrEqual(0);
+				expect(args[flagIdx + 1]).toBe('maestro context here');
+				// The flag must precede the '--' separator so it doesn't get
+				// swallowed as part of the positional prompt.
+				const sepIdx = args.indexOf('--');
+				expect(flagIdx).toBeLessThan(sepIdx);
+				expect(args[sepIdx + 1]).toBe('user msg');
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('uses --append-system-prompt-file with a temp file on Windows local execution', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				const p = spawnAgent('claude-code', 'C:\\proj', 'hi', undefined, {
+					appendSystemPrompt: 'sysprompt',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { args } = spawnCall();
+				const fileFlagIdx = args.indexOf('--append-system-prompt-file');
+				expect(fileFlagIdx).toBeGreaterThanOrEqual(0);
+				// The arg after the flag should be a tmp-path with the maestro prefix
+				expect(args[fileFlagIdx + 1]).toMatch(/maestro-sysprompt-/);
+				// Inline flag must NOT also be emitted on the Windows local path
+				expect(args.indexOf('--append-system-prompt')).toBe(-1);
+				// And we must have written the temp file
+				expect(writeSpy).toHaveBeenCalledWith(
+					expect.stringMatching(/maestro-sysprompt-/),
+					'sysprompt',
+					'utf-8'
+				);
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('sanitizes the session tag in the Windows temp-file path to block traversal', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				// A session id containing path separators / `..` would normally
+				// let `path.join(os.tmpdir(), …)` walk upward and escape tmpdir.
+				// We pass it through as the agentSessionId (which becomes the
+				// sessionTag inside buildAppendSystemPromptArgs).
+				const p = spawnAgent('claude-code', 'C:\\proj', 'hi', '../../../etc/passwd', {
+					appendSystemPrompt: 'sysprompt',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { args } = spawnCall();
+				const fileFlagIdx = args.indexOf('--append-system-prompt-file');
+				expect(fileFlagIdx).toBeGreaterThanOrEqual(0);
+				const tempPath = args[fileFlagIdx + 1];
+				// Sanitized path must not contain unescaped traversal tokens
+				expect(tempPath).not.toMatch(/\.\.\//);
+				expect(tempPath).not.toMatch(/\.\.\\/);
+				// And the dangerous chars should have collapsed to safe ones
+				expect(tempPath).toMatch(/maestro-sysprompt-[A-Za-z0-9_-]+-\d+\.txt$/);
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('uses inline --append-system-prompt on Windows when SSH is enabled (cmd is in a shell script)', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['remotehost', 'claude --append-system-prompt sysprompt -- hi'],
+				cwd: '/home/user',
+				customEnvVars: undefined,
+				prompt: undefined,
+				sshStdinScript: undefined,
+				sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+			});
+			try {
+				const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+					appendSystemPrompt: 'sysprompt',
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalled();
+				const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [{ args: string[] }];
+				const flagIdx = wrapConfig.args.indexOf('--append-system-prompt');
+				expect(flagIdx).toBeGreaterThanOrEqual(0);
+				expect(wrapConfig.args[flagIdx + 1]).toBe('sysprompt');
+				expect(wrapConfig.args.indexOf('--append-system-prompt-file')).toBe(-1);
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
+		it('still injects the Maestro system prompt on resume (Claude reads it every turn)', async () => {
+			const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
+				appendSystemPrompt: 'maestro context',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--resume');
+			expect(args).toContain('session-abc');
+			const flagIdx = args.indexOf('--append-system-prompt');
+			expect(flagIdx).toBeGreaterThanOrEqual(0);
+			expect(args[flagIdx + 1]).toBe('maestro context');
+		});
+
+		it('Codex (no native --append-system-prompt support) embeds the system prompt in the first user turn', async () => {
+			const p = spawnAgent('codex', '/p', 'do thing', undefined, {
+				appendSystemPrompt: 'maestro ctx',
+			});
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			// codex uses `-- <prompt>` positional form
+			const sepIdx = args.indexOf('--');
+			expect(sepIdx).toBeGreaterThan(0);
+			const positional = args[sepIdx + 1];
+			expect(positional).toContain('maestro ctx');
+			expect(positional).toContain('# User Request');
+			expect(positional).toContain('do thing');
+			// must NOT emit the native flag for agents that don't support it
+			expect(args.indexOf('--append-system-prompt')).toBe(-1);
+			expect(args.indexOf('--append-system-prompt-file')).toBe(-1);
+		});
+
+		it('Codex resume skips system-prompt embedding (already captured in transcript)', async () => {
+			const p = spawnAgent('codex', '/p', 'do thing', 'codex-thread-xyz', {
+				appendSystemPrompt: 'maestro ctx',
+			});
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			const sepIdx = args.indexOf('--');
+			expect(sepIdx).toBeGreaterThan(0);
+			const positional = args[sepIdx + 1];
+			expect(positional).toBe('do thing');
+			expect(positional).not.toContain('maestro ctx');
+			expect(positional).not.toContain('# User Request');
+		});
+
+		it('Claude spawn without appendSystemPrompt does NOT add the flag (regression)', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args.indexOf('--append-system-prompt')).toBe(-1);
+			expect(args.indexOf('--append-system-prompt-file')).toBe(-1);
+		});
+
+		it('Codex spawn without appendSystemPrompt passes the raw user prompt unchanged (regression)', async () => {
+			const p = spawnAgent('codex', '/p', 'just the user message');
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			const sepIdx = args.indexOf('--');
+			expect(sepIdx).toBeGreaterThan(0);
+			expect(args[sepIdx + 1]).toBe('just the user message');
+		});
+	});
 });

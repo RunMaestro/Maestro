@@ -67,6 +67,11 @@ export function useAgentThinkingListener(): void {
 								}
 								if (!hasChanges) return s;
 
+								// Tag thinking entries with `renderStyle: 'text-stream'` when the
+								// session's resolved Claude mode is interactive so the TUI/API
+								// footer pill matches the assistant text in the same turn.
+								const isInteractive = s.claudeInteractive?.mode === 'interactive';
+
 								let updatedTabs = s.aiTabs;
 								for (const [key, bufferedContent] of chunksToProcess) {
 									const [chunkSessionId, chunkTabId] = key.split(':');
@@ -111,6 +116,7 @@ export function useAgentThinkingListener(): void {
 											timestamp: Date.now(),
 											source: 'thinking',
 											text: bufferedContent,
+											...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 										};
 										nextLogs = [...targetTab.logs, newLog];
 									} else {
@@ -119,7 +125,11 @@ export function useAgentThinkingListener(): void {
 											: combinedText;
 										nextLogs = [
 											...targetTab.logs.slice(0, -1),
-											{ ...lastLog, text: replacementText },
+											{
+												...lastLog,
+												text: replacementText,
+												...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
+											},
 										];
 									}
 

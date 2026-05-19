@@ -217,7 +217,8 @@ describe('Git Preload API', () => {
 				'/home/user/project',
 				'/home/user/worktree',
 				'feature-branch',
-				'remote-1'
+				'remote-1',
+				undefined // baseBranch defaults when not specified
 			);
 			expect(result.success).toBe(true);
 			expect(result.created).toBe(true);

@@ -279,6 +279,8 @@ export interface TabStoreActions {
 	 * the Globe button is only surfaced for `.html` / `.htm`.
 	 */
 	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
+	/** Clear the transient deep-link line jump after FilePreview has consumed it. */
+	clearFileTabPendingScrollToLine: (tabId: string) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -602,4 +604,6 @@ export const useTabStore = create<TabStore>()((set) => ({
 	setFileTabPreviewTier: (tabId, tier) => updateFileTab(tabId, { previewTierOverride: tier }),
 
 	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
+	clearFileTabPendingScrollToLine: (tabId) =>
+		updateFileTab(tabId, { pendingScrollToLine: undefined }),
 }));

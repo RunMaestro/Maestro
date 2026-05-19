@@ -123,13 +123,15 @@ const AGENTS: AgentConfig[] = [
 		 *   Codex does NOT support --input-format stream-json (supportsStreamJsonInput: false)
 		 */
 		buildArgs: (prompt: string, options?: { images?: string[] }) => {
+			// `-C` precedes `exec` because Codex treats it as a root-level global
+			// flag — placing it after the subcommand makes it silently ignored (#959).
 			const args = [
+				'-C',
+				TEST_CWD,
 				'exec',
 				'--dangerously-bypass-approvals-and-sandbox',
 				'--skip-git-repo-check',
 				'--json',
-				'-C',
-				TEST_CWD,
 			];
 
 			// IMPORTANT: This mirrors process-manager.ts logic

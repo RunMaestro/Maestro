@@ -9,6 +9,8 @@
  * Pure / runtime-agnostic — safe to import from main and renderer alike.
  */
 
+import { stripMarkdown } from '../markdown';
+import { stripAnsiCodes } from '../stringUtils';
 import type { CueEvent, CueRunResult } from './contracts';
 
 /**
@@ -130,4 +132,44 @@ export function buildCueRunSummary(result: CueRunResult): string {
 
 	const detail = getCueEventDetail(result.event);
 	return detail ? `${head} — ${detail}` : head;
+}
+
+/**
+ * Extract a short, sentence-aligned excerpt from a Cue run's stdout for use as
+ * the History list-row body. Falls back to `undefined` when the output is
+ * empty, only whitespace, or so structured that no clean sentence boundary
+ * fits within the cap — the caller then substitutes the trigger-label summary.
+ *
+ * Strips ANSI escape codes and markdown, collapses whitespace, then greedily
+ * accumulates up to `maxSentences` complete sentences while staying within
+ * `maxChars`. Sentence boundaries are detected as `.!?` followed by whitespace
+ * and a capital letter or digit — good enough to avoid splitting on filenames
+ * like `2026-05-13-AM.md` or numbers like `2.34M`.
+ */
+export function extractCueOutputExcerpt(
+	stdout: string | undefined | null,
+	opts: { maxChars?: number; maxSentences?: number } = {}
+): string | undefined {
+	if (!stdout) return undefined;
+	const maxChars = opts.maxChars ?? 240;
+	const maxSentences = opts.maxSentences ?? 2;
+
+	const collapsed = stripMarkdown(stripAnsiCodes(stdout)).replace(/\s+/g, ' ').trim();
+	if (!collapsed) return undefined;
+
+	const sentences = collapsed.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
+
+	let result = '';
+	let count = 0;
+	for (const sentence of sentences) {
+		if (count >= maxSentences) break;
+		const trimmed = sentence.trim();
+		if (!trimmed) continue;
+		const candidate = result ? `${result} ${trimmed}` : trimmed;
+		if (candidate.length > maxChars) break;
+		result = candidate;
+		count++;
+	}
+
+	return result || undefined;
 }

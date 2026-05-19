@@ -18,7 +18,10 @@ describe('parseYamlKeyValues', () => {
 	});
 
 	it('trims surrounding whitespace from keys and values', () => {
-		expect(parseYamlKeyValues('  title  :   Hello World  ')).toEqual([
+		// Leading whitespace on the line itself marks an indented continuation
+		// (see the block-scalar tests below), so this only exercises trimming
+		// around the colon and at the end of the value.
+		expect(parseYamlKeyValues('title  :   Hello World  ')).toEqual([
 			{ key: 'title', value: 'Hello World' },
 		]);
 	});
@@ -69,6 +72,53 @@ describe('parseYamlKeyValues', () => {
 	it('preserves whitespace inside quoted values', () => {
 		expect(parseYamlKeyValues('title: "  spaced  "')).toEqual([
 			{ key: 'title', value: '  spaced  ' },
+		]);
+	});
+
+	it('captures literal block scalars (|) as a single multi-line value', () => {
+		const yaml = ['notes: |', '  first line', '  second line', 'author: Ada'].join('\n');
+		expect(parseYamlKeyValues(yaml)).toEqual([
+			{ key: 'notes', value: 'first line\nsecond line' },
+			{ key: 'author', value: 'Ada' },
+		]);
+	});
+
+	it('does not treat indented "key:" lines inside a block scalar as new entries', () => {
+		// Regression: prose containing colons inside a `notes: |` block was being
+		// shredded into bogus key/value rows.
+		const yaml = [
+			'notes: |',
+			'  Pedram-flagged 2026-05-13: "lot of people talking about conductor"',
+			'  Parent: "I actually think AI wrappers capture value."',
+			'tier: T3',
+		].join('\n');
+		expect(parseYamlKeyValues(yaml)).toEqual([
+			{
+				key: 'notes',
+				value:
+					'Pedram-flagged 2026-05-13: "lot of people talking about conductor"\nParent: "I actually think AI wrappers capture value."',
+			},
+			{ key: 'tier', value: 'T3' },
+		]);
+	});
+
+	it('preserves blank lines between paragraphs inside a block scalar', () => {
+		const yaml = ['notes: |', '  para one', '', '  para two'].join('\n');
+		expect(parseYamlKeyValues(yaml)).toEqual([{ key: 'notes', value: 'para one\n\npara two' }]);
+	});
+
+	it('folds (>) block scalars into space-joined lines with blanks as paragraph breaks', () => {
+		const yaml = ['summary: >', '  line one', '  line two', '', '  line three'].join('\n');
+		expect(parseYamlKeyValues(yaml)).toEqual([
+			{ key: 'summary', value: 'line one line two\n\nline three' },
+		]);
+	});
+
+	it('skips indented continuation lines that are not part of a block scalar', () => {
+		const yaml = ['title: Hello', '  stray-indented: ignored', 'author: Ada'].join('\n');
+		expect(parseYamlKeyValues(yaml)).toEqual([
+			{ key: 'title', value: 'Hello' },
+			{ key: 'author', value: 'Ada' },
 		]);
 	});
 });
@@ -122,6 +172,19 @@ describe('renderFrontmatterHtml', () => {
 		// URLs with raw HTML chars shouldn't be common, but we still escape them
 		const html = renderFrontmatterHtml([{ key: 'k', value: 'https://example.com/<x>' }])!;
 		expect(html).toContain('&lt;x&gt;');
+	});
+
+	it('renders multi-line values with <br> between lines', () => {
+		const html = renderFrontmatterHtml([
+			{ key: 'notes', value: 'line one\nline two\nline three' },
+		])!;
+		expect(html).toContain('line one<br>line two<br>line three');
+	});
+
+	it('escapes multi-line values before inserting <br>', () => {
+		const html = renderFrontmatterHtml([{ key: 'notes', value: '<script>\nalert(1)' }])!;
+		expect(html).not.toContain('<script>');
+		expect(html).toContain('&lt;script&gt;<br>alert(1)');
 	});
 
 	it('renders each entry as its own table row', () => {

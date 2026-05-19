@@ -3,7 +3,6 @@
  * Handles window state persistence, DevTools, crash detection, and auto-updater initialization.
  */
 
-import { pathToFileURL } from 'url';
 import { BrowserWindow, Menu, ipcMain } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
@@ -11,7 +10,11 @@ import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
-const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:']);
+// `file:` is allowed so users can open local HTML they just generated
+// (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
+// browser. The webview is still hardened (sandbox, no node, webSecurity true)
+// and only renders content the user explicitly opens.
+const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
 const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
@@ -140,8 +143,8 @@ export interface WindowManagerDependencies {
 	isDevelopment: boolean;
 	/** Path to the preload script */
 	preloadPath: string;
-	/** Path to the renderer HTML file (production) */
-	rendererPath: string;
+	/** Custom-protocol URL used to load the production renderer. */
+	rendererProductionUrl: string;
 	/** Development server URL */
 	devServerUrl: string;
 	/** Whether to use the native OS title bar instead of custom title bar */
@@ -173,7 +176,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowStateStore,
 		isDevelopment,
 		preloadPath,
-		rendererPath,
+		rendererProductionUrl,
 		devServerUrl,
 		useNativeTitleBar,
 		autoHideMenuBar,
@@ -262,7 +265,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				// DevTools can be opened via Command-K menu instead of automatically on startup
 				logger.info('Loading development server', 'Window');
 			} else {
-				mainWindow.loadFile(rendererPath);
+				mainWindow.loadURL(rendererProductionUrl);
 				logger.info('Loading production build', 'Window');
 				// Open DevTools in production if DEBUG env var is set
 				if (process.env.DEBUG === 'true') {
@@ -385,13 +388,14 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// in chat output could resolve relative to index.html and unload the app to
 			// a non-existent bundle file.
 			const allowedDevOrigin = isDevelopment ? new URL(devServerUrl).origin : null;
-			const rendererFileUrl = isDevelopment ? null : pathToFileURL(rendererPath).href;
+			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
+			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
 			mainWindow.webContents.on('will-navigate', (event, url) => {
 				const parsedUrl = new URL(url);
 				if (isDevelopment) {
 					if (parsedUrl.origin === allowedDevOrigin) return;
 				} else {
-					if (parsedUrl.protocol === 'file:' && url === rendererFileUrl) return;
+					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
 				}
 				event.preventDefault();
 				logger.warn(`Blocked navigation to: ${url}`, 'Window');
@@ -516,11 +520,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				logger.info('Window became responsive again', 'Window');
 			});
 
-			// Handle page crashes (less severe than render-process-gone)
-			mainWindow.webContents.on('crashed', (_event, killed) => {
-				logger.error('WebContents crashed', 'Window', { killed });
-				reportCrashToSentry('WebContents crashed', killed ? 'warning' : 'error', { killed });
-			});
+			// Note: the legacy 'crashed' event was removed in Electron 41 and
+			// is now subsumed by 'render-process-gone' above (which reports to
+			// Sentry with full reason/exitCode detail and handles auto-reload).
 
 			// Handle page load failures (network issues, invalid URLs, etc.)
 			mainWindow.webContents.on(

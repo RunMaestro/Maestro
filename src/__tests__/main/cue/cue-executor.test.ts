@@ -24,11 +24,19 @@ import type { TemplateContext } from '../../../shared/templateVariables';
 
 // --- Mocks ---
 
-// Mock fs
+// Mock fs — only `readFileSync` is overridden (the executor uses it for prompt
+// files). Other methods (e.g. `existsSync`) pass through to the real module
+// via `importOriginal`, because pulling in `cue-template-context-builder`
+// transitively imports `cue-github-poller`, which calls `getExpandedEnv()` at
+// module-load time and needs `fs.existsSync` for nvm/path detection.
 const mockReadFileSync = vi.fn();
-vi.mock('fs', () => ({
-	readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
-}));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+	};
+});
 
 // Mock crypto
 vi.mock('crypto', () => ({
@@ -1058,7 +1066,9 @@ describe('cue-executor', () => {
 
 			expect(entry.type).toBe('CUE');
 			expect(entry.id).toBe('test-uuid-1234');
-			expect(entry.summary).toBe('"Watch config" · Test Session — config.yaml');
+			// summary prefers a stdout excerpt when available, falling back to the
+			// trigger-label format (see buildCueRunSummary / extractCueOutputExcerpt).
+			expect(entry.summary).toBe('Task completed successfully');
 			expect(entry.fullResponse).toBe('Task completed successfully');
 			expect(entry.projectPath).toBe('/projects/test');
 			expect(entry.sessionId).toBe('session-1');

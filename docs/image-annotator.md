@@ -1,6 +1,6 @@
 ---
 title: Image Annotator
-description: Mark up screenshots and other images with freehand strokes, shapes, and arrows before sending them to your AI agents.
+description: Mark up screenshots and other images with freehand strokes, shapes, arrows, and text before sending them to your AI agents.
 icon: pen-line
 ---
 
@@ -29,7 +29,8 @@ The vertical toolbar lives on the right edge of the modal. Click an icon to swit
 | **Rectangle** | Drag to draw a bounding box. Toggle the fill handle to switch between outline and filled.                                          |
 | **Ellipse**   | Drag to draw an oval — useful for circling specific regions.                                                                       |
 | **Arrow**     | Drag from the tail to the head. Direction is preserved.                                                                            |
-| **Undo**      | Removes the last stroke or shape. Walks a unified history so it works regardless of which tool created the item.                   |
+| **Text**      | Click to place a text label and type inline. Click an existing label to drag it; double-click empty area to place another.         |
+| **Undo**      | Removes the last stroke, shape, or text label. Walks a unified history so it works regardless of which tool created the item.      |
 | **Clear**     | Wipes every stroke and shape. Inline confirmation prompt so you don't lose work by accident.                                       |
 
 Shapes are first-class objects after they're committed:
@@ -38,7 +39,7 @@ Shapes are first-class objects after they're committed:
 - **Drag** the body to reposition.
 - **Drag a handle** to resize.
 - For rect / ellipse, a small fill toggle appears next to the selected shape — click to flip between outlined and filled.
-- Press `Delete` or `Backspace` while a shape is selected to remove it.
+- Press `Delete` or `Backspace` while a shape or text label is selected to remove it.
 
 Pen strokes are immutable once committed — they can be erased or undone, but not edited. This keeps freehand input fast and predictable.
 
@@ -52,6 +53,8 @@ Click the sliders icon in the toolbar to slide out the **Drawing settings** draw
 - **Smoothing** — Curve smoothing applied to the raw input (0–1).
 - **Streamline** — Pointer-jitter dampening; higher values produce steadier lines for shaky hands or trackpad use (0–1).
 - **Taper Start** / **Taper End** — Pixel distance over which strokes fade in / out at each end. Useful for arrow-tip aesthetics.
+
+The drawer also has **Text** settings — color, size (10–120px), and font — that drive new text labels. As with strokes and shapes, each label captures the style in effect when it was created.
 
 Settings apply immediately and are remembered across the app — including a **Reset to defaults** button at the bottom of the drawer.
 
@@ -68,18 +71,19 @@ Two ways to leave the annotator with your work intact:
 
 ## Keyboard shortcuts
 
-| Shortcut                         | Action                                               |
-| -------------------------------- | ---------------------------------------------------- |
-| `Cmd+E` / `Ctrl+E` (in Lightbox) | Open the annotator on the current lightbox image     |
-| `Cmd+S` / `Ctrl+S`               | Save and exit                                        |
-| `Cmd+Z` / `Ctrl+Z`               | Undo last stroke or shape                            |
-| `Esc`                            | Cancel selection or close the modal                  |
-| `Delete` / `Backspace`           | Delete the selected shape                            |
-| `0`                              | Reset zoom and pan                                   |
-| `f`                              | Fit image to viewport                                |
-| `Space` (hold)                   | Temporarily switch to pan, regardless of active tool |
-| `Shift` (hold)                   | Same — temporary pan                                 |
-| Mouse wheel / trackpad scroll    | Zoom at cursor (5%–2000%)                            |
+| Shortcut                          | Action                                               |
+| --------------------------------- | ---------------------------------------------------- |
+| `Cmd+E` / `Ctrl+E` (in Lightbox)  | Open the annotator on the current lightbox image     |
+| `Cmd+S` / `Ctrl+S`                | Save and exit                                        |
+| `Cmd+Z` / `Ctrl+Z`                | Undo last stroke or shape                            |
+| `Esc`                             | Cancel selection or close the modal                  |
+| `Delete` / `Backspace`            | Delete the selected shape or text label              |
+| `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor            |
+| `0`                               | Reset zoom and pan                                   |
+| `f`                               | Fit image to viewport                                |
+| `Space` (hold)                    | Temporarily switch to pan, regardless of active tool |
+| `Shift` (hold)                    | Same — temporary pan                                 |
+| Mouse wheel / trackpad scroll     | Zoom at cursor (5%–2000%)                            |
 
 The annotator's shortcuts are bound at the modal layer with capture-phase priority, so they always win over the rest of the app's keymap while the modal is open.
 

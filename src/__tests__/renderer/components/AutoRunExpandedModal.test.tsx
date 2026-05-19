@@ -487,7 +487,9 @@ describe('AutoRunExpandedModal', () => {
 			expect(autoRunRefMethods.revert).toHaveBeenCalled();
 		});
 
-		it('should not show Save/Revert in preview mode even if dirty', async () => {
+		it('should show Save/Revert in preview mode when dirty', async () => {
+			// Save/Revert is mode-agnostic so users editing in the source pane
+			// can still confirm a save from the preview pane without flipping back.
 			autoRunRefMethods.isDirty.mockReturnValue(true);
 
 			const props = createDefaultProps({ mode: 'preview' });
@@ -498,7 +500,8 @@ describe('AutoRunExpandedModal', () => {
 				vi.advanceTimersByTime(200);
 			});
 
-			expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /revert/i })).toBeInTheDocument();
 		});
 
 		it('should not show Save/Revert when locked even if dirty', async () => {
@@ -618,8 +621,8 @@ describe('AutoRunExpandedModal', () => {
 			const shortcuts: Record<string, Shortcut> = {
 				toggleAutoRunExpanded: {
 					id: 'toggleAutoRunExpanded',
-					name: 'Toggle Auto Run Expanded',
-					keys: ['Meta', 'Shift', 'A'],
+					name: 'Auto Run Expanded Preview',
+					keys: ['Meta', 'Shift', '2'],
 				},
 			};
 
@@ -629,7 +632,7 @@ describe('AutoRunExpandedModal', () => {
 			const collapseButton = screen.getByRole('button', { name: /collapse/i });
 			expect(collapseButton).toHaveAttribute(
 				'title',
-				`Collapse (${formatShortcutKeys(['Meta', 'Shift', 'A'])})`
+				`Collapse (${formatShortcutKeys(['Meta', 'Shift', '2'])})`
 			);
 		});
 

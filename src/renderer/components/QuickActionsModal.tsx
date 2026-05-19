@@ -1,5 +1,6 @@
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Bot } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import type {
 	Session,
 	SessionState,
@@ -14,8 +15,8 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { getAllFolderPaths } from '../utils/fileExplorer';
 import { useModalStore } from '../stores/modalStore';
-import { QUICK_ACTION_PROMPTS } from '../../shared/promptDefinitions';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -28,6 +29,7 @@ import type { WizardStep } from './Wizard/WizardContext';
 import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
@@ -103,8 +105,13 @@ interface QuickAction {
 	subtext?: string;
 	shortcut?: Shortcut;
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
-	// bucket "active" agents at the top with a divider beneath them.
+	// bucket "active" agents at the top with a divider beneath them. Also true
+	// for agents in an active Auto Run batch — they idle between prompts but
+	// belong with the live agents.
 	isRunningAgent?: boolean;
+	// Agents-mode only: session is in an active (non-paused) Auto Run batch.
+	// Renders an AUTO badge next to the agent name, matching the sidebar.
+	isInBatch?: boolean;
 	// Agents-mode only: data needed to render rich live status for running agents.
 	// `thinkingStartTime` is recomputed against the modal's tick clock so the elapsed
 	// time updates while the modal stays open.
@@ -163,6 +170,7 @@ interface QuickActionsModalProps {
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onOpenTabSwitcher?: () => void;
 	tabShortcuts?: Record<string, Shortcut>;
 	isAiMode?: boolean;
@@ -211,6 +219,7 @@ interface QuickActionsModalProps {
 	autoRunSelectedDocument?: string | null;
 	autoRunCompletedTaskCount?: number;
 	onAutoRunResetTasks?: () => void;
+	onToggleAutoRunExpanded?: () => void;
 	onClearActiveTerminal?: () => void;
 	// Tab close operations
 	onCloseAllTabs?: () => void;
@@ -241,6 +250,13 @@ interface QuickActionsModalProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Execution Queue Browser
+	onOpenQueueBrowser?: () => void;
+	// New tab creation
+	onNewTab?: () => void;
+	onNewFileTab?: () => void;
+	onNewBrowserTab?: () => void;
+	onNewTerminalTab?: () => void;
 }
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
@@ -284,6 +300,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onRenameTab,
 		onToggleReadOnlyMode,
 		onToggleTabShowThinking,
+		onToggleTabEnterToSend,
 		onOpenTabSwitcher,
 		tabShortcuts,
 		isAiMode,
@@ -317,6 +334,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		autoRunSelectedDocument,
 		autoRunCompletedTaskCount,
 		onAutoRunResetTasks,
+		onToggleAutoRunExpanded,
 		onClearActiveTerminal,
 		onCloseAllTabs,
 		onCloseOtherTabs,
@@ -339,6 +357,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onConfigureCue,
+		onOpenQueueBrowser,
+		onNewTab,
+		onNewFileTab,
+		onNewBrowserTab,
+		onNewTerminalTab,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -352,10 +375,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setIdleNotificationEnabled = useSettingsStore((s) => s.setIdleNotificationEnabled);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
+	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const setBookmarksCollapsed = useUIStore((s) => s.setBookmarksCollapsed);
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
+	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
+	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
+	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -545,6 +574,61 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcut: shortcuts.newInstance,
 			action: addNewSession,
 		},
+		...(activeSession && onNewTab
+			? [
+					{
+						id: 'newAiChat',
+						label: 'New AI Chat',
+						subtext: 'Open a new AI chat tab in the active agent',
+						shortcut: tabShortcuts?.newTab,
+						action: () => {
+							onNewTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewFileTab
+			? [
+					{
+						id: 'newFileTab',
+						label: 'New File',
+						subtext: 'Open a new file tab in the active agent',
+						shortcut: tabShortcuts?.newFileTab,
+						action: () => {
+							onNewFileTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewBrowserTab
+			? [
+					{
+						id: 'newBrowserTab',
+						label: 'New Browser',
+						subtext: 'Open a new browser tab in the active agent',
+						shortcut: tabShortcuts?.newBrowserTab,
+						action: () => {
+							onNewBrowserTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(activeSession && onNewTerminalTab
+			? [
+					{
+						id: 'newTerminalTab',
+						label: 'New Terminal',
+						subtext: 'Open a new terminal tab in the active agent',
+						action: () => {
+							onNewTerminalTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(openWizard
 			? [
 					{
@@ -603,6 +687,30 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		...(sessions.some((s) => s.bookmarked)
+			? [
+					{
+						id: 'clearAllBookmarks',
+						label: 'Clear All Bookmarks',
+						action: () => {
+							const bookmarkedCount = sessions.filter((s) => s.bookmarked).length;
+							setQuickActionOpen(false);
+							useModalStore.getState().openModal('confirm', {
+								title: 'Clear All Bookmarks',
+								message: `Remove bookmarks from ${bookmarkedCount} agent${
+									bookmarkedCount === 1 ? '' : 's'
+								}?`,
+								destructive: true,
+								onConfirm: () => {
+									setSessions((prev) =>
+										prev.map((s) => (s.bookmarked ? { ...s, bookmarked: false } : s))
+									);
+								},
+							});
+						},
+					},
+				]
+			: []),
 		...(activeSession?.groupId
 			? [
 					{
@@ -635,6 +743,110 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				]
 			: []),
 		{ id: 'createGroup', label: 'Create New Group', action: handleCreateGroup },
+		...(groups.some((g) => g.collapsed) || ungroupedCollapsed
+			? [
+					{
+						id: 'expandAllGroups',
+						label: 'Expand All Agent Groups',
+						action: () => {
+							setGroups((prev) => prev.map((g) => (g.collapsed ? { ...g, collapsed: false } : g)));
+							setUngroupedCollapsed(false);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(groups.some((g) => !g.collapsed) || !ungroupedCollapsed
+			? [
+					{
+						id: 'collapseAllGroups',
+						label: 'Collapse All Agent Groups',
+						action: () => {
+							setGroups((prev) => prev.map((g) => (g.collapsed ? g : { ...g, collapsed: true })));
+							setUngroupedCollapsed(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(groups.some((g) => g.collapsed) ||
+		(sessions.some((s) => s.bookmarked) && bookmarksCollapsed) ||
+		ungroupedCollapsed ||
+		!groupChatsExpanded
+			? [
+					{
+						id: 'expandEntireAgentPanel',
+						label: 'Expand Entire Agent Panel',
+						action: () => {
+							setGroups((prev) => prev.map((g) => (g.collapsed ? { ...g, collapsed: false } : g)));
+							setBookmarksCollapsed(false);
+							setUngroupedCollapsed(false);
+							setGroupChatsExpanded(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(groups.some((g) => !g.collapsed) ||
+		(sessions.some((s) => s.bookmarked) && !bookmarksCollapsed) ||
+		!ungroupedCollapsed ||
+		groupChatsExpanded
+			? [
+					{
+						id: 'collapseEntireAgentPanel',
+						label: 'Collapse Entire Agent Panel',
+						action: () => {
+							setGroups((prev) => prev.map((g) => (g.collapsed ? g : { ...g, collapsed: true })));
+							setBookmarksCollapsed(true);
+							setUngroupedCollapsed(true);
+							setGroupChatsExpanded(false);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(() => {
+			if (!activeSession?.fileTree?.length) return [] as QuickAction[];
+			const allFolderPaths = getAllFolderPaths(activeSession.fileTree);
+			if (allFolderPaths.length === 0) return [] as QuickAction[];
+			const expanded = activeSession.fileExplorerExpanded ?? [];
+			const expandedSet = new Set(expanded);
+			const hasUnexpanded = allFolderPaths.some((p) => !expandedSet.has(p));
+			const hasExpanded = expanded.length > 0;
+			const sessionId = activeSession.id;
+			const items: QuickAction[] = [];
+			if (hasUnexpanded) {
+				items.push({
+					id: 'expandAllFolders',
+					label: 'Expand All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId ? { ...s, fileExplorerExpanded: allFolderPaths } : s
+							)
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			if (hasExpanded) {
+				items.push({
+					id: 'collapseAllFolders',
+					label: 'Collapse All Folders in File Panel',
+					action: () => {
+						setSessions((prev) =>
+							prev.map((s) => (s.id === sessionId ? { ...s, fileExplorerExpanded: [] } : s))
+						);
+						setRightPanelOpen(true);
+						setActiveRightTab('files');
+						setQuickActionOpen(false);
+					},
+				});
+			}
+			return items;
+		})(),
 		{
 			id: 'toggleSidebar',
 			label: 'Toggle Sidebar',
@@ -694,11 +906,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && onOpenTabSwitcher
+		...(onOpenTabSwitcher && activeSession?.aiTabs
 			? [
 					{
 						id: 'tabSwitcher',
 						label: 'Tab Switcher',
+						subtext: 'Search open tabs across this agent',
 						shortcut: tabShortcuts?.tabSwitcher,
 						action: () => {
 							onOpenTabSwitcher();
@@ -745,6 +958,25 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						},
 					},
 				]
+			: []),
+		...(isAiMode && onToggleTabEnterToSend
+			? (() => {
+					const activeTab = activeSession?.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					const effective = activeTab?.enterToSend ?? enterToSendAI;
+					return [
+						{
+							id: 'toggleEnterToSend',
+							label: 'Toggle Enter to Send',
+							subtext: effective
+								? 'Currently: Enter sends · click to switch this tab to Cmd+Enter'
+								: 'Currently: Cmd+Enter sends · click to switch this tab to Enter',
+							action: () => {
+								onToggleTabEnterToSend();
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
 			: []),
 		...(isAiMode && onToggleMarkdownEditMode
 			? [
@@ -1127,14 +1359,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
-		...QUICK_ACTION_PROMPTS.map((p) => ({
-			id: `edit-prompt-${p.id}`,
-			label: `Edit Prompt: ${p.label}`,
-			action: () => {
-				useModalStore.getState().openModal('settings', { tab: 'prompts', promptId: p.id });
-				setQuickActionOpen(false);
-			},
-		})),
 		{
 			id: 'shortcuts',
 			label: 'View Shortcuts',
@@ -1175,6 +1399,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		...(onOpenQueueBrowser
+			? [
+					{
+						id: 'executionQueue',
+						label: 'View Execution Queue',
+						subtext: 'Browse and manage queued prompts across agents',
+						action: () => {
+							onOpenQueueBrowser();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(setUsageDashboardOpen
 			? [
 					{
@@ -1529,6 +1766,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							setQuickActionOpen(false);
 						},
 					},
+					...(onToggleAutoRunExpanded
+						? [
+								{
+									id: 'autoRunExpandedPreview',
+									label: 'Auto Run Expanded Preview',
+									subtext: 'Open the Auto Run document in a centered modal',
+									shortcut: shortcuts.toggleAutoRunExpanded,
+									action: () => {
+										onToggleAutoRunExpanded();
+										setQuickActionOpen(false);
+									},
+								},
+							]
+						: []),
 				]),
 		// Playbook Exchange - browse and import community playbooks
 		...(onOpenPlaybookExchange
@@ -1938,15 +2189,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	// Agent switcher mode: clean names only, no "Jump to:" prefix.
 	// Group chats are intentionally excluded — this modal is the agent jumper.
+	const batchSessionIdSet = new Set(activeBatchSessionIds);
 	const agentActions: QuickAction[] = sessions.map((s) => {
-		const isRunning = s.state !== 'idle';
+		const isInBatch = batchSessionIdSet.has(s.id);
+		const isSessionBusy = s.state !== 'idle';
+		// Auto Run agents idle between prompts but belong with the LIVE bucket
+		// from the user's perspective — they're actively working through tasks.
+		const isRunningAgent = isSessionBusy || isInBatch;
 		// Find the AI tab that's currently working. Falls back to the active tab so
 		// the row still has a tab label when the session-level state diverges from
 		// per-tab state (e.g. connecting/error states).
-		const busyTab = isRunning
+		const busyTab = isSessionBusy
 			? (s.aiTabs?.find((t) => t.state === 'busy') ?? s.aiTabs?.find((t) => t.id === s.activeTabId))
 			: undefined;
-		const runningInfo = isRunning
+		const runningInfo = isSessionBusy
 			? {
 					state: s.state,
 					// Prefer the busy tab's start time; fall back to the session-level timer.
@@ -1966,7 +2222,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			// the agents-mode list, so we leave the per-row subtext empty here. Running
 			// agents render rich live status via `runningInfo` instead.
 			subtext: undefined,
-			isRunningAgent: isRunning,
+			isRunningAgent,
+			isInBatch,
 			runningInfo,
 			bookmarked: !!s.bookmarked,
 			agentSortKey: alphabetizeKey(s.name),
@@ -2112,7 +2369,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				<div
@@ -2226,6 +2483,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 													/>
 												)}
 												<span className="font-medium truncate">{a.label}</span>
+												{a.isInBatch && (
+													<div
+														className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+														style={{
+															backgroundColor: theme.colors.warning + '30',
+															color: theme.colors.warning,
+														}}
+														title="Auto Run active"
+													>
+														<Bot className="w-2.5 h-2.5" />
+														AUTO
+													</div>
+												)}
 											</div>
 											{a.runningInfo ? (
 												<RunningAgentSubtext

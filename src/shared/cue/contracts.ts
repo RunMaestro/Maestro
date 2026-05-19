@@ -150,6 +150,19 @@ export interface CueSubscription {
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
+	/** Re-fire this subscription when a tracked PR/issue receives new activity
+	 *  (comments, edits, reviews, label changes) after its initial discovery.
+	 *  Default `false` (legacy behavior: fire once per item on creation).
+	 *  Only meaningful for `github.pull_request` and `github.issue` events. */
+	retrigger_on_comments?: boolean;
+	/** Per-item cap on re-trigger fires when `retrigger_on_comments` is true.
+	 *  Counts re-fires only — the initial discovery fire is always allowed.
+	 *  Omitted = default 10. Positive integer = explicit cap.
+	 *  `0` = unlimited (sentinel chosen over `null` so the field is a single
+	 *  numeric type for validation). Once a PR/issue hits its cap the poller
+	 *  freezes its tracked revision so raising the cap later resumes from
+	 *  the right point instead of replaying stale activity. */
+	max_notifications?: number;
 	agent_id?: string;
 	label?: string;
 	fan_in_timeout_minutes?: number;

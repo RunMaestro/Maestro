@@ -26,7 +26,9 @@ function walkTsx(dir: string, out: string[] = []): string[] {
 
 function collectRenderedSettingIds(): { id: string; file: string }[] {
 	const matches: { id: string; file: string }[] = [];
-	const re = /data-setting-id=["']([a-z0-9-]+)["']/g;
+	// IDs use kebab-case for legacy entries (e.g. `general-thinking-mode`) and
+	// also accept dotted notation that mirrors a `settingsMetadata` key.
+	const re = /data-setting-id=["']([A-Za-z0-9.-]+)["']/g;
 	for (const file of walkTsx(RENDERER_ROOT)) {
 		const src = readFileSync(file, 'utf8');
 		for (const m of src.matchAll(re)) {

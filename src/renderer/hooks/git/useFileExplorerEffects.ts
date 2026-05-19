@@ -351,6 +351,19 @@ export function useFileExplorerEffects(
 				fileTreeKeyboardNavRef.current = true;
 				setSelectedFileIndex(flatFileList.length - 1);
 			}
+			// Shift+Arrow: peek scroll — move viewport without changing the
+			// focused file. Lets the user glance further down/up while keeping
+			// their place in the list.
+			else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+				e.preventDefault();
+				const scrollEl = fileTreeContainerRef.current?.querySelector(
+					'[data-file-list-scroll]'
+				) as HTMLElement | null;
+				if (scrollEl) {
+					const ROW_HEIGHT = 28;
+					scrollEl.scrollTop += e.key === 'ArrowDown' ? ROW_HEIGHT : -ROW_HEIGHT;
+				}
+			}
 			// Option+Arrow: page up/down (10 items)
 			else if (e.altKey && e.key === 'ArrowUp') {
 				e.preventDefault();

@@ -58,6 +58,8 @@ export interface SettingsModalData {
 /** New instance modal data */
 export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
+	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set — duplicates inherit the source's group). */
+	presetGroupId?: string | null;
 }
 
 /** Edit agent modal data */
@@ -961,6 +963,7 @@ export function useModalActions() {
 		// New Instance Modal
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
+		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,

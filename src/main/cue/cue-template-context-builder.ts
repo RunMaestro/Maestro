@@ -11,6 +11,7 @@ import type { CueEvent, CueSubscription } from './cue-types';
 import type { CueEventType } from '../../shared/cue/contracts';
 import type { TemplateContext } from '../../shared/templateVariables';
 import { sanitizeVarName } from '../../shared/cue-pipeline-types';
+import { formatNewCommentsForTemplate, type GitHubComment } from './cue-github-poller';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,9 @@ enricherRegistry.set('task.pending', (event) => ({
 
 /** Shared GitHub enricher for both pull_request and issue events. */
 function buildGitHubContext(event: CueEvent): Record<string, string> {
+	const newComments = Array.isArray(event.payload.new_comments)
+		? (event.payload.new_comments as GitHubComment[])
+		: [];
 	return {
 		ghType: String(event.payload.type ?? ''),
 		ghNumber: String(event.payload.number ?? ''),
@@ -103,6 +107,9 @@ function buildGitHubContext(event: CueEvent): Record<string, string> {
 		ghBaseBranch: String(event.payload.base_branch ?? ''),
 		ghAssignees: String(event.payload.assignees ?? ''),
 		ghMergedAt: String(event.payload.merged_at ?? ''),
+		ghNewComments: formatNewCommentsForTemplate(newComments),
+		ghIsRetrigger: event.payload.is_retrigger === true ? 'true' : 'false',
+		ghRetriggerCount: String(event.payload.retrigger_count ?? '0'),
 	};
 }
 

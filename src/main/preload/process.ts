@@ -211,6 +211,13 @@ export function createProcessApi() {
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>
 			ipcRenderer.invoke('process:getActiveProcesses'),
 
+		/**
+		 * Check whether a terminal tab's PTY has a non-shell foreground process
+		 * (i.e. is actively running a command). Returns false if no PTY is found.
+		 */
+		isTerminalBusy: (sessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:isTerminalBusy', sessionId),
+
 		// Event listeners
 
 		/**
@@ -288,6 +295,36 @@ export function createProcessApi() {
 				callback(sessionId, sshRemote);
 			ipcRenderer.on('process:ssh-remote', handler);
 			return () => ipcRenderer.removeListener('process:ssh-remote', handler);
+		},
+
+		/**
+		 * Subscribe to Claude headless-mode resolution.
+		 * Emitted after a Claude Code spawn succeeds, carrying the mode the spawner
+		 * actually picked (`api` vs `interactive`/maestro-p), the reason tag for
+		 * persistence, and the canonical CLAUDE_CONFIG_DIR key the snapshot was
+		 * consulted under. Non-Claude agents and SSH Claude spawns don't fire this.
+		 */
+		onClaudeModeResolved: (
+			callback: (
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'auto' | 'limit';
+					configDirKey: string;
+				}
+			) => callback(sessionId, resolution);
+			ipcRenderer.on('process:claude-mode-resolved', handler);
+			return () => ipcRenderer.removeListener('process:claude-mode-resolved', handler);
 		},
 
 		/**

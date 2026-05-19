@@ -8,6 +8,11 @@ import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import { captureException } from '../../utils/sentry';
+import {
+	waitForCopilotShutdown,
+	readCopilotFinalAnswer,
+	type CopilotShutdownWaitResult,
+} from '../CopilotShutdownWaiter';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -31,9 +36,14 @@ export class ExitHandler {
 	}
 
 	/**
-	 * Handle process exit event
+	 * Handle process exit event.
+	 *
+	 * Async because some agents need post-exit reconciliation against
+	 * on-disk session state before the renderer is told the agent is
+	 * done (currently: Copilot CLI — see `awaitCopilotShutdown`).
+	 * Callers fire-and-forget, so errors are caught internally.
 	 */
-	handleExit(sessionId: string, code: number): void {
+	async handleExit(sessionId: string, code: number): Promise<void> {
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) {
 			this.emitter.emit('exit', sessionId, code);
@@ -67,6 +77,18 @@ export class ExitHandler {
 				stderrPreview: managedProcess.stderrBuffer?.substring(0, 200) || '(empty)',
 			});
 		}
+
+		// Copilot CLI: wait for the on-disk shutdown marker before emitting
+		// `exit`. Copilot can keep working in subagent processes after our
+		// parent process closes, and `session.shutdown` is only ever
+		// written to `events.jsonl` — never to stdout in batch mode. If
+		// we emit `exit` immediately, the renderer flips to idle while
+		// Copilot is still doing real work; the user has to manually poke
+		// the tab to discover work is ongoing. When the shutdown marker
+		// is found, we also re-derive the authoritative final answer from
+		// disk so the rendered text matches what Copilot truly finished
+		// with (not the stale planning narration our parent saw last).
+		await this.awaitCopilotShutdown(sessionId, managedProcess);
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -227,6 +249,60 @@ export class ExitHandler {
 
 		this.emitter.emit('exit', sessionId, code);
 		this.processes.delete(sessionId);
+	}
+
+	/**
+	 * For Copilot CLI batch sessions, block emitting `exit` until the
+	 * authoritative `session.shutdown` event has been written to the
+	 * on-disk events.jsonl, or activity has clearly stopped. On success
+	 * also override `streamedText` with the disk-derived final answer
+	 * so the downstream flush emits Copilot's real conclusion, not the
+	 * possibly-stale text our parent process captured before it died.
+	 *
+	 * No-op for non-Copilot agents and for SSH-remote Copilot sessions
+	 * (we don't have local disk access there — that's a follow-up).
+	 */
+	private async awaitCopilotShutdown(
+		sessionId: string,
+		managedProcess: ManagedProcess
+	): Promise<void> {
+		if (managedProcess.toolType !== 'copilot-cli') return;
+		if (managedProcess.sshRemoteId) return;
+		const agentSessionId = managedProcess.agentSessionId;
+		if (!agentSessionId) return;
+
+		let result: CopilotShutdownWaitResult;
+		try {
+			result = await waitForCopilotShutdown(agentSessionId);
+		} catch (err) {
+			logger.warn('[ProcessManager] Copilot shutdown wait threw', 'ProcessManager', {
+				sessionId,
+				agentSessionId,
+				error: String(err),
+			});
+			return;
+		}
+
+		logger.info('[ProcessManager] Copilot shutdown wait completed', 'ProcessManager', {
+			sessionId,
+			agentSessionId,
+			result,
+		});
+
+		if (result !== 'observed') return;
+
+		try {
+			const finalAnswer = await readCopilotFinalAnswer(agentSessionId);
+			if (finalAnswer && finalAnswer.content) {
+				managedProcess.streamedText = finalAnswer.content;
+			}
+		} catch (err) {
+			logger.warn('[ProcessManager] Failed to read Copilot final answer', 'ProcessManager', {
+				sessionId,
+				agentSessionId,
+				error: String(err),
+			});
+		}
 	}
 
 	/**

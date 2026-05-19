@@ -2104,6 +2104,80 @@ export function Component() {
 			});
 		});
 
+		it('should pass baseBranch to git worktree add when branch is new', async () => {
+			// Regression: the UI's "Base Branch" dropdown (and the CLI's
+			// --base-branch flag) historically dropped this value, so new branches
+			// always started from the main repo's HEAD instead of the user's
+			// chosen base. This test pins the wiring end-to-end.
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// branch doesn't exist yet
+					stdout: '',
+					stderr: 'fatal: Needed a single revision',
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					stdout: "Preparing worktree (new branch 'feature-from-rc')",
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-from-rc',
+				undefined, // sshRemoteId
+				'rc' // baseBranch
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'add', '-b', 'feature-from-rc', '/worktrees/feature', 'rc'],
+				'/main/repo'
+			);
+		});
+
+		it('should ignore baseBranch when the branch already exists', async () => {
+			// Once the branch exists, `git worktree add <path> <branch>` adopts it;
+			// baseBranch would be a no-op so the handler must not pass it.
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// branch already exists
+					stdout: 'abc123',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/existing',
+				'already-exists',
+				undefined,
+				'rc' // baseBranch — ignored when branch already exists
+			);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['worktree', 'add', '/worktrees/existing', 'already-exists'],
+				'/main/repo'
+			);
+		});
+
 		it('should create worktree with existing branch', async () => {
 			// Mock fs.access to throw (path doesn't exist)
 			const fsPromises = await import('fs/promises');

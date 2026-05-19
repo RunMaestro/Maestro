@@ -126,6 +126,61 @@ describe('ProcessDetailView', () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
+	it('hides the env vars section when none are set', () => {
+		render(
+			<ProcessDetailView theme={theme} detail={baseDetail} onBack={() => {}} onClose={() => {}} />
+		);
+		expect(screen.queryByText('Maestro Environment Variables')).not.toBeInTheDocument();
+	});
+
+	it('renders all env vars inline when count is at or below the collapsed limit', () => {
+		render(
+			<ProcessDetailView
+				theme={theme}
+				detail={{
+					...baseDetail,
+					maestroEnvVars: {
+						ANTHROPIC_API_KEY: 'sk-xxx',
+						DEBUG: 'maestro:*',
+					},
+				}}
+				onBack={() => {}}
+				onClose={() => {}}
+			/>
+		);
+		expect(screen.getByText('Maestro Environment Variables')).toBeInTheDocument();
+		expect(screen.getByText('ANTHROPIC_API_KEY')).toBeInTheDocument();
+		expect(screen.getByText('DEBUG')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /show \d+ more/i })).not.toBeInTheDocument();
+	});
+
+	it('collapses overflow env vars and expands when toggled', () => {
+		const maestroEnvVars: Record<string, string> = {};
+		for (let i = 0; i < 8; i++) {
+			maestroEnvVars[`VAR_${String.fromCharCode(65 + i)}`] = `value-${i}`;
+		}
+		render(
+			<ProcessDetailView
+				theme={theme}
+				detail={{ ...baseDetail, maestroEnvVars }}
+				onBack={() => {}}
+				onClose={() => {}}
+			/>
+		);
+		// Sorted alphabetically: A..E visible, F..H hidden initially.
+		expect(screen.getByText('VAR_A')).toBeInTheDocument();
+		expect(screen.getByText('VAR_E')).toBeInTheDocument();
+		expect(screen.queryByText('VAR_F')).not.toBeInTheDocument();
+
+		const toggle = screen.getByRole('button', { name: /show 3 more/i });
+		fireEvent.click(toggle);
+		expect(screen.getByText('VAR_F')).toBeInTheDocument();
+		expect(screen.getByText('VAR_H')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole('button', { name: /show less/i }));
+		expect(screen.queryByText('VAR_F')).not.toBeInTheDocument();
+	});
+
 	it('renders a sensible fallback when command/args are missing', () => {
 		render(
 			<ProcessDetailView
