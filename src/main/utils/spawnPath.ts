@@ -38,7 +38,9 @@ export function buildSpawnPath(extraPaths?: string[]): string {
 	const shellPath = peekShellPath();
 	const shellParts = shellPath ? shellPath.split(delimiter).filter(Boolean) : [];
 
-	const extras = (extraPaths || []).filter(Boolean);
+	// Only absolute paths are safe to prepend — a "." or other relative dir
+	// would let a binary in the spawn cwd shadow system tools.
+	const extras = (extraPaths || []).filter((p) => Boolean(p) && path.isAbsolute(p));
 
 	const seen = new Set<string>();
 	const result: string[] = [];

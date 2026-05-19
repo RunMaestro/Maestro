@@ -107,4 +107,17 @@ describe('buildSpawnPath', () => {
 		expect(parts).not.toContain('');
 		expect(parts[0]).toBe('/Users/me/opt/node/bin');
 	});
+
+	it('drops non-absolute extras to avoid prepending "." or relative dirs', () => {
+		// path.dirname("codex") returns "." — if a caller ever forwards a bare
+		// binary name, we must NOT prepend cwd to PATH (it would let a binary
+		// in cwd shadow system tools).
+		process.env.PATH = '/usr/bin';
+		const result = buildSpawnPath(['.', 'relative/dir', '/Users/me/opt/node/bin']);
+		const parts = result.split(path.delimiter);
+
+		expect(parts).not.toContain('.');
+		expect(parts).not.toContain('relative/dir');
+		expect(parts[0]).toBe('/Users/me/opt/node/bin');
+	});
 });

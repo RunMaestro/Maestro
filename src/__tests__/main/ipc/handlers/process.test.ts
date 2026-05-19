@@ -2034,6 +2034,63 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.extraPathDirs).toEqual(['/Users/me/opt/node/bin']);
 		});
 
+		it('should prefer sessionCustomPath over agent.path when deriving extraPathDirs (local)', async () => {
+			// When the user overrides the binary, the co-located runtime lives
+			// next to *that* binary — not the auto-detected one. Per CodeRabbit
+			// + Greptile review on #1021.
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/opt/homebrew/bin/codex',
+				requiresPty: false,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: '/opt/homebrew/bin/codex',
+				args: ['exec'],
+				sessionCustomPath: '/Users/me/opt/node/bin/codex',
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.extraPathDirs).toEqual(['/Users/me/opt/node/bin']);
+		});
+
+		it('should not inject extraPathDirs when the spawn binary path is not absolute', async () => {
+			// path.dirname("codex") would return "." — prepending that to PATH
+			// would let a binary in the spawn cwd shadow system tools.
+			// Per Greptile review on #1021.
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: 'codex', // bare binary name, no directory
+				requiresPty: false,
+				capabilities: { supportsStreamJsonInput: false },
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: 'codex',
+				args: ['exec'],
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.extraPathDirs).toBeUndefined();
+		});
+
 		it('should use sessionCustomPath for SSH remote when user specifies a custom path', async () => {
 			// When user sets a custom path for a session, that path should be used on the remote
 			// This allows users to specify the exact binary location on the remote host

@@ -532,14 +532,18 @@ app
 
 		// Warm the login-shell PATH cache early so the first agent spawn picks up
 		// the user's custom PATH (e.g. node installs outside our hardcoded
-		// version-manager paths). Fire-and-forget: failures are logged inside
-		// path-prober and the spawn flow tolerates a missing cache.
+		// version-manager paths). Fire-and-forget; the spawn flow tolerates a
+		// missing cache.
 		void (async () => {
 			try {
 				const { refreshShellPath } = await import('./runtime/getShellPath');
 				await refreshShellPath();
-			} catch {
+				logger.debug('Shell PATH cache warmed at startup', 'Startup');
+			} catch (err) {
 				// Probe failures are non-fatal; spawn falls back to hardcoded paths.
+				logger.debug('Shell PATH cache warm-up skipped', 'Startup', {
+					reason: err instanceof Error ? err.message : String(err),
+				});
 			}
 		})();
 

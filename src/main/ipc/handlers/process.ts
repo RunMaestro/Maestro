@@ -884,15 +884,27 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
-				// For local (non-SSH) spawns, prepend the parent dir of the detected
-				// agent binary to PATH. Covers npm-style script agents (codex,
-				// claude, etc.) installed alongside a non-standard `node` that's
-				// outside our hardcoded version-manager paths — the script's
-				// `#!/usr/bin/env node` shebang needs that node on PATH.
-				// SSH path is built separately on the remote and must not inherit
-				// any local directories.
+				// For local (non-SSH) spawns, prepend the parent dir of the binary
+				// we're actually about to spawn to PATH. Covers npm-style script
+				// agents (codex, claude, etc.) installed alongside a non-standard
+				// `node` that's outside our hardcoded version-manager paths —
+				// the script's `#!/usr/bin/env node` shebang needs that node on
+				// PATH. SSH path is built separately on the remote and must not
+				// inherit any local directories.
+				//
+				// Prefer the session's effective custom path over the detected
+				// agent path: if the user overrode the binary, the co-located
+				// runtime belongs to *that* dir, not the auto-detected one.
+				// Skip non-absolute paths so `path.dirname("codex")` doesn't
+				// inject "." into PATH (which would let a binary in cwd shadow
+				// system tools).
+				const localSpawnBinaryPath = !sshRemoteUsed
+					? effectiveSessionCustomPath || agent?.path
+					: undefined;
 				const localAgentBinDir =
-					!sshRemoteUsed && agent?.path ? path.dirname(agent.path) : undefined;
+					localSpawnBinaryPath && path.isAbsolute(localSpawnBinaryPath)
+						? path.dirname(localSpawnBinaryPath)
+						: undefined;
 
 				const result = processManager.spawn({
 					...config,
