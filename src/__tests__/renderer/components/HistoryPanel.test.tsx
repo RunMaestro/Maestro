@@ -1135,7 +1135,7 @@ describe('HistoryPanel', () => {
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789');
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
 		});
 
 		it('should render summary with truncation', async () => {

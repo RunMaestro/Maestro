@@ -1208,7 +1208,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				const firstLine = content.split('\n')[0];
 				if (firstLine) {
 					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-					if (metadata.id === sessionId) {
+					if (metadata.id === sessionId || metadata.payload?.id === sessionId) {
 						return filePath;
 					}
 				}
@@ -1242,7 +1242,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					const firstLine = result.data.split('\n')[0];
 					if (firstLine) {
 						const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-						if (metadata.id === sessionId) {
+						if (metadata.id === sessionId || metadata.payload?.id === sessionId) {
 							return filePath;
 						}
 					}

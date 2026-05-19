@@ -64,7 +64,7 @@ export interface HistoryEntryItemProps {
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -117,7 +117,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onOpenSessionAsTab?.(entry.agentSessionId!);
+								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{

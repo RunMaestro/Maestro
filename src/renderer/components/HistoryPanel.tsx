@@ -28,7 +28,7 @@ interface HistoryPanelProps {
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: any[];

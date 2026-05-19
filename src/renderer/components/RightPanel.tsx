@@ -99,7 +99,7 @@ interface RightPanelProps {
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
