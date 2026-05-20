@@ -6,7 +6,6 @@ import React, {
 	useCallback,
 	lazy,
 	Suspense,
-	type ReactNode,
 } from 'react';
 import { useFocusAfterRender } from './hooks/utils/useFocusAfterRender';
 // SettingsModal is now lazy-loaded inside AppStandaloneModals
@@ -150,6 +149,7 @@ import { notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
+import { WindowProvider, useWindowContext } from './contexts/WindowContext';
 import { useGroupChatStore } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './stores/retryStore';
@@ -162,7 +162,6 @@ import {
 } from './stores/sessionStore';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { sidebarSessionEquality } from './stores/sessionEquality';
-import { useActiveSession } from './hooks/session/useActiveSession';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
@@ -210,6 +209,11 @@ import { useFileExplorerStore } from './stores/fileExplorerStore';
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
+	const {
+		windowId,
+		sessionIds: windowSessionIds,
+		activeSessionId: windowContextActiveSessionId,
+	} = useWindowContext();
 
 	// --- MODAL STATE (from modalStore, replaces ModalContext) ---
 	const {
@@ -500,9 +504,9 @@ function MaestroConsoleInner() {
 		sidebarSessionEquality
 	);
 	const groups = useSessionStore((s) => s.groups);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const storeActiveSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
-	const activeSession = useActiveSession();
+	const storeActiveSession = useSessionStore(selectActiveSession);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -511,6 +515,45 @@ function MaestroConsoleInner() {
 		setActiveSessionId: storeSetActiveSessionId,
 		setRemovedWorktreePaths,
 	} = useMemo(() => useSessionStore.getState(), []);
+
+	const windowSessionIdSet = useMemo(() => new Set(windowSessionIds), [windowSessionIds]);
+	const windowSessions = useMemo(
+		() => (windowId ? sessions.filter((session) => windowSessionIdSet.has(session.id)) : sessions),
+		[sessions, windowId, windowSessionIdSet]
+	);
+	const activeSession = useMemo(() => {
+		if (!windowId) {
+			return storeActiveSession;
+		}
+		if (storeActiveSession && windowSessionIdSet.has(storeActiveSession.id)) {
+			return storeActiveSession;
+		}
+
+		const contextActiveSession =
+			windowContextActiveSessionId &&
+			sessions.find((session) => session.id === windowContextActiveSessionId);
+		if (contextActiveSession && windowSessionIdSet.has(contextActiveSession.id)) {
+			return contextActiveSession;
+		}
+
+		return windowSessions[0] ?? null;
+	}, [
+		windowId,
+		storeActiveSession,
+		windowSessionIdSet,
+		windowContextActiveSessionId,
+		sessions,
+		windowSessions,
+	]);
+	const activeSessionId = activeSession?.id ?? storeActiveSessionId;
+
+	useEffect(() => {
+		if (!windowId || !activeSession || activeSession.id === storeActiveSessionId) {
+			return;
+		}
+
+		storeSetActiveSessionId(activeSession.id);
+	}, [windowId, activeSession, storeActiveSessionId, storeSetActiveSessionId]);
 
 	// batchedUpdater — React hook for timer lifecycle (reads store directly)
 	const batchedUpdater = useBatchedSessionUpdates();
@@ -2823,7 +2866,7 @@ function MaestroConsoleInner() {
 	const groupChatDropZone = useChatFileDropZone(theme, handleDrop);
 
 	return (
-		<>
+		<GitStatusProvider sessions={windowSessions} activeSessionId={activeSessionId}>
 			<div
 				className={`flex h-screen w-full font-mono overflow-hidden transition-colors duration-300 ${
 					isMobileLandscape || useNativeTitleBar ? 'pt-0' : 'pt-10'
@@ -3449,16 +3492,19 @@ function MaestroConsoleInner() {
 					)}
 
 				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
-				{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+				{windowSessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
 					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
-				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-					<ErrorBoundary>
-						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
-					</ErrorBoundary>
-				)}
+				{!isMobileLandscape &&
+					windowSessions.length > 0 &&
+					!activeGroupChatId &&
+					!logViewerOpen && (
+						<ErrorBoundary>
+							<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+						</ErrorBoundary>
+					)}
 
 				{/* NOTE: Settings, Wizard, Tour, and flash notifications are now rendered via AppStandaloneModals */}
 
@@ -3468,22 +3514,6 @@ function MaestroConsoleInner() {
 				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
 				<CenterFlash theme={theme} />
 			</div>
-		</>
-	);
-}
-
-/**
- * GitStatusProviderFromStore — reads sessions/activeSessionId from the store
- * so GitStatusProvider can sit ABOVE MaestroConsoleInner. Required because
- * useModalHandlers (called inside MaestroConsoleInner) consumes useGitDetail,
- * and a context provider must wrap its consumer.
- */
-function GitStatusProviderFromStore({ children }: { children: ReactNode }) {
-	const sessions = useSessionStore((s) => s.sessions);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	return (
-		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
-			{children}
 		</GitStatusProvider>
 	);
 }
@@ -3514,12 +3544,12 @@ export default function MaestroConsole() {
 	}
 
 	return (
-		<InlineWizardProvider>
-			<InputProvider>
-				<GitStatusProviderFromStore>
+		<WindowProvider>
+			<InlineWizardProvider>
+				<InputProvider>
 					<MaestroConsoleInner />
-				</GitStatusProviderFromStore>
-			</InputProvider>
-		</InlineWizardProvider>
+				</InputProvider>
+			</InlineWizardProvider>
+		</WindowProvider>
 	);
 }

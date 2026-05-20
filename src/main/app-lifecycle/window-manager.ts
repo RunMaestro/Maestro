@@ -156,6 +156,12 @@ function getWindowState(state: MultiWindowState, windowId?: string): WindowState
 	);
 }
 
+function appendWindowIdToUrl(url: string, windowId: string): string {
+	const parsedUrl = new URL(url);
+	parsedUrl.searchParams.set('windowId', windowId);
+	return parsedUrl.toString();
+}
+
 /**
  * Resolves the window position to use, dropping saved coordinates that would
  * place the window off every visible display. Windows reports bounds of
@@ -383,11 +389,11 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
 				);
 
-			mainWindow.loadURL(devServerUrl);
+			mainWindow.loadURL(appendWindowIdToUrl(devServerUrl, registryWindowId));
 			// DevTools can be opened via Command-K menu instead of automatically on startup
 			logger.info('Loading development server', 'Window');
 		} else {
-			mainWindow.loadURL(rendererProductionUrl);
+			mainWindow.loadURL(appendWindowIdToUrl(rendererProductionUrl, registryWindowId));
 			logger.info('Loading production build', 'Window');
 			// Open DevTools in production if DEBUG env var is set
 			if (process.env.DEBUG === 'true') {
