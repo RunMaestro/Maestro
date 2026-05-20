@@ -8,6 +8,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle } from 'electron';
 import type Store from 'electron-store';
 import type {
+	WindowBounds,
 	WindowInfo,
 	WindowSessionMovedEvent,
 	WindowState,
@@ -206,6 +207,11 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		entry.browserWindow.show();
 		entry.browserWindow.focus();
 		return true;
+	});
+
+	ipcMain.handle('windows:getWindowBounds', async (event): Promise<WindowBounds> => {
+		const browserWindow = getEventWindow(event);
+		return browserWindow.getBounds();
 	});
 
 	ipcMain.handle('windows:getState', async (event): Promise<WindowState> => {

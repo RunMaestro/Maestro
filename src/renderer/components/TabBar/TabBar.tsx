@@ -15,9 +15,16 @@ import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
+import type { WindowBounds } from '../../../shared/types/window';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
+
+const isPointOutsideBounds = (screenX: number, screenY: number, bounds: WindowBounds): boolean =>
+	screenX < bounds.x ||
+	screenX > bounds.x + bounds.width ||
+	screenY < bounds.y ||
+	screenY > bounds.y + bounds.height;
 
 /**
  * TabBar component for displaying the unified tab strip.
@@ -92,6 +99,7 @@ function TabBarInner({
 
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+	const [draggingOutsideWindow, setDraggingOutsideWindow] = useState(false);
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
 	// Agent Resilience: tabs stuck auto-retrying an outage surface in the unread
@@ -113,6 +121,7 @@ function TabBarInner({
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+	const windowBoundsRef = useRef<WindowBounds | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
 	const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -217,11 +226,39 @@ function TabBarInner({
 	]);
 
 	// Drag handlers
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
+	const updateDragWindowExitState = useCallback((screenX: number, screenY: number) => {
+		const bounds = windowBoundsRef.current;
+		if (!bounds) return;
+		setDraggingOutsideWindow(isPointOutsideBounds(screenX, screenY, bounds));
 	}, []);
+
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+			setDraggingOutsideWindow(false);
+			windowBoundsRef.current = null;
+
+			window.maestro?.windows
+				?.getWindowBounds?.()
+				.then((bounds) => {
+					windowBoundsRef.current = bounds;
+					updateDragWindowExitState(e.screenX, e.screenY);
+				})
+				.catch((error) => {
+					logger.warn('[TabBar] Failed to read window bounds during tab drag', { error });
+				});
+		},
+		[updateDragWindowExitState]
+	);
+
+	const handleDrag = useCallback(
+		(_tabId: string, e: React.DragEvent) => {
+			updateDragWindowExitState(e.screenX, e.screenY);
+		},
+		[updateDragWindowExitState]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -235,6 +272,8 @@ function TabBarInner({
 	const handleDragEnd = useCallback(() => {
 		setDraggingTabId(null);
 		setDragOverTabId(null);
+		setDraggingOutsideWindow(false);
+		windowBoundsRef.current = null;
 	}, []);
 
 	const handleDrop = useCallback(
@@ -383,6 +422,7 @@ function TabBarInner({
 		onSelect: onTabSelect,
 		onClose: onTabClose,
 		onDragStart: handleDragStart,
+		onDrag: handleDrag,
 		onDragOver: handleDragOver,
 		onDragEnd: handleDragEnd,
 		onDrop: handleDrop,
@@ -425,6 +465,7 @@ function TabBarInner({
 			ref={tabBarRef}
 			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
 			data-tour="tab-bar"
+			data-drag-outside-window={draggingOutsideWindow ? 'true' : undefined}
 			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 		>
 			{/* Sticky left: search + unread filter */}
@@ -542,6 +583,7 @@ function TabBarInner({
 										onSelect={onFileTabSelect || (() => {})}
 										onClose={onFileTabClose || (() => {})}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}

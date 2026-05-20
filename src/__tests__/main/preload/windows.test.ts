@@ -108,6 +108,16 @@ describe('Windows Preload API', () => {
 		expect(result).toBe(true);
 	});
 
+	it('should invoke windows:getWindowBounds', async () => {
+		const bounds = { x: 10, y: 20, width: 1200, height: 800 };
+		mockInvoke.mockResolvedValue(bounds);
+
+		const result = await api.getWindowBounds();
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:getWindowBounds');
+		expect(result).toEqual(bounds);
+	});
+
 	it('should invoke windows:getState', async () => {
 		const state = {
 			id: 'window-1',

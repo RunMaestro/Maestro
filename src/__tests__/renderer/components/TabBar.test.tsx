@@ -1083,8 +1083,21 @@ describe('TabBar', () => {
 	});
 
 	describe('drag and drop', () => {
-		it('handles drag start', () => {
+		it('handles drag start', async () => {
 			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const getWindowBounds = vi.fn().mockResolvedValue({
+				x: 10,
+				y: 20,
+				width: 1200,
+				height: 800,
+			});
+			window.maestro = {
+				...window.maestro,
+				windows: {
+					...window.maestro?.windows,
+					getWindowBounds,
+				},
+			} as typeof window.maestro;
 
 			render(
 				<TabBar
@@ -1105,10 +1118,76 @@ describe('TabBar', () => {
 				getData: vi.fn().mockReturnValue('tab-1'),
 			};
 
-			fireEvent.dragStart(tab, { dataTransfer });
+			await act(async () => {
+				fireEvent.dragStart(tab, { dataTransfer });
+				await Promise.resolve();
+			});
 
 			expect(dataTransfer.effectAllowed).toBe('move');
 			expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'tab-1');
+			expect(getWindowBounds).toHaveBeenCalled();
+		});
+
+		it('tracks when a dragged tab leaves the current window bounds', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			window.maestro = {
+				...window.maestro,
+				windows: {
+					...window.maestro?.windows,
+					getWindowBounds: vi.fn().mockResolvedValue({
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+					}),
+				},
+			} as typeof window.maestro;
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			const tabBar = screen.getByText('Tab 1').closest('[data-tour="tab-bar"]')!;
+
+			await act(async () => {
+				fireEvent.dragStart(tab, {
+					screenX: 100,
+					screenY: 100,
+					dataTransfer: {
+						effectAllowed: '',
+						setData: vi.fn(),
+						getData: vi.fn().mockReturnValue('tab-1'),
+					},
+				});
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.windows.getWindowBounds).toHaveBeenCalled();
+
+			const outsideDragEvent = new Event('drag', { bubbles: true });
+			Object.defineProperty(outsideDragEvent, 'screenX', { value: 1400 });
+			Object.defineProperty(outsideDragEvent, 'screenY', { value: 100 });
+			act(() => {
+				fireEvent(tab, outsideDragEvent);
+			});
+			expect(tabBar).toHaveAttribute('data-drag-outside-window', 'true');
+
+			const insideDragEvent = new Event('drag', { bubbles: true });
+			Object.defineProperty(insideDragEvent, 'screenX', { value: 100 });
+			Object.defineProperty(insideDragEvent, 'screenY', { value: 100 });
+			act(() => {
+				fireEvent(tab, insideDragEvent);
+			});
+			expect(tabBar).not.toHaveAttribute('data-drag-outside-window');
 		});
 
 		it('handles drag over', () => {

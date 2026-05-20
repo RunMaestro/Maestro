@@ -35,6 +35,8 @@ export interface FileTabProps {
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
 	/** Stable callback - receives tabId and event */
@@ -90,6 +92,7 @@ export const FileTab = memo(function FileTab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -277,6 +280,13 @@ export const FileTab = memo(function FileTab({
 		[onDragStart, tab.id]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tab.id, e);
+		},
+		[onDrag, tab.id]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tab.id, e);
@@ -362,6 +372,7 @@ export const FileTab = memo(function FileTab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}

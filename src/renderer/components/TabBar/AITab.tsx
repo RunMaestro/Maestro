@@ -28,6 +28,8 @@ export interface AITabProps {
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
 	/** Stable callback - receives tabId and event */
@@ -99,6 +101,7 @@ export const AITab = memo(function AITab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -368,6 +371,13 @@ export const AITab = memo(function AITab({
 		[onDragStart, tabId]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tabId, e);
+		},
+		[onDrag, tabId]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tabId, e);
@@ -459,6 +469,7 @@ export const AITab = memo(function AITab({
 			}}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
