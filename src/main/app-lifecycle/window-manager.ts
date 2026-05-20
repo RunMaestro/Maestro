@@ -6,7 +6,7 @@
 import * as path from 'path';
 import { BrowserWindow, ipcMain } from 'electron';
 import type Store from 'electron-store';
-import type { WindowState } from '../stores/types';
+import type { MultiWindowState, WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
@@ -23,6 +23,25 @@ interface SentryModule {
 
 /** Cached Sentry module reference */
 let sentryModule: SentryModule | null = null;
+
+function getPrimaryWindowState(state: MultiWindowState): WindowState {
+	return (
+		state.windows.find((windowState) => windowState.id === state.primaryWindowId) ||
+		state.windows[0] || {
+			id: 'primary',
+			x: 0,
+			y: 0,
+			width: 1400,
+			height: 900,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: null,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		}
+	);
+}
 
 /**
  * Reports a crash event to Sentry from the main process.
@@ -48,7 +67,7 @@ async function reportCrashToSentry(
 /** Dependencies for window manager */
 export interface WindowManagerDependencies {
 	/** Store for window state persistence */
-	windowStateStore: Store<WindowState>;
+	windowStateStore: Store<MultiWindowState>;
 	/** Whether running in development mode */
 	isDevelopment: boolean;
 	/** Path to the preload script */
@@ -89,7 +108,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 	return {
 		createWindow: (): BrowserWindow => {
 			// Restore saved window state
-			const savedState = windowStateStore.store;
+			const savedState = getPrimaryWindowState(windowStateStore.store);
 
 			const mainWindow = new BrowserWindow({
 				x: savedState.x,
@@ -131,14 +150,33 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					const bounds = mainWindow.getBounds();
 
 					// Only save bounds if not maximized/fullscreen (to restore proper size later)
+					const currentState = windowStateStore.store;
+					const primaryWindowState = getPrimaryWindowState(currentState);
+					const nextPrimaryWindowState = {
+						...primaryWindowState,
+						isMaximized,
+						isFullScreen,
+					};
+
 					if (!isMaximized && !isFullScreen) {
-						windowStateStore.set('x', bounds.x);
-						windowStateStore.set('y', bounds.y);
-						windowStateStore.set('width', bounds.width);
-						windowStateStore.set('height', bounds.height);
+						nextPrimaryWindowState.x = bounds.x;
+						nextPrimaryWindowState.y = bounds.y;
+						nextPrimaryWindowState.width = bounds.width;
+						nextPrimaryWindowState.height = bounds.height;
 					}
-					windowStateStore.set('isMaximized', isMaximized);
-					windowStateStore.set('isFullScreen', isFullScreen);
+
+					const hasPrimaryWindowState = currentState.windows.some(
+						(windowState) => windowState.id === primaryWindowState.id
+					);
+					windowStateStore.store = {
+						...currentState,
+						primaryWindowId: primaryWindowState.id,
+						windows: hasPrimaryWindowState
+							? currentState.windows.map((windowState) =>
+									windowState.id === primaryWindowState.id ? nextPrimaryWindowState : windowState
+								)
+							: [nextPrimaryWindowState],
+					};
 				} catch {
 					// Ignore ENFILE/ENOSPC errors during window close — non-critical
 				}
