@@ -31,6 +31,11 @@ export interface WindowBounds {
 	height: number;
 }
 
+export interface WindowPoint {
+	screenX: number;
+	screenY: number;
+}
+
 export interface WindowSessionMovedEvent {
 	sessionId: string;
 	fromWindowId: string;

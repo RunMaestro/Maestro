@@ -47,6 +47,8 @@ export function createWindowsApi() {
 		focusWindow: (windowId: string): Promise<boolean> =>
 			ipcRenderer.invoke('windows:focusWindow', windowId),
 		getWindowBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('windows:getWindowBounds'),
+		findWindowAtPoint: (screenX: number, screenY: number): Promise<WindowInfo | null> =>
+			ipcRenderer.invoke('windows:findWindowAtPoint', screenX, screenY),
 		getState: (): Promise<WindowState> => ipcRenderer.invoke('windows:getState'),
 		updateState: (update: WindowStateUpdate): Promise<WindowState> =>
 			ipcRenderer.invoke('windows:updateState', update),

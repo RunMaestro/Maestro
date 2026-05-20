@@ -10,6 +10,7 @@ import type Store from 'electron-store';
 import type {
 	WindowBounds,
 	WindowInfo,
+	WindowPoint,
 	WindowSessionMovedEvent,
 	WindowState,
 	WindowStateUpdate,
@@ -76,6 +77,15 @@ function getWindowList(
 			activeSessionId: storedState?.activeSessionId ?? null,
 		};
 	});
+}
+
+function isPointInsideBounds(point: WindowPoint, bounds: WindowBounds): boolean {
+	return (
+		point.screenX >= bounds.x &&
+		point.screenX <= bounds.x + bounds.width &&
+		point.screenY >= bounds.y &&
+		point.screenY <= bounds.y + bounds.height
+	);
 }
 
 function upsertStoredWindowState(
@@ -213,6 +223,31 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		const browserWindow = getEventWindow(event);
 		return browserWindow.getBounds();
 	});
+
+	ipcMain.handle(
+		'windows:findWindowAtPoint',
+		async (event, screenX: number, screenY: number): Promise<WindowInfo | null> => {
+			const sourceWindow = getEventWindow(event);
+
+			for (const entry of windowRegistry.getAll()) {
+				if (entry.browserWindow === sourceWindow || entry.browserWindow.isDestroyed()) {
+					continue;
+				}
+
+				const windowId = windowRegistry.getWindowId(entry.browserWindow);
+				if (!windowId) {
+					continue;
+				}
+
+				if (isPointInsideBounds({ screenX, screenY }, entry.browserWindow.getBounds())) {
+					const storedState = findStoredWindowState(windowStateStore, windowId);
+					return toWindowInfo(windowId, windowManager, storedState?.activeSessionId ?? null);
+				}
+			}
+
+			return null;
+		}
+	);
 
 	ipcMain.handle('windows:getState', async (event): Promise<WindowState> => {
 		const browserWindow = getEventWindow(event);

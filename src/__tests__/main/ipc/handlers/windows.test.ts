@@ -105,6 +105,7 @@ describe('windows IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:moveSession', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:focusWindow', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getWindowBounds', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('windows:findWindowAtPoint', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getState', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:updateState', expect.any(Function));
 	});
@@ -199,6 +200,36 @@ describe('windows IPC handlers', () => {
 
 		expect(BrowserWindow.fromWebContents(primary.webContents)).toBe(primary);
 		expect(result).toEqual({ x: 10, y: 20, width: 1200, height: 800 });
+	});
+
+	it('finds another registered window containing screen coordinates', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1']);
+		const secondary = windowManager.createSecondaryWindow(['session-2'], {});
+		primary.getBounds = vi.fn(() => ({ x: 0, y: 0, width: 500, height: 500 }));
+		secondary.getBounds = vi.fn(() => ({ x: 600, y: 100, width: 500, height: 400 }));
+		windowStateStore.store.windows = [{ id: '2', activeSessionId: 'session-2' } as any];
+
+		const handler = mockState.registeredHandlers.get('windows:findWindowAtPoint');
+		const result = await handler!({ sender: primary.webContents }, 650, 150);
+
+		expect(result).toEqual({
+			id: '2',
+			isMain: false,
+			sessionIds: ['session-2'],
+			activeSessionId: 'session-2',
+		});
+	});
+
+	it('returns null when screen coordinates do not hit another window', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1']);
+		const secondary = windowManager.createSecondaryWindow(['session-2'], {});
+		primary.getBounds = vi.fn(() => ({ x: 0, y: 0, width: 500, height: 500 }));
+		secondary.getBounds = vi.fn(() => ({ x: 600, y: 100, width: 500, height: 400 }));
+
+		const handler = mockState.registeredHandlers.get('windows:findWindowAtPoint');
+		const result = await handler!({ sender: primary.webContents }, 550, 50);
+
+		expect(result).toBeNull();
 	});
 
 	it('returns state for the invoking window', async () => {

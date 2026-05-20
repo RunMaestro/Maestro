@@ -118,6 +118,21 @@ describe('Windows Preload API', () => {
 		expect(result).toEqual(bounds);
 	});
 
+	it('should invoke windows:findWindowAtPoint with screen coordinates', async () => {
+		const windowInfo = {
+			id: 'window-2',
+			isMain: false,
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-1',
+		};
+		mockInvoke.mockResolvedValue(windowInfo);
+
+		const result = await api.findWindowAtPoint(640, 320);
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:findWindowAtPoint', 640, 320);
+		expect(result).toEqual(windowInfo);
+	});
+
 	it('should invoke windows:getState', async () => {
 		const state = {
 			id: 'window-1',
