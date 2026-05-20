@@ -53,6 +53,20 @@ export class WindowRegistry {
 		return Array.from(this.windows.values());
 	}
 
+	getEntries(): Array<[string, WindowRegistryEntry]> {
+		return Array.from(this.windows.entries());
+	}
+
+	getWindowId(browserWindow: BrowserWindow): string | undefined {
+		for (const [windowId, entry] of this.windows) {
+			if (entry.browserWindow === browserWindow) {
+				return windowId;
+			}
+		}
+
+		return undefined;
+	}
+
 	getPrimary(): WindowRegistryEntry | undefined {
 		return this.primaryWindowId ? this.windows.get(this.primaryWindowId) : undefined;
 	}
