@@ -95,6 +95,39 @@ type UsageStats = import('../shared/types').UsageStats;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
+interface MaestroWindowState {
+	id: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	isMaximized: boolean;
+	isFullScreen: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
+}
+
+interface MaestroWindowInfo {
+	id: string;
+	isMain: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+}
+
+interface MaestroWindowCreateBounds {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+}
+
+interface MaestroWindowCloseResult {
+	closed: boolean;
+	reason?: 'primary-window' | 'not-found';
+}
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -3593,6 +3626,20 @@ interface MaestroAPI {
 	 */
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
+	};
+
+	// Multi-window API
+	windows: {
+		create: (
+			sessionIds?: string[],
+			bounds?: MaestroWindowCreateBounds
+		) => Promise<MaestroWindowInfo>;
+		close: (windowId: string) => Promise<MaestroWindowCloseResult>;
+		list: () => Promise<MaestroWindowInfo[]>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (sessionId: string, fromWindowId: string, toWindowId: string) => Promise<boolean>;
+		focusWindow: (windowId: string) => Promise<boolean>;
+		getState: () => Promise<MaestroWindowState>;
 	};
 }
 

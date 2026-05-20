@@ -58,6 +58,7 @@ import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
 import { createImagesApi } from './images';
+import { createWindowsApi } from './windows';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -222,6 +223,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Multi-window API
+	windows: createWindowsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -312,6 +316,8 @@ export {
 	createMemoryApi,
 	// Session Images
 	createImagesApi,
+	// Windows
+	createWindowsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -555,3 +561,9 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From windows
+	WindowsApi,
+	WindowCreateBounds,
+	WindowCloseResult,
+} from './windows';
