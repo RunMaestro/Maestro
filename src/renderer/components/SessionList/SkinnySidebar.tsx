@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import type { Session, Group, Theme } from '../../types';
+import type { WindowInfo } from '../../../shared/types/window';
 import { getStatusColor } from '../../utils/theme';
+import { getSessionWindowOwnership } from '../../utils/windowSessionOwnership';
 import { SessionTooltipContent } from './SessionTooltipContent';
 
 interface SkinnySidebarProps {
@@ -11,6 +13,8 @@ interface SkinnySidebarProps {
 	activeBatchSessionIds: string[];
 	contextWarningYellowThreshold: number;
 	contextWarningRedThreshold: number;
+	currentWindowId?: string | null;
+	windows?: WindowInfo[];
 	getFileCount: (sessionId: string) => number;
 	setActiveSessionId: (id: string) => void;
 	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
@@ -24,6 +28,8 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	activeBatchSessionIds,
 	contextWarningYellowThreshold,
 	contextWarningRedThreshold,
+	currentWindowId = null,
+	windows = [],
 	getFileCount,
 	setActiveSessionId,
 	handleContextMenu,
@@ -39,6 +45,11 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 						? undefined
 						: getStatusColor(session.state, theme);
 				const shouldPulse = session.state === 'busy' || isInBatch;
+				const windowBadge = getSessionWindowOwnership(
+					session.id,
+					currentWindowId,
+					windows
+				).badgeLabel;
 
 				return (
 					<div
@@ -82,6 +93,18 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 									style={{ backgroundColor: theme.colors.error }}
 									title="Unread messages"
 								/>
+							)}
+							{windowBadge && (
+								<div
+									className="absolute -bottom-2 left-1/2 -translate-x-1/2 rounded px-0.5 text-[8px] font-bold leading-3"
+									style={{
+										backgroundColor: theme.colors.accent + '30',
+										color: theme.colors.accent,
+									}}
+									title={`Open in window ${windowBadge.replace(/^W/, '')}`}
+								>
+									{windowBadge}
+								</div>
 							)}
 						</div>
 

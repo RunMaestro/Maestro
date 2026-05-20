@@ -157,3 +157,7 @@ export function useWindowContext(): WindowContextValue {
 
 	return context;
 }
+
+export function useOptionalWindowContext(): WindowContextValue | null {
+	return useContext(WindowContext);
+}

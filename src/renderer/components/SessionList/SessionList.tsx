@@ -27,6 +27,9 @@ import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchSt
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
+import type { WindowInfo } from '../../../shared/types/window';
+import { getSessionWindowOwnership } from '../../utils/windowSessionOwnership';
 import { SessionContextMenu } from './SessionContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
@@ -132,6 +135,9 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const windowContext = useOptionalWindowContext();
+	const windowId = windowContext?.windowId ?? null;
+	const openSession = windowContext?.openSession;
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -226,6 +232,21 @@ function SessionListInner(props: SessionListProps) {
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [windows, setWindows] = useState<WindowInfo[]>([]);
+
+	const refreshWindows = useCallback(async () => {
+		if (!window.maestro?.windows?.list) {
+			setWindows([]);
+			return;
+		}
+
+		const nextWindows = await window.maestro.windows.list();
+		setWindows(nextWindows);
+	}, []);
+
+	useEffect(() => {
+		void refreshWindows();
+	}, [refreshWindows]);
 
 	// Live overlay state (extracted hook)
 	const {
@@ -387,10 +408,26 @@ function SessionListInner(props: SessionListProps) {
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessions.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => {
+				const ownership = getSessionWindowOwnership(s.id, windowId, windows);
+				if (ownership.ownerWindowId && ownership.isOpenInOtherWindow) {
+					void window.maestro.windows.focusWindow(ownership.ownerWindowId);
+					return;
+				}
+
+				if (!openSession) {
+					setActiveSessionId(s.id);
+					return;
+				}
+
+				void openSession(s.id).then(() => {
+					setActiveSessionId(s.id);
+					void refreshWindows();
+				});
+			});
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessions, windowId, windows, openSession, setActiveSessionId, refreshWindows]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
@@ -440,6 +477,7 @@ function SessionListInner(props: SessionListProps) {
 		const worktreesExpanded = session.worktreesExpanded ?? true;
 		const globalIdx = sortedSessionIndexById.get(session.id) ?? -1;
 		const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
+		const sessionWindowOwnership = getSessionWindowOwnership(session.id, windowId, windows);
 
 		// In flat/ungrouped view, wrap sessions with worktrees in a left-bordered container
 		// to visually associate parent and worktrees together (similar to grouped view)
@@ -465,6 +503,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					windowBadge={sessionWindowOwnership.badgeLabel}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -513,6 +552,7 @@ function SessionListInner(props: SessionListProps) {
 								const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
 								const isChildKeyboardSelected =
 									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
+								const childWindowOwnership = getSessionWindowOwnership(child.id, windowId, windows);
 								return (
 									<SessionItem
 										key={`worktree-${session.id}-${child.id}`}
@@ -527,6 +567,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										windowBadge={childWindowOwnership.badgeLabel}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -865,7 +906,7 @@ function SessionListInner(props: SessionListProps) {
 											contextWarningRedThreshold={contextWarningRedThreshold}
 											getFileCount={getFileCount}
 											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
+											setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 										/>
 									))}
 								</div>
@@ -995,7 +1036,7 @@ function SessionListInner(props: SessionListProps) {
 												contextWarningRedThreshold={contextWarningRedThreshold}
 												getFileCount={getFileCount}
 												getWorktreeChildren={getWorktreeChildren}
-												setActiveSessionId={setActiveSessionId}
+												setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 											/>
 										))}
 									</div>
@@ -1095,7 +1136,7 @@ function SessionListInner(props: SessionListProps) {
 											contextWarningRedThreshold={contextWarningRedThreshold}
 											getFileCount={getFileCount}
 											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
+											setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 										/>
 									))}
 								</div>
@@ -1172,8 +1213,10 @@ function SessionListInner(props: SessionListProps) {
 					activeBatchSessionIds={activeBatchSessionIds}
 					contextWarningYellowThreshold={contextWarningYellowThreshold}
 					contextWarningRedThreshold={contextWarningRedThreshold}
+					currentWindowId={windowId}
+					windows={windows}
 					getFileCount={getFileCount}
-					setActiveSessionId={setActiveSessionId}
+					setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 					handleContextMenu={handleContextMenu}
 				/>
 			)}
