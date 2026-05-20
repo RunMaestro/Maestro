@@ -2467,6 +2467,7 @@ function MaestroConsoleInner() {
 	const rightPanelProps = useRightPanelProps({
 		// Theme (computed externally from settingsStore + themeId)
 		theme,
+		activeSession,
 
 		// Refs
 		fileTreeContainerRef,
