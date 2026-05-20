@@ -657,6 +657,11 @@ interface MaestroAPI {
 			remoteCwd?: string
 		) => Promise<{ stdout: string; stderr: string }>;
 		isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<boolean>;
+		init: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; error?: string }>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,

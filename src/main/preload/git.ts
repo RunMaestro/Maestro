@@ -131,6 +131,16 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:isRepo', cwd, sshRemoteId, remoteCwd),
 
 		/**
+		 * Initialize a new git repository at the given directory.
+		 */
+		init: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('git:init', cwd, sshRemoteId, remoteCwd),
+
+		/**
 		 * Get git diff numstat
 		 */
 		numstat: (

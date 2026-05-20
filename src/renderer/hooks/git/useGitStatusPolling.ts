@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Session } from '../../types';
 import { gitService } from '../../services/git';
+import { updateSessionWith } from '../../stores/sessionStore';
 import { subscribeToActivity } from '../../utils/activityBus';
 
 /**
@@ -166,6 +167,51 @@ function gitStatusMapsEqual(
 }
 
 /**
+ * For sessions currently marked `isGitRepo: false`, re-check whether the
+ * working directory is now a git repo (e.g. the user ran `git init` after
+ * creating the agent). When a transition is detected, flip the session's
+ * `isGitRepo` flag and warm the branches/tags cache so worktree creation
+ * and other git-gated features become available without an app restart.
+ *
+ * Errors per-session are swallowed: a failing `isRepo` for one session
+ * must not block the others.
+ */
+async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
+	await Promise.all(
+		sessions.map(async (session) => {
+			try {
+				const cwd =
+					session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
+				const sshRemoteId =
+					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
+				const isRepo = await gitService.isRepo(cwd, sshRemoteId);
+				if (!isRepo) return;
+
+				const [gitBranches, gitTags] = await Promise.all([
+					gitService.getBranches(cwd, sshRemoteId),
+					gitService.getTags(cwd, sshRemoteId),
+				]);
+
+				updateSessionWith(session.id, (s) =>
+					s.isGitRepo
+						? s
+						: {
+								...s,
+								isGitRepo: true,
+								gitBranches,
+								gitTags,
+								gitRefsCacheTime: Date.now(),
+							}
+				);
+			} catch {
+				// Ignore — next poll will retry
+			}
+		})
+	);
+}
+
+/**
  * Hook that polls git status for all git repository sessions.
  *
  * Features:
@@ -220,7 +266,18 @@ export function useGitStatusPolling(
 		// Skip polling if document is hidden (app in background)
 		if (pauseWhenHidden && document.hidden) return;
 
-		const gitSessions = sessionsRef.current.filter((s) => s.isGitRepo);
+		const allSessions = sessionsRef.current;
+		const gitSessions = allSessions.filter((s) => s.isGitRepo);
+		const nonGitSessions = allSessions.filter((s) => !s.isGitRepo);
+
+		// Re-check non-git sessions in case the user ran `git init` after
+		// agent creation. On transition, update the session so the worktree
+		// menu and other git-gated features unlock without restart.
+		// Fire-and-forget — runs in parallel with the main git poll.
+		if (nonGitSessions.length > 0) {
+			void detectGitRepoTransitions(nonGitSessions);
+		}
+
 		if (gitSessions.length === 0) {
 			setGitStatusMap((prev) => (prev.size === 0 ? prev : new Map()));
 			return;
