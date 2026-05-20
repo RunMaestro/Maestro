@@ -4,10 +4,12 @@
  */
 
 import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
+import type { BrowserWindowConstructorOptions } from 'electron';
 import type Store from 'electron-store';
 import type { MultiWindowState, WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
+import { WindowRegistry } from '../window-registry';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
 // `file:` is allowed so users can open local HTML they just generated
@@ -117,44 +119,41 @@ function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): 
 	});
 }
 
+type WindowBounds = Pick<WindowState, 'x' | 'y' | 'width' | 'height'>;
+
+function createDefaultWindowState(id: string): WindowState {
+	return {
+		id,
+		x: 0,
+		y: 0,
+		width: 1400,
+		height: 900,
+		isMaximized: false,
+		isFullScreen: false,
+		sessionIds: [],
+		activeSessionId: null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+	};
+}
+
 function getPrimaryWindowState(state: MultiWindowState): WindowState {
 	return (
 		state.windows.find((windowState) => windowState.id === state.primaryWindowId) ||
-		state.windows[0] || {
-			id: 'primary',
-			x: 0,
-			y: 0,
-			width: 1400,
-			height: 900,
-			isMaximized: false,
-			isFullScreen: false,
-			sessionIds: [],
-			activeSessionId: null,
-			leftPanelCollapsed: false,
-			rightPanelCollapsed: false,
-		}
+		state.windows[0] ||
+		createDefaultWindowState('primary')
 	);
 }
 
-/**
- * Reports a crash event to Sentry from the main process.
- * Lazily loads Sentry to avoid module initialization issues.
- */
-async function reportCrashToSentry(
-	message: string,
-	level: SentrySeverityLevel,
-	extra?: Record<string, unknown>
-): Promise<void> {
-	try {
-		if (!sentryModule) {
-			const sentry = await import('@sentry/electron/main');
-			sentryModule = sentry;
-		}
-		sentryModule.captureMessage(message, { level, extra });
-	} catch {
-		// Sentry not available (development mode or initialization failed)
-		logger.debug('Sentry not available for crash reporting', 'Window');
+function getWindowState(state: MultiWindowState, windowId?: string): WindowState {
+	if (!windowId) {
+		return getPrimaryWindowState(state);
 	}
+
+	return (
+		state.windows.find((windowState) => windowState.id === windowId) ||
+		createDefaultWindowState(windowId)
+	);
 }
 
 /**
@@ -190,6 +189,27 @@ function resolveVisibleWindowPosition(state: WindowState): { x?: number; y?: num
 	return isOnScreen ? { x: state.x, y: state.y } : {};
 }
 
+/**
+ * Reports a crash event to Sentry from the main process.
+ * Lazily loads Sentry to avoid module initialization issues.
+ */
+async function reportCrashToSentry(
+	message: string,
+	level: SentrySeverityLevel,
+	extra?: Record<string, unknown>
+): Promise<void> {
+	try {
+		if (!sentryModule) {
+			const sentry = await import('@sentry/electron/main');
+			sentryModule = sentry;
+		}
+		sentryModule.captureMessage(message, { level, extra });
+	} catch {
+		// Sentry not available (development mode or initialization failed)
+		logger.debug('Sentry not available for crash reporting', 'Window');
+	}
+}
+
 /** Dependencies for window manager */
 export interface WindowManagerDependencies {
 	/** Store for window state persistence */
@@ -212,12 +232,18 @@ export interface WindowManagerDependencies {
 	 * gate. Lazy because the quit handler is constructed after the window.
 	 */
 	getConfirmQuit?: () => (() => void) | null | undefined;
+	/** Registry for tracking all open windows */
+	windowRegistry?: WindowRegistry;
 }
 
 /** Window manager instance */
 export interface WindowManager {
-	/** Create and show the main window */
-	createWindow: () => BrowserWindow;
+	/** Create and show a window */
+	createWindow: (windowId?: string, sessionIds?: string[]) => BrowserWindow;
+	/** Create a secondary window for the provided sessions */
+	createSecondaryWindow: (sessionIds: string[], bounds: Partial<WindowBounds>) => BrowserWindow;
+	/** Registry tracking all open windows */
+	windowRegistry: WindowRegistry;
 }
 
 /**
@@ -237,493 +263,484 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		autoHideMenuBar,
 		getConfirmQuit,
 	} = deps;
+	const windowRegistry = deps.windowRegistry ?? new WindowRegistry();
 
-	return {
-		createWindow: (): BrowserWindow => {
-			// Restore saved window state, discarding off-screen coordinates so the
-			// window can never spawn invisible (saved while minimized -> -32000 on
-			// Windows, or on an unplugged monitor); fall back to a centered window.
-			const savedState = getPrimaryWindowState(windowStateStore.store);
-			const position = resolveVisibleWindowPosition(savedState);
+	const createBrowserWindow = (
+		savedState: WindowState,
+		options: {
+			windowId?: string;
+			sessionIds?: string[];
+			bounds?: Partial<WindowBounds>;
+			isMain?: boolean;
+		} = {}
+	): BrowserWindow => {
+		const position = options.bounds ? options.bounds : resolveVisibleWindowPosition(savedState);
+		const windowOptions: BrowserWindowConstructorOptions = {
+			x: options.bounds?.x ?? position.x,
+			y: options.bounds?.y ?? position.y,
+			width: options.bounds?.width ?? savedState.width,
+			height: options.bounds?.height ?? savedState.height,
+			minWidth: 1000,
+			minHeight: 600,
+			backgroundColor: '#0b0b0d',
+			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
+			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
+			webPreferences: {
+				preload: preloadPath,
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+				spellcheck: true,
+				// Embedded browser tabs use Electron's guest webview surface in the renderer.
+				webviewTag: true,
+			},
+		};
 
-			const mainWindow = new BrowserWindow({
-				x: position.x,
-				y: position.y,
-				width: savedState.width,
-				height: savedState.height,
-				minWidth: 1000,
-				minHeight: 600,
-				backgroundColor: '#0b0b0d',
-				...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
-				...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
-				webPreferences: {
-					preload: preloadPath,
-					contextIsolation: true,
-					nodeIntegration: false,
-					sandbox: true,
-					spellcheck: true,
-					// Embedded browser tabs use Electron's guest webview surface in the renderer.
-					webviewTag: true,
-				},
-			});
+		const entry = windowRegistry.create({
+			...windowOptions,
+			id: options.windowId,
+			sessionIds: options.sessionIds ?? savedState.sessionIds,
+			isMain: options.isMain,
+		});
+		const mainWindow = entry.browserWindow;
+		const registryWindowId = options.windowId ?? String(mainWindow.id);
 
-			// Restore maximized/fullscreen state after window is created
-			if (savedState.isFullScreen) {
-				mainWindow.setFullScreen(true);
-			} else if (savedState.isMaximized) {
-				mainWindow.maximize();
-			}
+		// Restore maximized/fullscreen state after window is created
+		if (savedState.isFullScreen) {
+			mainWindow.setFullScreen(true);
+		} else if (savedState.isMaximized) {
+			mainWindow.maximize();
+		}
 
-			logger.info('Browser window created', 'Window', {
-				size: `${savedState.width}x${savedState.height}`,
-				maximized: savedState.isMaximized,
-				fullScreen: savedState.isFullScreen,
-				mode: isDevelopment ? 'development' : 'production',
-			});
+		logger.info('Browser window created', 'Window', {
+			id: registryWindowId,
+			size: `${windowOptions.width}x${windowOptions.height}`,
+			maximized: savedState.isMaximized,
+			fullScreen: savedState.isFullScreen,
+			mode: isDevelopment ? 'development' : 'production',
+		});
 
-			// Save window state before closing
-			const saveWindowState = () => {
-				try {
-					const isMaximized = mainWindow.isMaximized();
-					const isFullScreen = mainWindow.isFullScreen();
-					const isMinimized = mainWindow.isMinimized();
-					const bounds = mainWindow.getBounds();
+		// Save window state before closing
+		const saveWindowState = () => {
+			try {
+				const isMaximized = mainWindow.isMaximized();
+				const isFullScreen = mainWindow.isFullScreen();
+				const isMinimized = mainWindow.isMinimized();
+				const bounds = mainWindow.getBounds();
 
-					const currentState = windowStateStore.store;
-					const primaryWindowState = getPrimaryWindowState(currentState);
-					const nextPrimaryWindowState = {
-						...primaryWindowState,
-						isMaximized,
-						isFullScreen,
-					};
-
-					// Only save bounds when the window is in its normal state. While
-					// minimized, Windows reports bounds of (-32000, -32000), which would
-					// otherwise persist and make the window spawn off-screen next launch.
-					if (!isMaximized && !isFullScreen && !isMinimized) {
-						nextPrimaryWindowState.x = bounds.x;
-						nextPrimaryWindowState.y = bounds.y;
-						nextPrimaryWindowState.width = bounds.width;
-						nextPrimaryWindowState.height = bounds.height;
-					}
-
-					const hasPrimaryWindowState = currentState.windows.some(
-						(windowState) => windowState.id === primaryWindowState.id
-					);
-					windowStateStore.store = {
-						...currentState,
-						primaryWindowId: primaryWindowState.id,
-						windows: hasPrimaryWindowState
-							? currentState.windows.map((windowState) =>
-									windowState.id === primaryWindowState.id ? nextPrimaryWindowState : windowState
-								)
-							: [nextPrimaryWindowState],
-					};
-				} catch {
-					// Ignore ENFILE/ENOSPC errors during window close — non-critical
-				}
-			};
-
-			mainWindow.on('close', saveWindowState);
-
-			// Load the app
-			if (isDevelopment) {
-				// Install React DevTools extension in development mode
-				import('electron-devtools-installer')
-					.then(({ default: installExtension, REACT_DEVELOPER_TOOLS }) => {
-						installExtension(REACT_DEVELOPER_TOOLS)
-							.then(() => logger.info('React DevTools extension installed', 'Window'))
-							.catch((err: Error) =>
-								logger.warn(`Failed to install React DevTools: ${err.message}`, 'Window')
-							);
-					})
-					.catch((err: Error) =>
-						logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
-					);
-
-				mainWindow.loadURL(devServerUrl);
-				// DevTools can be opened via Command-K menu instead of automatically on startup
-				logger.info('Loading development server', 'Window');
-			} else {
-				mainWindow.loadURL(rendererProductionUrl);
-				logger.info('Loading production build', 'Window');
-				// Open DevTools in production if DEBUG env var is set
-				if (process.env.DEBUG === 'true') {
-					mainWindow.webContents.openDevTools();
-				}
-			}
-
-			// ================================================================
-			// Navigation & Window Security Hardening
-			// ================================================================
-
-			// Restrict renderer-created webviews to the browser-tab surface only.
-			mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-				const src = typeof params.src === 'string' ? params.src : '';
-				const partition =
-					typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
-
-				hardenBrowserTabWebPreferences(webPreferences as BrowserTabWebPreferences);
-
-				if (!isAllowedBrowserTabUrl(src) || !isAllowedBrowserTabPartition(partition)) {
-					event.preventDefault();
-					logger.warn(`Blocked unsafe webview attachment: ${src || '<empty src>'}`, 'Window', {
-						src,
-						partition,
-					});
-				}
-			});
-
-			mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
-				attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
-
-				// Forward app shortcuts from the webview guest process to the renderer.
-				// When a <webview> has focus, keyboard events are trapped in its guest
-				// Chromium process and never reach the renderer's window keydown handler.
-				//
-				// Strategy: inject a bubble-phase keydown listener into the guest page.
-				// After all page handlers have run, if the page did NOT call preventDefault
-				// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut —
-				// so we forward it to the app. If the page DID preventDefault, the page's
-				// shortcut takes precedence and we leave it alone.
-				const guest = guestContents as BrowserTabGuestContents;
-
-				// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
-				// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
-				// internally and never reach the injected JS listener below.
-				guest.on('before-input-event', (event, input) => {
-					if (!input.meta && !input.control && !input.alt) return;
-					if (input.type !== 'keyDown') return;
-					const k = input.key.toLowerCase();
-					// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
-					// Chromium's native paste needs the `clipboard-read` permission, which
-					// the permission handler denies to webviews as a security boundary, so
-					// native paste silently fails inside browser-tab form fields (issue
-					// #1063). guest.paste() is a privileged Electron call that bypasses
-					// that web-facing permission, mirroring the right-click Paste menu
-					// item (issue #1065).
-					const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
-					if (isPaste) {
-						event.preventDefault();
-						guest.paste();
-						return;
-					}
-					// Let the remaining standard text-editing shortcuts pass through to
-					// the page. `f` is intentionally NOT in this list: Cmd+F must reach
-					// the renderer so the in-page find bar can open.
-					const isTextEditing =
-						(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
-					const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
-					if (isTextEditing || isRedo) return;
-					event.preventDefault();
-					mainWindow.webContents.send('browser-tab:shortcutKey', {
-						key: input.key,
-						code: input.code,
-						meta: input.meta,
-						control: input.control,
-						alt: input.alt,
-						shift: input.shift,
-					});
-				});
-
-				// Capture-phase listener: intercepts app shortcuts BEFORE the page
-				// can handle them.  We preventDefault+stopPropagation so the page
-				// never sees the event, then forward it to the app via console.log.
-				const shortcutInjection = `(function(){
-					if(window.__maestroShortcutListenerInstalled)return;
-					window.__maestroShortcutListenerInstalled=true;
-					document.addEventListener('keydown',function(e){
-						var hasMod=e.metaKey||e.ctrlKey;
-						var hasAlt=e.altKey;
-						if(!hasMod&&!hasAlt)return;
-						var k=e.key.toLowerCase();
-						var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
-						var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
-						if(te||re)return;
-						e.preventDefault();
-						e.stopPropagation();
-						console.log('__MAESTRO_KEY__'+JSON.stringify({
-							key:e.key,code:e.code,
-							meta:e.metaKey,control:e.ctrlKey,
-							alt:e.altKey,shift:e.shiftKey
-						}));
-					},true);
-				})();`;
-				const injectShortcutListener = () => {
-					guest.executeJavaScript(shortcutInjection).catch(() => {});
+				const currentState = windowStateStore.store;
+				const existingWindowState = getWindowState(currentState, registryWindowId);
+				const registryEntry = windowRegistry.get(registryWindowId);
+				const nextWindowState = {
+					...existingWindowState,
+					id: registryWindowId,
+					sessionIds: registryEntry?.sessionIds ?? existingWindowState.sessionIds,
+					isMaximized,
+					isFullScreen,
 				};
-				guest.on('dom-ready', injectShortcutListener);
-				guest.on('did-navigate', injectShortcutListener);
-				// console-message args: (event, level, message, line, sourceId)
-				guest.on('console-message', (...args: unknown[]) => {
-					const message = typeof args[2] === 'string' ? args[2] : String(args[2] ?? '');
-					const prefix = '__MAESTRO_KEY__';
-					if (!message.startsWith(prefix)) return;
-					try {
-						const input = JSON.parse(message.slice(prefix.length));
-						mainWindow.webContents.send('browser-tab:shortcutKey', input);
-					} catch {
-						// Malformed message, ignore
-					}
-				});
-			});
 
-			// Deny all popup/new-window requests — external links use IPC shell:openExternal
-			mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-				logger.warn(`Blocked window.open request: ${url}`, 'Window');
-				return { action: 'deny' };
-			});
-
-			// Restrict navigation to the app itself — prevent renderer from navigating away.
-			// Both the dev-server URL and the renderer entry's file:// URL are constants
-			// for the lifetime of this window, so compute them once at setup time rather
-			// than on every navigation event. The production guard only allows the
-			// renderer entry HTML itself: a previous "directory prefix" check let any
-			// file inside the renderer dir through, which meant a stray <a href="foo.md">
-			// in chat output could resolve relative to index.html and unload the app to
-			// a non-existent bundle file.
-			// The dev server serves the app at its root. A previous guard allowed the
-			// ENTIRE dev origin through, which let any same-origin path (a game served
-			// by the dev server, or a stray relative <a href="game/"> in chat/markdown
-			// output) unload the app and take over the whole window. Page content
-			// belongs in a <webview> browser tab, never the top-level frame, so the dev
-			// guard is now as strict as production: only the app's own entry document
-			// (origin AND pathname) may load top-level. HMR/full-reloads target the same
-			// root URL and the renderer has no top-level URL routing, so this is safe.
-			const devEntryUrl = isDevelopment ? new URL(devServerUrl) : null;
-			const allowedDevOrigin = devEntryUrl ? devEntryUrl.origin : null;
-			const allowedDevPathname = devEntryUrl ? devEntryUrl.pathname || '/' : null;
-			const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
-			const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
-			mainWindow.webContents.on('will-navigate', (event, url) => {
-				const parsedUrl = new URL(url);
-				if (isDevelopment) {
-					const pathname = parsedUrl.pathname || '/';
-					if (parsedUrl.origin === allowedDevOrigin && pathname === allowedDevPathname) return;
-				} else {
-					if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
-				}
-				event.preventDefault();
-				logger.warn(`Blocked navigation to: ${url}`, 'Window');
-			});
-
-			// Deny most browser permission requests (camera, mic, geolocation, etc.)
-			// Allow clipboard access for the app window only, never embedded browser tabs.
-			mainWindow.webContents.session.setPermissionRequestHandler(
-				(webContents, permission, callback) => {
-					const contentsType = webContents?.getType?.();
-					const isAppWindow = contentsType === 'window';
-
-					if (isAppWindow && ALLOWED_APP_PERMISSIONS.has(permission)) {
-						callback(true);
-					} else {
-						if (contentsType === 'webview') {
-							logger.warn(`Blocked browser-tab permission request: ${permission}`, 'Window', {
-								permission,
-								type: contentsType,
-							});
-						}
-						callback(false);
-					}
-				}
-			);
-
-			// Spell check suggestions: Electron renders red squiggles automatically when
-			// `spellcheck` is true on a form element, but the right-click "Did you mean..."
-			// menu has to be wired up in the main process.
-			mainWindow.webContents.on('context-menu', (_event, params) => {
-				logger.debug('context-menu fired', 'Window', {
-					isEditable: params.isEditable,
-					misspelledWord: params.misspelledWord,
-					suggestions: params.dictionarySuggestions,
-					selectionText: params.selectionText,
-				});
-
-				if (!params.isEditable) return;
-
-				const template: Electron.MenuItemConstructorOptions[] = [];
-
-				const suggestions = params.dictionarySuggestions ?? [];
-				if (params.misspelledWord) {
-					if (suggestions.length === 0) {
-						template.push({ label: 'No suggestions', enabled: false });
-					} else {
-						for (const suggestion of suggestions) {
-							template.push({
-								label: suggestion,
-								click: () => mainWindow.webContents.replaceMisspelling(suggestion),
-							});
-						}
-					}
-					template.push(
-						{ type: 'separator' },
-						{
-							label: 'Add to Dictionary',
-							click: () =>
-								mainWindow.webContents.session.addWordToSpellCheckerDictionary(
-									params.misspelledWord
-								),
-						},
-						{ type: 'separator' }
-					);
+				// Only save bounds when the window is in its normal state. While
+				// minimized, Windows reports bounds of (-32000, -32000), which would
+				// otherwise persist and make the window spawn off-screen next launch.
+				if (!isMaximized && !isFullScreen && !isMinimized) {
+					nextWindowState.x = bounds.x;
+					nextWindowState.y = bounds.y;
+					nextWindowState.width = bounds.width;
+					nextWindowState.height = bounds.height;
 				}
 
-				template.push(
-					{ role: 'cut' },
-					{ role: 'copy' },
-					{ role: 'paste' },
-					{ type: 'separator' },
-					{ role: 'selectAll' }
+				const hasWindowState = currentState.windows.some(
+					(windowState) => windowState.id === registryWindowId
+				);
+				windowStateStore.store = {
+					...currentState,
+					primaryWindowId: entry.isMain ? registryWindowId : currentState.primaryWindowId,
+					windows: hasWindowState
+						? currentState.windows.map((windowState) =>
+								windowState.id === registryWindowId ? nextWindowState : windowState
+							)
+						: [...currentState.windows, nextWindowState],
+				};
+			} catch {
+				// Ignore ENFILE/ENOSPC errors during window close — non-critical
+			}
+		};
+
+		mainWindow.on('close', saveWindowState);
+
+		// Load the app
+		if (isDevelopment) {
+			// Install React DevTools extension in development mode
+			import('electron-devtools-installer')
+				.then(({ default: installExtension, REACT_DEVELOPER_TOOLS }) => {
+					installExtension(REACT_DEVELOPER_TOOLS)
+						.then(() => logger.info('React DevTools extension installed', 'Window'))
+						.catch((err: Error) =>
+							logger.warn(`Failed to install React DevTools: ${err.message}`, 'Window')
+						);
+				})
+				.catch((err: Error) =>
+					logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
 				);
 
-				Menu.buildFromTemplate(template).popup({ window: mainWindow });
-			});
+			mainWindow.loadURL(devServerUrl);
+			// DevTools can be opened via Command-K menu instead of automatically on startup
+			logger.info('Loading development server', 'Window');
+		} else {
+			mainWindow.loadURL(rendererProductionUrl);
+			logger.info('Loading production build', 'Window');
+			// Open DevTools in production if DEBUG env var is set
+			if (process.env.DEBUG === 'true') {
+				mainWindow.webContents.openDevTools();
+			}
+		}
 
-			mainWindow.on('closed', () => {
-				logger.info('Browser window closed', 'Window');
-			});
+		// ================================================================
+		// Navigation & Window Security Hardening
+		// ================================================================
 
-			// ================================================================
-			// Renderer Process Crash Detection
-			// ================================================================
-			// These handlers capture crashes that Sentry in the renderer cannot
-			// report (because the renderer process is dead or broken).
+		// Restrict renderer-created webviews to the browser-tab surface only.
+		mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+			const src = typeof params.src === 'string' ? params.src : '';
+			const partition =
+				typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
 
-			// Handle renderer process termination (crash, kill, OOM, etc.)
-			mainWindow.webContents.on('render-process-gone', (_event, details) => {
-				logger.error('Renderer process gone', 'Window', {
-					reason: details.reason,
-					exitCode: details.exitCode,
+			hardenBrowserTabWebPreferences(webPreferences as BrowserTabWebPreferences);
+
+			if (!isAllowedBrowserTabUrl(src) || !isAllowedBrowserTabPartition(partition)) {
+				event.preventDefault();
+				logger.warn(`Blocked unsafe webview attachment: ${src || '<empty src>'}`, 'Window', {
+					src,
+					partition,
 				});
+			}
+		});
 
-				// `killed` (signal-terminated, e.g. app quit / OS shutdown / user
-				// force-quit) and `clean-exit` are intentional terminations, not
-				// crashes - the auto-reload guard below already treats them as such.
-				// Reporting them as `fatal` Sentry events is pure noise; genuine
-				// out-of-memory kills surface separately as reason `oom`. Only the
-				// real crash reasons (`crashed`, `oom`, `abnormal-exit`, etc.) are
-				// worth a breadcrumb. Fixes MAESTRO-4X/4Y.
-				const intentionalTermination =
-					details.reason === 'killed' || details.reason === 'clean-exit';
-				if (!intentionalTermination) {
-					// Report to Sentry from main process (always available)
-					reportCrashToSentry(`Renderer process gone: ${details.reason}`, 'fatal', {
-						reason: details.reason,
-						exitCode: details.exitCode,
-					});
+		mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+			attachBrowserTabGuestSecurity(guestContents as BrowserTabGuestContents);
+
+			// Forward app shortcuts from the webview guest process to the renderer.
+			// When a <webview> has focus, keyboard events are trapped in its guest
+			// Chromium process and never reach the renderer's window keydown handler.
+			const guest = guestContents as BrowserTabGuestContents;
+
+			guest.on('before-input-event', (event, input) => {
+				if (!input.meta && !input.control && !input.alt) return;
+				if (input.type !== 'keyDown') return;
+				const k = input.key.toLowerCase();
+				const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
+				if (isPaste) {
+					event.preventDefault();
+					guest.paste();
+					return;
 				}
+				const isTextEditing =
+					(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
+				const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
+				if (isTextEditing || isRedo) return;
+				event.preventDefault();
+				mainWindow.webContents.send('browser-tab:shortcutKey', {
+					key: input.key,
+					code: input.code,
+					meta: input.meta,
+					control: input.control,
+					alt: input.alt,
+					shift: input.shift,
+				});
+			});
 
-				// Auto-reload unless the process was intentionally killed
-				if (details.reason !== 'killed' && details.reason !== 'clean-exit') {
-					logger.info('Attempting to reload renderer after crash', 'Window');
-					setTimeout(() => {
-						if (!mainWindow.isDestroyed()) {
-							mainWindow.webContents.reload();
-						}
-					}, 1000);
+			const shortcutInjection = `(function(){
+				if(window.__maestroShortcutListenerInstalled)return;
+				window.__maestroShortcutListenerInstalled=true;
+				document.addEventListener('keydown',function(e){
+					var hasMod=e.metaKey||e.ctrlKey;
+					var hasAlt=e.altKey;
+					if(!hasMod&&!hasAlt)return;
+					var k=e.key.toLowerCase();
+					var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
+					var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';
+					if(te||re)return;
+					e.preventDefault();
+					e.stopPropagation();
+					console.log('__MAESTRO_KEY__'+JSON.stringify({
+						key:e.key,code:e.code,
+						meta:e.metaKey,control:e.ctrlKey,
+						alt:e.altKey,shift:e.shiftKey
+					}));
+				},true);
+			})();`;
+			const injectShortcutListener = () => {
+				guest.executeJavaScript(shortcutInjection).catch(() => {});
+			};
+			guest.on('dom-ready', injectShortcutListener);
+			guest.on('did-navigate', injectShortcutListener);
+			guest.on('console-message', (...args: unknown[]) => {
+				const message = typeof args[2] === 'string' ? args[2] : String(args[2] ?? '');
+				const prefix = '__MAESTRO_KEY__';
+				if (!message.startsWith(prefix)) return;
+				try {
+					const input = JSON.parse(message.slice(prefix.length));
+					mainWindow.webContents.send('browser-tab:shortcutKey', input);
+				} catch {
+					// Malformed message, ignore
 				}
 			});
+		});
 
-			// Handle window becoming unresponsive (frozen renderer)
-			mainWindow.on('unresponsive', () => {
-				logger.warn('Window became unresponsive', 'Window');
-				reportCrashToSentry('Window unresponsive', 'warning', {
-					memoryUsage: process.memoryUsage(),
-				});
-			});
+		// Deny all popup/new-window requests — external links use IPC shell:openExternal
+		mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+			logger.warn(`Blocked window.open request: ${url}`, 'Window');
+			return { action: 'deny' };
+		});
 
-			// Log when window recovers from unresponsive state
-			mainWindow.on('responsive', () => {
-				logger.info('Window became responsive again', 'Window');
-			});
+		// Restrict navigation to the app itself — prevent renderer from navigating away.
+		// Page content belongs in a <webview> browser tab, never the top-level frame.
+		const devEntryUrl = isDevelopment ? new URL(devServerUrl) : null;
+		const allowedDevOrigin = devEntryUrl ? devEntryUrl.origin : null;
+		const allowedDevPathname = devEntryUrl ? devEntryUrl.pathname || '/' : null;
+		const allowedProdOrigin = isDevelopment ? null : new URL(rendererProductionUrl).origin;
+		const allowedProdEntryUrl = isDevelopment ? null : rendererProductionUrl;
+		mainWindow.webContents.on('will-navigate', (event, url) => {
+			const parsedUrl = new URL(url);
+			if (isDevelopment) {
+				const pathname = parsedUrl.pathname || '/';
+				if (parsedUrl.origin === allowedDevOrigin && pathname === allowedDevPathname) return;
+			} else {
+				if (parsedUrl.origin === allowedProdOrigin && url === allowedProdEntryUrl) return;
+			}
+			event.preventDefault();
+			logger.warn(`Blocked navigation to: ${url}`, 'Window');
+		});
 
-			// Note: the legacy 'crashed' event was removed in Electron 41 and
-			// is now subsumed by 'render-process-gone' above (which reports to
-			// Sentry with full reason/exitCode detail and handles auto-reload).
+		// Deny most browser permission requests (camera, mic, geolocation, etc.)
+		// Allow clipboard access for the app window only, never embedded browser tabs.
+		mainWindow.webContents.session.setPermissionRequestHandler(
+			(webContents, permission, callback) => {
+				const contentsType = webContents?.getType?.();
+				const isAppWindow = contentsType === 'window';
 
-			// Handle page load failures (network issues, invalid URLs, etc.)
-			mainWindow.webContents.on(
-				'did-fail-load',
-				(_event, errorCode, errorDescription, validatedURL) => {
-					// Ignore aborted loads (user navigated away)
-					if (errorCode === -3) return;
-
-					logger.error('Page failed to load', 'Window', {
-						errorCode,
-						errorDescription,
-						url: validatedURL,
-					});
-					reportCrashToSentry(`Page failed to load: ${errorDescription}`, 'error', {
-						errorCode,
-						errorDescription,
-						url: validatedURL,
-					});
+				if (isAppWindow && ALLOWED_APP_PERMISSIONS.has(permission)) {
+					callback(true);
+				} else {
+					if (contentsType === 'webview') {
+						logger.warn(`Blocked browser-tab permission request: ${permission}`, 'Window', {
+							permission,
+							type: contentsType,
+						});
+					}
+					callback(false);
 				}
-			);
+			}
+		);
 
-			// Handle preload script errors
-			mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
-				logger.error('Preload script error', 'Window', {
-					preloadPath,
-					error: error.message,
-					stack: error.stack,
-				});
-				reportCrashToSentry('Preload script error', 'fatal', {
-					preloadPath,
-					error: error.message,
-					stack: error.stack,
-				});
+		// Spell check suggestions: Electron renders red squiggles automatically when
+		// `spellcheck` is true on a form element, but the right-click "Did you mean..."
+		// menu has to be wired up in the main process.
+		mainWindow.webContents.on('context-menu', (_event, params) => {
+			logger.debug('context-menu fired', 'Window', {
+				isEditable: params.isEditable,
+				misspelledWord: params.misspelledWord,
+				suggestions: params.dictionarySuggestions,
+				selectionText: params.selectionText,
 			});
 
-			// Forward renderer console errors to main process logger and Sentry
-			// This catches errors that happen before or outside React's error boundary
-			mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-				// Level 2 = error (0=verbose, 1=info, 2=warning, 3=error)
-				if (level === 3) {
-					logger.error(`Renderer console error: ${message}`, 'Window', {
-						line,
-						source: sourceId,
-					});
+			if (!params.isEditable) return;
 
-					// Report critical errors to Sentry
-					// Filter out common noise (React dev warnings, etc.)
-					const isCritical =
-						message.includes('Uncaught') ||
-						message.includes('TypeError') ||
-						message.includes('ReferenceError') ||
-						message.includes('Cannot read') ||
-						message.includes('is not defined') ||
-						message.includes('is not a function');
+			const template: Electron.MenuItemConstructorOptions[] = [];
 
-					if (isCritical) {
-						reportCrashToSentry(`Renderer error: ${message}`, 'error', {
-							line,
-							source: sourceId,
+			const suggestions = params.dictionarySuggestions ?? [];
+			if (params.misspelledWord) {
+				if (suggestions.length === 0) {
+					template.push({ label: 'No suggestions', enabled: false });
+				} else {
+					for (const suggestion of suggestions) {
+						template.push({
+							label: suggestion,
+							click: () => mainWindow.webContents.replaceMisspelling(suggestion),
 						});
 					}
 				}
-			});
-
-			// Initialize auto-updater (only in production)
-			if (!isDevelopment) {
-				initAutoUpdater(mainWindow, {
-					onBeforeQuitAndInstall: () => {
-						const confirmQuit = getConfirmQuit?.();
-						confirmQuit?.();
+				template.push(
+					{ type: 'separator' },
+					{
+						label: 'Add to Dictionary',
+						click: () =>
+							mainWindow.webContents.session.addWordToSpellCheckerDictionary(
+								params.misspelledWord
+							),
 					},
-				});
-				logger.info('Auto-updater initialized', 'Window');
-			} else {
-				// Register stub handlers in development mode so users get a helpful error
-				registerDevAutoUpdaterStubs();
-				logger.info(
-					'Auto-updater disabled in development mode (stub handlers registered)',
-					'Window'
+					{ type: 'separator' }
 				);
 			}
 
-			return mainWindow;
+			template.push(
+				{ role: 'cut' },
+				{ role: 'copy' },
+				{ role: 'paste' },
+				{ type: 'separator' },
+				{ role: 'selectAll' }
+			);
+
+			Menu.buildFromTemplate(template).popup({ window: mainWindow });
+		});
+
+		mainWindow.on('closed', () => {
+			logger.info('Browser window closed', 'Window');
+			windowRegistry.remove(registryWindowId);
+		});
+
+		// ================================================================
+		// Renderer Process Crash Detection
+		// ================================================================
+		// These handlers capture crashes that Sentry in the renderer cannot
+		// report (because the renderer process is dead or broken).
+
+		// Handle renderer process termination (crash, kill, OOM, etc.)
+		mainWindow.webContents.on('render-process-gone', (_event, details) => {
+			logger.error('Renderer process gone', 'Window', {
+				reason: details.reason,
+				exitCode: details.exitCode,
+			});
+
+			const intentionalTermination =
+				details.reason === 'killed' || details.reason === 'clean-exit';
+			if (!intentionalTermination) {
+				// Report to Sentry from main process (always available)
+				reportCrashToSentry(`Renderer process gone: ${details.reason}`, 'fatal', {
+					reason: details.reason,
+					exitCode: details.exitCode,
+				});
+			}
+
+			// Auto-reload unless the process was intentionally killed
+			if (details.reason !== 'killed' && details.reason !== 'clean-exit') {
+				logger.info('Attempting to reload renderer after crash', 'Window');
+				setTimeout(() => {
+					if (!mainWindow.isDestroyed()) {
+						mainWindow.webContents.reload();
+					}
+				}, 1000);
+			}
+		});
+
+		// Handle window becoming unresponsive (frozen renderer)
+		mainWindow.on('unresponsive', () => {
+			logger.warn('Window became unresponsive', 'Window');
+			reportCrashToSentry('Window unresponsive', 'warning', {
+				memoryUsage: process.memoryUsage(),
+			});
+		});
+
+		// Log when window recovers from unresponsive state
+		mainWindow.on('responsive', () => {
+			logger.info('Window became responsive again', 'Window');
+		});
+
+		// Note: the legacy 'crashed' event was removed in Electron 41 and
+		// is now subsumed by 'render-process-gone' above (which reports to
+		// Sentry with full reason/exitCode detail and handles auto-reload).
+
+		// Handle page load failures (network issues, invalid URLs, etc.)
+		mainWindow.webContents.on(
+			'did-fail-load',
+			(_event, errorCode, errorDescription, validatedURL) => {
+				// Ignore aborted loads (user navigated away)
+				if (errorCode === -3) return;
+
+				logger.error('Page failed to load', 'Window', {
+					errorCode,
+					errorDescription,
+					url: validatedURL,
+				});
+				reportCrashToSentry(`Page failed to load: ${errorDescription}`, 'error', {
+					errorCode,
+					errorDescription,
+					url: validatedURL,
+				});
+			}
+		);
+
+		// Handle preload script errors
+		mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+			logger.error('Preload script error', 'Window', {
+				preloadPath,
+				error: error.message,
+				stack: error.stack,
+			});
+			reportCrashToSentry('Preload script error', 'fatal', {
+				preloadPath,
+				error: error.message,
+				stack: error.stack,
+			});
+		});
+
+		// Forward renderer console errors to main process logger and Sentry
+		// This catches errors that happen before or outside React's error boundary
+		mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+			// Level 2 = error (0=verbose, 1=info, 2=warning, 3=error)
+			if (level === 3) {
+				logger.error(`Renderer console error: ${message}`, 'Window', {
+					line,
+					source: sourceId,
+				});
+
+				// Report critical errors to Sentry
+				// Filter out common noise (React dev warnings, etc.)
+				const isCritical =
+					message.includes('Uncaught') ||
+					message.includes('TypeError') ||
+					message.includes('ReferenceError') ||
+					message.includes('Cannot read') ||
+					message.includes('is not defined') ||
+					message.includes('is not a function');
+
+				if (isCritical) {
+					reportCrashToSentry(`Renderer error: ${message}`, 'error', {
+						line,
+						source: sourceId,
+					});
+				}
+			}
+		});
+
+		// Initialize auto-updater (only in production)
+		if (!isDevelopment) {
+			initAutoUpdater(mainWindow, {
+				onBeforeQuitAndInstall: () => {
+					const confirmQuit = getConfirmQuit?.();
+					confirmQuit?.();
+				},
+			});
+			logger.info('Auto-updater initialized', 'Window');
+		} else {
+			// Register stub handlers in development mode so users get a helpful error
+			registerDevAutoUpdaterStubs();
+			logger.info('Auto-updater disabled in development mode (stub handlers registered)', 'Window');
+		}
+
+		return mainWindow;
+	};
+
+	return {
+		createWindow: (windowId?: string, sessionIds?: string[]): BrowserWindow => {
+			const savedState = getWindowState(windowStateStore.store, windowId);
+			return createBrowserWindow(savedState, {
+				windowId: windowId ?? savedState.id,
+				sessionIds,
+				isMain: windowRegistry.getPrimary() === undefined,
+			});
 		},
+		createSecondaryWindow: (
+			sessionIds: string[],
+			bounds: Partial<WindowBounds> = {}
+		): BrowserWindow => {
+			return createBrowserWindow(createDefaultWindowState('secondary'), {
+				sessionIds,
+				bounds,
+				isMain: false,
+			});
+		},
+		windowRegistry,
 	};
 }
 
