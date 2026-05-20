@@ -114,11 +114,14 @@ import {
 	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
+	attachPrimaryWindowClosePolicy,
+	type WindowManager,
 } from './app-lifecycle';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { WindowRegistry } from './window-registry';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -263,6 +266,7 @@ const agentSessionOriginsStore = getAgentSessionOriginsStore();
 // See src/main/history-manager.ts for details.
 
 let mainWindow: BrowserWindow | null = null;
+let windowManager: WindowManager | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
@@ -286,17 +290,6 @@ const settingsWatcher = createSettingsWatcher({
 const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
-// Create window manager with dependency injection (Phase 4 refactoring)
-const windowManager = createWindowManager({
-	windowStateStore,
-	isDevelopment,
-	preloadPath: path.join(__dirname, 'preload.js'),
-	rendererPath: path.join(__dirname, '../renderer/index.html'),
-	devServerUrl: devServerUrl,
-	useNativeTitleBar,
-	autoHideMenuBar,
-});
-
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
@@ -312,10 +305,21 @@ const createWebServer = createWebServerFactory({
 // - DevTools installation in development
 // - Auto-updater initialization in production
 function createWindow() {
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
+
 	mainWindow = windowManager.createWindow();
+	attachPrimaryWindowClosePolicy({
+		getPrimaryWindow: () => mainWindow,
+		quitHandler,
+	});
 	// Handle closed event to clear the reference
-	mainWindow.on('closed', () => {
-		mainWindow = null;
+	const createdWindow = mainWindow;
+	createdWindow.on('closed', () => {
+		if (mainWindow === createdWindow) {
+			mainWindow = null;
+		}
 	});
 }
 
@@ -343,6 +347,16 @@ app.whenReady().then(async () => {
 	processManager = new ProcessManager();
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
+	windowManager = createWindowManager({
+		windowStateStore,
+		isDevelopment,
+		preloadPath: path.join(__dirname, 'preload.js'),
+		rendererPath: path.join(__dirname, '../renderer/index.html'),
+		devServerUrl: devServerUrl,
+		useNativeTitleBar,
+		autoHideMenuBar,
+		windowRegistry: new WindowRegistry(),
+	});
 
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
@@ -643,6 +657,9 @@ function setupIpcHandlers() {
 	});
 
 	// Register multi-window handlers for secondary window lifecycle and session movement
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
 	registerWindowsHandlers({
 		windowManager,
 		windowStateStore,
