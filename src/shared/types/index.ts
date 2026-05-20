@@ -2,14 +2,14 @@
 // These types are used by both the CLI tool and the renderer process
 
 // Re-export agent ID constants and types from the single source of truth
-export { AGENT_IDS, isValidAgentId } from './agentIds';
-export type { AgentId } from './agentIds';
+export { AGENT_IDS, isValidAgentId } from '../agentIds';
+export type { AgentId } from '../agentIds';
 
 /**
  * Union type of all valid agent IDs.
  * Derived from AGENT_IDS — the single source of truth in agentIds.ts.
  */
-export type ToolType = import('./agentIds').AgentId;
+export type ToolType = import('../agentIds').AgentId;
 
 /**
  * ThinkingMode controls how AI reasoning/thinking content is displayed.
@@ -581,13 +581,15 @@ export type {
 	GetReadmeResponse,
 	ImportPlaybookResponse,
 	MarketplaceErrorResponse,
-} from './marketplace-types';
+} from '../marketplace-types';
 
 export {
 	MarketplaceFetchError,
 	MarketplaceCacheError,
 	MarketplaceImportError,
-} from './marketplace-types';
+} from '../marketplace-types';
+
+export type { MultiWindowState, WindowInfo, WindowState } from './window';
 
 // ============================================================================
 // SSH Remote Execution Types
