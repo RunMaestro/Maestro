@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import type { WindowBounds } from '../../shared/types/window';
+import { useOptionalWindowContext } from '../contexts/WindowContext';
 import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
@@ -99,7 +100,7 @@ interface TabProps {
 	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -493,6 +494,13 @@ const Tab = memo(function Tab({
 		[onDragOver, tabId]
 	);
 
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tabId, e);
+		},
+		[onDragEnd, tabId]
+	);
+
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
 			onDrop(tabId, e);
@@ -560,7 +568,7 @@ const Tab = memo(function Tab({
 			onDragStart={handleTabDragStart}
 			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
 		>
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
@@ -961,7 +969,7 @@ interface FileTabProps {
 	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -1220,6 +1228,13 @@ const FileTab = memo(function FileTab({
 		[onDragOver, tab.id]
 	);
 
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tab.id, e);
+		},
+		[onDragEnd, tab.id]
+	);
+
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
 			onDrop(tab.id, e);
@@ -1291,7 +1306,7 @@ const FileTab = memo(function FileTab({
 			onDragStart={handleTabDragStart}
 			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
 		>
 			{/* Unsaved edits indicator - pencil icon */}
@@ -1587,6 +1602,7 @@ function TabBarInner({
 	const dragTargetWindowIdRef = useRef<string | null>(null);
 	const lastWindowPointLookupRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
+	const windowContext = useOptionalWindowContext();
 
 	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
 	const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -1741,14 +1757,45 @@ function TabBarInner({
 		[draggingTabId]
 	);
 
-	const handleDragEnd = useCallback(() => {
-		setDraggingTabId(null);
-		setDragOverTabId(null);
-		setDraggingOutsideWindow(false);
-		windowBoundsRef.current = null;
-		dragTargetWindowIdRef.current = null;
-		lastWindowPointLookupRef.current = null;
-	}, []);
+	const handleDragEnd = useCallback(
+		(_tabId: string, e: React.DragEvent) => {
+			const targetWindowId = dragTargetWindowIdRef.current;
+			const sourceWindowId = windowContext?.windowId;
+			const sessionId = windowContext?.activeSessionId;
+			const moveSessionToWindow = (nextTargetWindowId: string | null | undefined) => {
+				if (
+					nextTargetWindowId &&
+					sourceWindowId &&
+					sessionId &&
+					nextTargetWindowId !== sourceWindowId &&
+					window.maestro?.windows?.moveSession
+				) {
+					void window.maestro.windows.moveSession(sessionId, sourceWindowId, nextTargetWindowId);
+				}
+			};
+
+			if (targetWindowId) {
+				moveSessionToWindow(targetWindowId);
+			} else if (
+				windowBoundsRef.current &&
+				(e.screenX !== 0 || e.screenY !== 0) &&
+				isPointOutsideBounds(e.screenX, e.screenY, windowBoundsRef.current) &&
+				window.maestro?.windows?.findWindowAtPoint
+			) {
+				void window.maestro.windows
+					.findWindowAtPoint(e.screenX, e.screenY)
+					.then((windowInfo) => moveSessionToWindow(windowInfo?.id));
+			}
+
+			setDraggingTabId(null);
+			setDragOverTabId(null);
+			setDraggingOutsideWindow(false);
+			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
+		},
+		[windowContext?.activeSessionId, windowContext?.windowId]
+	);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
