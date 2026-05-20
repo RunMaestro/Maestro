@@ -12,11 +12,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+let nextBrowserWindowId = 1;
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
 	send: vi.fn(),
 	openDevTools: vi.fn(),
+	reload: vi.fn(),
 	on: vi.fn(),
 	setWindowOpenHandler: vi.fn(),
 	session: {
@@ -31,6 +33,7 @@ const mockWindowInstance = {
 	setFullScreen: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
@@ -43,17 +46,21 @@ let lastBrowserWindowOptions: Record<string, unknown> | null = null;
 
 // Create a class-based mock for BrowserWindow
 class MockBrowserWindow {
+	id: number;
 	loadURL = mockWindowInstance.loadURL;
 	loadFile = mockWindowInstance.loadFile;
 	maximize = mockWindowInstance.maximize;
 	setFullScreen = mockWindowInstance.setFullScreen;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
+	isDestroyed = mockWindowInstance.isDestroyed;
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
 
 	constructor(options: unknown) {
+		this.id = nextBrowserWindowId;
+		nextBrowserWindowId += 1;
 		lastBrowserWindowOptions = options as Record<string, unknown>;
 	}
 }
@@ -117,6 +124,7 @@ describe('app-lifecycle/window-manager', () => {
 		vi.clearAllMocks();
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
+		nextBrowserWindowId = 1;
 		lastBrowserWindowOptions = null;
 
 		mockWindowStateStore = {
@@ -144,6 +152,7 @@ describe('app-lifecycle/window-manager', () => {
 		// Reset mock implementations
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
+		mockWindowInstance.isDestroyed.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 	});
 
@@ -168,7 +177,10 @@ describe('app-lifecycle/window-manager', () => {
 			});
 
 			expect(windowManager).toHaveProperty('createWindow');
+			expect(windowManager).toHaveProperty('createSecondaryWindow');
+			expect(windowManager).toHaveProperty('windowRegistry');
 			expect(typeof windowManager.createWindow).toBe('function');
+			expect(typeof windowManager.createSecondaryWindow).toBe('function');
 		});
 	});
 
@@ -191,6 +203,64 @@ describe('app-lifecycle/window-manager', () => {
 			const result = windowManager.createWindow();
 
 			expect(result).toBeInstanceOf(MockBrowserWindow);
+		});
+
+		it('should register created windows with explicit session ownership', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+
+			expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-1']);
+			expect(windowManager.windowRegistry.getWindowForSession('session-1')).toBe('primary');
+		});
+
+		it('should create secondary windows with provided sessions and bounds', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			const secondaryWindow = windowManager.createSecondaryWindow(['session-2'], {
+				x: 300,
+				y: 200,
+				width: 900,
+				height: 700,
+			});
+
+			expect(secondaryWindow).toBeInstanceOf(MockBrowserWindow);
+			expect(windowManager.windowRegistry.getWindowForSession('session-2')).toBe('2');
+			expect(lastBrowserWindowOptions).toMatchObject({
+				x: 300,
+				y: 200,
+				width: 900,
+				height: 700,
+				webPreferences: expect.objectContaining({
+					preload: '/path/to/preload.js',
+				}),
+			});
+			expect(mockWindowInstance.loadFile).toHaveBeenLastCalledWith('/path/to/index.html');
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
