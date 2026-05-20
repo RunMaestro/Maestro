@@ -205,6 +205,7 @@ import { useUIStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
+import { getWindowActiveSession, getWindowSessions } from './utils/windowSessionScope';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -516,35 +517,29 @@ function MaestroConsoleInner() {
 		setRemovedWorktreePaths,
 	} = useMemo(() => useSessionStore.getState(), []);
 
-	const windowSessionIdSet = useMemo(() => new Set(windowSessionIds), [windowSessionIds]);
 	const windowSessions = useMemo(
-		() => (windowId ? sessions.filter((session) => windowSessionIdSet.has(session.id)) : sessions),
-		[sessions, windowId, windowSessionIdSet]
+		() => getWindowSessions(sessions, windowId, windowSessionIds),
+		[sessions, windowId, windowSessionIds]
 	);
-	const activeSession = useMemo(() => {
-		if (!windowId) {
-			return storeActiveSession;
-		}
-		if (storeActiveSession && windowSessionIdSet.has(storeActiveSession.id)) {
-			return storeActiveSession;
-		}
-
-		const contextActiveSession =
-			windowContextActiveSessionId &&
-			sessions.find((session) => session.id === windowContextActiveSessionId);
-		if (contextActiveSession && windowSessionIdSet.has(contextActiveSession.id)) {
-			return contextActiveSession;
-		}
-
-		return windowSessions[0] ?? null;
-	}, [
-		windowId,
-		storeActiveSession,
-		windowSessionIdSet,
-		windowContextActiveSessionId,
-		sessions,
-		windowSessions,
-	]);
+	const activeSession = useMemo(
+		() =>
+			getWindowActiveSession({
+				sessions,
+				windowSessions,
+				windowId,
+				windowSessionIds,
+				storeActiveSession,
+				windowActiveSessionId: windowContextActiveSessionId,
+			}),
+		[
+			sessions,
+			windowSessions,
+			windowId,
+			windowSessionIds,
+			storeActiveSession,
+			windowContextActiveSessionId,
+		]
+	);
 	const activeSessionId = activeSession?.id ?? storeActiveSessionId;
 
 	useEffect(() => {
