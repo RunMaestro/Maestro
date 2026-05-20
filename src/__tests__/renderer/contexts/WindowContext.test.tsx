@@ -2,6 +2,7 @@ import React, { type ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WindowProvider, useWindowContext } from '../../../renderer/contexts/WindowContext';
+import type { WindowSessionMovedEvent } from '../../../shared/types/window';
 
 const initialWindowState = {
 	id: 'window-1',
@@ -22,8 +23,11 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe('WindowContext', () => {
+	let sessionMovedHandler: ((event: WindowSessionMovedEvent) => void) | undefined;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		sessionMovedHandler = undefined;
 
 		(window as any).maestro = {
 			...(window as any).maestro,
@@ -50,6 +54,10 @@ describe('WindowContext', () => {
 					isMain: false,
 					sessionIds: ['session-2'],
 					activeSessionId: null,
+				}),
+				onSessionMoved: vi.fn((handler) => {
+					sessionMovedHandler = handler;
+					return vi.fn();
 				}),
 			},
 		};
@@ -129,6 +137,68 @@ describe('WindowContext', () => {
 		expect(window.maestro.windows.create).toHaveBeenCalledWith(['session-2']);
 		expect(newWindowId).toBe('window-3');
 		expect(result.current.sessionIds).toEqual(['session-1']);
+		expect(result.current.activeSessionId).toBe('session-1');
+	});
+
+	it('updates local tabs when a session is moved out of this window', async () => {
+		const { result } = renderHook(() => useWindowContext(), { wrapper });
+		await waitFor(() => expect(result.current.windowId).toBe('window-1'));
+		await waitFor(() => expect(window.maestro.windows.onSessionMoved).toHaveBeenCalledTimes(1));
+
+		act(() => {
+			sessionMovedHandler?.({
+				sessionId: 'session-1',
+				fromWindowId: 'window-1',
+				toWindowId: 'window-2',
+				windows: [
+					{
+						id: 'window-1',
+						isMain: true,
+						sessionIds: ['session-2'],
+						activeSessionId: 'session-1',
+					},
+					{
+						id: 'window-2',
+						isMain: false,
+						sessionIds: ['session-3', 'session-1'],
+						activeSessionId: 'session-3',
+					},
+				],
+			});
+		});
+
+		expect(result.current.sessionIds).toEqual(['session-2']);
+		expect(result.current.activeSessionId).toBe('session-2');
+	});
+
+	it('updates local tabs when a session is moved into this window', async () => {
+		const { result } = renderHook(() => useWindowContext(), { wrapper });
+		await waitFor(() => expect(result.current.windowId).toBe('window-1'));
+		await waitFor(() => expect(window.maestro.windows.onSessionMoved).toHaveBeenCalledTimes(1));
+
+		act(() => {
+			sessionMovedHandler?.({
+				sessionId: 'session-3',
+				fromWindowId: 'window-2',
+				toWindowId: 'window-1',
+				windows: [
+					{
+						id: 'window-1',
+						isMain: true,
+						sessionIds: ['session-1', 'session-2', 'session-3'],
+						activeSessionId: 'session-1',
+					},
+					{
+						id: 'window-2',
+						isMain: false,
+						sessionIds: [],
+						activeSessionId: null,
+					},
+				],
+			});
+		});
+
+		expect(result.current.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
 		expect(result.current.activeSessionId).toBe('session-1');
 	});
 });

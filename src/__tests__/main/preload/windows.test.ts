@@ -5,10 +5,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockInvoke = vi.fn();
+const mockOn = vi.fn();
+const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		on: (...args: unknown[]) => mockOn(...args),
+		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
 }));
 
@@ -124,5 +128,18 @@ describe('Windows Preload API', () => {
 
 		expect(mockInvoke).toHaveBeenCalledWith('windows:getState');
 		expect(result).toEqual(state);
+	});
+
+	it('should subscribe to windows:sessionMoved events', () => {
+		const handler = vi.fn();
+
+		const unsubscribe = api.onSessionMoved(handler);
+		const wrappedHandler = mockOn.mock.calls[0][1] as Function;
+		wrappedHandler({}, { sessionId: 'session-1' });
+		unsubscribe();
+
+		expect(mockOn).toHaveBeenCalledWith('windows:sessionMoved', expect.any(Function));
+		expect(handler).toHaveBeenCalledWith({ sessionId: 'session-1' });
+		expect(mockRemoveListener).toHaveBeenCalledWith('windows:sessionMoved', wrappedHandler);
 	});
 });

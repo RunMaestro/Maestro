@@ -43,6 +43,21 @@ function getNextActiveSessionId(
 	return nextSessionIds[Math.min(closingIndex, nextSessionIds.length - 1)] ?? null;
 }
 
+function getValidActiveSessionId(
+	nextSessionIds: string[],
+	nextActiveSessionId: string | null,
+	currentActiveSessionId: string | null
+): string | null {
+	if (nextActiveSessionId && nextSessionIds.includes(nextActiveSessionId)) {
+		return nextActiveSessionId;
+	}
+	if (currentActiveSessionId && nextSessionIds.includes(currentActiveSessionId)) {
+		return currentActiveSessionId;
+	}
+
+	return nextSessionIds[0] ?? null;
+}
+
 export function WindowProvider({ children }: WindowProviderProps) {
 	const [windowId, setWindowId] = useState<string | null>(null);
 	const [isMainWindow, setIsMainWindow] = useState(false);
@@ -73,6 +88,29 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			cancelled = true;
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!windowId) {
+			return undefined;
+		}
+
+		return window.maestro.windows.onSessionMoved((event) => {
+			const currentWindow = event.windows.find((candidate) => candidate.id === windowId);
+			if (!currentWindow) {
+				return;
+			}
+
+			setSessionIds(currentWindow.sessionIds);
+			setIsMainWindow(currentWindow.isMain);
+			setActiveSessionId((currentActiveSessionId) =>
+				getValidActiveSessionId(
+					currentWindow.sessionIds,
+					currentWindow.activeSessionId,
+					currentActiveSessionId
+				)
+			);
+		});
+	}, [windowId]);
 
 	const closeTab = useCallback((sessionId: string) => {
 		setSessionIds((currentSessionIds) => {

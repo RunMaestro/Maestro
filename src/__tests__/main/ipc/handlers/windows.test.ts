@@ -12,7 +12,10 @@ const mockState = vi.hoisted(() => {
 
 	class MockBrowserWindow {
 		id: number;
-		webContents = {};
+		webContents = {
+			send: vi.fn(),
+			isDestroyed: vi.fn(() => false),
+		};
 		close = vi.fn();
 		focus = vi.fn();
 		show = vi.fn();
@@ -157,13 +160,22 @@ describe('windows IPC handlers', () => {
 
 	it('moves sessions between windows and looks up session ownership', async () => {
 		windowManager.createWindow('primary', ['session-1']);
-		windowManager.createSecondaryWindow([], {});
+		const secondary = windowManager.createSecondaryWindow([], {});
 
 		const moveHandler = mockState.registeredHandlers.get('windows:moveSession');
 		await expect(moveHandler!({}, 'session-1', 'primary', '2')).resolves.toBe(true);
 
 		const lookupHandler = mockState.registeredHandlers.get('windows:getForSession');
 		await expect(lookupHandler!({}, 'session-1')).resolves.toBe('2');
+		expect(secondary.webContents.send).toHaveBeenCalledWith('windows:sessionMoved', {
+			sessionId: 'session-1',
+			fromWindowId: 'primary',
+			toWindowId: '2',
+			windows: [
+				{ id: 'primary', isMain: true, sessionIds: [], activeSessionId: null },
+				{ id: '2', isMain: false, sessionIds: ['session-1'], activeSessionId: null },
+			],
+		});
 	});
 
 	it('focuses existing windows', async () => {
