@@ -30,3 +30,7 @@ export interface WindowSessionMovedEvent {
 	toWindowId: string;
 	windows: WindowInfo[];
 }
+
+export type WindowStateUpdate = Partial<
+	Pick<WindowState, 'activeSessionId' | 'leftPanelCollapsed' | 'rightPanelCollapsed'>
+>;

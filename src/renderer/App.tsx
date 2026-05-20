@@ -134,6 +134,7 @@ import {
 	useLiveMode,
 	// Session switching callbacks (navigate to session/tab from various UI surfaces)
 	useSessionSwitchCallbacks,
+	useWindowState,
 } from './hooks';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
@@ -640,6 +641,8 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 		setSidebarExtraSelection,
 	} = useUIStore.getState();
+
+	useWindowState({ windowId });
 
 	const {
 		setSelectedFileIndex: _setSelectedFileIndex,
