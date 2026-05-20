@@ -131,6 +131,7 @@ describe('RightPanel', () => {
 	// State/store props are now read directly from Zustand stores inside RightPanel.
 	const createDefaultProps = (overrides: Record<string, any> = {}) => ({
 		theme: mockTheme,
+		activeSession: mockSession,
 		setActiveRightTab: vi.fn(),
 		fileTreeContainerRef: { current: null } as React.RefObject<HTMLDivElement>,
 		fileTreeFilterInputRef: { current: null } as React.RefObject<HTMLInputElement>,
@@ -204,7 +205,7 @@ describe('RightPanel', () => {
 	describe('Render conditions', () => {
 		it('should return null when session is null', () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
-			const props = createDefaultProps();
+			const props = createDefaultProps({ activeSession: null });
 			const { container } = render(<RightPanel {...props} />);
 			expect(container.firstChild).toBeNull();
 		});
@@ -231,6 +232,28 @@ describe('RightPanel', () => {
 			const { container } = render(<RightPanel {...props} />);
 			const panel = container.firstChild as HTMLElement;
 			expect(panel.style.width).toBe('400px');
+		});
+
+		it('should render the window-scoped active session instead of the global store active session', () => {
+			const otherSession: Session = {
+				...mockSession,
+				id: 'session-2',
+				name: 'Other Window Session',
+			};
+			useSessionStore.setState({
+				sessions: [mockSession, otherSession],
+				activeSessionId: otherSession.id,
+			});
+
+			const props = createDefaultProps({ activeSession: mockSession });
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByTestId('file-explorer-panel')).toHaveTextContent(
+				'FileExplorerPanel: Test Session'
+			);
+			expect(screen.getByTestId('file-explorer-panel')).not.toHaveTextContent(
+				'Other Window Session'
+			);
 		});
 	});
 

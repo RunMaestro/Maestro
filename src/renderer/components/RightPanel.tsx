@@ -32,7 +32,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { useSessionStore } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
@@ -47,6 +47,8 @@ export interface RightPanelHandle {
 interface RightPanelProps {
 	// Theme (computed from settingsStore by App.tsx)
 	theme: Theme;
+	// Active session after App.tsx applies WindowContext session filtering.
+	activeSession: Session | null;
 
 	// Tab state (custom handler with setup modal logic)
 	setActiveRightTab: (tab: RightPanelTab) => void;
@@ -127,7 +129,6 @@ interface RightPanelProps {
 export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
 		// === State from stores (direct subscriptions — no prop drilling) ===
-		const session = useSessionStore(selectActiveSession);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -157,19 +158,10 @@ export const RightPanel = memo(
 		const autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
 		const autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
 
-		// Direct store subscription for error state — the prop chain passes error state
-		// through updateBatchStateAndBroadcast/UPDATE_PROGRESS which drops error fields.
-		const sessionId = session?.id;
-		const errorPaused = useBatchStore(
-			useCallback((s) => s.batchRunStates[sessionId ?? '']?.errorPaused ?? false, [sessionId])
-		);
-		const batchError = useBatchStore(
-			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
-		);
-
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
 			theme,
+			activeSession: session,
 			setActiveRightTab,
 			fileTreeContainerRef,
 			fileTreeFilterInputRef,
@@ -207,6 +199,16 @@ export const RightPanel = memo(
 			onFocusFileInGraph,
 			onOpenBrowserTabAt,
 		} = props;
+
+		// Direct store subscription for error state — the prop chain passes error state
+		// through updateBatchStateAndBroadcast/UPDATE_PROGRESS which drops error fields.
+		const sessionId = session?.id;
+		const errorPaused = useBatchStore(
+			useCallback((s) => s.batchRunStates[sessionId ?? '']?.errorPaused ?? false, [sessionId])
+		);
+		const batchError = useBatchStore(
+			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
+		);
 
 		// === Values derived from session ===
 		const autoRunContent = session?.autoRunContent ?? '';
