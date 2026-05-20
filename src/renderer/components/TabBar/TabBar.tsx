@@ -122,6 +122,8 @@ function TabBarInner({
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const windowBoundsRef = useRef<WindowBounds | null>(null);
+	const dragTargetWindowIdRef = useRef<string | null>(null);
+	const lastWindowPointLookupRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
 	const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -226,11 +228,51 @@ function TabBarInner({
 	]);
 
 	// Drag handlers
-	const updateDragWindowExitState = useCallback((screenX: number, screenY: number) => {
-		const bounds = windowBoundsRef.current;
-		if (!bounds) return;
-		setDraggingOutsideWindow(isPointOutsideBounds(screenX, screenY, bounds));
+	const lookupDragTargetWindow = useCallback((screenX: number, screenY: number) => {
+		const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
+		if (!findWindowAtPoint || (screenX === 0 && screenY === 0)) {
+			dragTargetWindowIdRef.current = null;
+			return;
+		}
+
+		const lookupKey = `${screenX}:${screenY}`;
+		if (lastWindowPointLookupRef.current === lookupKey) {
+			return;
+		}
+		lastWindowPointLookupRef.current = lookupKey;
+
+		void findWindowAtPoint(screenX, screenY)
+			.then((windowInfo) => {
+				if (lastWindowPointLookupRef.current === lookupKey) {
+					dragTargetWindowIdRef.current = windowInfo?.id ?? null;
+				}
+			})
+			.catch((error) => {
+				logger.warn('[TabBar] Failed to look up drag target window', { error });
+				if (lastWindowPointLookupRef.current === lookupKey) {
+					dragTargetWindowIdRef.current = null;
+				}
+			});
 	}, []);
+
+	const updateDragWindowExitState = useCallback(
+		(screenX: number, screenY: number) => {
+			const bounds = windowBoundsRef.current;
+			if (!bounds || (screenX === 0 && screenY === 0)) {
+				return;
+			}
+
+			const isOutsideWindow = isPointOutsideBounds(screenX, screenY, bounds);
+			setDraggingOutsideWindow(isOutsideWindow);
+			if (isOutsideWindow) {
+				lookupDragTargetWindow(screenX, screenY);
+			} else {
+				dragTargetWindowIdRef.current = null;
+				lastWindowPointLookupRef.current = null;
+			}
+		},
+		[lookupDragTargetWindow]
+	);
 
 	const handleDragStart = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -239,6 +281,8 @@ function TabBarInner({
 			setDraggingTabId(tabId);
 			setDraggingOutsideWindow(false);
 			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
 
 			window.maestro?.windows
 				?.getWindowBounds?.()
@@ -274,6 +318,8 @@ function TabBarInner({
 		setDragOverTabId(null);
 		setDraggingOutsideWindow(false);
 		windowBoundsRef.current = null;
+		dragTargetWindowIdRef.current = null;
+		lastWindowPointLookupRef.current = null;
 	}, []);
 
 	const handleDrop = useCallback(
@@ -293,6 +339,10 @@ function TabBarInner({
 			}
 			setDraggingTabId(null);
 			setDragOverTabId(null);
+			setDraggingOutsideWindow(false);
+			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
