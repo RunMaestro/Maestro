@@ -124,6 +124,7 @@ export interface SessionItemProps {
 	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
+	windowBadge?: string | null;
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
@@ -178,6 +179,7 @@ export const SessionItem = memo(function SessionItem({
 	gitFileCount,
 	isInBatch = false,
 	jumpNumber,
+	windowBadge,
 	cueSubscriptionCount,
 	cueActiveRun,
 	wizardActive = false,
@@ -414,6 +416,16 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{windowBadge && (
+					<span
+						className="text-[9px] px-1 py-0.5 rounded font-bold shrink-0"
+						style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+						title={`Open in window ${windowBadge.replace(/^W/, '')}`}
+					>
+						{windowBadge}
+					</span>
+				)}
+
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default; the showFullGroupLabelInBookmarks setting swaps in the full group

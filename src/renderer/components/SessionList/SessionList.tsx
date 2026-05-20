@@ -54,6 +54,9 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
+import type { WindowInfo } from '../../../shared/types/window';
+import { getSessionWindowOwnership } from '../../utils/windowSessionOwnership';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -187,6 +190,9 @@ function SessionListInner(props: SessionListProps) {
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const windowContext = useOptionalWindowContext();
+	const windowId = windowContext?.windowId ?? null;
+	const openSession = windowContext?.openSession;
 
 	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
@@ -420,6 +426,20 @@ function SessionListInner(props: SessionListProps) {
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 	const toggleShowUnreadAgentsOnly = useUIStore((s) => s.toggleShowUnreadAgentsOnly);
+	const [windows, setWindows] = useState<WindowInfo[]>([]);
+	const refreshWindows = useCallback(async () => {
+		if (!window.maestro?.windows?.list) {
+			setWindows([]);
+			return;
+		}
+
+		const nextWindows = await window.maestro.windows.list();
+		setWindows(nextWindows);
+	}, []);
+
+	useEffect(() => {
+		void refreshWindows();
+	}, [refreshWindows]);
 	// Agent Resilience: agents stuck auto-retrying an outage count as "needs
 	// attention" and surface in the unread filter (see useSessionCategories).
 	const stuckOutageSignature = useActiveOutageSessionSignature();
@@ -661,10 +681,26 @@ function SessionListInner(props: SessionListProps) {
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessionsRef.current.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => {
+				const ownership = getSessionWindowOwnership(s.id, windowId, windows);
+				if (ownership.ownerWindowId && ownership.isOpenInOtherWindow) {
+					void window.maestro?.windows?.focusWindow(ownership.ownerWindowId);
+					return;
+				}
+
+				if (!openSession) {
+					setActiveSessionId(s.id);
+					return;
+				}
+
+				void openSession(s.id).then(() => {
+					setActiveSessionId(s.id);
+					void refreshWindows();
+				});
+			});
 		});
 		return map;
-	}, [sessionIdsKey, setActiveSessionId]);
+	}, [sessionIdsKey, windowId, windows, openSession, setActiveSessionId, refreshWindows]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
@@ -756,6 +792,7 @@ function SessionListInner(props: SessionListProps) {
 		// agents out of it or dropping them into it has no meaningful target (drops
 		// previously fell through to "ungroup"). Disable drag/drop for those rows.
 		const dragDisabled = variant === 'bookmark';
+		const sessionWindowOwnership = getSessionWindowOwnership(session.id, windowId, windows);
 
 		const content = (
 			<>
@@ -783,6 +820,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					windowBadge={sessionWindowOwnership.badgeLabel}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
 					wizardActive={wizardActiveSessions.has(session.id)}
@@ -825,6 +863,7 @@ function SessionListInner(props: SessionListProps) {
 								activeFocus === 'sidebar' &&
 								!sidebarExtraSelection &&
 								childGlobalIdx === selectedSidebarIndex;
+							const childWindowOwnership = getSessionWindowOwnership(child.id, windowId, windows);
 							return (
 								<div key={`worktree-${session.id}-${child.id}`} className="tree-child">
 									<SessionItem
@@ -844,6 +883,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										windowBadge={childWindowOwnership.badgeLabel}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
 										wizardActive={wizardActiveSessions.has(child.id)}
@@ -1311,7 +1351,7 @@ function SessionListInner(props: SessionListProps) {
 									contextWarningRedThreshold={contextWarningRedThreshold}
 									getFileCount={getFileCount}
 									getWorktreeChildren={getWorktreeChildren}
-									setActiveSessionId={setActiveSessionId}
+									setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 								/>
 							)}
 						</div>
@@ -1469,7 +1509,7 @@ function SessionListInner(props: SessionListProps) {
 										contextWarningRedThreshold={contextWarningRedThreshold}
 										getFileCount={getFileCount}
 										getWorktreeChildren={getWorktreeChildren}
-										setActiveSessionId={setActiveSessionId}
+										setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 									/>
 								) : null}
 							</div>
@@ -1599,7 +1639,7 @@ function SessionListInner(props: SessionListProps) {
 									contextWarningRedThreshold={contextWarningRedThreshold}
 									getFileCount={getFileCount}
 									getWorktreeChildren={getWorktreeChildren}
-									setActiveSessionId={setActiveSessionId}
+									setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 								/>
 							)}
 						</div>
@@ -1699,8 +1739,10 @@ function SessionListInner(props: SessionListProps) {
 					activeBatchSessionIds={activeBatchSessionIds}
 					contextWarningYellowThreshold={contextWarningYellowThreshold}
 					contextWarningRedThreshold={contextWarningRedThreshold}
+					currentWindowId={windowId}
+					windows={windows}
 					getFileCount={getFileCount}
-					setActiveSessionId={setActiveSessionId}
+					setActiveSessionId={(id) => selectHandlers.get(id)?.()}
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
 				/>
