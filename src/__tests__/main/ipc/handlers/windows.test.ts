@@ -120,9 +120,42 @@ describe('windows IPC handlers', () => {
 			id: '2',
 			isMain: false,
 			sessionIds: ['session-2'],
-			activeSessionId: null,
+			activeSessionId: 'session-2',
 		});
 		expect(windowManager.windowRegistry.getWindowForSession('session-2')).toBe('2');
+	});
+
+	it('creates a secondary window from the invoking window and updates source ownership', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1', 'session-2']);
+		windowStateStore.store.windows = [{ id: 'primary', activeSessionId: 'session-1' } as any];
+
+		const handler = mockState.registeredHandlers.get('windows:create');
+		const result = await handler!({ sender: primary.webContents }, ['session-1'], {
+			x: 500,
+			y: 250,
+		});
+
+		expect(result).toEqual({
+			id: '2',
+			isMain: false,
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-1',
+		});
+		expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-2']);
+		expect(windowStateStore.store.windows).toEqual([
+			expect.objectContaining({
+				id: 'primary',
+				sessionIds: ['session-2'],
+				activeSessionId: 'session-2',
+			}),
+			expect.objectContaining({
+				id: '2',
+				sessionIds: ['session-1'],
+				activeSessionId: 'session-1',
+				x: 10,
+				y: 20,
+			}),
+		]);
 	});
 
 	it('prevents closing the primary window', async () => {

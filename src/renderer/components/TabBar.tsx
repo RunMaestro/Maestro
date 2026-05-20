@@ -1759,9 +1759,21 @@ function TabBarInner({
 
 	const handleDragEnd = useCallback(
 		(_tabId: string, e: React.DragEvent) => {
+			const dropScreenX = e.screenX;
+			const dropScreenY = e.screenY;
 			const targetWindowId = dragTargetWindowIdRef.current;
 			const sourceWindowId = windowContext?.windowId;
 			const sessionId = windowContext?.activeSessionId;
+			const closeSourceTab = windowContext?.closeTab;
+			const createSessionWindowAtPoint = (screenX: number, screenY: number) => {
+				if (!sessionId || !window.maestro?.windows?.create) {
+					return;
+				}
+
+				void window.maestro.windows
+					.create([sessionId], { x: screenX - 100, y: screenY - 50 })
+					.then(() => closeSourceTab?.(sessionId));
+			};
 			const moveSessionToWindow = (nextTargetWindowId: string | null | undefined) => {
 				if (
 					nextTargetWindowId &&
@@ -1773,18 +1785,25 @@ function TabBarInner({
 					void window.maestro.windows.moveSession(sessionId, sourceWindowId, nextTargetWindowId);
 				}
 			};
+			const handleOutsideDrop = (nextTargetWindowId: string | null | undefined) => {
+				if (nextTargetWindowId) {
+					moveSessionToWindow(nextTargetWindowId);
+				} else {
+					createSessionWindowAtPoint(dropScreenX, dropScreenY);
+				}
+			};
 
 			if (targetWindowId) {
 				moveSessionToWindow(targetWindowId);
 			} else if (
 				windowBoundsRef.current &&
-				(e.screenX !== 0 || e.screenY !== 0) &&
-				isPointOutsideBounds(e.screenX, e.screenY, windowBoundsRef.current) &&
+				(dropScreenX !== 0 || dropScreenY !== 0) &&
+				isPointOutsideBounds(dropScreenX, dropScreenY, windowBoundsRef.current) &&
 				window.maestro?.windows?.findWindowAtPoint
 			) {
 				void window.maestro.windows
-					.findWindowAtPoint(e.screenX, e.screenY)
-					.then((windowInfo) => moveSessionToWindow(windowInfo?.id));
+					.findWindowAtPoint(dropScreenX, dropScreenY)
+					.then((windowInfo) => handleOutsideDrop(windowInfo?.id));
 			}
 
 			setDraggingTabId(null);
@@ -1794,7 +1813,7 @@ function TabBarInner({
 			dragTargetWindowIdRef.current = null;
 			lastWindowPointLookupRef.current = null;
 		},
-		[windowContext?.activeSessionId, windowContext?.windowId]
+		[windowContext?.activeSessionId, windowContext?.closeTab, windowContext?.windowId]
 	);
 
 	const handleDrop = useCallback(
