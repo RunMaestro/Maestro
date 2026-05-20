@@ -126,12 +126,20 @@ vi.mock('@sentry/electron/main', () => ({
 describe('app-lifecycle/window-manager', () => {
 	let mockWindowStateStore: {
 		store: {
-			x: number;
-			y: number;
-			width: number;
-			height: number;
-			isMaximized: boolean;
-			isFullScreen: boolean;
+			primaryWindowId: string;
+			windows: Array<{
+				id: string;
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>;
 		};
 		set: ReturnType<typeof vi.fn>;
 	};
@@ -146,12 +154,22 @@ describe('app-lifecycle/window-manager', () => {
 
 		mockWindowStateStore = {
 			store: {
-				x: 50,
-				y: 50,
-				width: 1400,
-				height: 900,
-				isMaximized: false,
-				isFullScreen: false,
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 50,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
 			},
 			set: vi.fn(),
 		};
@@ -449,7 +467,7 @@ describe('app-lifecycle/window-manager', () => {
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
-			mockWindowStateStore.store.isMaximized = true;
+			mockWindowStateStore.store.windows[0].isMaximized = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -471,7 +489,7 @@ describe('app-lifecycle/window-manager', () => {
 		});
 
 		it('should set fullscreen if saved state is fullscreen', async () => {
-			mockWindowStateStore.store.isFullScreen = true;
+			mockWindowStateStore.store.windows[0].isFullScreen = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -658,12 +676,14 @@ describe('app-lifecycle/window-manager', () => {
 			expect(windowCloseHandler).not.toBeNull();
 			windowCloseHandler!();
 
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('x', 100);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('y', 100);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('width', 1200);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('height', 800);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', false);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isFullScreen', false);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 100,
+				y: 100,
+				width: 1200,
+				height: 800,
+				isMaximized: false,
+				isFullScreen: false,
+			});
 		});
 
 		it('should not save bounds when maximized', async () => {
@@ -687,9 +707,13 @@ describe('app-lifecycle/window-manager', () => {
 			windowCloseHandler!();
 
 			// Should save isMaximized but not bounds
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', true);
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('x', expect.anything());
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('y', expect.anything());
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+				isMaximized: true,
+			});
 		});
 
 		it('should log window creation details', async () => {

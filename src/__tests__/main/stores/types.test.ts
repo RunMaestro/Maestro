@@ -6,7 +6,8 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
-	WindowState,
+	LegacyWindowState,
+	MultiWindowState,
 	ClaudeSessionOrigin,
 	ClaudeSessionOriginInfo,
 	ClaudeSessionOriginsData,
@@ -170,9 +171,9 @@ describe('stores/types', () => {
 		});
 	});
 
-	describe('WindowState', () => {
+	describe('LegacyWindowState', () => {
 		it('should have required fields', () => {
-			const state: WindowState = {
+			const state: LegacyWindowState = {
 				width: 1400,
 				height: 900,
 				isMaximized: false,
@@ -184,7 +185,7 @@ describe('stores/types', () => {
 		});
 
 		it('should allow optional x and y', () => {
-			const state: WindowState = {
+			const state: LegacyWindowState = {
 				x: 100,
 				y: 200,
 				width: 1400,
@@ -195,6 +196,32 @@ describe('stores/types', () => {
 
 			expect(state.x).toBe(100);
 			expect(state.y).toBe(200);
+		});
+	});
+
+	describe('MultiWindowState', () => {
+		it('should store primary and secondary window layouts', () => {
+			const state: MultiWindowState = {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 0,
+						y: 0,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: true,
+					},
+				],
+			};
+
+			expect(state.windows[0].sessionIds).toEqual(['session-1']);
+			expect(state.primaryWindowId).toBe('primary');
 		});
 	});
 

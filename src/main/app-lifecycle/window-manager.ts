@@ -5,7 +5,7 @@
 
 import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
 import type Store from 'electron-store';
-import type { WindowState } from '../stores/types';
+import type { MultiWindowState, WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
@@ -117,6 +117,25 @@ function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): 
 	});
 }
 
+function getPrimaryWindowState(state: MultiWindowState): WindowState {
+	return (
+		state.windows.find((windowState) => windowState.id === state.primaryWindowId) ||
+		state.windows[0] || {
+			id: 'primary',
+			x: 0,
+			y: 0,
+			width: 1400,
+			height: 900,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: null,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		}
+	);
+}
+
 /**
  * Reports a crash event to Sentry from the main process.
  * Lazily loads Sentry to avoid module initialization issues.
@@ -174,7 +193,7 @@ function resolveVisibleWindowPosition(state: WindowState): { x?: number; y?: num
 /** Dependencies for window manager */
 export interface WindowManagerDependencies {
 	/** Store for window state persistence */
-	windowStateStore: Store<WindowState>;
+	windowStateStore: Store<MultiWindowState>;
 	/** Whether running in development mode */
 	isDevelopment: boolean;
 	/** Path to the preload script */
@@ -224,7 +243,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// Restore saved window state, discarding off-screen coordinates so the
 			// window can never spawn invisible (saved while minimized -> -32000 on
 			// Windows, or on an unplugged monitor); fall back to a centered window.
-			const savedState = windowStateStore.store;
+			const savedState = getPrimaryWindowState(windowStateStore.store);
 			const position = resolveVisibleWindowPosition(savedState);
 
 			const mainWindow = new BrowserWindow({
@@ -270,17 +289,36 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					const isMinimized = mainWindow.isMinimized();
 					const bounds = mainWindow.getBounds();
 
+					const currentState = windowStateStore.store;
+					const primaryWindowState = getPrimaryWindowState(currentState);
+					const nextPrimaryWindowState = {
+						...primaryWindowState,
+						isMaximized,
+						isFullScreen,
+					};
+
 					// Only save bounds when the window is in its normal state. While
 					// minimized, Windows reports bounds of (-32000, -32000), which would
 					// otherwise persist and make the window spawn off-screen next launch.
 					if (!isMaximized && !isFullScreen && !isMinimized) {
-						windowStateStore.set('x', bounds.x);
-						windowStateStore.set('y', bounds.y);
-						windowStateStore.set('width', bounds.width);
-						windowStateStore.set('height', bounds.height);
+						nextPrimaryWindowState.x = bounds.x;
+						nextPrimaryWindowState.y = bounds.y;
+						nextPrimaryWindowState.width = bounds.width;
+						nextPrimaryWindowState.height = bounds.height;
 					}
-					windowStateStore.set('isMaximized', isMaximized);
-					windowStateStore.set('isFullScreen', isFullScreen);
+
+					const hasPrimaryWindowState = currentState.windows.some(
+						(windowState) => windowState.id === primaryWindowState.id
+					);
+					windowStateStore.store = {
+						...currentState,
+						primaryWindowId: primaryWindowState.id,
+						windows: hasPrimaryWindowState
+							? currentState.windows.map((windowState) =>
+									windowState.id === primaryWindowState.id ? nextPrimaryWindowState : windowState
+								)
+							: [nextPrimaryWindowState],
+					};
 				} catch {
 					// Ignore ENFILE/ENOSPC errors during window close — non-critical
 				}

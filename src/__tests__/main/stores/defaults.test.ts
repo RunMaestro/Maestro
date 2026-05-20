@@ -170,25 +170,44 @@ describe('stores/defaults', () => {
 	});
 
 	describe('WINDOW_STATE_DEFAULTS', () => {
+		it('should have primary as the default primary window id', () => {
+			expect(WINDOW_STATE_DEFAULTS.primaryWindowId).toBe('primary');
+		});
+
+		it('should have one primary window by default', () => {
+			expect(WINDOW_STATE_DEFAULTS.windows).toHaveLength(1);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.id).toBe('primary');
+		});
+
 		it('should have correct default width', () => {
-			expect(WINDOW_STATE_DEFAULTS.width).toBe(1400);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.width).toBe(1400);
 		});
 
 		it('should have correct default height', () => {
-			expect(WINDOW_STATE_DEFAULTS.height).toBe(900);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.height).toBe(900);
 		});
 
 		it('should have isMaximized false by default', () => {
-			expect(WINDOW_STATE_DEFAULTS.isMaximized).toBe(false);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.isMaximized).toBe(false);
 		});
 
 		it('should have isFullScreen false by default', () => {
-			expect(WINDOW_STATE_DEFAULTS.isFullScreen).toBe(false);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.isFullScreen).toBe(false);
 		});
 
-		it('should not have x/y position by default', () => {
-			expect(WINDOW_STATE_DEFAULTS.x).toBeUndefined();
-			expect(WINDOW_STATE_DEFAULTS.y).toBeUndefined();
+		it('should have default x/y position on the primary window', () => {
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.x).toBe(0);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.y).toBe(0);
+		});
+
+		it('should have empty session state on the primary window', () => {
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.sessionIds).toEqual([]);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.activeSessionId).toBeNull();
+		});
+
+		it('should have panels expanded on the primary window', () => {
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.leftPanelCollapsed).toBe(false);
+			expect(WINDOW_STATE_DEFAULTS.windows[0]?.rightPanelCollapsed).toBe(false);
 		});
 	});
 

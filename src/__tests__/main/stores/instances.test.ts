@@ -5,6 +5,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const { mockStoreConstructorCalls } = vi.hoisted(() => ({
 	mockStoreConstructorCalls: [] as Array<Record<string, unknown>>,
 }));
+const { mockStoreDataByName } = vi.hoisted(() => ({
+	mockStoreDataByName: new Map<string, Record<string, unknown>>(),
+}));
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -18,8 +21,13 @@ vi.mock('electron-store', () => {
 	return {
 		default: class MockStore {
 			options: Record<string, unknown>;
+			store: Record<string, unknown>;
 			constructor(options: Record<string, unknown>) {
 				this.options = options;
+				this.store = {
+					...((options.defaults as Record<string, unknown> | undefined) ?? {}),
+					...(mockStoreDataByName.get(options.name as string) ?? {}),
+				};
 				mockStoreConstructorCalls.push(options);
 			}
 			get() {
@@ -49,6 +57,7 @@ describe('stores/instances', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockStoreConstructorCalls.length = 0; // Clear tracked constructor calls
+		mockStoreDataByName.clear();
 		mockedGetCustomSyncPath.mockReturnValue(undefined);
 	});
 
@@ -134,14 +143,93 @@ describe('stores/instances', () => {
 			expect(windowStateCall).toMatchObject({
 				name: 'maestro-window-state',
 				defaults: {
-					width: 1400,
-					height: 900,
-					isMaximized: false,
-					isFullScreen: false,
+					primaryWindowId: 'primary',
+					windows: [
+						{
+							id: 'primary',
+							x: 0,
+							y: 0,
+							width: 1400,
+							height: 900,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							activeSessionId: null,
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+						},
+					],
+				},
+			});
+			expect(windowStateCall?.schema).toMatchObject({
+				primaryWindowId: {
+					type: 'string',
+					default: 'primary',
+				},
+				windows: {
+					type: 'array',
 				},
 			});
 			// Window state should NOT have cwd
 			expect(windowStateCall).not.toHaveProperty('cwd');
+		});
+
+		it('should migrate legacy single-window state to multi-window state', () => {
+			mockStoreDataByName.set('maestro-window-state', {
+				x: 100,
+				y: 120,
+				width: 1280,
+				height: 720,
+				isMaximized: true,
+				isFullScreen: false,
+			});
+
+			initializeStores({ productionDataPath: '/mock/production/path' });
+
+			expect(getStoreInstances().windowStateStore?.store).toEqual({
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 100,
+						y: 120,
+						width: 1280,
+						height: 720,
+						isMaximized: true,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			});
+		});
+
+		it('should preserve existing multi-window state during legacy migration check', () => {
+			const existingMultiWindowState = {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 20,
+						y: 30,
+						width: 1000,
+						height: 700,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: false,
+					},
+				],
+			};
+			mockStoreDataByName.set('maestro-window-state', existingMultiWindowState);
+
+			initializeStores({ productionDataPath: '/mock/production/path' });
+
+			expect(getStoreInstances().windowStateStore?.store).toEqual(existingMultiWindowState);
 		});
 
 		it('should log startup paths', () => {

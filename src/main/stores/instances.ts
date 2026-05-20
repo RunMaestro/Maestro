@@ -21,9 +21,11 @@ import type {
 	GroupsData,
 	AgentConfigsData,
 	AgentCapabilitiesData,
-	WindowState,
+	LegacyWindowState,
+	MultiWindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
+	WindowState,
 } from './types';
 
 import {
@@ -53,7 +55,7 @@ let _sessionsStore: Store<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _agentCapabilitiesStore: Store<AgentCapabilitiesData> | null = null;
-let _windowStateStore: Store<WindowState> | null = null;
+let _windowStateStore: Store<MultiWindowState> | null = null;
 let _claudeSessionOriginsStore: Store<ClaudeSessionOriginsData> | null = null;
 let _agentSessionOriginsStore: Store<AgentSessionOriginsData> | null = null;
 
@@ -68,6 +70,89 @@ let _productionDataPath: string | null = null;
 export interface StoreInitOptions {
 	/** The production userData path (before any dev mode modifications) */
 	productionDataPath: string;
+}
+
+const WINDOW_STATE_SCHEMA: Store.Schema<MultiWindowState> = {
+	primaryWindowId: {
+		type: 'string',
+		default: WINDOW_STATE_DEFAULTS.primaryWindowId,
+	},
+	windows: {
+		type: 'array',
+		default: WINDOW_STATE_DEFAULTS.windows,
+		items: {
+			type: 'object',
+			required: [
+				'id',
+				'x',
+				'y',
+				'width',
+				'height',
+				'isMaximized',
+				'isFullScreen',
+				'sessionIds',
+				'activeSessionId',
+				'leftPanelCollapsed',
+				'rightPanelCollapsed',
+			],
+			properties: {
+				id: { type: 'string' },
+				x: { type: 'number' },
+				y: { type: 'number' },
+				width: { type: 'number', minimum: 1 },
+				height: { type: 'number', minimum: 1 },
+				isMaximized: { type: 'boolean' },
+				isFullScreen: { type: 'boolean' },
+				sessionIds: { type: 'array', items: { type: 'string' } },
+				activeSessionId: { type: ['string', 'null'] },
+				leftPanelCollapsed: { type: 'boolean' },
+				rightPanelCollapsed: { type: 'boolean' },
+			},
+		},
+	},
+};
+
+function isLegacyWindowState(value: unknown): value is LegacyWindowState {
+	if (!value || typeof value !== 'object') {
+		return false;
+	}
+
+	const candidate = value as Partial<LegacyWindowState>;
+	return (
+		typeof candidate.width === 'number' &&
+		typeof candidate.height === 'number' &&
+		typeof candidate.isMaximized === 'boolean' &&
+		typeof candidate.isFullScreen === 'boolean'
+	);
+}
+
+function createPrimaryWindowStateFromLegacy(legacyState: LegacyWindowState): WindowState {
+	return {
+		id: 'primary',
+		x: legacyState.x ?? 0,
+		y: legacyState.y ?? 0,
+		width: legacyState.width,
+		height: legacyState.height,
+		isMaximized: legacyState.isMaximized,
+		isFullScreen: legacyState.isFullScreen,
+		sessionIds: [],
+		activeSessionId: null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+	};
+}
+
+function migrateLegacyWindowStateStore(windowStateStore: Store<MultiWindowState>): void {
+	const rawState = windowStateStore.store as MultiWindowState & Partial<LegacyWindowState>;
+
+	if (!isLegacyWindowState(rawState)) {
+		return;
+	}
+
+	windowStateStore.store = {
+		primaryWindowId: rawState.primaryWindowId || 'primary',
+		windows: [createPrimaryWindowStateFromLegacy(rawState)],
+	};
 }
 
 /**
@@ -141,11 +226,13 @@ export function initializeStores(options: StoreInitOptions): {
 	});
 
 	// Window state is intentionally NOT synced - it's per-device
-	_windowStateStore = new Store<WindowState>({
+	_windowStateStore = new Store<MultiWindowState>({
 		name: 'maestro-window-state',
+		schema: WINDOW_STATE_SCHEMA,
 		defaults: WINDOW_STATE_DEFAULTS,
 		deserialize: deserializeStoreJson,
 	});
+	migrateLegacyWindowStateStore(_windowStateStore);
 
 	// Claude session origins - tracks which sessions were created by Maestro
 	_claudeSessionOriginsStore = new Store<ClaudeSessionOriginsData>({

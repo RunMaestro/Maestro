@@ -7,6 +7,7 @@
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
+export type { MultiWindowState, WindowState } from '../../shared/types/window';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -133,7 +134,7 @@ export interface AgentCapabilitiesData {
 // Window State Store (local-only, per-device)
 // ============================================================================
 
-export interface WindowState {
+export interface LegacyWindowState {
 	x?: number;
 	y?: number;
 	width: number;
