@@ -189,6 +189,10 @@ interface MaestroWindowSessionMovedEvent {
 	windows: MaestroWindowInfo[];
 }
 
+type MaestroWindowStateUpdate = Partial<
+	Pick<MaestroWindowState, 'activeSessionId' | 'leftPanelCollapsed' | 'rightPanelCollapsed'>
+>;
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -2785,6 +2789,7 @@ interface MaestroAPI {
 		moveSession: (sessionId: string, fromWindowId: string, toWindowId: string) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getState: () => Promise<MaestroWindowState>;
+		updateState: (update: MaestroWindowStateUpdate) => Promise<MaestroWindowState>;
 		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
 	};
 }

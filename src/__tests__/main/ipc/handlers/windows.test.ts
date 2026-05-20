@@ -105,6 +105,7 @@ describe('windows IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:moveSession', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:focusWindow', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getState', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('windows:updateState', expect.any(Function));
 	});
 
 	it('creates a secondary window with sessions and bounds', async () => {
@@ -216,6 +217,38 @@ describe('windows IPC handlers', () => {
 			activeSessionId: 'session-1',
 			leftPanelCollapsed: true,
 			rightPanelCollapsed: false,
+		});
+	});
+
+	it('updates persisted state for the invoking window', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1']);
+		windowStateStore.store.windows = [
+			{
+				id: 'primary',
+				x: 1,
+				y: 2,
+				width: 1000,
+				height: 700,
+				isMaximized: false,
+				isFullScreen: false,
+				sessionIds: ['session-1'],
+				activeSessionId: 'session-1',
+				leftPanelCollapsed: false,
+				rightPanelCollapsed: false,
+			},
+		];
+
+		const handler = mockState.registeredHandlers.get('windows:updateState');
+		const result = await handler!({ sender: primary.webContents }, { rightPanelCollapsed: true });
+
+		expect(result.rightPanelCollapsed).toBe(true);
+		expect(result.leftPanelCollapsed).toBe(false);
+		expect(windowStateStore.store.windows[0]).toMatchObject({
+			id: 'primary',
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-1',
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: true,
 		});
 	});
 });

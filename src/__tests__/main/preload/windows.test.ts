@@ -130,6 +130,28 @@ describe('Windows Preload API', () => {
 		expect(result).toEqual(state);
 	});
 
+	it('should invoke windows:updateState', async () => {
+		const state = {
+			id: 'window-1',
+			x: 0,
+			y: 0,
+			width: 1200,
+			height: 800,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-1',
+			leftPanelCollapsed: true,
+			rightPanelCollapsed: false,
+		};
+		mockInvoke.mockResolvedValue(state);
+
+		const result = await api.updateState({ leftPanelCollapsed: true });
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:updateState', { leftPanelCollapsed: true });
+		expect(result).toEqual(state);
+	});
+
 	it('should subscribe to windows:sessionMoved events', () => {
 		const handler = vi.fn();
 

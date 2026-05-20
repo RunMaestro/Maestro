@@ -139,6 +139,7 @@ import {
 	useInputMode,
 	// Live mode management (Tier 3B)
 	useLiveMode,
+	useWindowState,
 } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
@@ -605,6 +606,8 @@ function MaestroConsoleInner() {
 		setSuccessFlashNotification,
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
+
+	useWindowState({ windowId });
 
 	const {
 		setSelectedFileIndex: _setSelectedFileIndex,

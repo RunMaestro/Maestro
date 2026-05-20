@@ -11,6 +11,7 @@ import type {
 	WindowInfo,
 	WindowSessionMovedEvent,
 	WindowState,
+	WindowStateUpdate,
 } from '../../../shared/types/window';
 import type { MultiWindowState } from '../../stores/types';
 import type { WindowManager } from '../../app-lifecycle/window-manager';
@@ -74,6 +75,48 @@ function getWindowList(
 			activeSessionId: storedState?.activeSessionId ?? null,
 		};
 	});
+}
+
+function upsertStoredWindowState(
+	windowStateStore: Store<MultiWindowState>,
+	windowId: string,
+	browserWindow: BrowserWindow,
+	sessionIds: string[],
+	update: WindowStateUpdate
+): WindowState {
+	const currentState = windowStateStore.store;
+	const bounds = browserWindow.getBounds();
+	const existingWindowState = findStoredWindowState(windowStateStore, windowId);
+	const nextWindowState: WindowState = {
+		id: windowId,
+		x: existingWindowState?.x ?? bounds.x,
+		y: existingWindowState?.y ?? bounds.y,
+		width: existingWindowState?.width ?? bounds.width,
+		height: existingWindowState?.height ?? bounds.height,
+		isMaximized: existingWindowState?.isMaximized ?? browserWindow.isMaximized(),
+		isFullScreen: existingWindowState?.isFullScreen ?? browserWindow.isFullScreen(),
+		sessionIds,
+		activeSessionId:
+			update.activeSessionId !== undefined
+				? update.activeSessionId
+				: (existingWindowState?.activeSessionId ?? null),
+		leftPanelCollapsed:
+			update.leftPanelCollapsed ?? existingWindowState?.leftPanelCollapsed ?? false,
+		rightPanelCollapsed:
+			update.rightPanelCollapsed ?? existingWindowState?.rightPanelCollapsed ?? false,
+	};
+
+	const hasWindowState = currentState.windows.some((windowState) => windowState.id === windowId);
+	windowStateStore.store = {
+		...currentState,
+		windows: hasWindowState
+			? currentState.windows.map((windowState) =>
+					windowState.id === windowId ? nextWindowState : windowState
+				)
+			: [...currentState.windows, nextWindowState],
+	};
+
+	return nextWindowState;
 }
 
 function broadcastSessionMoved(
@@ -194,4 +237,28 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			rightPanelCollapsed: storedState?.rightPanelCollapsed ?? false,
 		};
 	});
+
+	ipcMain.handle(
+		'windows:updateState',
+		async (event, update: WindowStateUpdate): Promise<WindowState> => {
+			const browserWindow = getEventWindow(event);
+			const windowId = windowRegistry.getWindowId(browserWindow);
+			if (!windowId) {
+				throw new Error('IPC sender window is not registered');
+			}
+
+			const entry = windowRegistry.get(windowId);
+			if (!entry) {
+				throw new Error(`Window not registered: ${windowId}`);
+			}
+
+			return upsertStoredWindowState(
+				windowStateStore,
+				windowId,
+				browserWindow,
+				entry.sessionIds,
+				update
+			);
+		}
+	);
 }
