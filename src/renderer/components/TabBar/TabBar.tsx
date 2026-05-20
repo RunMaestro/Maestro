@@ -16,6 +16,7 @@ import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewT
 import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
 import type { WindowBounds } from '../../../shared/types/window';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
@@ -125,6 +126,7 @@ function TabBarInner({
 	const dragTargetWindowIdRef = useRef<string | null>(null);
 	const lastWindowPointLookupRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
+	const windowContext = useOptionalWindowContext();
 
 	const activeTab = tabs.find((t) => t.id === activeTabId);
 	const activeTabName = activeTab?.name ?? null;
@@ -313,7 +315,7 @@ function TabBarInner({
 		[draggingTabId]
 	);
 
-	const handleDragEnd = useCallback(() => {
+	const resetDragState = useCallback(() => {
 		setDraggingTabId(null);
 		setDragOverTabId(null);
 		setDraggingOutsideWindow(false);
@@ -321,6 +323,50 @@ function TabBarInner({
 		dragTargetWindowIdRef.current = null;
 		lastWindowPointLookupRef.current = null;
 	}, []);
+
+	const handleDragEnd = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			const isAiTabDrag = tabs.some((tab) => tab.id === tabId);
+			const targetWindowId = dragTargetWindowIdRef.current;
+			const sourceWindowId = windowContext?.windowId;
+			const windowSessionId = windowContext?.activeSessionId ?? sessionId ?? null;
+			const moveSessionToWindow = (nextTargetWindowId: string | null | undefined) => {
+				if (
+					isAiTabDrag &&
+					nextTargetWindowId &&
+					sourceWindowId &&
+					windowSessionId &&
+					nextTargetWindowId !== sourceWindowId &&
+					window.maestro?.windows?.moveSession
+				) {
+					void window.maestro.windows.moveSession(windowSessionId, sourceWindowId, nextTargetWindowId);
+				}
+			};
+
+			if (targetWindowId) {
+				moveSessionToWindow(targetWindowId);
+			} else if (
+				windowBoundsRef.current &&
+				(e.screenX !== 0 || e.screenY !== 0) &&
+				isPointOutsideBounds(e.screenX, e.screenY, windowBoundsRef.current) &&
+				window.maestro?.windows?.findWindowAtPoint
+			) {
+				void window.maestro.windows
+					.findWindowAtPoint(e.screenX, e.screenY)
+					.then((windowInfo) => moveSessionToWindow(windowInfo?.id))
+					.catch((error) => {
+						logger.warn('[TabBar] Failed to look up drag target window on drag end', { error });
+					});
+			}
+
+			resetDragState();
+		},
+		[resetDragState, sessionId, tabs, windowContext?.activeSessionId, windowContext?.windowId]
+	);
+
+	const handleGenericDragEnd = useCallback(() => {
+		resetDragState();
+	}, [resetDragState]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
@@ -337,14 +383,9 @@ function TabBarInner({
 					if (si !== -1 && ti !== -1) onTabReorder(si, ti);
 				}
 			}
-			setDraggingTabId(null);
-			setDragOverTabId(null);
-			setDraggingOutsideWindow(false);
-			windowBoundsRef.current = null;
-			dragTargetWindowIdRef.current = null;
-			lastWindowPointLookupRef.current = null;
+			resetDragState();
 		},
-		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder, resetDragState]
 	);
 
 	const handleRenameRequest = useCallback(
@@ -674,7 +715,7 @@ function TabBarInner({
 										onRename={onTerminalTabRename}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
-										onDragEnd={handleDragEnd}
+										onDragEnd={handleGenericDragEnd}
 										onDrop={handleDrop}
 										isDragging={draggingTabId === terminalTab.id}
 										isDragOver={dragOverTabId === terminalTab.id}
@@ -713,7 +754,7 @@ function TabBarInner({
 										onResetName={onBrowserTabResetName}
 										onDragStart={handleDragStart}
 										onDragOver={handleDragOver}
-										onDragEnd={handleDragEnd}
+										onDragEnd={handleGenericDragEnd}
 										onDrop={handleDrop}
 										isDragging={draggingTabId === browserTab.id}
 										isDragOver={dragOverTabId === browserTab.id}

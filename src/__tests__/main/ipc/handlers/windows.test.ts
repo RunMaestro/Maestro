@@ -164,6 +164,10 @@ describe('windows IPC handlers', () => {
 	it('moves sessions between windows and looks up session ownership', async () => {
 		windowManager.createWindow('primary', ['session-1']);
 		const secondary = windowManager.createSecondaryWindow([], {});
+		windowStateStore.store.windows = [
+			{ id: 'primary', activeSessionId: 'session-1' } as any,
+			{ id: '2', activeSessionId: null } as any,
+		];
 
 		const moveHandler = mockState.registeredHandlers.get('windows:moveSession');
 		await expect(moveHandler!({}, 'session-1', 'primary', '2')).resolves.toBe(true);
@@ -176,7 +180,7 @@ describe('windows IPC handlers', () => {
 			toWindowId: '2',
 			windows: [
 				{ id: 'primary', isMain: true, sessionIds: [], activeSessionId: null },
-				{ id: '2', isMain: false, sessionIds: ['session-1'], activeSessionId: null },
+				{ id: '2', isMain: false, sessionIds: ['session-1'], activeSessionId: 'session-1' },
 			],
 		});
 	});

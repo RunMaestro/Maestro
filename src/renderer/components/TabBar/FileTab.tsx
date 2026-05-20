@@ -38,7 +38,7 @@ export interface FileTabProps {
 	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -294,6 +294,13 @@ export const FileTab = memo(function FileTab({
 		[onDragOver, tab.id]
 	);
 
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tab.id, e);
+		},
+		[onDragEnd, tab.id]
+	);
+
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
 			onDrop(tab.id, e);
@@ -374,7 +381,7 @@ export const FileTab = memo(function FileTab({
 			onDragStart={handleTabDragStart}
 			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
 		>
 			{/* Unsaved edits indicator - pencil icon */}

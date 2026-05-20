@@ -31,7 +31,7 @@ export interface AITabProps {
 	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -385,6 +385,13 @@ export const AITab = memo(function AITab({
 		[onDragOver, tabId]
 	);
 
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tabId, e);
+		},
+		[onDragEnd, tabId]
+	);
+
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
 			onDrop(tabId, e);
@@ -471,7 +478,7 @@ export const AITab = memo(function AITab({
 			onDragStart={handleTabDragStart}
 			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
 		>
 			{/* Agent error pill - highlights tabs that have an active error for quick triage */}

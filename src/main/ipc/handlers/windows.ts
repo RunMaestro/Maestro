@@ -79,6 +79,16 @@ function getWindowList(
 	});
 }
 
+function getNextActiveSessionId(sessionIds: string[], movedSessionId: string): string | null {
+	const movedIndex = sessionIds.indexOf(movedSessionId);
+	const nextSessionIds = sessionIds.filter((sessionId) => sessionId !== movedSessionId);
+	if (nextSessionIds.length === 0) {
+		return null;
+	}
+
+	return nextSessionIds[Math.min(movedIndex, nextSessionIds.length - 1)] ?? null;
+}
+
 function isPointInsideBounds(point: WindowPoint, bounds: WindowBounds): boolean {
 	return (
 		point.screenX >= bounds.x &&
@@ -194,7 +204,36 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			fromWindowId: string,
 			toWindowId: string
 		): Promise<boolean> => {
+			const fromWindow = windowRegistry.get(fromWindowId);
+			const toWindow = windowRegistry.get(toWindowId);
+			if (!fromWindow) {
+				throw new Error(`Source window not registered: ${fromWindowId}`);
+			}
+			if (!toWindow) {
+				throw new Error(`Destination window not registered: ${toWindowId}`);
+			}
+
+			const sourceStoredState = findStoredWindowState(windowStateStore, fromWindowId);
+			const nextSourceActiveSessionId =
+				sourceStoredState?.activeSessionId === sessionId
+					? getNextActiveSessionId(fromWindow.sessionIds, sessionId)
+					: sourceStoredState?.activeSessionId;
+
 			windowRegistry.moveSession(sessionId, fromWindowId, toWindowId);
+			upsertStoredWindowState(
+				windowStateStore,
+				fromWindowId,
+				fromWindow.browserWindow,
+				fromWindow.sessionIds,
+				{ activeSessionId: nextSourceActiveSessionId ?? null }
+			);
+			upsertStoredWindowState(
+				windowStateStore,
+				toWindowId,
+				toWindow.browserWindow,
+				toWindow.sessionIds,
+				{ activeSessionId: sessionId }
+			);
 			broadcastSessionMoved(windowManager, {
 				sessionId,
 				fromWindowId,

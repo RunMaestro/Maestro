@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TabBar } from '../../../renderer/components/TabBar';
+import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
@@ -1313,6 +1314,102 @@ describe('TabBar', () => {
 
 			// Tab should no longer have opacity-50 class (dragging state)
 			expect(tab).not.toHaveClass('opacity-50');
+		});
+
+		it('moves the active session when a tab drag ends over another Maestro window', async () => {
+			vi.useRealTimers();
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const moveSession = vi.fn().mockResolvedValue(true);
+			window.maestro = {
+				...window.maestro,
+				windows: {
+					...window.maestro?.windows,
+					getState: vi.fn().mockResolvedValue({
+						id: 'window-1',
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					}),
+					list: vi.fn().mockResolvedValue([
+						{
+							id: 'window-1',
+							isMain: true,
+							sessionIds: ['session-1'],
+							activeSessionId: 'session-1',
+						},
+						{
+							id: 'window-2',
+							isMain: false,
+							sessionIds: ['session-2'],
+							activeSessionId: 'session-2',
+						},
+					]),
+					getWindowBounds: vi.fn().mockResolvedValue({
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+					}),
+					findWindowAtPoint: vi.fn().mockResolvedValue({
+						id: 'window-2',
+						isMain: false,
+						sessionIds: ['session-2'],
+						activeSessionId: 'session-2',
+					}),
+					moveSession,
+					onSessionMoved: vi.fn(() => vi.fn()),
+				},
+			} as typeof window.maestro;
+
+			render(
+				<WindowProvider>
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onTabReorder={mockOnTabReorder}
+					/>
+				</WindowProvider>
+			);
+
+			await waitFor(() => expect(window.maestro.windows.getState).toHaveBeenCalled());
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.dragStart(tab, {
+					screenX: 100,
+					screenY: 100,
+					dataTransfer: {
+						effectAllowed: '',
+						setData: vi.fn(),
+						getData: vi.fn().mockReturnValue('tab-1'),
+					},
+				});
+				await Promise.resolve();
+			});
+
+			const outsideDragEvent = new Event('drag', { bubbles: true });
+			Object.defineProperty(outsideDragEvent, 'screenX', { value: 1400 });
+			Object.defineProperty(outsideDragEvent, 'screenY', { value: 100 });
+			await act(async () => {
+				fireEvent(tab, outsideDragEvent);
+				await Promise.resolve();
+			});
+
+			fireEvent.dragEnd(tab);
+
+			expect(window.maestro.windows.findWindowAtPoint).toHaveBeenCalledWith(1400, 100);
+			expect(moveSession).toHaveBeenCalledWith('session-1', 'window-1', 'window-2');
 		});
 	});
 
