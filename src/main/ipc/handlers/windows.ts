@@ -7,7 +7,11 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle } from 'electron';
 import type Store from 'electron-store';
-import type { WindowInfo, WindowState } from '../../../shared/types/window';
+import type {
+	WindowInfo,
+	WindowSessionMovedEvent,
+	WindowState,
+} from '../../../shared/types/window';
 import type { MultiWindowState } from '../../stores/types';
 import type { WindowManager } from '../../app-lifecycle/window-manager';
 
@@ -57,6 +61,33 @@ function getEventWindow(event: IpcMainInvokeEvent): BrowserWindow {
 	return browserWindow;
 }
 
+function getWindowList(
+	windowManager: WindowManager,
+	windowStateStore: Store<MultiWindowState>
+): WindowInfo[] {
+	return windowManager.windowRegistry.getEntries().map(([windowId, entry]) => {
+		const storedState = findStoredWindowState(windowStateStore, windowId);
+		return {
+			id: windowId,
+			isMain: entry.isMain,
+			sessionIds: entry.sessionIds,
+			activeSessionId: storedState?.activeSessionId ?? null,
+		};
+	});
+}
+
+function broadcastSessionMoved(
+	windowManager: WindowManager,
+	payload: WindowSessionMovedEvent
+): void {
+	for (const entry of windowManager.windowRegistry.getAll()) {
+		if (entry.browserWindow.isDestroyed() || entry.browserWindow.webContents.isDestroyed()) {
+			continue;
+		}
+		entry.browserWindow.webContents.send('windows:sessionMoved', payload);
+	}
+}
+
 /**
  * Register all multi-window IPC handlers.
  */
@@ -91,15 +122,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 	});
 
 	ipcMain.handle('windows:list', async (): Promise<WindowInfo[]> => {
-		return windowRegistry.getEntries().map(([windowId, entry]) => {
-			const storedState = findStoredWindowState(windowStateStore, windowId);
-			return {
-				id: windowId,
-				isMain: entry.isMain,
-				sessionIds: entry.sessionIds,
-				activeSessionId: storedState?.activeSessionId ?? null,
-			};
-		});
+		return getWindowList(windowManager, windowStateStore);
 	});
 
 	ipcMain.handle(
@@ -118,6 +141,12 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			toWindowId: string
 		): Promise<boolean> => {
 			windowRegistry.moveSession(sessionId, fromWindowId, toWindowId);
+			broadcastSessionMoved(windowManager, {
+				sessionId,
+				fromWindowId,
+				toWindowId,
+				windows: getWindowList(windowManager, windowStateStore),
+			});
 			return true;
 		}
 	);

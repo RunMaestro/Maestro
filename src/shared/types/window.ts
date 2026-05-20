@@ -23,3 +23,10 @@ export interface WindowInfo {
 	sessionIds: string[];
 	activeSessionId: string | null;
 }
+
+export interface WindowSessionMovedEvent {
+	sessionId: string;
+	fromWindowId: string;
+	toWindowId: string;
+	windows: WindowInfo[];
+}

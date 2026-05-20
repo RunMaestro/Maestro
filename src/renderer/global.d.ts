@@ -182,6 +182,13 @@ interface MaestroWindowCloseResult {
 	reason?: 'primary-window' | 'not-found';
 }
 
+interface MaestroWindowSessionMovedEvent {
+	sessionId: string;
+	fromWindowId: string;
+	toWindowId: string;
+	windows: MaestroWindowInfo[];
+}
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -2778,6 +2785,7 @@ interface MaestroAPI {
 		moveSession: (sessionId: string, fromWindowId: string, toWindowId: string) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getState: () => Promise<MaestroWindowState>;
+		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
 	};
 }
 

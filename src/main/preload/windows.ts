@@ -9,7 +9,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { WindowInfo, WindowState } from '../../shared/types/window';
+import type { IpcRendererEvent } from 'electron';
+import type { WindowInfo, WindowSessionMovedEvent, WindowState } from '../../shared/types/window';
 
 export interface WindowCreateBounds {
 	x?: number;
@@ -40,6 +41,12 @@ export function createWindowsApi() {
 		focusWindow: (windowId: string): Promise<boolean> =>
 			ipcRenderer.invoke('windows:focusWindow', windowId),
 		getState: (): Promise<WindowState> => ipcRenderer.invoke('windows:getState'),
+		onSessionMoved: (handler: (event: WindowSessionMovedEvent) => void) => {
+			const wrappedHandler = (_event: IpcRendererEvent, payload: WindowSessionMovedEvent) =>
+				handler(payload);
+			ipcRenderer.on('windows:sessionMoved', wrappedHandler);
+			return () => ipcRenderer.removeListener('windows:sessionMoved', wrappedHandler);
+		},
 	};
 }
 
