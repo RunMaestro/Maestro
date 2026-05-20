@@ -156,6 +156,7 @@ import {
 	createWindowManager,
 	createQuitHandler,
 	type QuitHandler,
+	attachPrimaryWindowClosePolicy,
 } from './app-lifecycle';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
@@ -172,6 +173,7 @@ import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usa
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 import type { TemplateContext } from '../shared/templateVariables';
+import { WindowRegistry } from './window-registry';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -429,6 +431,7 @@ const windowManager = createWindowManager({
 	useNativeTitleBar,
 	autoHideMenuBar,
 	getConfirmQuit: () => quitHandler?.confirmQuit,
+	windowRegistry: new WindowRegistry(),
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
@@ -462,10 +465,21 @@ const createWebServer = createWebServerFactory({
 // - DevTools installation in development
 // - Auto-updater initialization in production
 function createWindow() {
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
+
 	mainWindow = windowManager.createWindow();
+	attachPrimaryWindowClosePolicy({
+		getPrimaryWindow: () => mainWindow,
+		quitHandler,
+	});
 	// Handle closed event to clear the reference
-	mainWindow.on('closed', () => {
-		mainWindow = null;
+	const createdWindow = mainWindow;
+	createdWindow.on('closed', () => {
+		if (mainWindow === createdWindow) {
+			mainWindow = null;
+		}
 	});
 
 	// Kill all managed processes before the renderer reloads after a crash.
@@ -1553,6 +1567,9 @@ function setupIpcHandlers() {
 	});
 
 	// Register multi-window handlers for secondary window lifecycle and session movement
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
 	registerWindowsHandlers({
 		windowManager,
 		windowStateStore,

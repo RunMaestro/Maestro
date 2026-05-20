@@ -16,3 +16,7 @@ export {
 	type SettingsWatcher,
 	type SettingsWatcherDependencies,
 } from './settings-watcher';
+export {
+	attachPrimaryWindowClosePolicy,
+	type PrimaryWindowClosePolicyDependencies,
+} from './window-close-policy';
