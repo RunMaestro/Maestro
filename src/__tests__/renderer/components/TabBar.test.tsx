@@ -1411,6 +1411,106 @@ describe('TabBar', () => {
 			expect(window.maestro.windows.findWindowAtPoint).toHaveBeenCalledWith(1400, 100);
 			expect(moveSession).toHaveBeenCalledWith('session-1', 'window-1', 'window-2');
 		});
+
+		it('creates a new window when a tab drag ends outside all Maestro windows', async () => {
+			vi.useRealTimers();
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const createWindow = vi.fn().mockResolvedValue({
+				id: 'window-3',
+				isMain: false,
+				sessionIds: ['session-1'],
+				activeSessionId: 'session-1',
+			});
+			window.maestro = {
+				...window.maestro,
+				windows: {
+					...window.maestro?.windows,
+					getState: vi.fn().mockResolvedValue({
+						id: 'window-1',
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					}),
+					list: vi.fn().mockResolvedValue([
+						{
+							id: 'window-1',
+							isMain: true,
+							sessionIds: ['session-1'],
+							activeSessionId: 'session-1',
+						},
+					]),
+					getWindowBounds: vi.fn().mockResolvedValue({
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+					}),
+					findWindowAtPoint: vi.fn().mockResolvedValue(null),
+					create: createWindow,
+					moveSession: vi.fn(),
+					onSessionMoved: vi.fn(() => vi.fn()),
+				},
+			} as typeof window.maestro;
+
+			render(
+				<WindowProvider>
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onTabReorder={mockOnTabReorder}
+					/>
+				</WindowProvider>
+			);
+
+			await waitFor(() => expect(window.maestro.windows.getState).toHaveBeenCalled());
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			await act(async () => {
+				fireEvent.dragStart(tab, {
+					screenX: 100,
+					screenY: 100,
+					dataTransfer: {
+						effectAllowed: '',
+						setData: vi.fn(),
+						getData: vi.fn().mockReturnValue('tab-1'),
+					},
+				});
+				await Promise.resolve();
+			});
+
+			const outsideDragEvent = new Event('drag', { bubbles: true });
+			Object.defineProperty(outsideDragEvent, 'screenX', { value: 1400 });
+			Object.defineProperty(outsideDragEvent, 'screenY', { value: 100 });
+			await act(async () => {
+				fireEvent(tab, outsideDragEvent);
+				await Promise.resolve();
+			});
+
+			const outsideDragEndEvent = new Event('dragend', { bubbles: true });
+			Object.defineProperty(outsideDragEndEvent, 'screenX', { value: 1400 });
+			Object.defineProperty(outsideDragEndEvent, 'screenY', { value: 100 });
+			await act(async () => {
+				fireEvent(tab, outsideDragEndEvent);
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.windows.findWindowAtPoint).toHaveBeenCalledWith(1400, 100);
+			await waitFor(() =>
+				expect(createWindow).toHaveBeenCalledWith(['session-1'], { x: 1300, y: 50 })
+			);
+			expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('hover overlay', () => {

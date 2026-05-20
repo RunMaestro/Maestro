@@ -161,14 +161,42 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 
 	ipcMain.handle(
 		'windows:create',
-		async (_event, sessionIds: string[] = [], bounds: WindowCreateBounds = {}) => {
+		async (event, sessionIds: string[] = [], bounds: WindowCreateBounds = {}) => {
+			const sourceWindow = event.sender ? BrowserWindow.fromWebContents(event.sender) : null;
+			const sourceWindowId = sourceWindow ? windowRegistry.getWindowId(sourceWindow) : undefined;
+			const sourceEntry = sourceWindowId ? windowRegistry.get(sourceWindowId) : undefined;
+			const sourceSessionIds = sourceEntry?.sessionIds ?? [];
+			const sourceActiveSessionId = sourceWindowId
+				? findStoredWindowState(windowStateStore, sourceWindowId)?.activeSessionId
+				: null;
 			const browserWindow = windowManager.createSecondaryWindow(sessionIds, bounds);
 			const windowId = windowRegistry.getWindowId(browserWindow);
 			if (!windowId) {
 				throw new Error('Created window was not registered');
 			}
 
-			return toWindowInfo(windowId, windowManager);
+			const activeSessionId = sessionIds[0] ?? null;
+			upsertStoredWindowState(windowStateStore, windowId, browserWindow, sessionIds, {
+				activeSessionId,
+			});
+
+			if (sourceWindowId && sourceWindow && sourceEntry) {
+				const sourceMovedActiveSession =
+					sourceActiveSessionId && sessionIds.includes(sourceActiveSessionId);
+				upsertStoredWindowState(
+					windowStateStore,
+					sourceWindowId,
+					sourceWindow,
+					sourceEntry.sessionIds,
+					{
+						activeSessionId: sourceMovedActiveSession
+							? getNextActiveSessionId(sourceSessionIds, sourceActiveSessionId)
+							: (sourceActiveSessionId ?? null),
+					}
+				);
+			}
+
+			return toWindowInfo(windowId, windowManager, activeSessionId);
 		}
 	);
 
