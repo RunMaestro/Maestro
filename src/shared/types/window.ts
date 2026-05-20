@@ -24,6 +24,13 @@ export interface WindowInfo {
 	activeSessionId: string | null;
 }
 
+export interface WindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
 export interface WindowSessionMovedEvent {
 	sessionId: string;
 	fromWindowId: string;

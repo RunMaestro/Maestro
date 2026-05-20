@@ -170,6 +170,13 @@ interface MaestroWindowInfo {
 	activeSessionId: string | null;
 }
 
+interface MaestroWindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
 interface MaestroWindowCreateBounds {
 	x?: number;
 	y?: number;
@@ -2788,6 +2795,7 @@ interface MaestroAPI {
 		getForSession: (sessionId: string) => Promise<string | null>;
 		moveSession: (sessionId: string, fromWindowId: string, toWindowId: string) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
+		getWindowBounds: () => Promise<MaestroWindowBounds>;
 		getState: () => Promise<MaestroWindowState>;
 		updateState: (update: MaestroWindowStateUpdate) => Promise<MaestroWindowState>;
 		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;

@@ -104,6 +104,7 @@ describe('windows IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getForSession', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:moveSession', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:focusWindow', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getWindowBounds', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getState', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:updateState', expect.any(Function));
 	});
@@ -188,6 +189,16 @@ describe('windows IPC handlers', () => {
 		expect(result).toBe(true);
 		expect(primary.show).toHaveBeenCalled();
 		expect(primary.focus).toHaveBeenCalled();
+	});
+
+	it('returns bounds for the invoking window', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1']);
+
+		const handler = mockState.registeredHandlers.get('windows:getWindowBounds');
+		const result = await handler!({ sender: primary.webContents });
+
+		expect(BrowserWindow.fromWebContents(primary.webContents)).toBe(primary);
+		expect(result).toEqual({ x: 10, y: 20, width: 1200, height: 800 });
 	});
 
 	it('returns state for the invoking window', async () => {

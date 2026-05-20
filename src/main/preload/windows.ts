@@ -11,6 +11,7 @@
 import { ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type {
+	WindowBounds,
 	WindowInfo,
 	WindowSessionMovedEvent,
 	WindowState,
@@ -45,6 +46,7 @@ export function createWindowsApi() {
 			ipcRenderer.invoke('windows:moveSession', sessionId, fromWindowId, toWindowId),
 		focusWindow: (windowId: string): Promise<boolean> =>
 			ipcRenderer.invoke('windows:focusWindow', windowId),
+		getWindowBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('windows:getWindowBounds'),
 		getState: (): Promise<WindowState> => ipcRenderer.invoke('windows:getState'),
 		updateState: (update: WindowStateUpdate): Promise<WindowState> =>
 			ipcRenderer.invoke('windows:updateState', update),

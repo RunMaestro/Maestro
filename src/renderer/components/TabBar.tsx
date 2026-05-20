@@ -22,6 +22,7 @@ import {
 	FolderOpen,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
+import type { WindowBounds } from '../../shared/types/window';
 import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
@@ -94,6 +95,8 @@ interface TabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -185,6 +188,15 @@ function getTabDisplayName(tab: AITab): string {
 	return 'New Session';
 }
 
+function isPointOutsideBounds(screenX: number, screenY: number, bounds: WindowBounds): boolean {
+	return (
+		screenX < bounds.x ||
+		screenX > bounds.x + bounds.width ||
+		screenY < bounds.y ||
+		screenY > bounds.y + bounds.height
+	);
+}
+
 /**
  * Individual tab component styled like browser tabs (Safari/Chrome).
  * All tabs have visible borders; active tab connects to content area.
@@ -201,6 +213,7 @@ const Tab = memo(function Tab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -466,6 +479,13 @@ const Tab = memo(function Tab({
 		[onDragStart, tabId]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tabId, e);
+		},
+		[onDrag, tabId]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tabId, e);
@@ -538,6 +558,7 @@ const Tab = memo(function Tab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -937,6 +958,8 @@ interface FileTabProps {
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
 	/** Stable callback - receives tabId and event */
@@ -985,6 +1008,7 @@ const FileTab = memo(function FileTab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -1182,6 +1206,13 @@ const FileTab = memo(function FileTab({
 		[onDragStart, tab.id]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tab.id, e);
+		},
+		[onDrag, tab.id]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tab.id, e);
@@ -1258,6 +1289,7 @@ const FileTab = memo(function FileTab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -1540,6 +1572,7 @@ function TabBarInner({
 }: TabBarProps) {
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+	const [draggingOutsideWindow, setDraggingOutsideWindow] = useState(false);
 	// Use prop if provided (controlled), otherwise use local state (uncontrolled)
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
@@ -1550,6 +1583,7 @@ function TabBarInner({
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
 	const stickyRightRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+	const windowBoundsRef = useRef<WindowBounds | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
 	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
@@ -1625,11 +1659,42 @@ function TabBarInner({
 		});
 	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId]);
 
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
+	const updateDragWindowExitState = useCallback((screenX: number, screenY: number) => {
+		const bounds = windowBoundsRef.current;
+		if (!bounds || (screenX === 0 && screenY === 0)) {
+			return;
+		}
+
+		setDraggingOutsideWindow(isPointOutsideBounds(screenX, screenY, bounds));
 	}, []);
+
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+			setDraggingOutsideWindow(false);
+			windowBoundsRef.current = null;
+
+			const getWindowBounds = window.maestro?.windows?.getWindowBounds;
+			if (!getWindowBounds) {
+				return;
+			}
+
+			void getWindowBounds().then((bounds) => {
+				windowBoundsRef.current = bounds;
+				updateDragWindowExitState(e.screenX, e.screenY);
+			});
+		},
+		[updateDragWindowExitState]
+	);
+
+	const handleDrag = useCallback(
+		(_tabId: string, e: React.DragEvent) => {
+			updateDragWindowExitState(e.screenX, e.screenY);
+		},
+		[updateDragWindowExitState]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -1645,6 +1710,8 @@ function TabBarInner({
 	const handleDragEnd = useCallback(() => {
 		setDraggingTabId(null);
 		setDragOverTabId(null);
+		setDraggingOutsideWindow(false);
+		windowBoundsRef.current = null;
 	}, []);
 
 	const handleDrop = useCallback(
@@ -1674,6 +1741,8 @@ function TabBarInner({
 
 			setDraggingTabId(null);
 			setDragOverTabId(null);
+			setDraggingOutsideWindow(false);
+			windowBoundsRef.current = null;
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
@@ -1842,6 +1911,7 @@ function TabBarInner({
 			ref={tabBarRef}
 			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
 			data-tour="tab-bar"
+			data-drag-outside-window={draggingOutsideWindow ? 'true' : undefined}
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -1957,6 +2027,7 @@ function TabBarInner({
 										onSelect={onTabSelect}
 										onClose={onTabClose}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}
@@ -2019,6 +2090,7 @@ function TabBarInner({
 										onSelect={onFileTabSelect || (() => {})}
 										onClose={onFileTabClose || (() => {})}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}
@@ -2076,6 +2148,7 @@ function TabBarInner({
 									onSelect={onTabSelect}
 									onClose={onTabClose}
 									onDragStart={handleDragStart}
+									onDrag={handleDrag}
 									onDragOver={handleDragOver}
 									onDragEnd={handleDragEnd}
 									onDrop={handleDrop}
