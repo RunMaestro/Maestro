@@ -260,7 +260,9 @@ describe('app-lifecycle/window-manager', () => {
 					preload: '/path/to/preload.js',
 				}),
 			});
-			expect(mockWindowInstance.loadFile).toHaveBeenLastCalledWith('/path/to/index.html');
+			expect(mockWindowInstance.loadFile).toHaveBeenLastCalledWith('/path/to/index.html', {
+				query: { windowId: '2' },
+			});
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
@@ -325,7 +327,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html');
+			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html', {
+				query: { windowId: 'primary' },
+			});
 			expect(mockWindowInstance.loadURL).not.toHaveBeenCalled();
 		});
 
@@ -346,7 +350,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith('http://localhost:5173');
+			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith(
+				'http://localhost:5173/?windowId=primary'
+			);
 			expect(mockWindowInstance.loadFile).not.toHaveBeenCalled();
 		});
 

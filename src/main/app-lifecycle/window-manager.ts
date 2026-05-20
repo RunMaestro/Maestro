@@ -63,6 +63,12 @@ function getWindowState(state: MultiWindowState, windowId?: string): WindowState
 	);
 }
 
+function appendWindowIdToUrl(url: string, windowId: string): string {
+	const parsedUrl = new URL(url);
+	parsedUrl.searchParams.set('windowId', windowId);
+	return parsedUrl.toString();
+}
+
 /**
  * Reports a crash event to Sentry from the main process.
  * Lazily loads Sentry to avoid module initialization issues.
@@ -243,11 +249,11 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
 				);
 
-			mainWindow.loadURL(devServerUrl);
+			mainWindow.loadURL(appendWindowIdToUrl(devServerUrl, registryWindowId));
 			// DevTools can be opened via Command-K menu instead of automatically on startup
 			logger.info('Loading development server', 'Window');
 		} else {
-			mainWindow.loadFile(rendererPath);
+			mainWindow.loadFile(rendererPath, { query: { windowId: registryWindowId } });
 			logger.info('Loading production build', 'Window');
 			// Open DevTools in production if DEBUG env var is set
 			if (process.env.DEBUG === 'true') {
