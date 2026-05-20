@@ -44,6 +44,7 @@ import {
 	registerStatsHandlers,
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
+	registerWindowsHandlers,
 	registerFilesystemHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
@@ -639,6 +640,12 @@ function setupIpcHandlers() {
 	// Register SSH Remote handlers for managing SSH configurations
 	registerSshRemoteHandlers({
 		settingsStore: store,
+	});
+
+	// Register multi-window handlers for secondary window lifecycle and session movement
+	registerWindowsHandlers({
+		windowManager,
+		windowStateStore,
 	});
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions

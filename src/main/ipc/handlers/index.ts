@@ -53,6 +53,7 @@ import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerWakatimeHandlers } from './wakatime';
+import { registerWindowsHandlers, WindowsHandlerDependencies } from './windows';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -97,6 +98,7 @@ export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
 export { registerWakatimeHandlers };
+export { registerWindowsHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -111,6 +113,7 @@ export type { DocumentGraphHandlerDependencies };
 export type { SshRemoteHandlerDependencies };
 export type { GitHandlerDependencies };
 export type { SymphonyHandlerDependencies };
+export type { WindowsHandlerDependencies };
 export type { MaestroSettings, SessionsData, GroupsData };
 
 /**
@@ -153,6 +156,9 @@ export interface HandlerDependencies {
 	getWebServer: () => WebServer | null;
 	// System-specific dependencies
 	tunnelManager: TunnelManagerType;
+	// Multi-window dependencies
+	windowManager: WindowsHandlerDependencies['windowManager'];
+	windowStateStore: WindowsHandlerDependencies['windowStateStore'];
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
 }
@@ -247,6 +253,11 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register SSH remote handlers
 	registerSshRemoteHandlers({
 		settingsStore: deps.settingsStore,
+	});
+	// Register multi-window handlers
+	registerWindowsHandlers({
+		windowManager: deps.windowManager,
+		windowStateStore: deps.windowStateStore,
 	});
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();
