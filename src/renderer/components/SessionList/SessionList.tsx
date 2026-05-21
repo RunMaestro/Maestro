@@ -130,7 +130,6 @@ function SessionListInner(props: SessionListProps) {
 	);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const groupChats = useGroupChatStore((s) => s.groupChats);
-	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
@@ -138,6 +137,15 @@ function SessionListInner(props: SessionListProps) {
 	const windowContext = useOptionalWindowContext();
 	const windowId = windowContext?.windowId ?? null;
 	const openSession = windowContext?.openSession;
+	const visibleGroupChats = useMemo(
+		() =>
+			groupChats.filter((chat) => !chat.initiatorWindowId || chat.initiatorWindowId === windowId),
+		[groupChats, windowId]
+	);
+	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
+	const visibleActiveGroupChatId = visibleGroupChats.some((chat) => chat.id === activeGroupChatId)
+		? activeGroupChatId
+		: null;
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -493,7 +501,7 @@ function SessionListInner(props: SessionListProps) {
 					session={session}
 					variant={effectiveVariant}
 					theme={theme}
-					isActive={activeSessionId === session.id && !activeGroupChatId}
+					isActive={activeSessionId === session.id && !visibleActiveGroupChatId}
 					isKeyboardSelected={isKeyboardSelected}
 					isDragging={draggingSessionId === session.id}
 					isEditing={editingSessionId === `${options.keyPrefix}-${session.id}`}
@@ -559,7 +567,7 @@ function SessionListInner(props: SessionListProps) {
 										session={child}
 										variant="worktree"
 										theme={theme}
-										isActive={activeSessionId === child.id && !activeGroupChatId}
+										isActive={activeSessionId === child.id && !visibleActiveGroupChatId}
 										isKeyboardSelected={isChildKeyboardSelected}
 										isDragging={draggingSessionId === child.id}
 										isEditing={editingSessionId === `worktree-${session.id}-${child.id}`}
@@ -637,7 +645,7 @@ function SessionListInner(props: SessionListProps) {
 		<div
 			ref={sidebarContainerRef}
 			tabIndex={0}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 ${activeFocus === 'sidebar' && !activeGroupChatId ? 'ring-1 ring-inset' : ''}`}
+			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 ${activeFocus === 'sidebar' && !visibleActiveGroupChatId ? 'ring-1 ring-inset' : ''}`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -1186,8 +1194,8 @@ function SessionListInner(props: SessionListProps) {
 						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
-								groupChats={groupChats}
-								activeGroupChatId={activeGroupChatId}
+								groupChats={visibleGroupChats}
+								activeGroupChatId={visibleActiveGroupChatId}
 								onOpenGroupChat={onOpenGroupChat}
 								onNewGroupChat={onNewGroupChat}
 								onEditGroupChat={onEditGroupChat}

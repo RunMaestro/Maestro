@@ -127,6 +127,8 @@ export interface GroupChat {
 	createdAt: number;
 	updatedAt: number;
 	moderatorAgentId: string;
+	/** Renderer window that created the group chat. Legacy chats may omit this. */
+	initiatorWindowId?: string | null;
 	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
 	moderatorSessionId: string;
 	/** Claude Code agent session UUID (set after first message is processed) */
@@ -149,6 +151,7 @@ export type GroupChatUpdate = Partial<
 		| 'moderatorSessionId'
 		| 'moderatorAgentSessionId'
 		| 'moderatorAgentId'
+		| 'initiatorWindowId'
 		| 'moderatorConfig'
 		| 'participants'
 		| 'updatedAt'
@@ -228,7 +231,8 @@ function sanitizeChatName(name: string): string {
 export async function createGroupChat(
 	name: string,
 	moderatorAgentId: string,
-	moderatorConfig?: ModeratorConfig
+	moderatorConfig?: ModeratorConfig,
+	initiatorWindowId?: string | null
 ): Promise<GroupChat> {
 	// Validate agent ID supports group chat moderation
 	if (!hasCapability(moderatorAgentId, 'supportsGroupChatModeration')) {
@@ -260,6 +264,7 @@ export async function createGroupChat(
 		createdAt: now,
 		updatedAt: now,
 		moderatorAgentId,
+		initiatorWindowId: initiatorWindowId ?? null,
 		moderatorSessionId: '', // Will be set when moderator is spawned
 		moderatorConfig,
 		participants: [],
