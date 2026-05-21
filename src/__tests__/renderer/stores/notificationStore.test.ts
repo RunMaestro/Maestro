@@ -547,6 +547,22 @@ describe('notificationStore', () => {
 				});
 				expect(mockShow).toHaveBeenCalledWith('Done', 'First sentence.', undefined, undefined);
 			});
+
+			it('passes window metadata for notification click routing', () => {
+				notifyToast({
+					type: 'success',
+					title: 'Done',
+					message: 'Finished.',
+					windowId: 'window-2',
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+				});
+				expect(mockShow).toHaveBeenCalledWith('Done', 'Finished.', {
+					windowId: 'window-2',
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+				});
+			});
 		});
 
 		describe('auto-dismiss', () => {

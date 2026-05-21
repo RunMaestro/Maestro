@@ -1849,8 +1849,7 @@ interface MaestroAPI {
 		show: (
 			title: string,
 			body: string,
-			sessionId?: string,
-			tabId?: string
+			metadata?: { windowId?: string; sessionId?: string; tabId?: string }
 		) => Promise<{ success: boolean; error?: string }>;
 		speak: (
 			text: string,

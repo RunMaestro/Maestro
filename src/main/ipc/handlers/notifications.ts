@@ -58,6 +58,12 @@ export interface NotificationShowResponse {
 	error?: string;
 }
 
+export interface NotificationMetadata {
+	windowId?: string;
+	sessionId?: string;
+	tabId?: string;
+}
+
 /**
  * Response from custom notification command operations
  */
@@ -148,6 +154,19 @@ export function parseNotificationCommand(command?: string): string {
 	}
 
 	return command.trim();
+}
+
+function focusNotificationWindow(win: BrowserWindow | null | undefined): boolean {
+	if (!win || win.isDestroyed()) {
+		return false;
+	}
+
+	if (win.isMinimized()) {
+		win.restore();
+	}
+	win.show();
+	win.focus();
+	return true;
 }
 
 /**
@@ -403,6 +422,7 @@ async function processNextNotification(): Promise<void> {
  */
 export interface NotificationsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	getWindowById?: (windowId: string) => BrowserWindow | null | undefined;
 }
 
 /**
@@ -413,11 +433,10 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 	ipcMain.handle(
 		'notification:show',
 		async (
-			_event,
+			event,
 			title: string,
 			body: string,
-			sessionId?: string,
-			tabId?: string
+			metadata?: NotificationMetadata
 		): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
@@ -435,20 +454,34 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					notification.on('close', releaseNotification);
 
 					// Wire click handler for navigation if session context is provided
-					if (sessionId && deps?.getMainWindow) {
-						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
-
+					if (metadata?.sessionId || metadata?.windowId) {
+						const deepLinkUrl = metadata.sessionId
+							? buildSessionDeepLink(metadata.sessionId, metadata.tabId)
+							: null;
 						notification.on('click', () => {
-							const parsed = parseDeepLink(deepLinkUrl);
-							if (parsed) {
+							const targetWindow =
+								metadata.windowId && deps?.getWindowById
+									? (deps.getWindowById(metadata.windowId) ??
+										BrowserWindow.fromWebContents(event.sender))
+									: BrowserWindow.fromWebContents(event.sender);
+							const focused = focusNotificationWindow(targetWindow);
+
+							const parsed = deepLinkUrl ? parseDeepLink(deepLinkUrl) : null;
+							if (parsed && deps?.getMainWindow) {
 								dispatchDeepLink(parsed, deps.getMainWindow);
 							}
+							logger.debug('Notification click handled', 'Notification', {
+								focused,
+								windowId: metadata.windowId,
+								sessionId: metadata.sessionId,
+								tabId: metadata.tabId,
+							});
 							releaseNotification();
 						});
 					}
 
 					notification.show();
-					logger.debug('Showed OS notification', 'Notification', { title, body, sessionId, tabId });
+					logger.debug('Showed OS notification', 'Notification', { title, body, metadata });
 					return { success: true };
 				} else {
 					logger.warn('OS notifications not supported on this platform', 'Notification');

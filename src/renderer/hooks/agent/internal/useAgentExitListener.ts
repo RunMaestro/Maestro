@@ -24,6 +24,7 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import { clearRetryIfSettled } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
+import { useOptionalWindowContext } from '../../../contexts/WindowContext';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import {
 	getActiveTab,
@@ -62,6 +63,7 @@ export interface UseAgentExitListenerDeps {
 }
 
 export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
+	const windowContext = useOptionalWindowContext();
 	const isSessionInCurrentWindow = useProcessWindowScope();
 
 	// Pending debounced synopses, keyed by `${sessionId}:${tabId}`. When the
@@ -816,6 +818,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							tabName: toastData!.tabName,
 							sessionId: toastData!.sessionId,
 							tabId: toastData!.tabId,
+							windowId: windowContext?.windowId ?? undefined,
 						});
 					} else {
 						// Viewing the completed tab: the visual toast is suppressed (no need
@@ -858,5 +861,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		deps.rightPanelRef,
 		deps.spawnBackgroundSynopsisRef,
 		isSessionInCurrentWindow,
+		windowContext?.windowId,
 	]);
 }

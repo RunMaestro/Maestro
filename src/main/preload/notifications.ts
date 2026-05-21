@@ -17,6 +17,12 @@ export interface NotificationShowResponse {
 	error?: string;
 }
 
+export interface NotificationMetadata {
+	windowId?: string;
+	sessionId?: string;
+	tabId?: string;
+}
+
 /**
  * Response from notification command operations
  */
@@ -53,16 +59,14 @@ export function createNotificationApi() {
 		 * Show an OS notification
 		 * @param title - Notification title
 		 * @param body - Notification body text
-		 * @param sessionId - Optional session ID for click-to-navigate
-		 * @param tabId - Optional tab ID for click-to-navigate
+		 * @param metadata - Optional routing metadata for notification click handling
 		 */
 		show: (
 			title: string,
 			body: string,
-			sessionId?: string,
-			tabId?: string
+			metadata?: NotificationMetadata
 		): Promise<NotificationShowResponse> =>
-			ipcRenderer.invoke('notification:show', title, body, sessionId, tabId),
+			ipcRenderer.invoke('notification:show', title, body, metadata),
 
 		/**
 		 * Execute a custom notification command (e.g., TTS, logging)

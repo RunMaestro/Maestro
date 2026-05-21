@@ -16,8 +16,9 @@ import { ipcMain } from 'electron';
 // Create hoisted mocks for more reliable mocking
 const mocks = vi.hoisted(() => ({
 	mockNotificationShow: vi.fn(),
-	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
 	mockNotificationOn: vi.fn(),
+	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
+	mockBrowserWindowFromWebContents: vi.fn(),
 }));
 
 // Mock electron with a proper class for Notification
@@ -45,6 +46,7 @@ vi.mock('electron', () => {
 		Notification: MockNotification,
 		BrowserWindow: {
 			getAllWindows: vi.fn().mockReturnValue([]),
+			fromWebContents: (...args: unknown[]) => mocks.mockBrowserWindowFromWebContents(...args),
 		},
 	};
 });
@@ -124,6 +126,7 @@ describe('Notification IPC Handlers', () => {
 		mocks.mockNotificationIsSupported.mockReturnValue(true);
 		mocks.mockNotificationShow.mockClear();
 		mocks.mockNotificationOn.mockClear();
+		mocks.mockBrowserWindowFromWebContents.mockClear();
 
 		// Capture registered handlers
 		vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
@@ -151,10 +154,43 @@ describe('Notification IPC Handlers', () => {
 			mocks.mockNotificationIsSupported.mockReturnValue(true);
 
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Test Title', 'Test Body');
+			const result = await handler({ sender: {} }, 'Test Title', 'Test Body');
 
 			expect(result.success).toBe(true);
 			expect(mocks.mockNotificationShow).toHaveBeenCalled();
+		});
+
+		it('should focus metadata window when notification is clicked', async () => {
+			const targetWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				isMinimized: vi.fn().mockReturnValue(true),
+				restore: vi.fn(),
+				show: vi.fn(),
+				focus: vi.fn(),
+			};
+
+			registerNotificationsHandlers({
+				getMainWindow: mockGetMainWindow,
+				getWindowById: (windowId) => (windowId === 'window-2' ? (targetWindow as any) : null),
+			});
+			const handler = handlers.get('notification:show')!;
+			const result = await handler({ sender: {} }, 'Test Title', 'Test Body', {
+				windowId: 'window-2',
+				sessionId: 'session-1',
+			});
+
+			expect(result.success).toBe(true);
+			const clickHandler = mocks.mockNotificationOn.mock.calls.find(
+				([eventName]) => eventName === 'click'
+			)?.[1] as (() => void) | undefined;
+			expect(clickHandler).toBeTypeOf('function');
+
+			clickHandler!();
+
+			expect(targetWindow.restore).toHaveBeenCalled();
+			expect(targetWindow.show).toHaveBeenCalled();
+			expect(targetWindow.focus).toHaveBeenCalled();
+			expect(mocks.mockBrowserWindowFromWebContents).not.toHaveBeenCalled();
 		});
 
 		it('should return error when notifications not supported', async () => {
@@ -213,7 +249,7 @@ describe('Notification IPC Handlers', () => {
 
 		it('should register click handler when sessionId is provided', async () => {
 			const handler = handlers.get('notification:show')!;
-			await handler({}, 'Title', 'Body', 'session-123');
+			await handler({}, 'Title', 'Body', { sessionId: 'session-123' });
 
 			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('close', expect.any(Function));
 			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
@@ -221,7 +257,7 @@ describe('Notification IPC Handlers', () => {
 
 		it('should register click handler when sessionId and tabId are provided', async () => {
 			const handler = handlers.get('notification:show')!;
-			await handler({}, 'Title', 'Body', 'session-123', 'tab-456');
+			await handler({}, 'Title', 'Body', { sessionId: 'session-123', tabId: 'tab-456' });
 
 			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
 		});
@@ -229,7 +265,7 @@ describe('Notification IPC Handlers', () => {
 		it('should URI-encode sessionId and tabId in deep link URL', async () => {
 			const { parseDeepLink } = await import('../../../../main/deep-links');
 			const handler = handlers.get('notification:show')!;
-			await handler({}, 'Title', 'Body', 'id/with/slashes', 'tab?special');
+			await handler({}, 'Title', 'Body', { sessionId: 'id/with/slashes', tabId: 'tab?special' });
 
 			// Find the click handler (not the close handler)
 			const clickCall = mocks.mockNotificationOn.mock.calls.find(
@@ -256,7 +292,7 @@ describe('Notification IPC Handlers', () => {
 
 		it('should not register click handler when sessionId is undefined', async () => {
 			const handler = handlers.get('notification:show')!;
-			await handler({}, 'Title', 'Body', undefined, undefined);
+			await handler({}, 'Title', 'Body', undefined);
 
 			const clickCalls = mocks.mockNotificationOn.mock.calls.filter(
 				(call: any[]) => call[0] === 'click'
