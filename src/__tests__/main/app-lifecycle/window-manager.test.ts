@@ -92,6 +92,12 @@ const mockHandle = vi.fn();
 
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
+	screen: {
+		getDisplayMatching: vi.fn(() => ({
+			id: 1,
+			workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		})),
+	},
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
 	},

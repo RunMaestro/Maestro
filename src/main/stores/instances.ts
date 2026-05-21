@@ -101,6 +101,17 @@ const WINDOW_STATE_SCHEMA: Store.Schema<MultiWindowState> = {
 				y: { type: 'number' },
 				width: { type: 'number', minimum: 1 },
 				height: { type: 'number', minimum: 1 },
+				displayId: { type: 'number' },
+				displayWorkArea: {
+					type: 'object',
+					required: ['x', 'y', 'width', 'height'],
+					properties: {
+						x: { type: 'number' },
+						y: { type: 'number' },
+						width: { type: 'number', minimum: 1 },
+						height: { type: 'number', minimum: 1 },
+					},
+				},
 				isMaximized: { type: 'boolean' },
 				isFullScreen: { type: 'boolean' },
 				sessionIds: { type: 'array', items: { type: 'string' } },

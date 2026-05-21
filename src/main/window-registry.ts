@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import type { BrowserWindowConstructorOptions } from 'electron';
 import type Store from 'electron-store';
 import type { MultiWindowState, WindowState } from './stores/types';
@@ -186,6 +186,7 @@ export class WindowRegistry {
 		const isFullScreen = entry.browserWindow.isFullScreen();
 		const isMinimized = entry.browserWindow.isMinimized();
 		const bounds = entry.browserWindow.getBounds();
+		const display = screen.getDisplayMatching(bounds);
 		const currentState = this.windowStateStore.store;
 		const existingWindowState = currentState.windows.find(
 			(windowState) => windowState.id === windowId
@@ -196,6 +197,8 @@ export class WindowRegistry {
 			y: existingWindowState?.y ?? bounds.y,
 			width: existingWindowState?.width ?? bounds.width,
 			height: existingWindowState?.height ?? bounds.height,
+			displayId: existingWindowState?.displayId ?? display.id,
+			displayWorkArea: existingWindowState?.displayWorkArea ?? display.workArea,
 			isMaximized,
 			isFullScreen,
 			sessionIds: entry.sessionIds,
@@ -209,6 +212,8 @@ export class WindowRegistry {
 			nextWindowState.y = bounds.y;
 			nextWindowState.width = bounds.width;
 			nextWindowState.height = bounds.height;
+			nextWindowState.displayId = display.id;
+			nextWindowState.displayWorkArea = display.workArea;
 		}
 
 		const hasWindowState = currentState.windows.some((windowState) => windowState.id === windowId);

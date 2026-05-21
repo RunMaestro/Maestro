@@ -174,10 +174,10 @@ describe('app-lifecycle/window-state-restore', () => {
 			[],
 			{
 				getAllDisplays: () => [
-					{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
-					{ workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+					{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+					{ id: 2, workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
 				],
-				getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+				getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
 			}
 		);
 
@@ -211,8 +211,8 @@ describe('app-lifecycle/window-state-restore', () => {
 			},
 			[],
 			{
-				getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
-				getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+				getAllDisplays: () => [{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+				getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
 			}
 		);
 
@@ -246,8 +246,8 @@ describe('app-lifecycle/window-state-restore', () => {
 			},
 			[],
 			{
-				getAllDisplays: () => [{ workArea: { x: 50, y: 25, width: 1280, height: 720 } }],
-				getPrimaryDisplay: () => ({ workArea: { x: 50, y: 25, width: 1280, height: 720 } }),
+				getAllDisplays: () => [{ id: 1, workArea: { x: 50, y: 25, width: 1280, height: 720 } }],
+				getPrimaryDisplay: () => ({ id: 1, workArea: { x: 50, y: 25, width: 1280, height: 720 } }),
 			}
 		);
 
@@ -256,6 +256,87 @@ describe('app-lifecycle/window-state-restore', () => {
 			y: 25,
 			width: 1280,
 			height: 720,
+		});
+	});
+
+	it('restores a window to the same display when display coordinates change', () => {
+		const restoredState = sanitizeRestoredWindowState(
+			{
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'secondary',
+						x: 2100,
+						y: 120,
+						width: 1000,
+						height: 700,
+						displayId: 2,
+						displayWorkArea: { x: 1920, y: 0, width: 1920, height: 1080 },
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+			[],
+			{
+				getAllDisplays: () => [
+					{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+					{ id: 2, workArea: { x: -1920, y: 0, width: 1920, height: 1080 } },
+				],
+				getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+			}
+		);
+
+		expect(restoredState.windows[0]).toMatchObject({
+			x: -1740,
+			y: 120,
+			width: 1000,
+			height: 700,
+			displayId: 2,
+			displayWorkArea: { x: -1920, y: 0, width: 1920, height: 1080 },
+		});
+	});
+
+	it('falls back to primary display when the saved display is missing', () => {
+		const restoredState = sanitizeRestoredWindowState(
+			{
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'secondary',
+						x: 2100,
+						y: 120,
+						width: 1000,
+						height: 700,
+						displayId: 2,
+						displayWorkArea: { x: 1920, y: 0, width: 1920, height: 1080 },
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+			[],
+			{
+				getAllDisplays: () => [{ id: 1, workArea: { x: 0, y: 0, width: 1440, height: 900 } }],
+				getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1440, height: 900 } }),
+			}
+		);
+
+		expect(restoredState.windows[0]).toMatchObject({
+			x: 220,
+			y: 100,
+			width: 1000,
+			height: 700,
+			displayId: 1,
+			displayWorkArea: { x: 0, y: 0, width: 1440, height: 900 },
 		});
 	});
 
@@ -320,8 +401,8 @@ describe('app-lifecycle/window-state-restore', () => {
 		});
 
 		const startupWindows = getStartupWindowStates(windowStateStore as never, [], {
-			getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1600, height: 900 } }],
-			getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1600, height: 900 } }),
+			getAllDisplays: () => [{ id: 1, workArea: { x: 0, y: 0, width: 1600, height: 900 } }],
+			getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1600, height: 900 } }),
 		});
 
 		expect(startupWindows[0]).toMatchObject({
