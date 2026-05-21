@@ -13,6 +13,7 @@ interface DisplayBounds {
 }
 
 export interface StartupDisplay {
+	id: number;
 	workArea: DisplayBounds;
 }
 
@@ -46,7 +47,48 @@ function hasVisibleIntersection(bounds: DisplayBounds, displayBounds: DisplayBou
 	);
 }
 
-function repositionWindowToPrimaryDisplay(
+function fitBoundsInsideDisplay(
+	bounds: DisplayBounds,
+	displayBounds: DisplayBounds
+): DisplayBounds {
+	const width = Math.min(bounds.width, displayBounds.width);
+	const height = Math.min(bounds.height, displayBounds.height);
+	const maxX = displayBounds.x + displayBounds.width - width;
+	const maxY = displayBounds.y + displayBounds.height - height;
+
+	return {
+		x: Math.min(Math.max(bounds.x, displayBounds.x), maxX),
+		y: Math.min(Math.max(bounds.y, displayBounds.y), maxY),
+		width,
+		height,
+	};
+}
+
+function centerWindowOnDisplay(
+	windowState: WindowState,
+	displayBounds: DisplayBounds
+): DisplayBounds {
+	const width = Math.min(windowState.width, displayBounds.width);
+	const height = Math.min(windowState.height, displayBounds.height);
+
+	return {
+		x: displayBounds.x + Math.max(0, Math.floor((displayBounds.width - width) / 2)),
+		y: displayBounds.y + Math.max(0, Math.floor((displayBounds.height - height) / 2)),
+		width,
+		height,
+	};
+}
+
+function getWindowBounds(windowState: WindowState): DisplayBounds {
+	return {
+		x: windowState.x,
+		y: windowState.y,
+		width: windowState.width,
+		height: windowState.height,
+	};
+}
+
+function repositionWindowForDisplays(
 	windowState: WindowState,
 	displayProvider?: StartupDisplayProvider
 ): WindowState {
@@ -55,12 +97,31 @@ function repositionWindowToPrimaryDisplay(
 	}
 
 	const displays = displayProvider.getAllDisplays();
-	const bounds = {
-		x: windowState.x,
-		y: windowState.y,
-		width: windowState.width,
-		height: windowState.height,
-	};
+	const bounds = getWindowBounds(windowState);
+	const matchingDisplay = displays.find((display) => display.id === windowState.displayId);
+
+	if (matchingDisplay) {
+		if (hasVisibleIntersection(bounds, matchingDisplay.workArea)) {
+			return windowState;
+		}
+
+		const translatedBounds = windowState.displayWorkArea
+			? {
+					...bounds,
+					x: matchingDisplay.workArea.x + (windowState.x - windowState.displayWorkArea.x),
+					y: matchingDisplay.workArea.y + (windowState.y - windowState.displayWorkArea.y),
+				}
+			: centerWindowOnDisplay(windowState, matchingDisplay.workArea);
+		const nextBounds = fitBoundsInsideDisplay(translatedBounds, matchingDisplay.workArea);
+
+		return {
+			...windowState,
+			...nextBounds,
+			displayId: matchingDisplay.id,
+			displayWorkArea: matchingDisplay.workArea,
+		};
+	}
+
 	const isVisibleOnAnyDisplay = displays.some((display) =>
 		hasVisibleIntersection(bounds, display.workArea)
 	);
@@ -70,15 +131,13 @@ function repositionWindowToPrimaryDisplay(
 	}
 
 	const primaryWorkArea = displayProvider.getPrimaryDisplay().workArea;
-	const width = Math.min(windowState.width, primaryWorkArea.width);
-	const height = Math.min(windowState.height, primaryWorkArea.height);
+	const nextBounds = centerWindowOnDisplay(windowState, primaryWorkArea);
 
 	return {
 		...windowState,
-		x: primaryWorkArea.x + Math.max(0, Math.floor((primaryWorkArea.width - width) / 2)),
-		y: primaryWorkArea.y + Math.max(0, Math.floor((primaryWorkArea.height - height) / 2)),
-		width,
-		height,
+		...nextBounds,
+		displayId: displayProvider.getPrimaryDisplay().id,
+		displayWorkArea: primaryWorkArea,
 	};
 }
 
@@ -96,7 +155,7 @@ function sanitizeWindowState(
 		claimedSessionIds.add(sessionId);
 		return true;
 	});
-	const displaySafeWindowState = repositionWindowToPrimaryDisplay(windowState, displayProvider);
+	const displaySafeWindowState = repositionWindowForDisplays(windowState, displayProvider);
 
 	return {
 		...displaySafeWindowState,

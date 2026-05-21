@@ -4,6 +4,8 @@ export interface WindowState {
 	y: number;
 	width: number;
 	height: number;
+	displayId?: number;
+	displayWorkArea?: WindowBounds;
 	isMaximized: boolean;
 	isFullScreen: boolean;
 	sessionIds: string[];

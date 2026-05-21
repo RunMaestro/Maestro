@@ -19,6 +19,12 @@ class MockBrowserWindow {
 
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
+	screen: {
+		getDisplayMatching: vi.fn(() => ({
+			id: 2,
+			workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		})),
+	},
 }));
 
 describe('WindowRegistry', () => {
@@ -178,6 +184,8 @@ describe('WindowRegistry', () => {
 			y: 60,
 			width: 1400,
 			height: 900,
+			displayId: 2,
+			displayWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
 			isMaximized: true,
 			isFullScreen: false,
 			sessionIds: ['session-1'],
@@ -185,6 +193,52 @@ describe('WindowRegistry', () => {
 			leftPanelCollapsed: true,
 		});
 		expect(windowStateStore.store.primaryWindowId).toBe('primary');
+	});
+
+	it('saves the current display metadata for restored windows when not maximized', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						displayId: 1,
+						displayWorkArea: { x: 0, y: 0, width: 1440, height: 900 },
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+		const entry = registry.create({ id: 'primary', isMain: true });
+
+		entry.browserWindow.getBounds = vi.fn().mockReturnValue({
+			x: 1980,
+			y: 100,
+			width: 1200,
+			height: 800,
+		});
+
+		const savedState = registry.saveWindowState('primary');
+
+		expect(savedState).toMatchObject({
+			x: 1980,
+			y: 100,
+			width: 1200,
+			height: 800,
+			displayId: 2,
+			displayWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		});
 	});
 
 	it('removes persisted state for secondary windows only', async () => {
