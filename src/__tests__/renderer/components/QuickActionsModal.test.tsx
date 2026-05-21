@@ -9,6 +9,18 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { mockTheme } from '../../helpers/mockTheme';
+
+const mockWindowContextState = vi.hoisted(() => ({
+	value: null as null | {
+		windowId: string | null;
+		sessionIds: string[];
+		openSession: ReturnType<typeof vi.fn>;
+	},
+}));
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useOptionalWindowContext: () => mockWindowContextState.value,
+}));
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
 	(window.maestro as any).devtools = {
@@ -185,6 +197,12 @@ describe('QuickActionsModal', () => {
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
 		});
+		mockWindowContextState.value = null;
+		(window.maestro as any).windows = {
+			...(window.maestro as any).windows,
+			getForSession: vi.fn().mockResolvedValue(null),
+			focusWindow: vi.fn().mockResolvedValue(true),
+		};
 	});
 
 	afterEach(() => {
@@ -354,7 +372,7 @@ describe('QuickActionsModal', () => {
 	});
 
 	describe('Session actions', () => {
-		it('handles Jump to session action', () => {
+		it('handles Jump to session action without window context', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
@@ -362,6 +380,72 @@ describe('QuickActionsModal', () => {
 
 			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('switches within the current window for a local session', async () => {
+			const openSession = vi.fn().mockResolvedValue(undefined);
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['session-1'],
+				openSession,
+			};
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			await waitFor(() => expect(openSession).toHaveBeenCalledWith('session-1'));
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(window.maestro.windows.getForSession).not.toHaveBeenCalled();
+			expect(window.maestro.windows.focusWindow).not.toHaveBeenCalled();
+		});
+
+		it('focuses the owning window for a session open elsewhere', async () => {
+			const openSession = vi.fn().mockResolvedValue(undefined);
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['session-1'],
+				openSession,
+			};
+			vi.mocked(window.maestro.windows.getForSession).mockResolvedValue('window-2');
+			const props = createDefaultProps({
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Local Session' }),
+					createMockSession({ id: 'session-2', name: 'Remote Session' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Remote Session'));
+
+			await waitFor(() =>
+				expect(window.maestro.windows.focusWindow).toHaveBeenCalledWith('window-2')
+			);
+			expect(openSession).not.toHaveBeenCalled();
+			expect(props.setActiveSessionId).not.toHaveBeenCalledWith('session-2');
+		});
+
+		it('opens an unassigned session in the current window', async () => {
+			const openSession = vi.fn().mockResolvedValue(undefined);
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['session-1'],
+				openSession,
+			};
+			vi.mocked(window.maestro.windows.getForSession).mockResolvedValue(null);
+			const props = createDefaultProps({
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Local Session' }),
+					createMockSession({ id: 'session-2', name: 'Unassigned Session' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Unassigned Session'));
+
+			await waitFor(() => expect(openSession).toHaveBeenCalledWith('session-2'));
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-2');
+			expect(window.maestro.windows.focusWindow).not.toHaveBeenCalled();
 		});
 
 		it('auto-expands collapsed group when jumping to non-bookmarked session in group', () => {

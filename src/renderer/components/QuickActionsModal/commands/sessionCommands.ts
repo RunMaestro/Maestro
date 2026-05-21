@@ -5,8 +5,7 @@ import { alphabetizeKey } from '../utils/quickActionSorting';
 
 interface BuildSessionCommandsArgs {
 	sessions: Session[];
-	setActiveSessionId: (id: string) => void;
-	revealJumpTarget: (session: Session) => void;
+	handleJumpToSession: (session: Session) => void | Promise<void>;
 }
 
 interface BuildSessionManagementCommandsArgs {
@@ -27,8 +26,7 @@ interface BuildSessionManagementCommandsArgs {
 
 export function buildSessionJumpCommands({
 	sessions,
-	setActiveSessionId,
-	revealJumpTarget,
+	handleJumpToSession,
 }: BuildSessionCommandsArgs): QuickAction[] {
 	return sessions.map((session) => {
 		let label: string;
@@ -44,8 +42,7 @@ export function buildSessionJumpCommands({
 			id: `jump-${session.id}`,
 			label,
 			action: () => {
-				setActiveSessionId(session.id);
-				revealJumpTarget(session);
+				void handleJumpToSession(session);
 			},
 			subtext: session.state.toUpperCase(),
 			bookmarked: !!session.bookmarked,

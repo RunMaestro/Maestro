@@ -6,15 +6,13 @@ import { alphabetizeKey } from '../utils/quickActionSorting';
 interface BuildAgentSwitcherCommandsArgs {
 	sessions: Session[];
 	activeBatchSessionIds: string[];
-	setActiveSessionId: (id: string) => void;
-	revealJumpTarget: (session: Session) => void;
+	handleJumpToSession: (session: Session) => void | Promise<void>;
 }
 
 export function buildAgentSwitcherCommands({
 	sessions,
 	activeBatchSessionIds,
-	setActiveSessionId,
-	revealJumpTarget,
+	handleJumpToSession,
 }: BuildAgentSwitcherCommandsArgs): QuickAction[] {
 	const batchSessionIdSet = new Set(activeBatchSessionIds);
 
@@ -39,8 +37,7 @@ export function buildAgentSwitcherCommands({
 			id: `jump-${session.id}`,
 			label: session.name,
 			action: () => {
-				setActiveSessionId(session.id);
-				revealJumpTarget(session);
+				void handleJumpToSession(session);
 			},
 			subtext: undefined,
 			isRunningAgent,

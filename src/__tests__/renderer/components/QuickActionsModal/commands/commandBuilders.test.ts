@@ -33,8 +33,7 @@ describe('QuickActions command builders', () => {
 		const session = createMockSession({ id: 's1', name: 'Atlas', bookmarked: true });
 		const jump = buildSessionJumpCommands({
 			sessions: [session],
-			setActiveSessionId: vi.fn(),
-			revealJumpTarget: vi.fn(),
+			handleJumpToSession: vi.fn(),
 		});
 		expect(jump[0]).toMatchObject({ id: 'jump-s1', label: 'Jump to: Atlas' });
 
@@ -101,8 +100,7 @@ describe('QuickActions command builders', () => {
 			buildAgentSwitcherCommands({
 				sessions: [session],
 				activeBatchSessionIds: ['s1'],
-				setActiveSessionId: vi.fn(),
-				revealJumpTarget: vi.fn(),
+				handleJumpToSession: vi.fn(),
 			})[0]
 		).toMatchObject({ label: 'Atlas', isRunningAgent: true, isInBatch: true });
 

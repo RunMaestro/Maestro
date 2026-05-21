@@ -23,6 +23,7 @@ import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
 import { getActiveTabInfo } from './utils/activeTabInfo';
 import {
 	filterAndSortQuickActions,
@@ -194,6 +195,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const windowContext = useOptionalWindowContext();
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -351,7 +353,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// - Bookmarked: prefer whichever section the agent is already visible in. If
 	//   neither bookmarks nor the parent group is open, expand bookmarks (the
 	//   pinned bookmark row is the lighter-weight reveal of the two).
-	const revealJumpTarget = (s: Session) => {
+	const revealJumpTarget = useCallback((s: Session) => {
 		if (!s.bookmarked) {
 			if (s.groupId) {
 				setGroups((prev) =>
@@ -364,12 +366,39 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		if (bookmarksCollapsed && !groupOpen) {
 			setBookmarksCollapsed(false);
 		}
-	};
+	}, [bookmarksCollapsed, groups, setBookmarksCollapsed, setGroups]);
+
+	const handleJumpToSession = useCallback(
+		async (session: Session) => {
+			if (!windowContext?.windowId) {
+				setActiveSessionId(session.id);
+				revealJumpTarget(session);
+				return;
+			}
+
+			if (windowContext.sessionIds.includes(session.id)) {
+				await windowContext.openSession(session.id);
+				setActiveSessionId(session.id);
+				revealJumpTarget(session);
+				return;
+			}
+
+			const ownerWindowId = await window.maestro.windows.getForSession(session.id);
+			if (ownerWindowId && ownerWindowId !== windowContext.windowId) {
+				await window.maestro.windows.focusWindow(ownerWindowId);
+				return;
+			}
+
+			await windowContext.openSession(session.id);
+			setActiveSessionId(session.id);
+			revealJumpTarget(session);
+		},
+		[revealJumpTarget, setActiveSessionId, windowContext]
+	);
 
 	const sessionActions = buildSessionJumpCommands({
 		sessions,
-		setActiveSessionId,
-		revealJumpTarget,
+		handleJumpToSession,
 	});
 
 	const groupChatActions = buildGroupChatJumpCommands({
@@ -687,8 +716,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const agentActions = buildAgentSwitcherCommands({
 		sessions,
 		activeBatchSessionIds,
-		setActiveSessionId,
-		revealJumpTarget,
+		handleJumpToSession,
 	});
 
 	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
