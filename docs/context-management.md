@@ -22,8 +22,11 @@ Hover over any tab with an established session to access the tab menu overlay:
 | **Context: Merge Into**             | Yes              | Merge this context into another session                                  |
 | **Context: Send to Agent**          | Yes              | Transfer context to a different agent                                    |
 | **Context: Publish as GitHub Gist** | No (1+ logs)     | Share conversation as a public or secret GitHub Gist (requires `gh` CLI) |
+| **Move to New Window**              | No               | Move the agent tab into a separate Maestro window                        |
 | **Move to First Position**          | No               | Move this tab to the first position                                      |
 | **Move to Last Position**           | No               | Move this tab to the last position                                       |
+
+See [Multi-Window Support](./multi-window) for drag-out behavior and how Maestro focuses agents that are already open in another window.
 
 ### Tab Close Operations
 
