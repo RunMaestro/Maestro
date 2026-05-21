@@ -134,6 +134,8 @@ interface TabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/** Stable callback - receives tabId */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -285,6 +287,7 @@ const Tab = memo(function Tab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -353,6 +356,15 @@ const Tab = memo(function Tab({
 			}
 		}, 100);
 	};
+
+	const openOverlayAt = useCallback((left: number, top: number) => {
+		if (hoverTimeoutRef.current) {
+			clearTimeout(hoverTimeoutRef.current);
+			hoverTimeoutRef.current = null;
+		}
+		setOverlayPosition({ top, left });
+		setOverlayOpen(true);
+	}, []);
 
 	// Event handlers using stable tabId to avoid inline closure captures
 	const handleMouseDown = useCallback(
@@ -459,6 +471,15 @@ const Tab = memo(function Tab({
 		[onMoveToLast, tabId]
 	);
 
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId]
+	);
+
 	const handleCopyContextClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -562,6 +583,15 @@ const Tab = memo(function Tab({
 		[onDrop, tabId]
 	);
 
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			openOverlayAt(e.clientX, e.clientY);
+		},
+		[openOverlayAt]
+	);
+
 	// Memoize display name to avoid recalculation on every render
 	const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
 
@@ -624,6 +654,7 @@ const Tab = memo(function Tab({
 			onDragOver={handleTabDragOver}
 			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
+			onContextMenu={handleContextMenu}
 		>
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
 			{tab.state === 'busy' && (
@@ -928,6 +959,23 @@ const Tab = memo(function Tab({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Move to Last Position
+									</button>
+								)}
+
+								{/* Window Move Actions Section */}
+								{onMoveToNewWindow && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{/* Move current agent to a separate window */}
+								{onMoveToNewWindow && (
+									<button
+										onClick={handleMoveToNewWindowClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to New Window
 									</button>
 								)}
 
@@ -2059,6 +2107,15 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
+	const handleMoveToNewWindow = useCallback(() => {
+		const sessionId = windowContext?.activeSessionId;
+		if (!sessionId) {
+			return;
+		}
+
+		void windowContext.moveSessionToNewWindow(sessionId);
+	}, [windowContext]);
+
 	// Stable callback wrappers that receive tabId from the Tab component
 	// These avoid creating new function references on each render
 	const handleTabStar = useCallback(
@@ -2313,6 +2370,9 @@ function TabBarInner({
 											onMoveToLast={
 												!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined
 											}
+											onMoveToNewWindow={
+												windowContext?.activeSessionId ? handleMoveToNewWindow : undefined
+											}
 											isFirstTab={isFirstTab}
 											isLastTab={isLastTab}
 											shortcutHint={shortcutHint}
@@ -2434,6 +2494,9 @@ function TabBarInner({
 										}
 										onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
 										onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
+										onMoveToNewWindow={
+											windowContext?.activeSessionId ? handleMoveToNewWindow : undefined
+										}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
 										shortcutHint={
