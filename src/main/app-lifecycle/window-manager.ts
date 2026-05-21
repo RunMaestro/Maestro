@@ -108,6 +108,8 @@ export interface WindowManagerDependencies {
 	autoHideMenuBar: boolean;
 	/** Registry for tracking all open windows */
 	windowRegistry?: WindowRegistry;
+	/** Whether the app is in the confirmed quit path */
+	isQuitting?: () => boolean;
 }
 
 /** Window manager instance */
@@ -286,6 +288,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 		mainWindow.on('closed', () => {
 			logger.info('Browser window closed', 'Window');
+			if (!entry.isMain && !(deps.isQuitting?.() ?? false)) {
+				windowRegistry.removeWindowState(registryWindowId);
+			}
 			windowRegistry.remove(registryWindowId);
 		});
 

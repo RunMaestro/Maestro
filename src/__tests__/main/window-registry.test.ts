@@ -165,4 +165,50 @@ describe('WindowRegistry', () => {
 		});
 		expect(windowStateStore.store.primaryWindowId).toBe('primary');
 	});
+
+	it('removes persisted state for secondary windows only', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+					{
+						id: 'secondary',
+						x: 100,
+						y: 120,
+						width: 900,
+						height: 700,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-2'],
+						activeSessionId: 'session-2',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: true,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+
+		registry.removeWindowState('secondary');
+		registry.removeWindowState('primary');
+
+		expect(windowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+			'primary',
+		]);
+		expect(windowStateStore.store.primaryWindowId).toBe('primary');
+	});
 });

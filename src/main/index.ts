@@ -377,6 +377,7 @@ app.whenReady().then(async () => {
 		useNativeTitleBar,
 		autoHideMenuBar,
 		windowRegistry: new WindowRegistry(),
+		isQuitting: () => quitHandler.isQuitConfirmed(),
 	});
 
 	// Load custom agent paths from settings
