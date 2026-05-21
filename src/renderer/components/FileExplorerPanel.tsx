@@ -24,6 +24,7 @@ import {
 	AlertTriangle,
 	Search,
 	FilePlus,
+	Files,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, FocusArea, FileChangeType } from '../types';
@@ -34,7 +35,9 @@ import {
 	renameNodeInTree,
 	findNodeInTree,
 	countNodesInTree,
+	shouldOpenExternally,
 } from '../utils/fileExplorer';
+import { useModalStore } from '../stores/modalStore';
 import { getExplorerFileIcon, getExplorerFolderIcon } from '../utils/theme';
 import { buildChangedAncestors, buildFileChangeMap } from '../utils/gitChangeMap';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
@@ -572,6 +575,38 @@ interface FlattenedNode {
 	globalIndex: number;
 }
 
+/**
+ * Above this many files, "Preview all files under Folder" asks for confirmation
+ * first so a deep folder doesn't silently flood the tab bar with hundreds of tabs.
+ */
+const PREVIEW_ALL_CONFIRM_THRESHOLD = 25;
+
+/**
+ * Recursively collect every previewable file under a folder node, paired with
+ * its tree-relative path. Files that open in an external app (PDFs, video,
+ * archives, binaries, etc.) are skipped — they can't be shown as in-app
+ * preview tabs.
+ */
+function collectPreviewableFiles(
+	folderNode: FileNode,
+	folderPath: string
+): { node: FileNode; path: string }[] {
+	const result: { node: FileNode; path: string }[] = [];
+	const walk = (nodes: FileNode[] | undefined, basePath: string) => {
+		if (!nodes) return;
+		for (const child of nodes) {
+			const childPath = `${basePath}/${child.name}`;
+			if (child.type === 'folder') {
+				walk(child.children, childPath);
+			} else if (!shouldOpenExternally(child.name)) {
+				result.push({ node: child, path: childPath });
+			}
+		}
+	};
+	walk(folderNode.children, folderPath);
+	return result;
+}
+
 interface FileExplorerPanelProps {
 	session: Session;
 	theme: Theme;
@@ -928,6 +963,43 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		}
 		setContextMenu(null);
 	}, [contextMenu, handleFileClick, session]);
+
+	// Open every previewable file under the right-clicked folder as a tab, so a
+	// folder of documents can be reviewed in one shot. Opens sequentially to
+	// preserve the tree's folders-first ordering in the tab bar.
+	const handlePreviewAllInFolder = useCallback(() => {
+		if (!contextMenu || contextMenu.node.type !== 'folder') {
+			setContextMenu(null);
+			return;
+		}
+		const folderNode = contextMenu.node;
+		const folderPath = contextMenu.path;
+		setContextMenu(null);
+
+		const files = collectPreviewableFiles(folderNode, folderPath);
+		if (files.length === 0) {
+			onShowFlash?.(`No previewable files in "${folderNode.name}"`);
+			return;
+		}
+
+		const openAll = async () => {
+			for (const file of files) {
+				await handleFileClick(file.node, file.path, session);
+			}
+			onShowFlash?.(
+				`Opened ${files.length} file${files.length !== 1 ? 's' : ''} from "${folderNode.name}"`
+			);
+		};
+
+		if (files.length > PREVIEW_ALL_CONFIRM_THRESHOLD) {
+			useModalStore.getState().openModal('confirm', {
+				message: `Preview all ${files.length} files under "${folderNode.name}"? This opens a tab for each file.`,
+				onConfirm: () => void openAll(),
+			});
+			return;
+		}
+		void openAll();
+	}, [contextMenu, handleFileClick, session, onShowFlash]);
 
 	// Ensure a folder is expanded in the tree. Idempotent — no-op if already
 	// expanded or if the path is empty (project root is always visible). Used
@@ -2315,7 +2387,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						}}
 					>
 						<div className="p-1">
-							{/* New File option - for folders only, top of the menu */}
+							{/* New File + Preview all - for folders only, top of the menu */}
 							{contextMenu.node.type === 'folder' && (
 								<>
 									<button
@@ -2325,6 +2397,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									>
 										<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 										<span>New File</span>
+									</button>
+									<button
+										onClick={handlePreviewAllInFolder}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Files className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>Preview all files under Folder</span>
 									</button>
 									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 								</>

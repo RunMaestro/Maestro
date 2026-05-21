@@ -1665,6 +1665,100 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
+		describe('AI-tab metadata toggles gated to AI chat tabs', () => {
+			it('Cmd+S toggles save-to-history when an AI chat tab is active', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockSetSessions = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) =>
+						actionId === 'toggleSaveToHistory',
+					setSessions: mockSetSessions,
+					activeSession: {
+						id: 'session-1',
+						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+						activeTabId: 'ai-tab-1',
+						filePreviewTabs: [],
+						activeFileTabId: null, // AI chat tab is active
+						unifiedTabOrder: ['ai-tab-1'],
+						inputMode: 'ai',
+					},
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true })
+					);
+				});
+
+				expect(mockSetSessions).toHaveBeenCalled();
+			});
+
+			it('Cmd+S does NOT toggle save-to-history when a file tab is active', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockSetSessions = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) =>
+						actionId === 'toggleSaveToHistory',
+					setSessions: mockSetSessions,
+					activeSession: {
+						id: 'session-1',
+						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+						activeTabId: 'ai-tab-1',
+						filePreviewTabs: [
+							{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' },
+						],
+						activeFileTabId: 'file-tab-1', // File tab is active — inputMode stays 'ai'
+						unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+						inputMode: 'ai',
+					},
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true })
+					);
+				});
+
+				// The toggle must not mutate the (hidden) last-visited AI tab.
+				expect(mockSetSessions).not.toHaveBeenCalled();
+			});
+
+			it('Cmd+S does NOT toggle save-to-history when a browser tab is active', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockSetSessions = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) =>
+						actionId === 'toggleSaveToHistory',
+					setSessions: mockSetSessions,
+					activeSession: {
+						id: 'session-1',
+						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+						activeTabId: 'ai-tab-1',
+						filePreviewTabs: [],
+						activeFileTabId: null,
+						browserTabs: [{ id: 'browser-tab-1', url: 'https://example.com' }],
+						activeBrowserTabId: 'browser-tab-1', // Browser tab is active
+						unifiedTabOrder: ['ai-tab-1', 'browser-tab-1'],
+						inputMode: 'ai',
+					},
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 's', metaKey: true, bubbles: true })
+					);
+				});
+
+				expect(mockSetSessions).not.toHaveBeenCalled();
+			});
+		});
+
 		// Unified tab shortcuts in terminal mode — verifies that tab navigation and
 		// management shortcuts work identically whether AI, file, or terminal tabs are active.
 		// The keyboard handler uses a single unified block for all tab types; these tests

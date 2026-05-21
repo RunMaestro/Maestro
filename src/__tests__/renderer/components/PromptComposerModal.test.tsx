@@ -52,6 +52,12 @@ vi.mock('lucide-react', () => ({
 	Folder: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="folder-icon" className={className} style={style} />
 	),
+	Maximize2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="maximize-icon" className={className} style={style} />
+	),
+	Minimize2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="minimize-icon" className={className} style={style} />
+	),
 }));
 
 // Mock theme
@@ -225,6 +231,59 @@ describe('PromptComposerModal', () => {
 
 			expect(screen.getByTitle('Close (Escape)')).toBeInTheDocument();
 			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
+		});
+
+		it('should render expand button defaulting to windowed mode', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			expect(screen.getByTitle('Expand to full screen')).toBeInTheDocument();
+			expect(screen.getByTestId('maximize-icon')).toBeInTheDocument();
+		});
+
+		it('should toggle to full screen and persist the preference', () => {
+			window.localStorage.removeItem('maestro.promptComposer.fullscreen');
+			const { unmount } = renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Expand to full screen'));
+
+			expect(screen.getByTitle('Collapse')).toBeInTheDocument();
+			expect(screen.getByTestId('minimize-icon')).toBeInTheDocument();
+			expect(window.localStorage.getItem('maestro.promptComposer.fullscreen')).toBe('true');
+
+			unmount();
+
+			// Reopening should default to the last-used (full screen) state
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			expect(screen.getByTitle('Collapse')).toBeInTheDocument();
+			window.localStorage.removeItem('maestro.promptComposer.fullscreen');
 		});
 
 		it('should render textarea with placeholder', () => {

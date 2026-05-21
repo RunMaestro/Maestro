@@ -2569,6 +2569,55 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('New File')).not.toBeInTheDocument();
 		});
 
+		it('shows "Preview all files under Folder" option on folder context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('Preview all files under Folder')).toBeInTheDocument();
+		});
+
+		it('does not show "Preview all files under Folder" option on file context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.queryByText('Preview all files under Folder')).not.toBeInTheDocument();
+		});
+
+		it('opens every previewable file under a folder recursively when clicked', async () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const onShowFlash = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					handleFileClick={handleFileClick}
+					onShowFlash={onShowFlash}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Preview all files under Folder'));
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// Recurses into subfolders: src/index.ts and src/utils/helpers.ts
+			expect(handleFileClick).toHaveBeenCalledTimes(2);
+			const paths = handleFileClick.mock.calls.map((c) => c[1]);
+			expect(paths).toContain('src/index.ts');
+			expect(paths).toContain('src/utils/helpers.ts');
+			expect(onShowFlash).toHaveBeenCalledWith('Opened 2 files from "src"');
+		});
+
 		it('creates a new file inside the right-clicked folder', async () => {
 			const writeFile = vi.fn().mockResolvedValue({ success: true });
 			(window as any).maestro = { fs: { writeFile } };
