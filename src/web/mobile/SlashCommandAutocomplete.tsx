@@ -291,7 +291,9 @@ export function SlashCommandAutocomplete({
 								cmd.command,
 								inputValue && inputValue.startsWith('/')
 									? (inputValue || '').toLowerCase().replace(/^\//, '')
-									: ''
+									: '',
+								colors.accent,
+								isSelected
 							)}
 						</div>
 						{/* Command description */}

@@ -622,8 +622,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								}}
 								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
 							>
-								<div className="font-mono text-sm leading-tight">
-									{highlightSlashCommand(cmd.command, inputValueLower.replace(/^\//, ''))}
+								<div className="font-mono text-sm">
+									{highlightSlashCommand(
+										cmd.command,
+										inputValueLower.replace(/^\//, ''),
+										theme.colors.accent,
+										idx === safeSelectedIndex
+									)}
 								</div>
 								<div className="text-[11px] opacity-70 leading-tight">{cmd.description}</div>
 							</button>
