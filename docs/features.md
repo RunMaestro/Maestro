@@ -14,7 +14,7 @@ icon: sparkles
 - 🌐 **[Remote Control](./remote-control)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 🔗 **[SSH Remote Execution](./ssh-remote-execution)** - Run AI agents on remote hosts via SSH. Leverage powerful cloud VMs, access tools not installed locally, or work with projects requiring specific environments - all while controlling everything from your local Maestro instance.
 - 💻 **[Command Line Interface](./cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks, manage settings and agent configs - all from the command line. Settings changes take effect instantly in the running app.
-- 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
+- 🚀 **Multi-Agent Management** - Run unlimited agents in parallel, with [multi-window support](./multi-window) for splitting active agents across monitors or focused work areas. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **[Message Queueing](./general-usage#message-queue)** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Edit, copy, hold/resume, reorder, or remove anything still waiting. Never lose a thought.
 - 🔐 **[Global Environment Variables](./configuration#global-environment-variables)** - Configure environment variables once in Settings and they apply to all agent processes and terminal sessions. Perfect for API keys, proxy settings, and tool paths.
 
