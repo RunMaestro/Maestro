@@ -1199,19 +1199,23 @@ describe('useCycleSession', () => {
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 
-		it('worktree children are sorted by worktreeBranch name', () => {
+		it('worktree children are sorted by display name, not branch name', () => {
+			// Cycling order must match the visible Left Bar order. SessionItem renders
+			// `session.name` as the primary label, so cycling sorts by name and ignores
+			// `worktreeBranch` (which is only a subtitle and would otherwise make Cmd+Shift+[/]
+			// bounce around relative to what the user sees).
 			const parent = makeSession({ id: 'p', name: 'Parent', worktreesExpanded: true });
 			const childZ = makeSession({
 				id: 'cz',
-				name: 'Child',
+				name: 'zebra-agent',
 				parentSessionId: 'p',
-				worktreeBranch: 'zzz-branch',
+				worktreeBranch: 'aaa-branch',
 			});
 			const childA = makeSession({
 				id: 'ca',
-				name: 'Child',
+				name: 'apple-agent',
 				parentSessionId: 'p',
-				worktreeBranch: 'aaa-branch',
+				worktreeBranch: 'zzz-branch',
 			});
 
 			useSessionStore.setState({
@@ -1228,14 +1232,14 @@ describe('useCycleSession', () => {
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
 
-			// Visual order: [Parent, aaa-branch(ca), zzz-branch(cz)]
-			// next from Parent → ca
+			// Visual order by name: [Parent, apple-agent(ca), zebra-agent(cz)]
+			// next from Parent → ca (apple-agent comes first alphabetically by name)
 			act(() => {
 				result.current.cycleSession('next');
 			});
 			expect(useSessionStore.getState().activeSessionId).toBe('ca');
 
-			// next from ca → cz
+			// next from ca → cz (zebra-agent)
 			act(() => {
 				result.current.cycleSession('next');
 			});

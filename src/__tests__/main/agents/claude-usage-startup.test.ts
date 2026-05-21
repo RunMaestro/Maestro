@@ -36,6 +36,25 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+vi.mock('fs', async () => {
+	const actual = await vi.importActual<typeof import('fs')>('fs');
+	const accessSync = vi.fn((filePath: unknown, mode?: number) => {
+		if (typeof filePath === 'string' && filePath.endsWith('maestro-p.js')) {
+			return;
+		}
+		return actual.accessSync(filePath as Parameters<typeof actual.accessSync>[0], mode);
+	});
+
+	return {
+		...actual,
+		accessSync,
+		default: {
+			...actual,
+			accessSync,
+		},
+	};
+});
+
 vi.mock('electron-store', () => {
 	return {
 		default: class MockStore {
