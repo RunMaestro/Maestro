@@ -195,4 +195,25 @@ export class WindowRegistry {
 
 		return nextWindowState;
 	}
+
+	removeWindowState(windowId: string): void {
+		if (!this.windowStateStore) {
+			return;
+		}
+
+		const currentState = this.windowStateStore.store;
+		if (currentState.primaryWindowId === windowId) {
+			return;
+		}
+
+		const windows = currentState.windows.filter((windowState) => windowState.id !== windowId);
+		if (windows.length === currentState.windows.length) {
+			return;
+		}
+
+		this.windowStateStore.store = {
+			...currentState,
+			windows,
+		};
+	}
 }

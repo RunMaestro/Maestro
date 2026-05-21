@@ -433,6 +433,7 @@ const windowManager = createWindowManager({
 	autoHideMenuBar,
 	getConfirmQuit: () => quitHandler?.confirmQuit,
 	windowRegistry: new WindowRegistry(),
+	isQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)

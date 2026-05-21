@@ -546,6 +546,99 @@ describe('app-lifecycle/window-manager', () => {
 			});
 		});
 
+		it('should remove secondary windows from persisted state after they close', async () => {
+			mockWindowStateStore.store.windows = [
+				{
+					...mockWindowStateStore.store.windows[0],
+					id: 'primary',
+					sessionIds: ['session-1'],
+				},
+				{
+					id: '2',
+					x: 300,
+					y: 200,
+					width: 900,
+					height: 700,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['session-2'],
+					activeSessionId: 'session-2',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: true,
+				},
+			];
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2'], {});
+			windowEventHandlers.closed![1]();
+
+			expect(mockWindowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+				'primary',
+			]);
+			expect(windowManager.windowRegistry.get('2')).toBeUndefined();
+		});
+
+		it('should keep secondary window state when closing during app quit', async () => {
+			mockWindowStateStore.store.windows = [
+				{
+					...mockWindowStateStore.store.windows[0],
+					id: 'primary',
+					sessionIds: ['session-1'],
+				},
+				{
+					id: '2',
+					x: 300,
+					y: 200,
+					width: 900,
+					height: 700,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['session-2'],
+					activeSessionId: 'session-2',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: true,
+				},
+			];
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => true,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2'], {});
+			windowEventHandlers.closed![1]();
+
+			expect(mockWindowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+				'primary',
+				'2',
+			]);
+			expect(windowManager.windowRegistry.get('2')).toBeUndefined();
+		});
+
 		it('should log window creation details', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
