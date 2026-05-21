@@ -261,6 +261,44 @@ describe('ShortcutsHelpModal', () => {
 			expect(screen.getByText('Close Session')).toBeInTheDocument();
 			expect(screen.getByText('Search Files')).toBeInTheDocument();
 		});
+
+		it('labels shortcuts by global and current-window scope', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={{
+							quickAction: {
+								id: 'quickAction',
+								label: 'Quick Actions',
+								keys: ['Cmd', 'K'],
+							},
+							newInstance: {
+								id: 'newInstance',
+								label: 'New Agent',
+								keys: ['Cmd', 'N'],
+							},
+						}}
+						onClose={mockOnClose}
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByText('Quick Actions')).toBeInTheDocument();
+			expect(screen.getByText('Global')).toBeInTheDocument();
+			expect(screen.getAllByText('This window').length).toBeGreaterThan(0);
+		});
+
+		it('documents Move to New Window as a tab context-menu action', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			expect(screen.getByText('Move to New Window')).toBeInTheDocument();
+			expect(screen.getByText('Tab context menu')).toBeInTheDocument();
+		});
 	});
 
 	describe('Theme Styling', () => {
