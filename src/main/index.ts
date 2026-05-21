@@ -487,6 +487,8 @@ const quitHandler = createQuitHandler({
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
 	stopSessionCleanup,
+	getWindowRegistry: () => windowManager?.windowRegistry ?? null,
+	windowStateStore,
 });
 quitHandler.setup();
 
