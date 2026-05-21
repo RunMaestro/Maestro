@@ -1,4 +1,4 @@
-import type { Session } from '../types';
+import type { Session, ThinkingItem } from '../types';
 
 export function getWindowSessions(
 	sessions: Session[],
@@ -44,4 +44,37 @@ export function getWindowActiveSession({
 	}
 
 	return windowSessions[0] ?? null;
+}
+
+export function getThinkingItemsForSessions(sessions: Session[]): ThinkingItem[] {
+	const items: ThinkingItem[] = [];
+	for (const session of sessions) {
+		if (session.state === 'busy' && session.busySource === 'ai') {
+			const busyTabs = session.aiTabs?.filter((tab) => tab.state === 'busy');
+			if (busyTabs && busyTabs.length > 0) {
+				for (const tab of busyTabs) {
+					items.push({ session, tab });
+				}
+			} else if (!session.orphanedThinkingTabs?.length) {
+				items.push({ session, tab: null });
+			}
+		}
+		for (const orphan of session.orphanedThinkingTabs ?? []) {
+			items.push({ session, tab: orphan });
+		}
+	}
+	return items;
+}
+
+export function getWindowScopedIds(
+	ids: string[],
+	windowId: string | null,
+	windowSessionIds: string[]
+): string[] {
+	if (!windowId) {
+		return ids;
+	}
+
+	const windowSessionIdSet = new Set(windowSessionIds);
+	return ids.filter((id) => windowSessionIdSet.has(id));
 }

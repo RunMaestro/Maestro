@@ -174,7 +174,7 @@ import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import type { RightPanelTab, Session, QueuedItem, CustomAICommand } from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
@@ -206,7 +206,12 @@ import { useUIStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
-import { getWindowActiveSession, getWindowSessions } from './utils/windowSessionScope';
+import {
+	getThinkingItemsForSessions,
+	getWindowActiveSession,
+	getWindowScopedIds,
+	getWindowSessions,
+} from './utils/windowSessionScope';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -1387,32 +1392,12 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize thinkingItems at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
-	// Flat list of (session, tab) pairs — one entry per busy tab across all sessions.
-	// This allows the ThinkingStatusPill to show all active work, even when multiple tabs
-	// within the same agent are busy in parallel.
-	const thinkingItems: ThinkingItem[] = useMemo(() => {
-		const items: ThinkingItem[] = [];
-		for (const session of sessions) {
-			if (session.state === 'busy' && session.busySource === 'ai') {
-				const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
-				if (busyTabs && busyTabs.length > 0) {
-					for (const tab of busyTabs) {
-						items.push({ session, tab });
-					}
-				} else if (!session.orphanedThinkingTabs?.length) {
-					// Legacy: session is busy but no individual tab-level tracking
-					items.push({ session, tab: null });
-				}
-			}
-			// Closed-but-still-thinking tabs: keep showing them on the pill until
-			// the agent process actually exits. The exit/error listeners remove
-			// entries from orphanedThinkingTabs when the underlying process is gone.
-			for (const orphan of session.orphanedThinkingTabs ?? []) {
-				items.push({ session, tab: orphan });
-			}
-		}
-		return items;
-	}, [sessions]);
+	// Flat list of (session, tab) pairs — one entry per busy tab in this window.
+	// This keeps status pills scoped to the sessions whose tabs are open here.
+	const thinkingItems = useMemo(
+		() => getThinkingItemsForSessions(windowSessions),
+		[windowSessions]
+	);
 
 	// addLogToTab/addLogToActiveTab now used directly via store in useWizardHandlers
 
@@ -1483,7 +1468,6 @@ function MaestroConsoleInner() {
 		abortBatchOnError: abortAutoRunBatchOnError,
 		activeBatchSessionIds,
 		currentSessionBatchState,
-		activeBatchRunState,
 		pauseBatchOnErrorRef,
 		getBatchStateRef,
 		handleSyncAutoRunStats,
@@ -1493,6 +1477,15 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		handleClearAgentError,
 	});
+	const windowActiveBatchSessionIds = useMemo(
+		() => getWindowScopedIds(activeBatchSessionIds, windowId, windowSessionIds),
+		[activeBatchSessionIds, windowId, windowSessionIds]
+	);
+	const displayBatchRunSessionId = windowActiveBatchSessionIds[0] ?? activeSession?.id;
+	const displayBatchRunState = useMemo(
+		() => (displayBatchRunSessionId ? getBatchState(displayBatchRunSessionId) : getBatchState('')),
+		[displayBatchRunSessionId, getBatchState]
+	);
 
 	// Agent Resilience: give the retry engine a way to resume a parked Auto Run
 	// batch so batch turns can auto-continue after transient upstream/quota errors.
@@ -1658,7 +1651,7 @@ function MaestroConsoleInner() {
 		dragCounterRef,
 		setIsDraggingFile,
 		getBatchState,
-		activeBatchRunState,
+		activeBatchRunState: displayBatchRunState,
 		processQueuedItemRef,
 		flushBatchedUpdates: batchedUpdater.flushNow,
 		handleHistoryCommand,
@@ -2447,7 +2440,7 @@ function MaestroConsoleInner() {
 		handleOpenQueueBrowser,
 
 		// Auto Run state for keyboard handler
-		activeBatchRunState,
+		activeBatchRunState: displayBatchRunState,
 
 		// Bulk tab close handlers
 		handleCloseAllTabs,
@@ -2549,6 +2542,8 @@ function MaestroConsoleInner() {
 
 		// Batch run state (convert null to undefined for component props)
 		currentSessionBatchState: currentSessionBatchState ?? undefined,
+		displayBatchRunState,
+		displayBatchRunSessionId,
 
 		// File tree
 		fileTree: stableFileTree,

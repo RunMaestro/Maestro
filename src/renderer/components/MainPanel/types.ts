@@ -156,6 +156,8 @@ export interface MainPanelProps {
 
 	// Auto mode props
 	currentSessionBatchState?: BatchRunState | null; // For current session only (input highlighting)
+	displayBatchRunState?: BatchRunState | null; // For this window's visible Auto Run progress pill
+	displayBatchRunSessionId?: string;
 	onStopBatchRun?: (sessionId?: string) => void;
 
 	// Tab management for AI sessions

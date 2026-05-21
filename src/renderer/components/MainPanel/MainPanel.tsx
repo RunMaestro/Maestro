@@ -98,6 +98,8 @@ export const MainPanel = React.memo(
 			getContextColor,
 			setActiveSessionId,
 			currentSessionBatchState,
+			displayBatchRunState,
+			displayBatchRunSessionId,
 			onStopBatchRun,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
@@ -944,6 +946,8 @@ export const MainPanel = React.memo(
 							handleSessionClick={handleSessionClick}
 							isCurrentSessionAutoMode={isCurrentSessionAutoMode}
 							currentSessionBatchState={currentSessionBatchState}
+							displayBatchRunState={displayBatchRunState}
+							displayBatchRunSessionId={displayBatchRunSessionId}
 							hasCapability={hasCapability}
 							setInputValue={setInputValue}
 							stagedImages={stagedImages}

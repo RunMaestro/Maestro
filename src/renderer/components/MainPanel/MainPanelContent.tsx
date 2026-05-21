@@ -103,6 +103,8 @@ export interface MainPanelContentProps {
 	// Auto mode
 	isCurrentSessionAutoMode: boolean;
 	currentSessionBatchState?: BatchRunState | null;
+	displayBatchRunState?: BatchRunState | null;
+	displayBatchRunSessionId?: string;
 
 	// hasCapability function
 	hasCapability: (
@@ -302,6 +304,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleSessionClick,
 		isCurrentSessionAutoMode,
 		currentSessionBatchState,
+		displayBatchRunState,
+		displayBatchRunSessionId,
 		hasCapability,
 		setInputValue,
 		stagedImages,
@@ -756,8 +760,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 									isAutoModeActive={isCurrentSessionAutoMode}
 									thinkingItems={thinkingItems}
 									onSessionClick={handleSessionClick}
-									autoRunState={currentSessionBatchState || undefined}
-									onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+									autoRunState={displayBatchRunState || undefined}
+									onStopAutoRun={() =>
+										onStopBatchRun?.(displayBatchRunSessionId ?? activeSession.id)
+									}
 									onOpenQueueBrowser={onOpenQueueBrowser}
 									tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
 									onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
