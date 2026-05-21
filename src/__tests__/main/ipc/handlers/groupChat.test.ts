@@ -228,6 +228,7 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Test Chat',
 				'claude-code',
+				undefined,
 				undefined
 			);
 			expect(groupChatModerator.spawnModerator).toHaveBeenCalledWith(mockChat, mockProcessManager);
@@ -262,8 +263,40 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Config Chat',
 				'claude-code',
-				moderatorConfig
+				moderatorConfig,
+				undefined
 			);
+			expect(result).toEqual(mockChat);
+		});
+
+		it('should pass initiator window ID when creating a group chat', async () => {
+			const mockChat: GroupChat = {
+				id: 'gc-window',
+				name: 'Window Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				initiatorWindowId: 'window-2',
+				moderatorSessionId: 'group-chat-gc-window-moderator',
+				participants: [],
+				logPath: '/path/to/log',
+				imagesDir: '/path/to/images',
+			};
+
+			vi.mocked(groupChatStorage.createGroupChat).mockResolvedValue(mockChat);
+			vi.mocked(groupChatModerator.spawnModerator).mockResolvedValue('session-window');
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(mockChat);
+
+			const handler = handlers.get('groupChat:create');
+			const result = await handler!({} as any, 'Window Chat', 'claude-code', undefined, 'window-2');
+
+			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
+				'Window Chat',
+				'claude-code',
+				undefined,
+				'window-2'
+			);
+			expect(result).toEqual(mockChat);
 		});
 
 		it('should return original chat if process manager is not available', async () => {

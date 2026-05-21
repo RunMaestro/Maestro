@@ -197,13 +197,20 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					enableMaestroP?: boolean;
 					maestroPMode?: 'interactive' | 'dynamic';
 					maestroPPath?: string;
-				}
+				},
+				initiatorWindowId?: string | null
 			): Promise<GroupChat> => {
 				logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, {
 					moderatorAgentId,
 					hasConfig: !!moderatorConfig,
+					initiatorWindowId,
 				});
-				const chat = await createGroupChat(name, moderatorAgentId, moderatorConfig);
+				const chat = await createGroupChat(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					initiatorWindowId
+				);
 
 				// Initialize the moderator immediately so it's "hot and ready"
 				// This spawns the session ID prefix so the UI doesn't show "pending"

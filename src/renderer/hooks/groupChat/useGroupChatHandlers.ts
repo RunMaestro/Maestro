@@ -26,6 +26,7 @@ import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
 import { logger } from '../../utils/logger';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -132,6 +133,13 @@ function resetGroupChatUI(): void {
 	setGroupChatError(null);
 }
 
+function isGroupChatVisibleInWindow(
+	chat: { initiatorWindowId?: string | null },
+	windowId: string | null
+): boolean {
+	return !chat.initiatorWindowId || chat.initiatorWindowId === windowId;
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -140,6 +148,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	// --- Refs ---
 	const groupChatInputRef = useRef<HTMLTextAreaElement>(null);
 	const groupChatMessagesRef = useRef<GroupChatMessagesHandle>(null);
+	const windowContext = useOptionalWindowContext();
+	const windowId = windowContext?.windowId ?? null;
 
 	// --- Reactive reads (for effects only) ---
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
@@ -397,59 +407,65 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	// Core group chat handlers
 	// =======================================================================
 
-	const handleOpenGroupChat = useCallback(async (id: string) => {
-		const {
-			setActiveGroupChatId,
-			setGroupChatMessages,
-			setGroupChatState,
-			setGroupChatRightTab,
-			setGroupChats,
-			setParticipantStates,
-			groupChatStates,
-			allGroupChatParticipantStates,
-		} = useGroupChatStore.getState();
-		const { setActiveFocus } = useUIStore.getState();
+	const handleOpenGroupChat = useCallback(
+		async (id: string) => {
+			const {
+				setActiveGroupChatId,
+				setGroupChatMessages,
+				setGroupChatState,
+				setGroupChatRightTab,
+				setGroupChats,
+				setParticipantStates,
+				groupChatStates,
+				allGroupChatParticipantStates,
+			} = useGroupChatStore.getState();
+			const { setActiveFocus } = useUIStore.getState();
 
-		const chat = await window.maestro.groupChat.load(id);
-		if (chat) {
-			setActiveGroupChatId(id);
-			const messages = await window.maestro.groupChat.getMessages(id);
-			setGroupChatMessages(messages);
-
-			// Restore the state for this specific chat from the per-chat state map
-			setGroupChatState(groupChatStates.get(id) ?? 'idle');
-
-			// Restore participant states for this chat
-			setParticipantStates(allGroupChatParticipantStates.get(id) ?? new Map());
-
-			// Load saved right tab preference for this group chat
-			const savedTab = await window.maestro.settings.get(`groupChatRightTab:${id}`);
-			if (savedTab === 'participants' || savedTab === 'history') {
-				setGroupChatRightTab(savedTab);
-			} else {
-				setGroupChatRightTab('participants'); // Default
-			}
-
-			// Start moderator if not running
-			// Fixes MAESTRO-B2: handle case where group chat was deleted between operations
-			try {
-				const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
-				if (moderatorSessionId) {
-					setGroupChats((prev) =>
-						prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c))
-					);
+			const chat = await window.maestro.groupChat.load(id);
+			if (chat) {
+				if (!isGroupChatVisibleInWindow(chat, windowId)) {
+					return;
 				}
-			} catch (error) {
-				logger.warn(`Failed to start moderator for group chat ${id}:`, undefined, error);
-			}
+				setActiveGroupChatId(id);
+				const messages = await window.maestro.groupChat.getMessages(id);
+				setGroupChatMessages(messages);
 
-			// Focus the input after the component renders
-			setTimeout(() => {
-				setActiveFocus('main');
-				groupChatInputRef.current?.focus();
-			}, 100);
-		}
-	}, []);
+				// Restore the state for this specific chat from the per-chat state map
+				setGroupChatState(groupChatStates.get(id) ?? 'idle');
+
+				// Restore participant states for this chat
+				setParticipantStates(allGroupChatParticipantStates.get(id) ?? new Map());
+
+				// Load saved right tab preference for this group chat
+				const savedTab = await window.maestro.settings.get(`groupChatRightTab:${id}`);
+				if (savedTab === 'participants' || savedTab === 'history') {
+					setGroupChatRightTab(savedTab);
+				} else {
+					setGroupChatRightTab('participants'); // Default
+				}
+
+				// Start moderator if not running
+				// Fixes MAESTRO-B2: handle case where group chat was deleted between operations
+				try {
+					const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
+					if (moderatorSessionId) {
+						setGroupChats((prev) =>
+							prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c))
+						);
+					}
+				} catch (error) {
+					logger.warn(`Failed to start moderator for group chat ${id}:`, undefined, error);
+				}
+
+				// Focus the input after the component renders
+				setTimeout(() => {
+					setActiveFocus('main');
+					groupChatInputRef.current?.focus();
+				}, 100);
+			}
+		},
+		[windowId]
+	);
 
 	const handleCloseGroupChat = useCallback(() => {
 		resetGroupChatUI();
@@ -531,7 +547,12 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			const { setGroupChats } = useGroupChatStore.getState();
 			const { closeModal } = useModalStore.getState();
 			try {
-				const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+				const chat = await window.maestro.groupChat.create(
+					name,
+					moderatorAgentId,
+					moderatorConfig,
+					windowId
+				);
 				setGroupChats((prev) => [chat, ...prev]);
 				closeModal('newGroupChat');
 				handleOpenGroupChat(chat.id);
@@ -551,7 +572,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				}
 			}
 		},
-		[handleOpenGroupChat]
+		[handleOpenGroupChat, windowId]
 	);
 
 	const handleDeleteGroupChat = useCallback(

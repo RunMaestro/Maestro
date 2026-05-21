@@ -296,11 +296,19 @@ function SessionListInner(props: SessionListProps) {
 	const setStarredSectionCollapsed = useSettingsStore.getState().setStarredSessionsCollapsed;
 
 	const groupChats = useGroupChatStore((s) => s.groupChats);
-	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
+	const visibleGroupChats = useMemo(
+		() =>
+			groupChats.filter((chat) => !chat.initiatorWindowId || chat.initiatorWindowId === windowId),
+		[groupChats, windowId]
+	);
+	const visibleActiveGroupChatId = visibleGroupChats.some((chat) => chat.id === activeGroupChatId)
+		? activeGroupChatId
+		: null;
 
 	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
 	// Rows are tagged with `data-nav-key`; we resolve the current key from the
@@ -804,7 +812,7 @@ function SessionListInner(props: SessionListProps) {
 					navDomKey={globalIdx >= 0 ? `idx:${globalIdx}` : undefined}
 					isActive={
 						activeSessionId === session.id &&
-						!activeGroupChatId &&
+						!visibleActiveGroupChatId &&
 						// While the keyboard cursor is parked on a Starred row, suppress the
 						// parent agent's active highlight so the starred row is the sole
 						// highlighted item - otherwise the agent's (stronger) active styling
@@ -873,7 +881,7 @@ function SessionListInner(props: SessionListProps) {
 										navDomKey={childGlobalIdx >= 0 ? `idx:${childGlobalIdx}` : undefined}
 										isActive={
 											activeSessionId === child.id &&
-											!activeGroupChatId &&
+											!visibleActiveGroupChatId &&
 											sidebarExtraSelection?.kind !== 'starred'
 										}
 										isKeyboardSelected={isChildKeyboardSelected}
@@ -1703,8 +1711,8 @@ function SessionListInner(props: SessionListProps) {
 						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
-								groupChats={groupChats}
-								activeGroupChatId={activeGroupChatId}
+								groupChats={visibleGroupChats}
+								activeGroupChatId={visibleActiveGroupChatId}
 								keyboardSelectedChatId={
 									activeFocus === 'sidebar' && sidebarExtraSelection?.kind === 'groupChat'
 										? sidebarExtraSelection.id

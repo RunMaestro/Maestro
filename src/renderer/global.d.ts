@@ -176,6 +176,7 @@ type GroupChatData = {
 	createdAt: number;
 	updatedAt?: number;
 	moderatorAgentId: string;
+	initiatorWindowId?: string | null;
 	moderatorSessionId: string;
 	moderatorAgentSessionId?: string;
 	moderatorConfig?: {
@@ -2317,7 +2318,8 @@ interface MaestroAPI {
 				enableMaestroP?: boolean;
 				maestroPMode?: 'interactive' | 'dynamic';
 				maestroPPath?: string;
-			}
+			},
+			initiatorWindowId?: string | null
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;

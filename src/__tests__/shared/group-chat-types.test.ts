@@ -162,12 +162,13 @@ describe('GroupChat type', () => {
 			name: 'Test Group',
 			createdAt: Date.now(),
 			moderatorAgentId: 'claude-code',
+			initiatorWindowId: 'window-2',
 			moderatorSessionId: 'mod-session-123',
 			participants: [],
 			logPath: '/path/to/log.md',
 			imagesDir: '/path/to/images',
 		};
-		expect(groupChat.id).toBe('gc-123');
+		expect(groupChat.initiatorWindowId).toBe('window-2');
 	});
 
 	it('should allow optional fields', () => {

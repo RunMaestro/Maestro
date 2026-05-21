@@ -98,6 +98,8 @@ export interface GroupChat {
 	createdAt: number;
 	updatedAt?: number;
 	moderatorAgentId: string;
+	/** Renderer window that created the group chat. Legacy chats may omit this. */
+	initiatorWindowId?: string | null;
 	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
 	moderatorSessionId: string;
 	/** Claude Code agent session UUID (set after first message is processed) */
