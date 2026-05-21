@@ -89,6 +89,18 @@ function getNextActiveSessionId(sessionIds: string[], movedSessionId: string): s
 	return nextSessionIds[Math.min(movedIndex, nextSessionIds.length - 1)] ?? null;
 }
 
+function wouldEmptyPrimaryWindow(
+	sessionIds: string[],
+	movedSessionIds: string[],
+	isMain: boolean
+): boolean {
+	if (!isMain || sessionIds.length === 0) {
+		return false;
+	}
+
+	return sessionIds.every((sessionId) => movedSessionIds.includes(sessionId));
+}
+
 function isPointInsideBounds(point: WindowPoint, bounds: WindowBounds): boolean {
 	return (
 		point.screenX >= bounds.x &&
@@ -169,6 +181,13 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			const sourceActiveSessionId = sourceWindowId
 				? findStoredWindowState(windowStateStore, sourceWindowId)?.activeSessionId
 				: null;
+			if (
+				sourceEntry &&
+				wouldEmptyPrimaryWindow(sourceEntry.sessionIds, sessionIds, sourceEntry.isMain)
+			) {
+				throw new Error('Cannot move the last tab out of the primary window');
+			}
+
 			const browserWindow = windowManager.createSecondaryWindow(sessionIds, bounds);
 			const windowId = windowRegistry.getWindowId(browserWindow);
 			if (!windowId) {
@@ -239,6 +258,9 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			}
 			if (!toWindow) {
 				throw new Error(`Destination window not registered: ${toWindowId}`);
+			}
+			if (wouldEmptyPrimaryWindow(fromWindow.sessionIds, [sessionId], fromWindow.isMain)) {
+				throw new Error('Cannot move the last tab out of the primary window');
 			}
 
 			const sourceStoredState = findStoredWindowState(windowStateStore, fromWindowId);

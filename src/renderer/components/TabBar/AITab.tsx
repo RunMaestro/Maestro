@@ -58,6 +58,8 @@ export interface AITabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/** Stable callback - receives tabId */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -118,6 +120,7 @@ export const AITab = memo(function AITab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -147,6 +150,7 @@ export const AITab = memo(function AITab({
 		overlayOpen,
 		setOverlayOpen,
 		overlayPosition,
+		setOverlayPosition,
 		setOverlayRef,
 		positionReady,
 		setTabRef,
@@ -284,6 +288,15 @@ export const AITab = memo(function AITab({
 		[onMoveToLast, tabId, setOverlayOpen]
 	);
 
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId, setOverlayOpen]
+	);
+
 	const handleCopyContextClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -399,6 +412,27 @@ export const AITab = memo(function AITab({
 		[onDrop, tabId]
 	);
 
+	const openOverlayAt = useCallback(
+		(left: number, top: number) => {
+			if (hoverTimeoutRef.current) {
+				clearTimeout(hoverTimeoutRef.current);
+				hoverTimeoutRef.current = null;
+			}
+			setOverlayPosition({ top, left });
+			setOverlayOpen(true);
+		},
+		[hoverTimeoutRef, setOverlayOpen, setOverlayPosition]
+	);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			openOverlayAt(e.clientX, e.clientY);
+		},
+		[openOverlayAt]
+	);
+
 	// Memoize display name to avoid recalculation on every render.
 	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) —
 	// using [tab] would invalidate on every logs/state change which is too aggressive.
@@ -480,6 +514,7 @@ export const AITab = memo(function AITab({
 			onDragOver={handleTabDragOver}
 			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
+			onContextMenu={handleContextMenu}
 		>
 			{/* Agent error pill - highlights tabs that have an active error for quick triage */}
 			{tab.agentError && (
@@ -626,6 +661,7 @@ export const AITab = memo(function AITab({
 							onPublishGistClick={handlePublishGistClick}
 							onMoveToFirstClick={handleMoveToFirstClick}
 							onMoveToLastClick={handleMoveToLastClick}
+							onMoveToNewWindowClick={handleMoveToNewWindowClick}
 							onCloseTabClick={handleCloseTabClick}
 							onCloseOtherTabsClick={handleCloseOtherTabsClick}
 							onCloseTabsLeftClick={handleCloseTabsLeftClick}
@@ -638,6 +674,7 @@ export const AITab = memo(function AITab({
 							onPublishGist={onPublishGist}
 							onMoveToFirst={onMoveToFirst}
 							onMoveToLast={onMoveToLast}
+							onMoveToNewWindow={onMoveToNewWindow}
 							onCloseOtherTabs={onCloseOtherTabs}
 							onCloseTabsLeft={onCloseTabsLeft}
 							onCloseTabsRight={onCloseTabsRight}

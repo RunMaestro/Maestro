@@ -19,6 +19,7 @@ export interface UseTabHoverOverlayReturn {
 	overlayOpen: boolean;
 	setOverlayOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	overlayPosition: OverlayPosition | null;
+	setOverlayPosition: React.Dispatch<React.SetStateAction<OverlayPosition | null>>;
 	tabRef: React.RefObject<HTMLDivElement | null>;
 	hoverTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
 	isOverOverlayRef: React.MutableRefObject<boolean>;
@@ -150,6 +151,7 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		overlayOpen,
 		setOverlayOpen,
 		overlayPosition,
+		setOverlayPosition,
 		tabRef,
 		hoverTimeoutRef,
 		isOverOverlayRef,

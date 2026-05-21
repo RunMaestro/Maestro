@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell } from 'lucide-react';
-import type { AITab } from '../../types';
-import { hasDraft } from '../../utils/tabHelpers';
+import type { AITab, Theme } from '../../types';
+import { getTabDisplayName, hasDraft } from '../../utils/tabHelpers';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useStuckTabSignature } from '../../stores/retryStore';
@@ -17,6 +18,7 @@ import type { TabBarProps } from './types';
 import { logger } from '../../utils/logger';
 import type { WindowBounds } from '../../../shared/types/window';
 import { useOptionalWindowContext } from '../../contexts/WindowContext';
+import { notifyToast } from '../../stores/notificationStore';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
@@ -26,6 +28,60 @@ const isPointOutsideBounds = (screenX: number, screenY: number, bounds: WindowBo
 	screenX > bounds.x + bounds.width ||
 	screenY < bounds.y ||
 	screenY > bounds.y + bounds.height;
+
+interface DragPreviewState {
+	label: string;
+	x: number;
+	y: number;
+	targetWindowId: string | null;
+}
+
+function getDragPreviewPosition(
+	screenX: number,
+	screenY: number,
+	bounds: WindowBounds
+): Pick<DragPreviewState, 'x' | 'y'> {
+	return {
+		x: screenX - bounds.x + 12,
+		y: screenY - bounds.y + 12,
+	};
+}
+
+function setTabDragImage(
+	dataTransfer: DataTransfer,
+	label: string,
+	theme: Theme
+): HTMLDivElement | null {
+	if (!dataTransfer.setDragImage || typeof document === 'undefined') {
+		return null;
+	}
+
+	const dragImage = document.createElement('div');
+	dragImage.textContent = label;
+	Object.assign(dragImage.style, {
+		position: 'fixed',
+		top: '-1000px',
+		left: '-1000px',
+		maxWidth: '220px',
+		padding: '6px 10px',
+		borderRadius: '6px',
+		border: `1px solid ${theme.colors.accent}`,
+		background: theme.colors.bgMain,
+		color: theme.colors.textMain,
+		boxShadow: '0 10px 24px rgba(0, 0, 0, 0.32)',
+		fontSize: '12px',
+		fontWeight: '500',
+		whiteSpace: 'nowrap',
+		overflow: 'hidden',
+		textOverflow: 'ellipsis',
+		pointerEvents: 'none',
+		zIndex: '9999',
+	});
+	document.body.appendChild(dragImage);
+	dataTransfer.setDragImage(dragImage, 12, 12);
+
+	return dragImage;
+}
 
 /**
  * TabBar component for displaying the unified tab strip.
@@ -101,6 +157,7 @@ function TabBarInner({
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
 	const [draggingOutsideWindow, setDraggingOutsideWindow] = useState(false);
+	const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
 	// Agent Resilience: tabs stuck auto-retrying an outage surface in the unread
@@ -125,6 +182,7 @@ function TabBarInner({
 	const windowBoundsRef = useRef<WindowBounds | null>(null);
 	const dragTargetWindowIdRef = useRef<string | null>(null);
 	const lastWindowPointLookupRef = useRef<string | null>(null);
+	const highlightedWindowIdRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 	const windowContext = useOptionalWindowContext();
 
@@ -230,32 +288,103 @@ function TabBarInner({
 	]);
 
 	// Drag handlers
-	const lookupDragTargetWindow = useCallback((screenX: number, screenY: number) => {
-		const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
-		if (!findWindowAtPoint || (screenX === 0 && screenY === 0)) {
-			dragTargetWindowIdRef.current = null;
+	const clearHighlightedDropZone = useCallback(() => {
+		const highlightedWindowId = highlightedWindowIdRef.current;
+		if (!highlightedWindowId) {
 			return;
 		}
 
-		const lookupKey = `${screenX}:${screenY}`;
-		if (lastWindowPointLookupRef.current === lookupKey) {
-			return;
-		}
-		lastWindowPointLookupRef.current = lookupKey;
-
-		void findWindowAtPoint(screenX, screenY)
-			.then((windowInfo) => {
-				if (lastWindowPointLookupRef.current === lookupKey) {
-					dragTargetWindowIdRef.current = windowInfo?.id ?? null;
-				}
-			})
-			.catch((error) => {
-				logger.warn('[TabBar] Failed to look up drag target window', { error });
-				if (lastWindowPointLookupRef.current === lookupKey) {
-					dragTargetWindowIdRef.current = null;
-				}
-			});
+		highlightedWindowIdRef.current = null;
+		void window.maestro?.windows?.highlightDropZone?.(highlightedWindowId, false);
 	}, []);
+
+	const setHighlightedDropZone = useCallback(
+		(windowId: string | null) => {
+			if (highlightedWindowIdRef.current === windowId) {
+				return;
+			}
+
+			clearHighlightedDropZone();
+			highlightedWindowIdRef.current = windowId;
+			if (windowId) {
+				void window.maestro?.windows?.highlightDropZone?.(windowId, true);
+			}
+		},
+		[clearHighlightedDropZone]
+	);
+
+	const isLastPrimarySessionTab = useCallback(
+		(tabId: string) => {
+			const primarySessionId = windowContext?.sessionIds[0];
+			return Boolean(
+				windowContext?.isMainWindow &&
+					windowContext.sessionIds.length === 1 &&
+					(primarySessionId === tabId || primarySessionId === windowContext.activeSessionId)
+			);
+		},
+		[windowContext?.activeSessionId, windowContext?.isMainWindow, windowContext?.sessionIds]
+	);
+
+	const showPrimaryLastTabToast = useCallback(() => {
+		notifyToast({
+			type: 'warning',
+			title: 'Primary Window Needs a Tab',
+			message: 'Move another tab into the primary window before moving its last tab out.',
+			skipCustomNotification: true,
+		});
+	}, []);
+
+	const getDragPreviewLabel = useCallback(
+		(tabId: string) => {
+			const aiTab = tabs.find((tab) => tab.id === tabId);
+			if (aiTab) {
+				return getTabDisplayName(aiTab);
+			}
+
+			const fileTab = unifiedTabs?.find((tab) => tab.id === tabId && tab.type === 'file');
+			return fileTab?.type === 'file' ? `${fileTab.data.name}${fileTab.data.extension}` : 'Tab';
+		},
+		[tabs, unifiedTabs]
+	);
+
+	const lookupDragTargetWindow = useCallback(
+		(screenX: number, screenY: number) => {
+			const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
+			if (!findWindowAtPoint || (screenX === 0 && screenY === 0)) {
+				dragTargetWindowIdRef.current = null;
+				setHighlightedDropZone(null);
+				return;
+			}
+
+			const lookupKey = `${screenX}:${screenY}`;
+			if (lastWindowPointLookupRef.current === lookupKey) {
+				return;
+			}
+			lastWindowPointLookupRef.current = lookupKey;
+
+			void findWindowAtPoint(screenX, screenY)
+				.then((windowInfo) => {
+					if (lastWindowPointLookupRef.current === lookupKey) {
+						const nextTargetWindowId = windowInfo?.id ?? null;
+						dragTargetWindowIdRef.current = nextTargetWindowId;
+						setDragPreview((currentPreview) =>
+							currentPreview
+								? { ...currentPreview, targetWindowId: nextTargetWindowId }
+								: currentPreview
+						);
+						setHighlightedDropZone(nextTargetWindowId);
+					}
+				})
+				.catch((error) => {
+					logger.warn('[TabBar] Failed to look up drag target window', { error });
+					if (lastWindowPointLookupRef.current === lookupKey) {
+						dragTargetWindowIdRef.current = null;
+						setHighlightedDropZone(null);
+					}
+				});
+		},
+		[setHighlightedDropZone]
+	);
 
 	const updateDragWindowExitState = useCallback(
 		(screenX: number, screenY: number) => {
@@ -267,36 +396,69 @@ function TabBarInner({
 			const isOutsideWindow = isPointOutsideBounds(screenX, screenY, bounds);
 			setDraggingOutsideWindow(isOutsideWindow);
 			if (isOutsideWindow) {
+				setDragPreview((currentPreview) =>
+					currentPreview
+						? { ...currentPreview, ...getDragPreviewPosition(screenX, screenY, bounds) }
+						: currentPreview
+				);
 				lookupDragTargetWindow(screenX, screenY);
 			} else {
 				dragTargetWindowIdRef.current = null;
 				lastWindowPointLookupRef.current = null;
+				setDragPreview(null);
+				setHighlightedDropZone(null);
 			}
 		},
-		[lookupDragTargetWindow]
+		[lookupDragTargetWindow, setHighlightedDropZone]
 	);
 
 	const handleDragStart = useCallback(
 		(tabId: string, e: React.DragEvent) => {
+			if (isLastPrimarySessionTab(tabId)) {
+				e.preventDefault();
+				showPrimaryLastTabToast();
+				return;
+			}
+
 			e.dataTransfer.effectAllowed = 'move';
 			e.dataTransfer.setData('text/plain', tabId);
 			setDraggingTabId(tabId);
 			setDraggingOutsideWindow(false);
+			setDragPreview(null);
 			windowBoundsRef.current = null;
 			dragTargetWindowIdRef.current = null;
 			lastWindowPointLookupRef.current = null;
+			clearHighlightedDropZone();
+
+			const label = getDragPreviewLabel(tabId);
+			const dragImage = setTabDragImage(e.dataTransfer, label, theme);
+			if (dragImage) {
+				setTimeout(() => dragImage.remove(), 0);
+			}
 
 			window.maestro?.windows
 				?.getWindowBounds?.()
 				.then((bounds) => {
 					windowBoundsRef.current = bounds;
+					setDragPreview({
+						label,
+						...getDragPreviewPosition(e.screenX, e.screenY, bounds),
+						targetWindowId: null,
+					});
 					updateDragWindowExitState(e.screenX, e.screenY);
 				})
 				.catch((error) => {
 					logger.warn('[TabBar] Failed to read window bounds during tab drag', { error });
 				});
 		},
-		[updateDragWindowExitState]
+		[
+			clearHighlightedDropZone,
+			getDragPreviewLabel,
+			isLastPrimarySessionTab,
+			showPrimaryLastTabToast,
+			theme,
+			updateDragWindowExitState,
+		]
 	);
 
 	const handleDrag = useCallback(
@@ -319,17 +481,34 @@ function TabBarInner({
 		setDraggingTabId(null);
 		setDragOverTabId(null);
 		setDraggingOutsideWindow(false);
+		setDragPreview(null);
 		windowBoundsRef.current = null;
 		dragTargetWindowIdRef.current = null;
 		lastWindowPointLookupRef.current = null;
-	}, []);
+		clearHighlightedDropZone();
+	}, [clearHighlightedDropZone]);
 
 	const handleDragEnd = useCallback(
 		(tabId: string, e: React.DragEvent) => {
 			const isAiTabDrag = tabs.some((tab) => tab.id === tabId);
+			const dropScreenX = e.screenX;
+			const dropScreenY = e.screenY;
 			const targetWindowId = dragTargetWindowIdRef.current;
 			const sourceWindowId = windowContext?.windowId;
 			const windowSessionId = windowContext?.activeSessionId ?? sessionId ?? null;
+			const closeSourceTab = windowContext?.closeTab;
+			const createSessionWindowAtPoint = (screenX: number, screenY: number) => {
+				if (!isAiTabDrag || !windowSessionId || !window.maestro?.windows?.create) {
+					return;
+				}
+
+				void window.maestro.windows
+					.create([windowSessionId], { x: screenX - 100, y: screenY - 50 })
+					.then(() => closeSourceTab?.(windowSessionId))
+					.catch((error) => {
+						logger.warn('[TabBar] Failed to create window for dragged tab', { error });
+					});
+			};
 			const moveSessionToWindow = (nextTargetWindowId: string | null | undefined) => {
 				if (
 					isAiTabDrag &&
@@ -342,18 +521,27 @@ function TabBarInner({
 					void window.maestro.windows.moveSession(windowSessionId, sourceWindowId, nextTargetWindowId);
 				}
 			};
+			const handleOutsideDrop = (nextTargetWindowId: string | null | undefined) => {
+				if (nextTargetWindowId) {
+					moveSessionToWindow(nextTargetWindowId);
+				} else {
+					createSessionWindowAtPoint(dropScreenX, dropScreenY);
+				}
+			};
 
-			if (targetWindowId) {
+			if (isLastPrimarySessionTab(tabId)) {
+				showPrimaryLastTabToast();
+			} else if (targetWindowId) {
 				moveSessionToWindow(targetWindowId);
 			} else if (
 				windowBoundsRef.current &&
-				(e.screenX !== 0 || e.screenY !== 0) &&
-				isPointOutsideBounds(e.screenX, e.screenY, windowBoundsRef.current) &&
+				(dropScreenX !== 0 || dropScreenY !== 0) &&
+				isPointOutsideBounds(dropScreenX, dropScreenY, windowBoundsRef.current) &&
 				window.maestro?.windows?.findWindowAtPoint
 			) {
 				void window.maestro.windows
-					.findWindowAtPoint(e.screenX, e.screenY)
-					.then((windowInfo) => moveSessionToWindow(windowInfo?.id))
+					.findWindowAtPoint(dropScreenX, dropScreenY)
+					.then((windowInfo) => handleOutsideDrop(windowInfo?.id))
 					.catch((error) => {
 						logger.warn('[TabBar] Failed to look up drag target window on drag end', { error });
 					});
@@ -361,7 +549,16 @@ function TabBarInner({
 
 			resetDragState();
 		},
-		[resetDragState, sessionId, tabs, windowContext?.activeSessionId, windowContext?.windowId]
+		[
+			isLastPrimarySessionTab,
+			resetDragState,
+			sessionId,
+			showPrimaryLastTabToast,
+			tabs,
+			windowContext?.activeSessionId,
+			windowContext?.closeTab,
+			windowContext?.windowId,
+		]
 	);
 
 	const handleGenericDragEnd = useCallback(() => {
@@ -392,6 +589,12 @@ function TabBarInner({
 		(tabId: string) => onRequestRename?.(tabId),
 		[onRequestRename]
 	);
+
+	useEffect(() => {
+		return () => {
+			clearHighlightedDropZone();
+		};
+	}, [clearHighlightedDropZone]);
 
 	// Overflow detection
 	useEffect(() => {
@@ -433,6 +636,25 @@ function TabBarInner({
 			}
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+	);
+
+	const handleMoveToNewWindow = useCallback(
+		(tabId: string) => {
+			const windowSessionId = windowContext?.sessionIds.includes(tabId)
+				? tabId
+				: (windowContext?.activeSessionId ?? sessionId ?? null);
+			if (!windowSessionId) {
+				return;
+			}
+
+			if (isLastPrimarySessionTab(windowSessionId)) {
+				showPrimaryLastTabToast();
+				return;
+			}
+
+			void windowContext?.moveSessionToNewWindow(windowSessionId);
+		},
+		[isLastPrimarySessionTab, sessionId, showPrimaryLastTabToast, windowContext]
 	);
 
 	// Close wrappers — forward the clicked tab id as the pivot so the operation
@@ -538,6 +760,7 @@ function TabBarInner({
 			!isLastTab && (useUnifiedReorder ? onUnifiedTabReorder : onTabReorder)
 				? handleMoveToLast
 				: undefined,
+		onMoveToNewWindow: windowContext?.activeSessionId ? handleMoveToNewWindow : undefined,
 		isFirstTab,
 		isLastTab,
 		shortcutHint,
@@ -552,13 +775,23 @@ function TabBarInner({
 	});
 
 	return (
-		<div
-			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
-			data-tour="tab-bar"
-			data-drag-outside-window={draggingOutsideWindow ? 'true' : undefined}
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
-		>
+		<>
+			<div
+				ref={tabBarRef}
+				className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
+				data-tour="tab-bar"
+				data-drag-outside-window={draggingOutsideWindow ? 'true' : undefined}
+				data-drop-zone-highlighted={windowContext?.isDropZoneHighlighted ? 'true' : undefined}
+				style={{
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: windowContext?.isDropZoneHighlighted
+						? theme.colors.accent
+						: theme.colors.border,
+					boxShadow: windowContext?.isDropZoneHighlighted
+						? `inset 0 0 0 2px ${theme.colors.accent}`
+						: undefined,
+				}}
+			>
 			{/* Sticky left: search + unread filter */}
 			<div
 				ref={stickyLeftRef}
@@ -825,7 +1058,28 @@ function TabBarInner({
 				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
 				isOverflowing={isOverflowing}
 			/>
-		</div>
+			</div>
+			{draggingOutsideWindow &&
+				dragPreview &&
+				createPortal(
+					<div
+						className="fixed z-[9999] pointer-events-none max-w-[220px] truncate rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-xl"
+						style={{
+							left: dragPreview.x,
+							top: dragPreview.y,
+							backgroundColor: theme.colors.bgMain,
+							borderColor: dragPreview.targetWindowId ? theme.colors.accent : theme.colors.border,
+							color: theme.colors.textMain,
+							boxShadow: dragPreview.targetWindowId
+								? `0 0 0 2px ${theme.colors.accent}55, 0 12px 28px rgba(0, 0, 0, 0.35)`
+								: '0 12px 28px rgba(0, 0, 0, 0.35)',
+						}}
+					>
+						{dragPreview.label}
+					</div>,
+					document.body
+				)}
+		</>
 	);
 }
 

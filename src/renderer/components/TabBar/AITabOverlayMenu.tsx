@@ -13,6 +13,7 @@ import {
 	Share2,
 	ChevronsLeft,
 	ChevronsRight,
+	ExternalLink,
 	X,
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
@@ -45,6 +46,7 @@ export interface AITabOverlayMenuProps {
 	onPublishGistClick: (e: React.MouseEvent) => void;
 	onMoveToFirstClick: (e: React.MouseEvent) => void;
 	onMoveToLastClick: (e: React.MouseEvent) => void;
+	onMoveToNewWindowClick: (e: React.MouseEvent) => void;
 	onCloseTabClick: (e: React.MouseEvent) => void;
 	onCloseOtherTabsClick: (e: React.MouseEvent) => void;
 	onCloseTabsLeftClick: (e: React.MouseEvent) => void;
@@ -58,6 +60,7 @@ export interface AITabOverlayMenuProps {
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
+	onMoveToNewWindow?: (tabId: string) => void;
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
@@ -89,6 +92,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onPublishGistClick,
 	onMoveToFirstClick,
 	onMoveToLastClick,
+	onMoveToNewWindowClick,
 	onCloseTabClick,
 	onCloseOtherTabsClick,
 	onCloseTabsLeftClick,
@@ -101,6 +105,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
@@ -341,6 +346,23 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 						<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Move to Last Position
 						{tabShortcuts.moveTabToEnd && <ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />}
+					</button>
+				)}
+
+				{/* Window Move Actions Section */}
+				{onMoveToNewWindow && (
+					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+				)}
+
+				{/* Move current agent to a separate window */}
+				{onMoveToNewWindow && (
+					<button
+						onClick={onMoveToNewWindowClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+						style={{ color: theme.colors.textMain }}
+					>
+						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Move to New Window
 					</button>
 				)}
 
