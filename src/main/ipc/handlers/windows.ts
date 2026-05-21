@@ -316,6 +316,23 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		}
 	);
 
+	ipcMain.handle(
+		'windows:highlightDropZone',
+		async (_event, windowId: string, highlighted: boolean): Promise<boolean> => {
+			const entry = windowRegistry.get(windowId);
+			if (
+				!entry ||
+				entry.browserWindow.isDestroyed() ||
+				entry.browserWindow.webContents.isDestroyed()
+			) {
+				return false;
+			}
+
+			entry.browserWindow.webContents.send('windows:dropZoneHighlightChanged', { highlighted });
+			return true;
+		}
+	);
+
 	ipcMain.handle('windows:getState', async (event): Promise<WindowState> => {
 		const browserWindow = getEventWindow(event);
 		const windowId = windowRegistry.getWindowId(browserWindow);

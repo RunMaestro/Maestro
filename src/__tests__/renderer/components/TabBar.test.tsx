@@ -1363,8 +1363,10 @@ describe('TabBar', () => {
 						sessionIds: ['session-2'],
 						activeSessionId: 'session-2',
 					}),
+					highlightDropZone: vi.fn().mockResolvedValue(true),
 					moveSession,
 					onSessionMoved: vi.fn(() => vi.fn()),
+					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 				},
 			} as typeof window.maestro;
 
@@ -1409,6 +1411,8 @@ describe('TabBar', () => {
 			fireEvent.dragEnd(tab);
 
 			expect(window.maestro.windows.findWindowAtPoint).toHaveBeenCalledWith(1400, 100);
+			expect(window.maestro.windows.highlightDropZone).toHaveBeenCalledWith('window-2', true);
+			expect(window.maestro.windows.highlightDropZone).toHaveBeenCalledWith('window-2', false);
 			expect(moveSession).toHaveBeenCalledWith('session-1', 'window-1', 'window-2');
 		});
 
@@ -1453,9 +1457,11 @@ describe('TabBar', () => {
 						height: 800,
 					}),
 					findWindowAtPoint: vi.fn().mockResolvedValue(null),
+					highlightDropZone: vi.fn().mockResolvedValue(true),
 					create: createWindow,
 					moveSession: vi.fn(),
 					onSessionMoved: vi.fn(() => vi.fn()),
+					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 				},
 			} as typeof window.maestro;
 

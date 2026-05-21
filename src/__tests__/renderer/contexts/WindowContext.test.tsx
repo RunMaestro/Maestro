@@ -2,7 +2,10 @@ import React, { type ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WindowProvider, useWindowContext } from '../../../renderer/contexts/WindowContext';
-import type { WindowSessionMovedEvent } from '../../../shared/types/window';
+import type {
+	WindowDropZoneHighlightEvent,
+	WindowSessionMovedEvent,
+} from '../../../shared/types/window';
 
 const initialWindowState = {
 	id: 'window-1',
@@ -24,10 +27,12 @@ function wrapper({ children }: { children: ReactNode }) {
 
 describe('WindowContext', () => {
 	let sessionMovedHandler: ((event: WindowSessionMovedEvent) => void) | undefined;
+	let dropZoneHighlightHandler: ((event: WindowDropZoneHighlightEvent) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sessionMovedHandler = undefined;
+		dropZoneHighlightHandler = undefined;
 
 		(window as any).maestro = {
 			...(window as any).maestro,
@@ -57,6 +62,10 @@ describe('WindowContext', () => {
 				}),
 				onSessionMoved: vi.fn((handler) => {
 					sessionMovedHandler = handler;
+					return vi.fn();
+				}),
+				onDropZoneHighlightChanged: vi.fn((handler) => {
+					dropZoneHighlightHandler = handler;
 					return vi.fn();
 				}),
 			},
@@ -200,5 +209,22 @@ describe('WindowContext', () => {
 
 		expect(result.current.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
 		expect(result.current.activeSessionId).toBe('session-1');
+	});
+
+	it('updates drop zone highlight state from window events', async () => {
+		const { result } = renderHook(() => useWindowContext(), { wrapper });
+		await waitFor(() => expect(result.current.windowId).toBe('window-1'));
+
+		act(() => {
+			dropZoneHighlightHandler?.({ highlighted: true });
+		});
+
+		expect(result.current.isDropZoneHighlighted).toBe(true);
+
+		act(() => {
+			dropZoneHighlightHandler?.({ highlighted: false });
+		});
+
+		expect(result.current.isDropZoneHighlighted).toBe(false);
 	});
 });

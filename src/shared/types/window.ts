@@ -43,6 +43,10 @@ export interface WindowSessionMovedEvent {
 	windows: WindowInfo[];
 }
 
+export interface WindowDropZoneHighlightEvent {
+	highlighted: boolean;
+}
+
 export type WindowStateUpdate = Partial<
 	Pick<WindowState, 'activeSessionId' | 'leftPanelCollapsed' | 'rightPanelCollapsed'>
 >;

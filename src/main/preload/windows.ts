@@ -12,6 +12,7 @@ import { ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type {
 	WindowBounds,
+	WindowDropZoneHighlightEvent,
 	WindowInfo,
 	WindowSessionMovedEvent,
 	WindowState,
@@ -49,6 +50,8 @@ export function createWindowsApi() {
 		getWindowBounds: (): Promise<WindowBounds> => ipcRenderer.invoke('windows:getWindowBounds'),
 		findWindowAtPoint: (screenX: number, screenY: number): Promise<WindowInfo | null> =>
 			ipcRenderer.invoke('windows:findWindowAtPoint', screenX, screenY),
+		highlightDropZone: (windowId: string, highlighted: boolean): Promise<boolean> =>
+			ipcRenderer.invoke('windows:highlightDropZone', windowId, highlighted),
 		getState: (): Promise<WindowState> => ipcRenderer.invoke('windows:getState'),
 		updateState: (update: WindowStateUpdate): Promise<WindowState> =>
 			ipcRenderer.invoke('windows:updateState', update),
@@ -57,6 +60,12 @@ export function createWindowsApi() {
 				handler(payload);
 			ipcRenderer.on('windows:sessionMoved', wrappedHandler);
 			return () => ipcRenderer.removeListener('windows:sessionMoved', wrappedHandler);
+		},
+		onDropZoneHighlightChanged: (handler: (event: WindowDropZoneHighlightEvent) => void) => {
+			const wrappedHandler = (_event: IpcRendererEvent, payload: WindowDropZoneHighlightEvent) =>
+				handler(payload);
+			ipcRenderer.on('windows:dropZoneHighlightChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('windows:dropZoneHighlightChanged', wrappedHandler);
 		},
 	};
 }

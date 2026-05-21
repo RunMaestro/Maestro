@@ -589,7 +589,12 @@ export {
 	MarketplaceImportError,
 } from '../marketplace-types';
 
-export type { MultiWindowState, WindowInfo, WindowState } from './window';
+export type {
+	MultiWindowState,
+	WindowDropZoneHighlightEvent,
+	WindowInfo,
+	WindowState,
+} from './window';
 
 // ============================================================================
 // SSH Remote Execution Types

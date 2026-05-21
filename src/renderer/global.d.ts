@@ -142,6 +142,10 @@ interface MaestroWindowSessionMovedEvent {
 	windows: MaestroWindowInfo[];
 }
 
+interface MaestroWindowDropZoneHighlightEvent {
+	highlighted: boolean;
+}
+
 type MaestroWindowStateUpdate = Partial<
 	Pick<MaestroWindowState, 'activeSessionId' | 'leftPanelCollapsed' | 'rightPanelCollapsed'>
 >;
@@ -3659,9 +3663,13 @@ interface MaestroAPI {
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getWindowBounds: () => Promise<MaestroWindowBounds>;
 		findWindowAtPoint: (screenX: number, screenY: number) => Promise<MaestroWindowInfo | null>;
+		highlightDropZone: (windowId: string, highlighted: boolean) => Promise<boolean>;
 		getState: () => Promise<MaestroWindowState>;
 		updateState: (update: MaestroWindowStateUpdate) => Promise<MaestroWindowState>;
 		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
+		onDropZoneHighlightChanged: (
+			handler: (event: MaestroWindowDropZoneHighlightEvent) => void
+		) => () => void;
 	};
 }
 

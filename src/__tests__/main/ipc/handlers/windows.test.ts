@@ -106,6 +106,7 @@ describe('windows IPC handlers', () => {
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:focusWindow', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getWindowBounds', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:findWindowAtPoint', expect.any(Function));
+		expect(ipcMain.handle).toHaveBeenCalledWith('windows:highlightDropZone', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:getState', expect.any(Function));
 		expect(ipcMain.handle).toHaveBeenCalledWith('windows:updateState', expect.any(Function));
 	});
@@ -267,6 +268,19 @@ describe('windows IPC handlers', () => {
 		const result = await handler!({ sender: primary.webContents }, 550, 50);
 
 		expect(result).toBeNull();
+	});
+
+	it('sends drop zone highlight events to the target window', async () => {
+		windowManager.createWindow('primary', ['session-1']);
+		const secondary = windowManager.createSecondaryWindow(['session-2'], {});
+
+		const handler = mockState.registeredHandlers.get('windows:highlightDropZone');
+		const result = await handler!({}, '2', true);
+
+		expect(result).toBe(true);
+		expect(secondary.webContents.send).toHaveBeenCalledWith('windows:dropZoneHighlightChanged', {
+			highlighted: true,
+		});
 	});
 
 	it('returns state for the invoking window', async () => {
