@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Session } from '../../../renderer/types';
 import {
+	getThinkingItemsForSessions,
 	getWindowActiveSession,
+	getWindowScopedIds,
 	getWindowSessions,
 } from '../../../renderer/utils/windowSessionScope';
 
-function createSession(id: string): Session {
+function createSession(id: string, overrides: Partial<Session> = {}): Session {
 	return {
 		id,
 		name: id,
@@ -13,6 +15,8 @@ function createSession(id: string): Session {
 		workingDirectory: '/tmp',
 		projectRoot: '/tmp',
 		status: 'idle',
+		state: 'idle',
+		busySource: undefined,
 		logs: [],
 		queue: [],
 		agents: [],
@@ -24,6 +28,7 @@ function createSession(id: string): Session {
 		unifiedTabOrder: [],
 		inputMode: 'ai',
 		agentId: 'claude-code',
+		...overrides,
 	} as Session;
 }
 
@@ -82,5 +87,49 @@ describe('windowSessionScope', () => {
 		});
 
 		expect(activeSession).toBe(sessions[0]);
+	});
+
+	it('builds thinking items only from the sessions passed by the caller', () => {
+		const visibleBusySession = createSession('visible', {
+			id: 'visible',
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [
+				{
+					id: 'visible-tab',
+					state: 'busy',
+					name: null,
+					agentSessionId: 'agent-session-visible',
+				},
+			] as Session['aiTabs'],
+		});
+		const hiddenBusySession = createSession('hidden', {
+			id: 'hidden',
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [
+				{
+					id: 'hidden-tab',
+					state: 'busy',
+					name: null,
+					agentSessionId: 'agent-session-hidden',
+				},
+			] as Session['aiTabs'],
+		});
+
+		const items = getThinkingItemsForSessions([visibleBusySession]);
+
+		expect(items).toHaveLength(1);
+		expect(items[0].session.id).toBe('visible');
+		expect(items[0].tab?.id).toBe('visible-tab');
+		expect(items.some((item) => item.session.id === hiddenBusySession.id)).toBe(false);
+	});
+
+	it('keeps active batch session ids scoped to the current desktop window', () => {
+		expect(getWindowScopedIds(['visible', 'hidden'], 'window-1', ['visible'])).toEqual(['visible']);
+	});
+
+	it('does not scope ids before window state is initialized', () => {
+		expect(getWindowScopedIds(['visible', 'hidden'], null, [])).toEqual(['visible', 'hidden']);
 	});
 });
