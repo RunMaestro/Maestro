@@ -10,6 +10,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import type { WizardStep } from './Wizard/WizardContext';
 import { useListNavigation } from '../hooks';
+import { useOptionalWindowContext } from '../contexts/WindowContext';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 
@@ -215,6 +216,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
+	const windowContext = useOptionalWindowContext();
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
@@ -307,6 +309,47 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
+	const expandSessionGroup = useCallback(
+		(session: Session) => {
+			if (!session.groupId) {
+				return;
+			}
+
+			setGroups((prev) =>
+				prev.map((g) => (g.id === session.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+			);
+		},
+		[setGroups]
+	);
+
+	const handleJumpToSession = useCallback(
+		async (session: Session) => {
+			if (!windowContext?.windowId) {
+				setActiveSessionId(session.id);
+				expandSessionGroup(session);
+				return;
+			}
+
+			if (windowContext.sessionIds.includes(session.id)) {
+				await windowContext.openSession(session.id);
+				setActiveSessionId(session.id);
+				expandSessionGroup(session);
+				return;
+			}
+
+			const ownerWindowId = await window.maestro.windows.getForSession(session.id);
+			if (ownerWindowId && ownerWindowId !== windowContext.windowId) {
+				await window.maestro.windows.focusWindow(ownerWindowId);
+				return;
+			}
+
+			await windowContext.openSession(session.id);
+			setActiveSessionId(session.id);
+			expandSessionGroup(session);
+		},
+		[expandSessionGroup, setActiveSessionId, windowContext]
+	);
+
 	const sessionActions: QuickAction[] = sessions.map((s) => {
 		// For worktree subagents, format as "Jump to $PARENT subagent: $NAME"
 		let label: string;
@@ -322,13 +365,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			id: `jump-${s.id}`,
 			label,
 			action: () => {
-				setActiveSessionId(s.id);
-				// Auto-expand group if it's collapsed
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
-				}
+				void handleJumpToSession(s);
 			},
 			subtext: s.state.toUpperCase(),
 		};
