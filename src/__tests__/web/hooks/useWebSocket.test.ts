@@ -36,6 +36,7 @@ import {
 	type AutoRunState,
 } from '../../../web/hooks/useWebSocket';
 import type { Theme } from '../../../shared/theme-types';
+import { getCurrentSessionId } from '../../../web/utils/config';
 
 // Mock the config module
 vi.mock('../../../web/utils/config', () => ({
@@ -137,6 +138,7 @@ const originalWebSocket = global.WebSocket;
 describe('useWebSocket', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(getCurrentSessionId).mockReturnValue(null);
 		vi.useFakeTimers();
 		MockWebSocket.clearInstances();
 		// Mock global WebSocket
@@ -221,6 +223,18 @@ describe('useWebSocket', () => {
 
 			const ws = MockWebSocket.getLastInstance();
 			expect(ws.url).toBe('ws://custom.host/ws');
+		});
+
+		it('does not subscribe to URL session by default so web remains a unified session view', () => {
+			vi.mocked(getCurrentSessionId).mockReturnValue('session-from-url');
+			const { result } = renderHook(() => useWebSocket());
+
+			act(() => {
+				result.current.connect();
+			});
+
+			const ws = MockWebSocket.getLastInstance();
+			expect(ws.url).toBe('ws://localhost:3000/test-token/ws');
 		});
 
 		it('transitions to authenticating state on WebSocket open', () => {

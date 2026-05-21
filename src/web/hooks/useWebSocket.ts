@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../shared/theme-types';
 import type { UsageStats as BaseUsageStats } from '../../shared/types';
-import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/config';
+import { buildWebSocketUrl as buildWsUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 
 /**
@@ -644,14 +644,15 @@ const DEFAULT_OPTIONS: Required<Omit<UseWebSocketOptions, 'handlers' | 'token'>>
  * Build the WebSocket URL using the config
  * The security token is in the URL path, not as a query param
  */
-function buildWebSocketUrl(baseUrl?: string, sessionId?: string): string {
+function buildWebSocketUrl(baseUrl?: string): string {
 	if (baseUrl) {
 		return baseUrl;
 	}
 
 	// Use config to build the URL with security token in path
-	// If sessionId is provided, subscribe to that session's updates
-	return buildWsUrl(sessionId || getCurrentSessionId() || undefined);
+	// Do not auto-subscribe to the URL session. The mobile web interface is a
+	// unified view and must continue receiving broadcasts for every session.
+	return buildWsUrl();
 }
 
 /**
