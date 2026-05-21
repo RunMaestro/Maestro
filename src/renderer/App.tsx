@@ -1758,7 +1758,13 @@ function MaestroConsoleInner() {
 
 	// --- ACTIONS ---
 	// cycleSession — provided by useCycleSession hook
-	const { cycleSession } = useCycleSession({ sortedSessions, handleOpenGroupChat });
+	const { cycleSession } = useCycleSession({
+		sortedSessions,
+		windowId,
+		windowSessionIds,
+		windowActiveSessionId: windowContextActiveSessionId,
+		handleOpenGroupChat,
+	});
 
 	// showConfirmation, performDeleteSession — provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup — provided by useSessionCrud hook

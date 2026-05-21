@@ -25,6 +25,12 @@ import { compareNamesIgnoringEmojis } from '../session/useSortedSessions';
 export interface UseCycleSessionDeps {
 	/** Sorted sessions array (used when sidebar is collapsed) */
 	sortedSessions: Session[];
+	/** Current Electron window ID; null outside desktop multi-window contexts */
+	windowId?: string | null;
+	/** Session IDs owned by the current Electron window, in tab order */
+	windowSessionIds?: string[];
+	/** Active session persisted for the current Electron window */
+	windowActiveSessionId?: string | null;
 	/** Open a group chat (loads messages etc.) */
 	handleOpenGroupChat: (groupChatId: string) => void;
 }
@@ -43,7 +49,13 @@ export interface UseCycleSessionReturn {
 // ============================================================================
 
 export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionReturn {
-	const { sortedSessions, handleOpenGroupChat } = deps;
+	const {
+		sortedSessions,
+		windowId = null,
+		windowSessionIds = [],
+		windowActiveSessionId = null,
+		handleOpenGroupChat,
+	} = deps;
 
 	// --- Reactive subscriptions ---
 	const sessions = useSessionStore((s) => s.sessions);
@@ -65,6 +77,34 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 	const cycleSession = useCallback(
 		(dir: 'next' | 'prev') => {
+			if (windowId) {
+				const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+				const windowOrder = windowSessionIds
+					.map((sessionId) => sessionsById.get(sessionId))
+					.filter((session): session is Session => Boolean(session));
+
+				if (windowOrder.length === 0) return;
+
+				const windowSessionIdSet = new Set(windowSessionIds);
+				const currentActiveId = windowSessionIdSet.has(activeSessionId)
+					? activeSessionId
+					: windowActiveSessionId;
+				let currentIndex = windowOrder.findIndex((session) => session.id === currentActiveId);
+
+				if (currentIndex === -1) {
+					currentIndex = 0;
+				} else if (dir === 'next') {
+					currentIndex = currentIndex === windowOrder.length - 1 ? 0 : currentIndex + 1;
+				} else {
+					currentIndex = currentIndex === 0 ? windowOrder.length - 1 : currentIndex - 1;
+				}
+
+				setCyclePosition(currentIndex);
+				setActiveGroupChatId(null);
+				setActiveSessionIdInternal(windowOrder[currentIndex].id);
+				return;
+			}
+
 			// Build the visual order of items as they appear in the sidebar.
 			// This matches the actual rendering order in SessionList.tsx:
 			// 1. Bookmarks section (if open) - sorted alphabetically
@@ -228,6 +268,9 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			sessions,
 			groups,
 			activeSessionId,
+			windowId,
+			windowSessionIds,
+			windowActiveSessionId,
 			activeGroupChatId,
 			leftSidebarOpen,
 			bookmarksCollapsed,
