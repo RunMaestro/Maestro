@@ -91,6 +91,35 @@ export class WindowRegistry {
 		}
 	}
 
+	moveSessionsToPrimary(fromWindowId: string): { sessionIds: string[]; toWindowId: string } | null {
+		const fromWindow = this.windows.get(fromWindowId);
+		const primaryWindowId = this.primaryWindowId;
+		const primaryWindow = primaryWindowId ? this.windows.get(primaryWindowId) : undefined;
+		if (
+			!fromWindow ||
+			!primaryWindow ||
+			!primaryWindowId ||
+			fromWindow.isMain ||
+			fromWindowId === primaryWindowId ||
+			fromWindow.sessionIds.length === 0
+		) {
+			return null;
+		}
+
+		const movedSessionIds = [...fromWindow.sessionIds];
+		fromWindow.sessionIds = [];
+		for (const sessionId of movedSessionIds) {
+			if (!primaryWindow.sessionIds.includes(sessionId)) {
+				primaryWindow.sessionIds.push(sessionId);
+			}
+		}
+
+		return {
+			sessionIds: movedSessionIds,
+			toWindowId: primaryWindowId,
+		};
+	}
+
 	getWindowForSession(sessionId: string): string | undefined {
 		for (const [windowId, entry] of this.windows) {
 			if (entry.sessionIds.includes(sessionId)) {

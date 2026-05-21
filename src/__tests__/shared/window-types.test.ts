@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { MultiWindowState, WindowInfo, WindowState } from '../../shared/types/window';
+import type {
+	MultiWindowState,
+	WindowInfo,
+	WindowSessionsMovedToPrimaryEvent,
+	WindowState,
+} from '../../shared/types/window';
 import type {
 	MultiWindowState as ExportedMultiWindowState,
 	WindowInfo as ExportedWindowInfo,
+	WindowSessionsMovedToPrimaryEvent as ExportedWindowSessionsMovedToPrimaryEvent,
 	WindowState as ExportedWindowState,
 } from '../../shared/types';
 
@@ -41,6 +47,24 @@ describe('shared/types/window', () => {
 		expect(windowInfo.isMain).toBe(false);
 	});
 
+	it('supports secondary close session transfer events', () => {
+		const event = {
+			sessionIds: ['session-2'],
+			fromWindowId: 'secondary',
+			toWindowId: 'primary',
+			windows: [
+				{
+					id: 'primary',
+					isMain: true,
+					sessionIds: ['session-1', 'session-2'],
+					activeSessionId: 'session-1',
+				},
+			],
+		} satisfies WindowSessionsMovedToPrimaryEvent;
+
+		expect(event.toWindowId).toBe('primary');
+	});
+
 	it('re-exports window types from shared/types', () => {
 		const windowState: ExportedWindowState = {
 			id: 'primary',
@@ -65,7 +89,14 @@ describe('shared/types/window', () => {
 			sessionIds: windowState.sessionIds,
 			activeSessionId: windowState.activeSessionId,
 		};
+		const movedEvent: ExportedWindowSessionsMovedToPrimaryEvent = {
+			sessionIds: [],
+			fromWindowId: 'secondary',
+			toWindowId: windowState.id,
+			windows: [windowInfo],
+		};
 
 		expect(multiWindowState.primaryWindowId).toBe(windowInfo.id);
+		expect(movedEvent.toWindowId).toBe(windowInfo.id);
 	});
 });

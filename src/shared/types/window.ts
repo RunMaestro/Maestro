@@ -43,6 +43,13 @@ export interface WindowSessionMovedEvent {
 	windows: WindowInfo[];
 }
 
+export interface WindowSessionsMovedToPrimaryEvent {
+	sessionIds: string[];
+	fromWindowId: string;
+	toWindowId: string;
+	windows: WindowInfo[];
+}
+
 export interface WindowDropZoneHighlightEvent {
 	highlighted: boolean;
 }

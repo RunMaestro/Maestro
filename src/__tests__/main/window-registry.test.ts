@@ -86,6 +86,27 @@ describe('WindowRegistry', () => {
 		expect(registry.getWindowForSession('session-2')).toBe('secondary');
 	});
 
+	it('moves all sessions from a secondary window back to primary', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const primary = registry.create({ id: 'primary', sessionIds: ['session-1'] });
+		const secondary = registry.create({
+			id: 'secondary',
+			sessionIds: ['session-2', 'session-3'],
+		});
+
+		const result = registry.moveSessionsToPrimary('secondary');
+
+		expect(result).toEqual({
+			sessionIds: ['session-2', 'session-3'],
+			toWindowId: 'primary',
+		});
+		expect(primary.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
+		expect(secondary.sessionIds).toEqual([]);
+		expect(registry.getWindowForSession('session-2')).toBe('primary');
+	});
+
 	it('removes windows and clears the primary reference when the main window is removed', async () => {
 		const { WindowRegistry } = await import('../../main/window-registry');
 		const registry = new WindowRegistry();

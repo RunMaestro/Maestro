@@ -199,6 +199,22 @@ describe('Windows Preload API', () => {
 		expect(mockRemoveListener).toHaveBeenCalledWith('windows:sessionMoved', wrappedHandler);
 	});
 
+	it('should subscribe to windows:sessionsMovedToPrimary events', () => {
+		const handler = vi.fn();
+
+		const unsubscribe = api.onSessionsMovedToPrimary(handler);
+		const wrappedHandler = mockOn.mock.calls[0][1] as Function;
+		wrappedHandler({}, { sessionIds: ['session-1'], toWindowId: 'primary' });
+		unsubscribe();
+
+		expect(mockOn).toHaveBeenCalledWith('windows:sessionsMovedToPrimary', expect.any(Function));
+		expect(handler).toHaveBeenCalledWith({ sessionIds: ['session-1'], toWindowId: 'primary' });
+		expect(mockRemoveListener).toHaveBeenCalledWith(
+			'windows:sessionsMovedToPrimary',
+			wrappedHandler
+		);
+	});
+
 	it('should subscribe to windows:dropZoneHighlightChanged events', () => {
 		const handler = vi.fn();
 

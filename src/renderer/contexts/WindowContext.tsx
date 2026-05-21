@@ -8,6 +8,7 @@ import React, {
 	type ReactNode,
 } from 'react';
 import type { WindowInfo, WindowState } from '../../shared/types/window';
+import { notifyToast } from '../stores/notificationStore';
 
 export interface WindowContextValue {
 	windowId: string | null;
@@ -111,6 +112,39 @@ export function WindowProvider({ children }: WindowProviderProps) {
 					currentActiveSessionId
 				)
 			);
+		});
+	}, [windowId]);
+
+	useEffect(() => {
+		if (!windowId) {
+			return undefined;
+		}
+
+		return window.maestro.windows.onSessionsMovedToPrimary((event) => {
+			const currentWindow = event.windows.find((candidate) => candidate.id === windowId);
+			if (!currentWindow) {
+				return;
+			}
+
+			setSessionIds(currentWindow.sessionIds);
+			setIsMainWindow(currentWindow.isMain);
+			setActiveSessionId((currentActiveSessionId) =>
+				getValidActiveSessionId(
+					currentWindow.sessionIds,
+					currentWindow.activeSessionId,
+					currentActiveSessionId
+				)
+			);
+
+			if (windowId === event.toWindowId) {
+				const sessionCount = event.sessionIds.length;
+				notifyToast({
+					type: 'info',
+					title: `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} moved to main window`,
+					message: '',
+					duration: 4000,
+				});
+			}
 		});
 	}, [windowId]);
 
