@@ -5,6 +5,22 @@ export interface StoredSessionRef {
 	id: string;
 }
 
+interface DisplayBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+export interface StartupDisplay {
+	workArea: DisplayBounds;
+}
+
+export interface StartupDisplayProvider {
+	getAllDisplays: () => StartupDisplay[];
+	getPrimaryDisplay: () => StartupDisplay;
+}
+
 function createPrimaryWindowState(): WindowState {
 	return {
 		id: 'primary',
@@ -21,10 +37,56 @@ function createPrimaryWindowState(): WindowState {
 	};
 }
 
+function hasVisibleIntersection(bounds: DisplayBounds, displayBounds: DisplayBounds): boolean {
+	return (
+		bounds.x < displayBounds.x + displayBounds.width &&
+		bounds.x + bounds.width > displayBounds.x &&
+		bounds.y < displayBounds.y + displayBounds.height &&
+		bounds.y + bounds.height > displayBounds.y
+	);
+}
+
+function repositionWindowToPrimaryDisplay(
+	windowState: WindowState,
+	displayProvider?: StartupDisplayProvider
+): WindowState {
+	if (!displayProvider) {
+		return windowState;
+	}
+
+	const displays = displayProvider.getAllDisplays();
+	const bounds = {
+		x: windowState.x,
+		y: windowState.y,
+		width: windowState.width,
+		height: windowState.height,
+	};
+	const isVisibleOnAnyDisplay = displays.some((display) =>
+		hasVisibleIntersection(bounds, display.workArea)
+	);
+
+	if (isVisibleOnAnyDisplay) {
+		return windowState;
+	}
+
+	const primaryWorkArea = displayProvider.getPrimaryDisplay().workArea;
+	const width = Math.min(windowState.width, primaryWorkArea.width);
+	const height = Math.min(windowState.height, primaryWorkArea.height);
+
+	return {
+		...windowState,
+		x: primaryWorkArea.x + Math.max(0, Math.floor((primaryWorkArea.width - width) / 2)),
+		y: primaryWorkArea.y + Math.max(0, Math.floor((primaryWorkArea.height - height) / 2)),
+		width,
+		height,
+	};
+}
+
 function sanitizeWindowState(
 	windowState: WindowState,
 	validSessionIds: Set<string>,
-	claimedSessionIds: Set<string>
+	claimedSessionIds: Set<string>,
+	displayProvider?: StartupDisplayProvider
 ): WindowState {
 	const sessionIds = windowState.sessionIds.filter((sessionId) => {
 		if (!validSessionIds.has(sessionId) || claimedSessionIds.has(sessionId)) {
@@ -34,9 +96,10 @@ function sanitizeWindowState(
 		claimedSessionIds.add(sessionId);
 		return true;
 	});
+	const displaySafeWindowState = repositionWindowToPrimaryDisplay(windowState, displayProvider);
 
 	return {
-		...windowState,
+		...displaySafeWindowState,
 		sessionIds,
 		activeSessionId:
 			windowState.activeSessionId && sessionIds.includes(windowState.activeSessionId)
@@ -60,14 +123,15 @@ function orderPrimaryWindowFirst(windows: WindowState[], primaryWindowId: string
 
 export function sanitizeRestoredWindowState(
 	savedState: MultiWindowState,
-	sessions: StoredSessionRef[]
+	sessions: StoredSessionRef[],
+	displayProvider?: StartupDisplayProvider
 ): MultiWindowState {
 	const validSessionIds = new Set(sessions.map((session) => session.id));
 	const claimedSessionIds = new Set<string>();
 	const savedWindows =
 		savedState.windows.length > 0 ? savedState.windows : [createPrimaryWindowState()];
 	const windows = savedWindows.map((windowState) =>
-		sanitizeWindowState(windowState, validSessionIds, claimedSessionIds)
+		sanitizeWindowState(windowState, validSessionIds, claimedSessionIds, displayProvider)
 	);
 	const hasPrimaryWindow = windows.some(
 		(windowState) => windowState.id === savedState.primaryWindowId
@@ -84,10 +148,11 @@ export function sanitizeRestoredWindowState(
 
 export function getStartupWindowStates(
 	windowStateStore: Store<MultiWindowState>,
-	sessions: StoredSessionRef[]
+	sessions: StoredSessionRef[],
+	displayProvider?: StartupDisplayProvider
 ): WindowState[] {
 	const savedState = windowStateStore.store;
-	const nextState = sanitizeRestoredWindowState(savedState, sessions);
+	const nextState = sanitizeRestoredWindowState(savedState, sessions, displayProvider);
 
 	if (hasStateChanged(savedState, nextState)) {
 		windowStateStore.store = nextState;

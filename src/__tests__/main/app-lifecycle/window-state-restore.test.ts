@@ -151,6 +151,114 @@ describe('app-lifecycle/window-state-restore', () => {
 		]);
 	});
 
+	it('keeps saved bounds when the window intersects a connected display', () => {
+		const restoredState = sanitizeRestoredWindowState(
+			{
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 1800,
+						y: 100,
+						width: 1200,
+						height: 800,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+			[],
+			{
+				getAllDisplays: () => [
+					{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+					{ workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+				],
+				getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+			}
+		);
+
+		expect(restoredState.windows[0]).toMatchObject({
+			x: 1800,
+			y: 100,
+			width: 1200,
+			height: 800,
+		});
+	});
+
+	it('repositions off-screen saved bounds to the primary display', () => {
+		const restoredState = sanitizeRestoredWindowState(
+			{
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 4000,
+						y: 200,
+						width: 1200,
+						height: 800,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+			[],
+			{
+				getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }],
+				getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+			}
+		);
+
+		expect(restoredState.windows[0]).toMatchObject({
+			x: 360,
+			y: 140,
+			width: 1200,
+			height: 800,
+		});
+	});
+
+	it('shrinks oversized off-screen windows to fit the primary display work area', () => {
+		const restoredState = sanitizeRestoredWindowState(
+			{
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: -5000,
+						y: -5000,
+						width: 3000,
+						height: 1400,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+			[],
+			{
+				getAllDisplays: () => [{ workArea: { x: 50, y: 25, width: 1280, height: 720 } }],
+				getPrimaryDisplay: () => ({ workArea: { x: 50, y: 25, width: 1280, height: 720 } }),
+			}
+		);
+
+		expect(restoredState.windows[0]).toMatchObject({
+			x: 50,
+			y: 25,
+			width: 1280,
+			height: 720,
+		});
+	});
+
 	it('writes sanitized startup state back to the store', () => {
 		const windowStateStore = createWindowStateStore({
 			primaryWindowId: 'primary',
@@ -189,5 +297,44 @@ describe('app-lifecycle/window-state-restore', () => {
 			},
 		]);
 		expect(windowStateStore.store.windows[0].activeSessionId).toBeNull();
+	});
+
+	it('writes display-safe startup bounds back to the store', () => {
+		const windowStateStore = createWindowStateStore({
+			primaryWindowId: 'primary',
+			windows: [
+				{
+					id: 'primary',
+					x: 3000,
+					y: 0,
+					width: 1000,
+					height: 700,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: [],
+					activeSessionId: null,
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: false,
+				},
+			],
+		});
+
+		const startupWindows = getStartupWindowStates(windowStateStore as never, [], {
+			getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1600, height: 900 } }],
+			getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1600, height: 900 } }),
+		});
+
+		expect(startupWindows[0]).toMatchObject({
+			x: 300,
+			y: 100,
+			width: 1000,
+			height: 700,
+		});
+		expect(windowStateStore.store.windows[0]).toMatchObject({
+			x: 300,
+			y: 100,
+			width: 1000,
+			height: 700,
+		});
 	});
 });
