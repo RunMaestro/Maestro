@@ -5,6 +5,10 @@ const browserWindowOptions: unknown[] = [];
 
 class MockBrowserWindow {
 	id: number;
+	isDestroyed = vi.fn().mockReturnValue(false);
+	isMaximized = vi.fn().mockReturnValue(false);
+	isFullScreen = vi.fn().mockReturnValue(false);
+	getBounds = vi.fn().mockReturnValue({ x: 10, y: 20, width: 800, height: 600 });
 
 	constructor(options: unknown) {
 		this.id = nextBrowserWindowId;
@@ -110,5 +114,55 @@ describe('WindowRegistry', () => {
 		expect(() => registry.moveSession('session-1', 'primary', 'missing')).toThrow(
 			'Destination window not registered: missing'
 		);
+	});
+
+	it('saves a registered window state without overwriting restored bounds while maximized', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-old'],
+						activeSessionId: 'session-old',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+		const entry = registry.create({ id: 'primary', sessionIds: ['session-1'], isMain: true });
+
+		entry.browserWindow.isMaximized = vi.fn().mockReturnValue(true);
+		entry.browserWindow.getBounds = vi.fn().mockReturnValue({
+			x: 5,
+			y: 6,
+			width: 700,
+			height: 500,
+		});
+
+		const savedState = registry.saveWindowState('primary');
+
+		expect(savedState).toMatchObject({
+			id: 'primary',
+			x: 50,
+			y: 60,
+			width: 1400,
+			height: 900,
+			isMaximized: true,
+			isFullScreen: false,
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-old',
+			leftPanelCollapsed: true,
+		});
+		expect(windowStateStore.store.primaryWindowId).toBe('primary');
 	});
 });

@@ -1,5 +1,7 @@
 import { BrowserWindow } from 'electron';
 import type { BrowserWindowConstructorOptions } from 'electron';
+import type Store from 'electron-store';
+import type { MultiWindowState, WindowState } from './stores/types';
 
 export interface WindowRegistryEntry {
 	browserWindow: BrowserWindow;
@@ -16,6 +18,12 @@ export interface WindowRegistryCreateOptions extends BrowserWindowConstructorOpt
 export class WindowRegistry {
 	private windows = new Map<string, WindowRegistryEntry>();
 	private primaryWindowId: string | null = null;
+
+	constructor(private windowStateStore?: Store<MultiWindowState>) {}
+
+	setWindowStateStore(windowStateStore: Store<MultiWindowState>): void {
+		this.windowStateStore = windowStateStore;
+	}
 
 	create(options: WindowRegistryCreateOptions = {}): WindowRegistryEntry {
 		const { id, sessionIds = [], isMain, ...browserWindowOptions } = options;
@@ -133,5 +141,58 @@ export class WindowRegistry {
 		if (!toWindow.sessionIds.includes(sessionId)) {
 			toWindow.sessionIds.push(sessionId);
 		}
+	}
+
+	saveWindowState(windowId: string): WindowState | null {
+		if (!this.windowStateStore) {
+			return null;
+		}
+
+		const entry = this.windows.get(windowId);
+		if (!entry || entry.browserWindow.isDestroyed()) {
+			return null;
+		}
+
+		const isMaximized = entry.browserWindow.isMaximized();
+		const isFullScreen = entry.browserWindow.isFullScreen();
+		const isMinimized = entry.browserWindow.isMinimized();
+		const bounds = entry.browserWindow.getBounds();
+		const currentState = this.windowStateStore.store;
+		const existingWindowState = currentState.windows.find(
+			(windowState) => windowState.id === windowId
+		);
+		const nextWindowState: WindowState = {
+			id: windowId,
+			x: existingWindowState?.x ?? bounds.x,
+			y: existingWindowState?.y ?? bounds.y,
+			width: existingWindowState?.width ?? bounds.width,
+			height: existingWindowState?.height ?? bounds.height,
+			isMaximized,
+			isFullScreen,
+			sessionIds: entry.sessionIds,
+			activeSessionId: existingWindowState?.activeSessionId ?? null,
+			leftPanelCollapsed: existingWindowState?.leftPanelCollapsed ?? false,
+			rightPanelCollapsed: existingWindowState?.rightPanelCollapsed ?? false,
+		};
+
+		if (!isMaximized && !isFullScreen && !isMinimized) {
+			nextWindowState.x = bounds.x;
+			nextWindowState.y = bounds.y;
+			nextWindowState.width = bounds.width;
+			nextWindowState.height = bounds.height;
+		}
+
+		const hasWindowState = currentState.windows.some((windowState) => windowState.id === windowId);
+		this.windowStateStore.store = {
+			...currentState,
+			primaryWindowId: entry.isMain ? windowId : currentState.primaryWindowId,
+			windows: hasWindowState
+				? currentState.windows.map((windowState) =>
+						windowState.id === windowId ? nextWindowState : windowState
+					)
+				: [...currentState.windows, nextWindowState],
+		};
+
+		return nextWindowState;
 	}
 }

@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 let windowCloseHandler: (() => void) | null = null;
 const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 const guestWebContentsEventHandlers = new Map<string, (...args: any[]) => void>();
+let windowEventHandlers: Record<string, Array<() => void>> = {};
 let nextBrowserWindowId = 1;
 
 const mockGuestWebContents = {
@@ -55,6 +56,7 @@ const mockWindowInstance = {
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
+		windowEventHandlers[event] = [...(windowEventHandlers[event] ?? []), handler];
 		if (event === 'close') windowCloseHandler = handler;
 	}),
 };
@@ -149,6 +151,7 @@ describe('app-lifecycle/window-manager', () => {
 		vi.clearAllMocks();
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
+		windowEventHandlers = {};
 		nextBrowserWindowId = 1;
 		lastBrowserWindowOptions = null;
 		webContentsEventHandlers.clear();
@@ -187,6 +190,7 @@ describe('app-lifecycle/window-manager', () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -456,6 +460,59 @@ describe('app-lifecycle/window-manager', () => {
 				height: 800,
 				isMaximized: false,
 				isFullScreen: false,
+			});
+		});
+
+		it('should debounce window state saves after geometry and display-state changes', async () => {
+			vi.useFakeTimers();
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('move', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('resize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('maximize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('unmaximize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('enter-full-screen', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('leave-full-screen', expect.any(Function));
+
+			mockWindowInstance.getBounds.mockReturnValue({ x: 150, y: 160, width: 1000, height: 700 });
+			windowEventHandlers.move![0]();
+			mockWindowInstance.getBounds.mockReturnValue({ x: 175, y: 185, width: 1100, height: 750 });
+			windowEventHandlers.resize![0]();
+
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+			});
+
+			vi.advanceTimersByTime(249);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+			});
+
+			vi.advanceTimersByTime(1);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 175,
+				y: 185,
+				width: 1100,
+				height: 750,
 			});
 		});
 

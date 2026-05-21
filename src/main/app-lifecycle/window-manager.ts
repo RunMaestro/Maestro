@@ -270,6 +270,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		getConfirmQuit,
 	} = deps;
 	const windowRegistry = deps.windowRegistry ?? new WindowRegistry();
+	windowRegistry.setWindowStateStore(windowStateStore);
 
 	const createBrowserWindow = (
 		savedState: WindowState,
@@ -326,53 +327,31 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			mode: isDevelopment ? 'development' : 'production',
 		});
 
-		// Save window state before closing
 		const saveWindowState = () => {
 			try {
-				const isMaximized = mainWindow.isMaximized();
-				const isFullScreen = mainWindow.isFullScreen();
-				const isMinimized = mainWindow.isMinimized();
-				const bounds = mainWindow.getBounds();
-
-				const currentState = windowStateStore.store;
-				const existingWindowState = getWindowState(currentState, registryWindowId);
-				const registryEntry = windowRegistry.get(registryWindowId);
-				const nextWindowState = {
-					...existingWindowState,
-					id: registryWindowId,
-					sessionIds: registryEntry?.sessionIds ?? existingWindowState.sessionIds,
-					isMaximized,
-					isFullScreen,
-				};
-
-				// Only save bounds when the window is in its normal state. While
-				// minimized, Windows reports bounds of (-32000, -32000), which would
-				// otherwise persist and make the window spawn off-screen next launch.
-				if (!isMaximized && !isFullScreen && !isMinimized) {
-					nextWindowState.x = bounds.x;
-					nextWindowState.y = bounds.y;
-					nextWindowState.width = bounds.width;
-					nextWindowState.height = bounds.height;
-				}
-
-				const hasWindowState = currentState.windows.some(
-					(windowState) => windowState.id === registryWindowId
-				);
-				windowStateStore.store = {
-					...currentState,
-					primaryWindowId: entry.isMain ? registryWindowId : currentState.primaryWindowId,
-					windows: hasWindowState
-						? currentState.windows.map((windowState) =>
-								windowState.id === registryWindowId ? nextWindowState : windowState
-							)
-						: [...currentState.windows, nextWindowState],
-				};
+				windowRegistry.saveWindowState(registryWindowId);
 			} catch {
 				// Ignore ENFILE/ENOSPC errors during window close — non-critical
 			}
 		};
+		let saveWindowStateTimer: ReturnType<typeof setTimeout> | null = null;
+		const scheduleWindowStateSave = () => {
+			if (saveWindowStateTimer) {
+				clearTimeout(saveWindowStateTimer);
+			}
+			saveWindowStateTimer = setTimeout(() => {
+				saveWindowStateTimer = null;
+				saveWindowState();
+			}, 250);
+		};
 
 		mainWindow.on('close', saveWindowState);
+		mainWindow.on('move', scheduleWindowStateSave);
+		mainWindow.on('resize', scheduleWindowStateSave);
+		mainWindow.on('maximize', scheduleWindowStateSave);
+		mainWindow.on('unmaximize', scheduleWindowStateSave);
+		mainWindow.on('enter-full-screen', scheduleWindowStateSave);
+		mainWindow.on('leave-full-screen', scheduleWindowStateSave);
 
 		// Load the app
 		if (isDevelopment) {
