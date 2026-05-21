@@ -25,7 +25,6 @@ interface PaseoScheduleCreateCommandOptions extends PaseoBaseOptions {
 	maxRuns?: string;
 	expiresIn?: string;
 	runNow?: boolean;
-	noRunNow?: boolean;
 }
 
 function printResult(result: PaseoCommandResult): void {

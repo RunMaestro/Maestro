@@ -27,7 +27,10 @@ import {
 	runPaseoCommand,
 } from '../../../cli/services/paseo';
 
-function mockSpawnResult(code: number, stdout = '', stderr = ''): void {
+function mockSpawnChild(): EventEmitter & {
+	stdout: Readable;
+	stderr: Readable;
+} {
 	const child = new EventEmitter() as EventEmitter & {
 		stdout: Readable;
 		stderr: Readable;
@@ -36,6 +39,12 @@ function mockSpawnResult(code: number, stdout = '', stderr = ''): void {
 	child.stderr = new Readable({ read() {} });
 
 	vi.mocked(spawn).mockReturnValue(child as any);
+
+	return child;
+}
+
+function mockSpawnResult(code: number | null, stdout = '', stderr = ''): void {
+	const child = mockSpawnChild();
 
 	setImmediate(() => {
 		if (stdout) child.stdout.emit('data', Buffer.from(stdout));
@@ -101,6 +110,26 @@ describe('paseo service', () => {
 		await expect(runPaseoCommand(['bad'], { cliPath: '/bin/paseo' })).rejects.toThrow('bad option');
 	});
 
+	it('rejects failed Paseo commands that close without an exit code', async () => {
+		mockSpawnResult(null);
+
+		await expect(runPaseoCommand(['bad'], { cliPath: '/bin/paseo' })).rejects.toThrow(
+			'Paseo exited without an exit code'
+		);
+	});
+
+	it('rejects when the Paseo process fails to spawn', async () => {
+		const child = mockSpawnChild();
+
+		setImmediate(() => {
+			child.emit('error', new Error('ENOENT'));
+		});
+
+		await expect(
+			runPaseoCommand(['schedule', 'ls'], { cliPath: '/missing/paseo' })
+		).rejects.toThrow('Failed to run Paseo CLI (/missing/paseo): ENOENT');
+	});
+
 	it('builds schedule create arguments', async () => {
 		mockSpawnResult(0, 'created\n');
 
@@ -135,6 +164,36 @@ describe('paseo service', () => {
 				'--json',
 				'do work',
 			],
+			expect.any(Object)
+		);
+	});
+
+	it('builds schedule create arguments with explicit immediate run control', async () => {
+		mockSpawnResult(0, 'created\n');
+
+		await createPaseoSchedule('do work now', {
+			cliPath: '/bin/paseo',
+			every: '2m',
+			runNow: true,
+		});
+
+		expect(spawn).toHaveBeenLastCalledWith(
+			'/bin/paseo',
+			['schedule', 'create', '--every', '2m', '--run-now', 'do work now'],
+			expect.any(Object)
+		);
+
+		mockSpawnResult(0, 'created\n');
+
+		await createPaseoSchedule('do work later', {
+			cliPath: '/bin/paseo',
+			every: '2m',
+			runNow: false,
+		});
+
+		expect(spawn).toHaveBeenLastCalledWith(
+			'/bin/paseo',
+			['schedule', 'create', '--every', '2m', '--no-run-now', 'do work later'],
 			expect.any(Object)
 		);
 	});

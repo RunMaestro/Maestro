@@ -27,7 +27,6 @@ export interface PaseoScheduleCreateOptions extends PaseoExecOptions {
 	maxRuns?: string;
 	expiresIn?: string;
 	runNow?: boolean;
-	noRunNow?: boolean;
 	host?: string;
 	json?: boolean;
 }
@@ -96,9 +95,9 @@ export function runPaseoCommand(
 				return;
 			}
 
-			const details = [stderr.trim(), stdout.trim(), `Paseo exited with code ${code}`]
-				.filter(Boolean)
-				.join('\n');
+			const exitDetail =
+				code === null ? 'Paseo exited without an exit code' : `Paseo exited with code ${code}`;
+			const details = [stderr.trim(), stdout.trim(), exitDetail].filter(Boolean).join('\n');
 			reject(new Error(details));
 		});
 	});
@@ -133,10 +132,9 @@ export function createPaseoSchedule(
 	addOption(args, '--max-runs', options.maxRuns);
 	addOption(args, '--expires-in', options.expiresIn);
 
-	if (options.runNow) {
+	if (options.runNow === true) {
 		args.push('--run-now');
-	}
-	if (options.noRunNow) {
+	} else if (options.runNow === false) {
 		args.push('--no-run-now');
 	}
 
