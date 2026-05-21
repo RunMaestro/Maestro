@@ -45,6 +45,7 @@ import {
 } from './helpers/exitSynopsis';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -61,6 +62,8 @@ export interface UseAgentExitListenerDeps {
 }
 
 export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	// Pending debounced synopses, keyed by `${sessionId}:${tabId}`. When the
 	// Synopsis Debounce setting is on, each eligible exit (re)arms a timer here
 	// instead of spawning immediately, so rapid-fire turns coalesce into one
@@ -135,6 +138,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		};
 
 		const unsubscribe = window.maestro.process.onExit(async (sessionId: string, code: number) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
 			if (sessionId.includes('-terminal-')) return;
 
 			logger.info('[onExit] Process exit event received:', undefined, {
@@ -853,5 +857,6 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 		deps.processQueuedItemRef,
 		deps.rightPanelRef,
 		deps.spawnBackgroundSynopsisRef,
+		isSessionInCurrentWindow,
 	]);
 }

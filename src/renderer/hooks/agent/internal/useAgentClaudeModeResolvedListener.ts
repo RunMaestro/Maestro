@@ -26,6 +26,7 @@ import { notifyToast } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { LogEntry } from '../../../types';
 
 /**
@@ -81,6 +82,8 @@ function buildBatchModeBanner(
 }
 
 export function useAgentClaudeModeResolvedListener(): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 
@@ -93,6 +96,8 @@ export function useAgentClaudeModeResolvedListener(): void {
 					configDirKey: string;
 				}
 			) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				// Strip the tab/role suffix the spawner uses for AI tabs so we land
 				// on the parent session that actually owns `claudeInteractive`.
 				let actualSessionId: string;
@@ -190,5 +195,5 @@ export function useAgentClaudeModeResolvedListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, []);
+	}, [isSessionInCurrentWindow]);
 }

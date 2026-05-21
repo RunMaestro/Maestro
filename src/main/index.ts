@@ -391,7 +391,10 @@ let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
-const safeSend = createSafeSend(() => mainWindow);
+const safeSend = createSafeSend(
+	() => mainWindow,
+	() => BrowserWindow.getAllWindows()
+);
 
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.

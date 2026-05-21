@@ -13,13 +13,18 @@ import { useEffect } from 'react';
 import type { LogEntry, SessionState } from '../../../types';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { generateId } from '../../../utils/ids';
+import { useProcessWindowScope } from './useProcessWindowScope';
 
 export function useAgentCommandExitListener(): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onCommandExit((sessionId: string, code: number) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
+
 			const actualSessionId = sessionId;
 			if (!getSessions().some((s) => s.id === actualSessionId)) return;
 
@@ -60,5 +65,5 @@ export function useAgentCommandExitListener(): void {
 		return () => {
 			unsubscribe();
 		};
-	}, []);
+	}, [isSessionInCurrentWindow]);
 }

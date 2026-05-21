@@ -13,6 +13,7 @@ import { parseSessionId } from '../../../utils/sessionIdParser';
 import { estimateContextUsage, estimateAccumulatedGrowth } from '../../../utils/contextUsage';
 import { getContextWindowForAgent } from '../../../../shared/agentConstants';
 import { useAgentStore } from '../../../stores/agentStore';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { BatchedUpdater } from './types';
 
 /**
@@ -30,10 +31,14 @@ export interface UseAgentUsageListenerDeps {
 }
 
 export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onUsage((sessionId: string, usageStats) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
+
 			const parsed = parseSessionId(sessionId);
 			const { actualSessionId, tabId, baseSessionId } = parsed;
 
@@ -83,5 +88,5 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater, deps.contextWarningYellowThreshold]);
+	}, [deps.batchedUpdater, deps.contextWarningYellowThreshold, isSessionInCurrentWindow]);
 }

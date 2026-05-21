@@ -8,38 +8,41 @@ import { logger } from './logger';
 
 /** Function type for getting the main window reference */
 export type GetMainWindow = () => BrowserWindow | null;
+export type GetWindows = () => Array<BrowserWindow | null | undefined>;
 
 /**
  * Creates a safeSend function with the provided window getter.
- * This allows dependency injection of the window reference.
+ * This allows dependency injection of the window references.
  *
  * @param getMainWindow - Function that returns the current main window or null
+ * @param getWindows - Optional function that returns every window that should receive the message
  * @returns A function that safely sends IPC messages to the renderer
  */
-export function createSafeSend(getMainWindow: GetMainWindow) {
+export function createSafeSend(getMainWindow: GetMainWindow, getWindows?: GetWindows) {
 	/**
 	 * Safely send IPC message to renderer.
 	 * Handles cases where the renderer has been disposed (e.g., GPU crash, window closing).
 	 * This prevents "Render frame was disposed before WebFrameMain could be accessed" errors.
 	 */
 	return function safeSend(channel: string, ...args: unknown[]): void {
-		try {
-			const mainWindow = getMainWindow();
-			if (
-				mainWindow &&
-				!mainWindow.isDestroyed() &&
-				mainWindow.webContents &&
-				!mainWindow.webContents.isDestroyed()
-			) {
-				mainWindow.webContents.send(channel, ...args);
+		const windows = getWindows?.() ?? [getMainWindow()];
+		const uniqueWindows = Array.from(
+			new Set(windows.filter((win): win is BrowserWindow => Boolean(win)))
+		);
+
+		for (const win of uniqueWindows) {
+			try {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send(channel, ...args);
+				}
+			} catch (error) {
+				// Silently ignore - renderer is not available
+				// This fires on every clean app shutdown, GPU crash, or mid-window-close;
+				// reporting it to Sentry would generate high-volume noise, not signal.
+				logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
+					error: String(error),
+				});
 			}
-		} catch (error) {
-			// Silently ignore - renderer is not available
-			// This fires on every clean app shutdown, GPU crash, or mid-window-close;
-			// reporting it to Sentry would generate high-volume noise, not signal.
-			logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
-				error: String(error),
-			});
 		}
 	};
 }

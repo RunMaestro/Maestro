@@ -13,14 +13,19 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { gitService } from '../../../services/git';
+import { useProcessWindowScope } from './useProcessWindowScope';
 
 export function useAgentSshRemoteListener(): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 
 		const unsubscribe = window.maestro.process.onSshRemote?.(
 			(sessionId: string, sshRemote: { id: string; name: string; host: string } | null) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				let actualSessionId: string;
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (aiTabMatch) {
@@ -102,5 +107,5 @@ export function useAgentSshRemoteListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, []);
+	}, [isSessionInCurrentWindow]);
 }

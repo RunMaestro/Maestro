@@ -23,6 +23,7 @@ import { getActiveTab, getWriteModeTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { SessionState } from '../../../types';
 import type { BatchedUpdater, ToolProgressState } from './types';
 
@@ -34,12 +35,16 @@ export interface UseAgentDataListenerDeps {
 }
 
 export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
 
 		const unsubscribe = window.maestro.process.onData((sessionId: string, data: string) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
+
 			let actualSessionId: string;
 			let isFromAi: boolean;
 			let tabIdFromSession: string | undefined;
@@ -165,5 +170,5 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater, deps.activeHiddenToolRef]);
+	}, [deps.batchedUpdater, deps.activeHiddenToolRef, isSessionInCurrentWindow]);
 }

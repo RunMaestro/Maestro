@@ -18,6 +18,7 @@ import { parseSessionId, isBatchSession } from '../../../utils/sessionIdParser';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { LogEntry } from '../../../types';
 import type { BatchedUpdater } from './types';
 
@@ -26,11 +27,14 @@ export interface UseAgentSessionIdListenerDeps {
 }
 
 export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 
 		const unsubscribe = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
 				if (isBatchSession(sessionId)) return;
 
 				const parsed = parseSessionId(sessionId);
@@ -165,5 +169,5 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater]);
+	}, [deps.batchedUpdater, isSessionInCurrentWindow]);
 }

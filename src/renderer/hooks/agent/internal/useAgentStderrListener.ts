@@ -10,6 +10,7 @@
 
 import { useEffect } from 'react';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { BatchedUpdater } from './types';
 
 export interface UseAgentStderrListenerDeps {
@@ -17,8 +18,11 @@ export interface UseAgentStderrListenerDeps {
 }
 
 export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onStderr((sessionId: string, data: string) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
 			if (!data.trim()) return;
 
 			let actualSessionId: string;
@@ -46,5 +50,5 @@ export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
 		return () => {
 			unsubscribe();
 		};
-	}, [deps.batchedUpdater]);
+	}, [deps.batchedUpdater, isSessionInCurrentWindow]);
 }

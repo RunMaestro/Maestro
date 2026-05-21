@@ -19,9 +19,12 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { LogEntry } from '../../../types';
 
 export function useAgentToolExecutionListener(): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
+
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 		const getSessions = () => useSessionStore.getState().sessions;
@@ -36,6 +39,8 @@ export function useAgentToolExecutionListener(): void {
 					toolCallId?: string;
 				}
 			) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (!aiTabMatch) return;
 
@@ -131,5 +136,5 @@ export function useAgentToolExecutionListener(): void {
 		return () => {
 			unsubscribe?.();
 		};
-	}, []);
+	}, [isSessionInCurrentWindow]);
 }

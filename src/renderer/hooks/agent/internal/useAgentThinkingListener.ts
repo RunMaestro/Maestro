@@ -23,9 +23,11 @@ import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
+import { useProcessWindowScope } from './useProcessWindowScope';
 import type { LogEntry } from '../../../types';
 
 export function useAgentThinkingListener(): void {
+	const isSessionInCurrentWindow = useProcessWindowScope();
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
 
@@ -35,6 +37,8 @@ export function useAgentThinkingListener(): void {
 
 		const unsubscribe = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
 				if (!aiTabMatch) return;
 
@@ -155,5 +159,5 @@ export function useAgentThinkingListener(): void {
 			}
 			thinkingChunkBuffer.clear();
 		};
-	}, []);
+	}, [isSessionInCurrentWindow]);
 }
