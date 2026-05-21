@@ -17,12 +17,17 @@ import type {
 } from '../../../shared/types/window';
 import type { MultiWindowState } from '../../stores/types';
 import type { WindowManager } from '../../app-lifecycle/window-manager';
+import {
+	recordMultiWindowUsage,
+	type StatsSettingsReader,
+} from '../../stats/multi-window-recorder';
 
 export type WindowCreateBounds = Partial<Pick<Rectangle, 'x' | 'y' | 'width' | 'height'>>;
 
 export interface WindowsHandlerDependencies {
 	windowManager: WindowManager;
 	windowStateStore: Store<MultiWindowState>;
+	settingsStore?: StatsSettingsReader;
 }
 
 export interface WindowCloseResult {
@@ -181,7 +186,7 @@ function createMoveSessionQueue() {
  * Register all multi-window IPC handlers.
  */
 export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void {
-	const { windowManager, windowStateStore } = deps;
+	const { windowManager, windowStateStore, settingsStore } = deps;
 	const { windowRegistry } = windowManager;
 	const enqueueMoveSession = createMoveSessionQueue();
 
@@ -228,6 +233,8 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 					}
 				);
 			}
+
+			recordMultiWindowUsage(settingsStore, windowRegistry, 'window_created');
 
 			return toWindowInfo(windowId, windowManager, activeSessionId);
 		}
@@ -310,6 +317,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 					toWindowId,
 					windows: getWindowList(windowManager, windowStateStore),
 				});
+				recordMultiWindowUsage(settingsStore, windowRegistry, 'session_moved');
 				return true;
 			});
 		}

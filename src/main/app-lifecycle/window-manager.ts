@@ -12,6 +12,7 @@ import type { WindowInfo, WindowSessionsMovedToPrimaryEvent } from '../../shared
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 import { WindowRegistry } from '../window-registry';
+import { recordMultiWindowUsage, type StatsSettingsReader } from '../stats/multi-window-recorder';
 
 /** Sentry severity levels */
 type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
@@ -145,6 +146,8 @@ export interface WindowManagerDependencies {
 	windowRegistry?: WindowRegistry;
 	/** Whether the app is in the confirmed quit path */
 	isQuitting?: () => boolean;
+	/** Settings store for stats collection gating */
+	settingsStore?: StatsSettingsReader;
 }
 
 /** Window manager instance */
@@ -257,6 +260,12 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 						windows: getWindowList(windowRegistry, windowStateStore),
 					});
 				}
+				recordMultiWindowUsage(
+					deps.settingsStore,
+					windowRegistry,
+					'window_closed',
+					Math.max(0, windowRegistry.getAll().length - 1)
+				);
 			}
 
 			saveWindowState();

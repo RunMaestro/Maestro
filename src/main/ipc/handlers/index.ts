@@ -260,6 +260,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerWindowsHandlers({
 		windowManager: deps.windowManager,
 		windowStateStore: deps.windowStateStore,
+		settingsStore: deps.settingsStore,
 	});
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ipcMain, BrowserWindow } from 'electron';
 import { registerWindowsHandlers } from '../../../../main/ipc/handlers/windows';
 import { WindowRegistry } from '../../../../main/window-registry';
+import { recordMultiWindowUsage } from '../../../../main/stats/multi-window-recorder';
 import type { WindowManager } from '../../../../main/app-lifecycle/window-manager';
 import type { MultiWindowState } from '../../../../main/stores/types';
 
@@ -54,6 +55,10 @@ vi.mock('electron', () => ({
 		}),
 	},
 	BrowserWindow: mockState.MockBrowserWindow,
+}));
+
+vi.mock('../../../../main/stats/multi-window-recorder', () => ({
+	recordMultiWindowUsage: vi.fn(),
 }));
 
 function createWindowStateStore(state?: Partial<MultiWindowState>) {
@@ -124,6 +129,11 @@ describe('windows IPC handlers', () => {
 			activeSessionId: 'session-2',
 		});
 		expect(windowManager.windowRegistry.getWindowForSession('session-2')).toBe('2');
+		expect(recordMultiWindowUsage).toHaveBeenCalledWith(
+			undefined,
+			windowManager.windowRegistry,
+			'window_created'
+		);
 	});
 
 	it('creates a secondary window from the invoking window and updates source ownership', async () => {
@@ -228,6 +238,11 @@ describe('windows IPC handlers', () => {
 				{ id: '2', isMain: false, sessionIds: ['session-1'], activeSessionId: 'session-1' },
 			],
 		});
+		expect(recordMultiWindowUsage).toHaveBeenCalledWith(
+			undefined,
+			windowManager.windowRegistry,
+			'session_moved'
+		);
 	});
 
 	it('prevents moving the last session out of the primary window', async () => {

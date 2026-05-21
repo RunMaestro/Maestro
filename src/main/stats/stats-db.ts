@@ -18,6 +18,7 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	MultiWindowEvent,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -52,6 +53,11 @@ import {
 	getSessionLifecycleEvents,
 	clearSessionLifecycleCache,
 } from './session-lifecycle';
+import {
+	recordMultiWindowEvent,
+	getMultiWindowUsageStats,
+	clearMultiWindowEventCache,
+} from './multi-window';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
 
@@ -151,6 +157,7 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearMultiWindowEventCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -758,6 +765,18 @@ export class StatsDB {
 	}
 
 	// ============================================================================
+	// Multi-Window Events (delegated)
+	// ============================================================================
+
+	recordMultiWindowEvent(event: Omit<MultiWindowEvent, 'id' | 'timestamp'>): string {
+		return recordMultiWindowEvent(this.database, event);
+	}
+
+	getMultiWindowUsageStats(range: StatsTimeRange) {
+		return getMultiWindowUsageStats(this.database, range);
+	}
+
+	// ============================================================================
 	// Aggregations (delegated)
 	// ============================================================================
 
@@ -777,6 +796,7 @@ export class StatsDB {
 				deletedAutoRunSessions: 0,
 				deletedAutoRunTasks: 0,
 				deletedSessionLifecycle: 0,
+				deletedMultiWindowEvents: 0,
 				error: 'Database not initialized',
 			};
 		}

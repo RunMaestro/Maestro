@@ -2304,6 +2304,14 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			multiWindowUsage?: {
+				hasUsedMultipleWindows: boolean;
+				averageWindowCount: number;
+				maxWindowCount: number;
+				totalWindowCreatedEvents: number;
+				totalWindowClosedEvents: number;
+				totalSessionMovedEvents: number;
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;

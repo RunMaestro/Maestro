@@ -381,6 +381,7 @@ app.whenReady().then(async () => {
 		autoHideMenuBar,
 		windowRegistry: new WindowRegistry(),
 		isQuitting: () => quitHandler.isQuitConfirmed(),
+		settingsStore: store,
 	});
 
 	// Load custom agent paths from settings
@@ -692,6 +693,7 @@ function setupIpcHandlers() {
 	registerWindowsHandlers({
 		windowManager,
 		windowStateStore,
+		settingsStore: store,
 	});
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions

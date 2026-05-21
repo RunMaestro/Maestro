@@ -70,6 +70,14 @@ export interface StatsAggregation {
 	byAgent: Record<string, { count: number; duration: number }>;
 	bySource: { user: number; auto: number };
 	byDay: Array<{ date: string; count: number; duration: number }>;
+	multiWindowUsage?: {
+		hasUsedMultipleWindows: boolean;
+		averageWindowCount: number;
+		maxWindowCount: number;
+		totalWindowCreatedEvents: number;
+		totalWindowClosedEvents: number;
+		totalSessionMovedEvents: number;
+	};
 }
 
 /**
