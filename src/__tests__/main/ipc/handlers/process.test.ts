@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import {
 	registerProcessHandlers,
 	ProcessHandlerDependencies,
@@ -25,6 +25,9 @@ vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
+	},
+	BrowserWindow: {
+		fromWebContents: vi.fn(),
 	},
 }));
 
@@ -279,6 +282,7 @@ describe('process IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
 
 		// Create mock process manager
 		mockProcessManager = {
@@ -425,6 +429,104 @@ describe('process IPC handlers', () => {
 
 			expect(result.pid).toBe(99999);
 			expect(result.success).toBe(true);
+		});
+
+		it('assigns an unowned spawned session to the sender window after successful spawn', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: true,
+			};
+			const mockWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const mockBrowserWindow = {
+				webContents: mockWebContents,
+				getBounds: vi.fn().mockReturnValue({ x: 10, y: 20, width: 900, height: 700 }),
+				isMaximized: vi.fn().mockReturnValue(false),
+				isFullScreen: vi.fn().mockReturnValue(false),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const windowEntry = {
+				browserWindow: mockBrowserWindow,
+				sessionIds: ['existing-session'],
+				isMain: false,
+			};
+			const windowStateStore = {
+				store: {
+					primaryWindowId: 'primary',
+					windows: [
+						{
+							id: 'window-2',
+							x: 10,
+							y: 20,
+							width: 900,
+							height: 700,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: ['existing-session'],
+							activeSessionId: 'existing-session',
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+						},
+					],
+				},
+			};
+			const windowRegistry = {
+				getWindowId: vi.fn().mockReturnValue('window-2'),
+				getWindowForSession: vi.fn().mockReturnValue(undefined),
+				get: vi.fn().mockReturnValue(windowEntry),
+				setSessionsForWindow: vi.fn((_windowId: string, sessionIds: string[]) => {
+					windowEntry.sessionIds = sessionIds;
+				}),
+				getEntries: vi.fn().mockReturnValue([['window-2', windowEntry]]),
+				getAll: vi.fn().mockReturnValue([windowEntry]),
+			};
+
+			deps.windowManager = { windowRegistry } as any;
+			deps.windowStateStore = windowStateStore as any;
+			handlers.clear();
+			registerProcessHandlers(deps);
+			vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(mockBrowserWindow as any);
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({ sender: 'sender-web-contents' } as any, {
+				sessionId: 'new-session',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: [],
+			});
+
+			expect(windowRegistry.setSessionsForWindow).toHaveBeenCalledWith('window-2', [
+				'existing-session',
+				'new-session',
+			]);
+			expect(windowStateStore.store.windows[0]).toEqual(
+				expect.objectContaining({
+					id: 'window-2',
+					sessionIds: ['existing-session', 'new-session'],
+					activeSessionId: 'new-session',
+				})
+			);
+			expect(mockWebContents.send).toHaveBeenCalledWith('windows:sessionMoved', {
+				sessionId: 'new-session',
+				fromWindowId: 'window-2',
+				toWindowId: 'window-2',
+				windows: [
+					{
+						id: 'window-2',
+						isMain: false,
+						sessionIds: ['existing-session', 'new-session'],
+						activeSessionId: 'new-session',
+					},
+				],
+			});
+			expect(mockWebContents.send.mock.invocationCallOrder[0]).toBeGreaterThan(
+				mockProcessManager.spawn.mock.invocationCallOrder[0]
+			);
 		});
 
 		it('should handle spawn failure', async () => {

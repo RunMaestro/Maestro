@@ -217,6 +217,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
 		sessionsStore: deps.sessionsStore,
+		windowManager: deps.windowManager,
+		windowStateStore: deps.windowStateStore,
 	});
 	registerPersistenceHandlers({
 		settingsStore: deps.settingsStore,

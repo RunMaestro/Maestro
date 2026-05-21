@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
 import Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
 import * as os from 'os';
@@ -28,6 +29,7 @@ import {
 } from '../../utils/agent-args';
 import {
 	withIpcErrorLogging,
+	withErrorLogging,
 	requireProcessManager,
 	requireDependency,
 	CreateHandlerOptions,
@@ -42,6 +44,9 @@ import { getWindowsShellForAgentExecution } from '../../process-manager/utils/sh
 import { buildExpandedEnv, encodeClaudeProjectPath } from '../../../shared/pathUtils';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { WindowInfo, WindowState } from '../../../shared/types/window';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
+import type { MultiWindowState } from '../../stores/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell } from '../../stores/defaults';
@@ -140,6 +145,122 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	windowManager?: WindowManager;
+	windowStateStore?: Store<MultiWindowState>;
+}
+
+function findStoredWindowState(
+	windowStateStore: Store<MultiWindowState>,
+	windowId: string
+): WindowState | undefined {
+	return windowStateStore.store.windows.find((windowState) => windowState.id === windowId);
+}
+
+function getWindowList(
+	windowManager: WindowManager,
+	windowStateStore: Store<MultiWindowState>
+): WindowInfo[] {
+	return windowManager.windowRegistry.getEntries().map(([windowId, entry]) => {
+		const storedState = findStoredWindowState(windowStateStore, windowId);
+		return {
+			id: windowId,
+			isMain: entry.isMain,
+			sessionIds: entry.sessionIds,
+			activeSessionId: storedState?.activeSessionId ?? null,
+		};
+	});
+}
+
+function upsertSpawnWindowState(
+	windowStateStore: Store<MultiWindowState>,
+	windowId: string,
+	browserWindow: BrowserWindow,
+	sessionIds: string[],
+	activeSessionId: string
+): void {
+	const currentState = windowStateStore.store;
+	const bounds = browserWindow.getBounds();
+	const existingWindowState = findStoredWindowState(windowStateStore, windowId);
+	const nextWindowState: WindowState = {
+		id: windowId,
+		x: existingWindowState?.x ?? bounds.x,
+		y: existingWindowState?.y ?? bounds.y,
+		width: existingWindowState?.width ?? bounds.width,
+		height: existingWindowState?.height ?? bounds.height,
+		isMaximized: existingWindowState?.isMaximized ?? browserWindow.isMaximized(),
+		isFullScreen: existingWindowState?.isFullScreen ?? browserWindow.isFullScreen(),
+		sessionIds,
+		activeSessionId,
+		leftPanelCollapsed: existingWindowState?.leftPanelCollapsed ?? false,
+		rightPanelCollapsed: existingWindowState?.rightPanelCollapsed ?? false,
+	};
+
+	const hasWindowState = currentState.windows.some((windowState) => windowState.id === windowId);
+	windowStateStore.store = {
+		...currentState,
+		windows: hasWindowState
+			? currentState.windows.map((windowState) =>
+					windowState.id === windowId ? nextWindowState : windowState
+				)
+			: [...currentState.windows, nextWindowState],
+	};
+}
+
+function assignSpawnSessionToSenderWindow(
+	event: IpcMainInvokeEvent,
+	sessionId: string,
+	windowManager?: WindowManager,
+	windowStateStore?: Store<MultiWindowState>
+): void {
+	if (!windowManager || !windowStateStore) {
+		return;
+	}
+
+	const browserWindow = BrowserWindow.fromWebContents(event.sender);
+	if (!browserWindow) {
+		return;
+	}
+
+	const { windowRegistry } = windowManager;
+	const targetWindowId = windowRegistry.getWindowId(browserWindow);
+	if (!targetWindowId) {
+		return;
+	}
+
+	const currentOwnerWindowId = windowRegistry.getWindowForSession(sessionId);
+	if (currentOwnerWindowId && currentOwnerWindowId !== targetWindowId) {
+		return;
+	}
+
+	const targetEntry = windowRegistry.get(targetWindowId);
+	if (!targetEntry) {
+		return;
+	}
+
+	if (!targetEntry.sessionIds.includes(sessionId)) {
+		windowRegistry.setSessionsForWindow(targetWindowId, [...targetEntry.sessionIds, sessionId]);
+	}
+
+	upsertSpawnWindowState(
+		windowStateStore,
+		targetWindowId,
+		targetEntry.browserWindow,
+		targetEntry.sessionIds,
+		sessionId
+	);
+
+	const windows = getWindowList(windowManager, windowStateStore);
+	for (const entry of windowRegistry.getAll()) {
+		if (entry.browserWindow.isDestroyed() || entry.browserWindow.webContents.isDestroyed()) {
+			continue;
+		}
+		entry.browserWindow.webContents.send('windows:sessionMoved', {
+			sessionId,
+			fromWindowId: currentOwnerWindowId ?? targetWindowId,
+			toWindowId: targetWindowId,
+			windows,
+		});
+	}
 }
 
 /**
@@ -155,63 +276,75 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
-		deps;
+	const {
+		getProcessManager,
+		getAgentDetector,
+		agentConfigsStore,
+		settingsStore,
+		getMainWindow,
+		getCueProcesses,
+		interactiveReplayController,
+		windowManager,
+		windowStateStore,
+	} = deps;
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withIpcErrorLogging(
+		withErrorLogging(
 			handlerOpts('spawn'),
-			async (config: {
-				sessionId: string;
-				toolType: string;
-				cwd: string;
-				command: string;
-				args: string[];
-				prompt?: string;
-				shell?: string;
-				images?: string[]; // Base64 data URLs for images
-				// Stdin prompt delivery modes
-				sendPromptViaStdin?: boolean; // If true, send prompt via stdin as JSON (for stream-json compatible agents)
-				sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text (for OpenCode, Codex, etc.)
-				// Agent-specific spawn options (used to build args via agent config)
-				agentSessionId?: string; // For session resume
-				readOnlyMode?: boolean; // For read-only/plan mode
-				modelId?: string; // For model selection
-				yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
-				// Per-session overrides (take precedence over agent-level config)
-				sessionCustomPath?: string; // Session-specific custom path
-				sessionCustomArgs?: string; // Session-specific custom args
-				sessionCustomEnvVars?: Record<string, string>; // Session-specific env vars
-				sessionCustomModel?: string; // Session-specific model selection
-				sessionCustomEffort?: string; // Session-specific effort/reasoning level
-				sessionCustomContextWindow?: number; // Session-specific context window size
-				// Per-session SSH remote config (takes precedence over agent-level SSH config)
-				sessionSshRemoteConfig?: {
-					enabled: boolean;
-					remoteId: string | null;
-					workingDirOverride?: string;
-				};
-				// Batch Mode (Claude Code only). When true and a maestro-p binary resolves,
-				// the spawner picks between maestro-p (Time Limits / Max plan) and
-				// claude --print (API Limits) based on the latest usage snapshot.
-				enableMaestroP?: boolean;
-				// Refines the Adaptive opt-in: 'interactive' always drives the maestro-p
-				// TUI, 'dynamic' (default) auto-switches to API when over the usage
-				// limit. Authoritative value is read from the persisted session; this is
-				// only a fallback for callers that pass it inline.
-				maestroPMode?: 'interactive' | 'dynamic';
-				// Optional override for the maestro-p binary path. When unset/empty, the
-				// spawner falls back to the bundled maestro-p script.
-				maestroPPath?: string;
-				// System prompt delivery (separate from user message for token efficiency)
-				appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-				// Stats tracking options
-				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
-				tabId?: string; // Tab ID for multi-tab tracking
-			}) => {
+			async (
+				event: IpcMainInvokeEvent,
+				config: {
+					sessionId: string;
+					toolType: string;
+					cwd: string;
+					command: string;
+					args: string[];
+					prompt?: string;
+					shell?: string;
+					images?: string[]; // Base64 data URLs for images
+					// Stdin prompt delivery modes
+					sendPromptViaStdin?: boolean; // If true, send prompt via stdin as JSON (for stream-json compatible agents)
+					sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text (for OpenCode, Codex, etc.)
+					// Agent-specific spawn options (used to build args via agent config)
+					agentSessionId?: string; // For session resume
+					readOnlyMode?: boolean; // For read-only/plan mode
+					modelId?: string; // For model selection
+					yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
+					// Per-session overrides (take precedence over agent-level config)
+					sessionCustomPath?: string; // Session-specific custom path
+					sessionCustomArgs?: string; // Session-specific custom args
+					sessionCustomEnvVars?: Record<string, string>; // Session-specific env vars
+					sessionCustomModel?: string; // Session-specific model selection
+					sessionCustomEffort?: string; // Session-specific effort/reasoning level
+					sessionCustomContextWindow?: number; // Session-specific context window size
+					// Per-session SSH remote config (takes precedence over agent-level SSH config)
+					sessionSshRemoteConfig?: {
+						enabled: boolean;
+						remoteId: string | null;
+						workingDirOverride?: string;
+					};
+					// Batch Mode (Claude Code only). When true and a maestro-p binary resolves,
+					// the spawner picks between maestro-p (Time Limits / Max plan) and
+					// claude --print (API Limits) based on the latest usage snapshot.
+					enableMaestroP?: boolean;
+					// Refines the Adaptive opt-in: 'interactive' always drives the maestro-p
+					// TUI, 'dynamic' (default) auto-switches to API when over the usage
+					// limit. Authoritative value is read from the persisted session; this is
+					// only a fallback for callers that pass it inline.
+					maestroPMode?: 'interactive' | 'dynamic';
+					// Optional override for the maestro-p binary path. When unset/empty, the
+					// spawner falls back to the bundled maestro-p script.
+					maestroPPath?: string;
+					// System prompt delivery (separate from user message for token efficiency)
+					appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
+					// Stats tracking options
+					querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
+					tabId?: string; // Tab ID for multi-tab tracking
+				}
+			) => {
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -1145,6 +1278,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					// Extra dirs to prepend to spawn PATH (local non-SSH only)
 					extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 				});
+
+				if (result.success) {
+					assignSpawnSessionToSenderWindow(event, config.sessionId, windowManager, windowStateStore);
+				}
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 					sessionId: config.sessionId,
