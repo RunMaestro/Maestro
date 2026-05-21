@@ -16,7 +16,6 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
-import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -376,14 +375,17 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
-				{/* Group badge (only in bookmark variant when session belongs to a group) */}
+				{/* Group badge (only in bookmark variant when session belongs to a group).
+				    Show the real group name with CSS ellipsis when too long, instead of
+				    initialism — initials like "CCS" hide which group a row belongs to.
+				    Full name remains available via the hover title. */}
 				{variant === 'bookmark' && group && (
 					<span
-						className="text-[9px] px-1 py-0.5 rounded"
+						className="text-[9px] px-1 py-0.5 rounded truncate max-w-[12ch] shrink-0"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						title={group.name}
 					>
-						{abbreviateGroupName(group.name)}
+						{group.name}
 					</span>
 				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}

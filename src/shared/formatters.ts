@@ -23,7 +23,6 @@
  * - formatTimestamp: Format timestamps in various styles (time, datetime, smart, full)
  * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
  * - truncateCommand: Truncate command text for display with ellipsis
- * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
 /**
@@ -508,55 +507,6 @@ export function formatDurationDecimal(ms: number): string {
 export function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 	return Math.ceil(totalChars / 4);
-}
-
-/**
- * Cleverly shorten a group name so it fits in a small badge/pill.
- *
- * Strategy ladder — first rung that meets `max` wins:
- *   1. Already short enough → return as-is.
- *   2. Contains "&" or " and " conjunction → acronym joined by "&"
- *      ("Amini & Conant" → "A&C", "Foo and Bar and Baz" → "F&B&B").
- *   3. Multi-word (split on whitespace, "_", "-", "/") → initials ("Acme Corp" → "AC").
- *   4. Single long word → strip vowels keeping the first character
- *      ("Engineering" → "Engnrng", "Documentation" → "Dcmnttn").
- *   5. Still too long → hard-truncate the devoweled form.
- *
- * Aim for `target` chars, accept up to `max`. Defaults match the bookmark
- * badge in the Left Bar (target 8, allow 10).
- */
-export function abbreviateGroupName(
-	name: string,
-	options?: { target?: number; max?: number }
-): string {
-	const max = options?.max ?? 10;
-	const trimmed = name.trim();
-	if (!trimmed) return trimmed;
-	if (trimmed.length <= max) return trimmed;
-
-	// Acronym joined by "&" — handles "A & B" and "A and B" forms.
-	const conjunctionParts = trimmed
-		.split(/\s*&\s*|\s+and\s+/i)
-		.map((p) => p.trim())
-		.filter(Boolean);
-	if (conjunctionParts.length >= 2) {
-		const acronym = conjunctionParts.map((p) => p.charAt(0).toUpperCase()).join('&');
-		if (acronym.length <= max) return acronym;
-	}
-
-	// Plain initials for multi-word names.
-	const words = trimmed.split(/[\s_\-/]+/).filter(Boolean);
-	if (words.length >= 2) {
-		const initials = words.map((w) => w.charAt(0).toUpperCase()).join('');
-		if (initials.length <= max) return initials;
-		return initials.slice(0, max);
-	}
-
-	// Single word: drop vowels but preserve the first character so "Amini" → "Amn", not "mn".
-	const first = trimmed.charAt(0);
-	const devoweled = first + trimmed.slice(1).replace(/[aeiouAEIOU]/g, '');
-	if (devoweled.length <= max) return devoweled;
-	return devoweled.slice(0, max);
 }
 
 /**
