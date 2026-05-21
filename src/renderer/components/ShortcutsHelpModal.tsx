@@ -8,19 +8,77 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
 
+type ShortcutScope = 'global' | 'window' | 'context';
+
+interface ShortcutHelpItem extends Shortcut {
+	scope: ShortcutScope;
+	helpText?: string;
+	isAction?: boolean;
+}
+
 interface ShortcutsHelpModalProps {
 	theme: Theme;
 	shortcuts: Record<string, Shortcut>;
-	tabShortcuts: Record<string, Shortcut>;
+	tabShortcuts?: Record<string, Shortcut>;
 	onClose: () => void;
 	hasNoAgents?: boolean;
 	keyboardMasteryStats?: KeyboardMasteryStats;
 }
 
+const GLOBAL_SHORTCUT_IDS = new Set([
+	'quickAction',
+	'help',
+	'settings',
+	'agentSettings',
+	'systemLogs',
+	'processMonitor',
+	'usageDashboard',
+	'directorNotes',
+	'openSymphony',
+]);
+
+const WINDOW_CONTEXT_ACTIONS: ShortcutHelpItem[] = [
+	{
+		id: 'moveTabToNewWindow',
+		label: 'Move to New Window',
+		keys: [],
+		scope: 'window',
+		helpText: 'Tab context menu',
+		isAction: true,
+	},
+];
+
+function getShortcutScope(shortcut: Shortcut, tabShortcutIds: Set<string>): ShortcutScope {
+	if (GLOBAL_SHORTCUT_IDS.has(shortcut.id)) {
+		return 'global';
+	}
+
+	if (tabShortcutIds.has(shortcut.id)) {
+		return 'window';
+	}
+
+	if (shortcut.label.includes('(in ') || shortcut.label.startsWith('File Preview:')) {
+		return 'context';
+	}
+
+	return 'window';
+}
+
+function getScopeLabel(scope: ShortcutScope): string {
+	switch (scope) {
+		case 'global':
+			return 'Global';
+		case 'window':
+			return 'This window';
+		case 'context':
+			return 'Context';
+	}
+}
+
 export function ShortcutsHelpModal({
 	theme,
 	shortcuts,
-	tabShortcuts,
+	tabShortcuts = {},
 	onClose,
 	hasNoAgents,
 	keyboardMasteryStats,
@@ -39,6 +97,19 @@ export function ShortcutsHelpModal({
 	);
 
 	const totalShortcuts = Object.values(allShortcuts).length;
+	const tabShortcutIds = useMemo(
+		() => new Set(Object.values(tabShortcuts).map((sc) => sc.id)),
+		[tabShortcuts]
+	);
+	const helpItems = useMemo<ShortcutHelpItem[]>(() => {
+		const shortcutItems = Object.values(allShortcuts).map((sc) => ({
+			...sc,
+			scope: getShortcutScope(sc, tabShortcutIds),
+		}));
+
+		return [...shortcutItems, ...WINDOW_CONTEXT_ACTIONS];
+	}, [allShortcuts, tabShortcutIds]);
+	const totalHelpItems = helpItems.length;
 
 	// Calculate mastery progress
 	const usedShortcutsCount = keyboardMasteryStats?.usedShortcuts.length ?? 0;
@@ -51,10 +122,16 @@ export function ShortcutsHelpModal({
 		return KEYBOARD_MASTERY_LEVELS.find((l) => l.threshold > masteryPercentage);
 	}, [masteryPercentage]);
 	const usedShortcutIds = new Set(keyboardMasteryStats?.usedShortcuts ?? []);
-	const filteredShortcuts = Object.values(allShortcuts)
-		.filter((sc) => fuzzyMatch(sc.label, searchQuery) || fuzzyMatch(sc.keys.join(' '), searchQuery))
+	const filteredItems = helpItems
+		.filter(
+			(sc) =>
+				fuzzyMatch(sc.label, searchQuery) ||
+				fuzzyMatch(sc.keys.join(' '), searchQuery) ||
+				fuzzyMatch(getScopeLabel(sc.scope), searchQuery) ||
+				fuzzyMatch(sc.helpText ?? '', searchQuery)
+		)
 		.sort((a, b) => a.label.localeCompare(b.label));
-	const filteredCount = filteredShortcuts.length;
+	const filteredCount = filteredItems.length;
 
 	// Custom header with title, badge, mastery progress, search input, and close button
 	const customHeader = (
@@ -68,7 +145,7 @@ export function ShortcutsHelpModal({
 						className="text-xs px-2 py-0.5 rounded"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
-						{searchQuery ? `${filteredCount} / ${totalShortcuts}` : totalShortcuts}
+						{searchQuery ? `${filteredCount} / ${totalHelpItems}` : totalHelpItems}
 					</span>
 				</div>
 				<button
@@ -98,7 +175,8 @@ export function ShortcutsHelpModal({
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 			/>
 			<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-				Many shortcuts can be customized from Settings → Shortcuts.
+				Many shortcuts can be customized from Settings → Shortcuts. Global actions apply across
+				Maestro; this-window actions affect only the active window.
 			</p>
 		</div>
 	);
@@ -168,12 +246,12 @@ export function ShortcutsHelpModal({
 			initialFocusRef={searchInputRef}
 		>
 			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin -my-2">
-				{filteredShortcuts.map((sc, i) => {
+				{filteredItems.map((sc, i) => {
 					const isUsed = usedShortcutIds.has(sc.id);
 					return (
 						<div key={i} className="flex justify-between items-center text-sm gap-2">
 							<div className="flex items-center gap-1.5 min-w-0 flex-1">
-								{keyboardMasteryStats && (
+								{keyboardMasteryStats && !sc.isAction && (
 									<span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
 										{isUsed ? (
 											<CheckCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
@@ -191,17 +269,39 @@ export function ShortcutsHelpModal({
 								>
 									{sc.label}
 								</span>
+								<span
+									className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textDim,
+									}}
+								>
+									{getScopeLabel(sc.scope)}
+								</span>
 							</div>
-							<kbd
-								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-							>
-								{formatShortcutKeys(sc.keys)}
-							</kbd>
+							{sc.isAction ? (
+								<span
+									className="px-2 py-1 rounded border text-xs flex-shrink-0"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+								>
+									{sc.helpText}
+								</span>
+							) : (
+								<kbd
+									className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+								>
+									{formatShortcutKeys(sc.keys)}
+								</kbd>
+							)}
 						</div>
 					);
 				})}
