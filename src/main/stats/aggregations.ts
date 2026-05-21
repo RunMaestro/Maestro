@@ -15,6 +15,7 @@ import {
 import { PERFORMANCE_THRESHOLDS } from '../../shared/performance-metrics';
 import { getTimeRangeStart, perfMetrics, LOG_CONTEXT } from './utils';
 import { countImageAnnotationsSince } from './image-annotations';
+import { getMultiWindowUsageStats } from './multi-window';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -484,6 +485,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const durationPercentiles = queryDurationPercentiles(db, startTime);
 	const autoRunTaskDurationPercentiles = queryAutoRunTaskPercentiles(db, startTime);
 	const imageAnnotations = countImageAnnotationsSince(db, startTime);
+	const multiWindowUsage = getMultiWindowUsageStats(db, range);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 		range,
@@ -519,5 +521,6 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		parentQueries: worktreeStatus.parentQueries,
 		byWorktreeStatus: worktreeStatus.byWorktreeStatus,
 		imageAnnotations,
+		multiWindowUsage,
 	};
 }

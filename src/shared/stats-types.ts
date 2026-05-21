@@ -73,6 +73,18 @@ export interface SessionLifecycleEvent {
 }
 
 /**
+ * Multi-window usage event - tracks aggregate-safe window count snapshots.
+ */
+export interface MultiWindowEvent {
+	id: string;
+	eventType: 'window_created' | 'window_closed' | 'session_moved';
+	timestamp: number;
+	windowCount: number;
+	secondaryWindowCount: number;
+	sessionCount: number;
+}
+
+/**
  * Time range for querying stats
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -122,6 +134,15 @@ export interface StatsAggregation {
 	};
 	/** Number of image annotations saved in the time range */
 	imageAnnotations: number;
+	/** Multi-window usage telemetry derived from aggregate-safe local stats */
+	multiWindowUsage?: {
+		hasUsedMultipleWindows: boolean;
+		averageWindowCount: number;
+		maxWindowCount: number;
+		totalWindowCreatedEvents: number;
+		totalWindowClosedEvents: number;
+		totalSessionMovedEvents: number;
+	};
 }
 
 /**
@@ -146,4 +167,4 @@ export interface ShortcutUsageDay {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 7;
+export const STATS_DB_VERSION = 8;

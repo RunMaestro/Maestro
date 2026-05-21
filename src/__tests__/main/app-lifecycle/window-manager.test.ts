@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { recordMultiWindowUsage } from '../../../main/stats/multi-window-recorder';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
@@ -125,6 +126,10 @@ vi.mock('../../../main/utils/logger', () => ({
 const mockInitAutoUpdater = vi.fn();
 vi.mock('../../../main/auto-updater', () => ({
 	initAutoUpdater: (...args: unknown[]) => mockInitAutoUpdater(...args),
+}));
+
+vi.mock('../../../main/stats/multi-window-recorder', () => ({
+	recordMultiWindowUsage: vi.fn(),
 }));
 
 // Mock electron-devtools-installer (for development mode)
@@ -645,6 +650,12 @@ describe('app-lifecycle/window-manager', () => {
 					},
 				],
 			});
+			expect(recordMultiWindowUsage).toHaveBeenCalledWith(
+				undefined,
+				windowManager.windowRegistry,
+				'window_closed',
+				1
+			);
 		});
 
 		it('should keep secondary window state when closing during app quit', async () => {

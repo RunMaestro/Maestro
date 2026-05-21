@@ -164,6 +164,26 @@ export const CREATE_COMPOUND_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Multi-Window Events (Migration v5)
+// ============================================================================
+
+export const CREATE_MULTI_WINDOW_EVENTS_SQL = `
+  CREATE TABLE IF NOT EXISTS multi_window_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL CHECK(event_type IN ('window_created', 'window_closed', 'session_moved')),
+    timestamp INTEGER NOT NULL,
+    window_count INTEGER NOT NULL,
+    secondary_window_count INTEGER NOT NULL,
+    session_count INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_MULTI_WINDOW_EVENTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_multi_window_timestamp ON multi_window_events(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_multi_window_event_type ON multi_window_events(event_type)
+`;
+
+// ============================================================================
 // Utilities
 // ============================================================================
 

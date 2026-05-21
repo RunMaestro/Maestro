@@ -35,6 +35,7 @@ export function clearOldData(
 	deletedAutoRunSessions: number;
 	deletedAutoRunTasks: number;
 	deletedSessionLifecycle: number;
+	deletedMultiWindowEvents: number;
 	error?: string;
 } {
 	if (olderThanDays <= 0) {
@@ -44,6 +45,7 @@ export function clearOldData(
 			deletedAutoRunSessions: 0,
 			deletedAutoRunTasks: 0,
 			deletedSessionLifecycle: 0,
+			deletedMultiWindowEvents: 0,
 			error: 'olderThanDays must be greater than 0',
 		};
 	}
@@ -60,6 +62,7 @@ export function clearOldData(
 		let deletedSessions = 0;
 		let deletedTasks = 0;
 		let deletedLifecycle = 0;
+		let deletedMultiWindowEvents = 0;
 
 		// Wrap all deletes in a transaction for atomicity
 		const runCleanup = db.transaction(() => {
@@ -88,13 +91,19 @@ export function clearOldData(
 				.prepare('DELETE FROM session_lifecycle WHERE created_at < ?')
 				.run(cutoffTime);
 			deletedLifecycle = lifecycleResult.changes;
+
+			const multiWindowResult = db
+				.prepare('DELETE FROM multi_window_events WHERE timestamp < ?')
+				.run(cutoffTime);
+			deletedMultiWindowEvents = multiWindowResult.changes;
 		});
 
 		runCleanup();
 
-		const totalDeleted = deletedEvents + deletedSessions + deletedTasks + deletedLifecycle;
+		const totalDeleted =
+			deletedEvents + deletedSessions + deletedTasks + deletedLifecycle + deletedMultiWindowEvents;
 		logger.info(
-			`Cleared ${totalDeleted} old stats records (${deletedEvents} query events, ${deletedSessions} auto-run sessions, ${deletedTasks} auto-run tasks, ${deletedLifecycle} session lifecycle)`,
+			`Cleared ${totalDeleted} old stats records (${deletedEvents} query events, ${deletedSessions} auto-run sessions, ${deletedTasks} auto-run tasks, ${deletedLifecycle} session lifecycle, ${deletedMultiWindowEvents} multi-window events)`,
 			LOG_CONTEXT
 		);
 
@@ -104,6 +113,7 @@ export function clearOldData(
 			deletedAutoRunSessions: deletedSessions,
 			deletedAutoRunTasks: deletedTasks,
 			deletedSessionLifecycle: deletedLifecycle,
+			deletedMultiWindowEvents,
 		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
@@ -114,6 +124,7 @@ export function clearOldData(
 			deletedAutoRunSessions: 0,
 			deletedAutoRunTasks: 0,
 			deletedSessionLifecycle: 0,
+			deletedMultiWindowEvents: 0,
 			error: errorMessage,
 		};
 	}

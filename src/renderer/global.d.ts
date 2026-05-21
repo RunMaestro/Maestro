@@ -2921,6 +2921,14 @@ interface MaestroAPI {
 				parent: { count: number; duration: number };
 			};
 			imageAnnotations: number;
+			multiWindowUsage?: {
+				hasUsedMultipleWindows: boolean;
+				averageWindowCount: number;
+				maxWindowCount: number;
+				totalWindowCreatedEvents: number;
+				totalWindowClosedEvents: number;
+				totalSessionMovedEvents: number;
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
@@ -2933,6 +2941,7 @@ interface MaestroAPI {
 			deletedAutoRunSessions: number;
 			deletedAutoRunTasks: number;
 			deletedSessionLifecycle: number;
+			deletedMultiWindowEvents: number;
 			error?: string;
 		}>;
 		// Get database size in bytes

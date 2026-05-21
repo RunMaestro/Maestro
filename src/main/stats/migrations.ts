@@ -28,6 +28,8 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_MULTI_WINDOW_EVENTS_SQL,
+	CREATE_MULTI_WINDOW_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -78,6 +80,11 @@ function getMigrations(): Migration[] {
 			version: 7,
 			description: 'Add shortcut_usage_daily table for tracking keyboard shortcut firings per day',
 			up: (db) => migrateV7(db),
+		},
+		{
+			version: 8,
+			description: 'Add multi_window_events table for local multi-window usage telemetry',
+			up: (db) => migrateV8(db),
 		},
 	];
 }
@@ -319,4 +326,14 @@ function migrateV7(db: Database.Database): void {
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
 	const rows = db.pragma(`table_info(${table})`) as Array<{ name: string }> | undefined;
 	return Array.isArray(rows) && rows.some((row) => row.name === column);
+}
+
+/**
+ * Migration v8: Add multi-window events table
+ */
+function migrateV8(db: Database.Database): void {
+	db.prepare(CREATE_MULTI_WINDOW_EVENTS_SQL).run();
+	runStatements(db, CREATE_MULTI_WINDOW_EVENTS_INDEXES_SQL);
+
+	logger.debug('Created multi_window_events table', LOG_CONTEXT);
 }

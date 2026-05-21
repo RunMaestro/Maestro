@@ -1602,6 +1602,7 @@ function setupIpcHandlers() {
 	registerWindowsHandlers({
 		windowManager,
 		windowStateStore,
+		settingsStore: store,
 	});
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
