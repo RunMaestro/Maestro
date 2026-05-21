@@ -265,6 +265,7 @@ interface MaestroAPI {
 				childProcesses?: Array<{ pid: number; command: string }>;
 			}>
 		>;
+		isTerminalBusy: (sessionId: string) => Promise<boolean>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
@@ -280,6 +281,16 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				sshRemote: { id: string; name: string; host: string } | null
+			) => void
+		) => () => void;
+		onClaudeModeResolved: (
+			callback: (
+				sessionId: string,
+				resolution: {
+					mode: 'interactive' | 'api';
+					reason: 'auto' | 'limit';
+					configDirKey: string;
+				}
 			) => void
 		) => () => void;
 		onRemoteCommand: (
@@ -985,6 +996,20 @@ interface MaestroAPI {
 			customPath?: string,
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+		getMaestroPDetectedPath: () => Promise<string | null>;
+		getClaudeUsageSnapshots: () => Promise<
+			Record<
+				string,
+				{
+					sampledAt: string;
+					configDirKey: string;
+					session: { percent: number; resetsAt: string };
+					weekAllModels: { percent: number; resetsAt: string };
+					weekSonnetOnly: { percent: number; resetsAt: string };
+				}
+			>
+		>;
+		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

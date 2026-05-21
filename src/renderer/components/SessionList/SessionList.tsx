@@ -984,7 +984,7 @@ function SessionListInner(props: SessionListProps) {
 				>
 					{/* Session Filter */}
 					{sessionFilterOpen && (
-						<div className="mx-3 mb-3">
+						<div className="mx-3 mb-3 relative">
 							<input
 								autoFocus
 								type="text"
@@ -997,9 +997,18 @@ function SessionListInner(props: SessionListProps) {
 										setSessionFilter('');
 									}
 								}}
-								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+								className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 							/>
+							<div
+								className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textDim,
+								}}
+							>
+								ESC
+							</div>
 						</div>
 					)}
 

@@ -25,6 +25,7 @@ import {
 	Square,
 	SlidersHorizontal,
 	Trash2,
+	Type,
 	Undo2,
 	X,
 	type LucideIcon,
@@ -55,10 +56,10 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	onCopy,
 	onCancel,
 }: AnnotatorToolbarProps) {
-	const { tool, setTool, strokes, shapes, undo, clear } = state;
+	const { tool, setTool, strokes, shapes, texts, undo, clear } = state;
 	const [confirmingClear, setConfirmingClear] = useState(false);
 	const confirmWrapRef = useRef<HTMLDivElement>(null);
-	const hasContent = strokes.length > 0 || shapes.length > 0;
+	const hasContent = strokes.length > 0 || shapes.length > 0 || texts.length > 0;
 
 	// Cmd/Ctrl+Z (undo) and Cmd/Ctrl+S (save+exit) for the annotator.
 	//
@@ -178,7 +179,8 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	// Slide the toolbar left when the settings drawer opens, so the drawer
 	// can take the right edge without occluding the buttons. The drawer
 	// itself is 320px wide; we leave a 24px gap on either side.
-	const DRAWER_WIDTH = 320;
+	// Keep in sync with `AnnotatorSettingsDrawer`'s aside width.
+	const DRAWER_WIDTH = 360;
 	const EDGE_GAP = 24;
 	const rightOffset = drawerOpen ? DRAWER_WIDTH + EDGE_GAP : EDGE_GAP;
 
@@ -220,6 +222,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 			{renderToolButton('rect', Square, 'Rectangle')}
 			{renderToolButton('ellipse', Circle, 'Ellipse')}
 			{renderToolButton('arrow', ArrowUpRight, 'Arrow')}
+			{renderToolButton('text', Type, 'Text (Aa)')}
 
 			{divider}
 

@@ -97,6 +97,7 @@ function TabBarInner({
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
+	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
@@ -181,9 +182,11 @@ function TabBarInner({
 					(showStarredInUnreadFilter && ut.data.starred)
 				);
 			}
-			// File preview tabs: hidden by default in unread filter, shown if setting enabled
+			// File preview tabs: hidden by default in unread filter, shown if setting
+			// enabled — but the currently active file tab is always visible so the user
+			// never loses sight of what they're looking at.
 			if (ut.type === 'file') {
-				return showFilePreviewsInUnreadFilter;
+				return showFilePreviewsInUnreadFilter || ut.id === activeFileTabId;
 			}
 			// Terminal tabs are always visible
 			return true;
@@ -481,8 +484,8 @@ function TabBarInner({
 						// underlying unifiedTabs index.
 						const isLastDisplayed = index === displayedUnifiedTabs.length - 1;
 						const shortcutHint = showUnreadOnly
-							? getShortcutHint(index, isLastDisplayed)
-							: getShortcutHint(originalIndex, isLastTab);
+							? getShortcutHint(index, isLastDisplayed, useCmd0AsLastTab)
+							: getShortcutHint(originalIndex, isLastTab, useCmd0AsLastTab);
 
 						if (unifiedTab.type === 'ai') {
 							return (
@@ -626,8 +629,8 @@ function TabBarInner({
 						// Legacy mode: displayedTabs is the filtered list when unread filter is on.
 						const isLastDisplayed = index === displayedTabs.length - 1;
 						const shortcutHint = showUnreadOnly
-							? getShortcutHint(index, isLastDisplayed)
-							: getShortcutHint(originalIndex, isLastTab);
+							? getShortcutHint(index, isLastDisplayed, useCmd0AsLastTab)
+							: getShortcutHint(originalIndex, isLastTab, useCmd0AsLastTab);
 
 						return (
 							<React.Fragment key={tab.id}>

@@ -723,7 +723,7 @@ export function useModalHandlers(
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.aiTabs) {
+		if (currentSession?.aiTabs) {
 			getModalActions().setTabSwitcherOpen(true);
 		}
 	}, []);

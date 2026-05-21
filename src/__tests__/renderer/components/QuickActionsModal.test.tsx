@@ -1310,7 +1310,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('does not show tab actions when not in AI mode', () => {
+		it('hides AI-only tab actions when not in AI mode, but keeps Tab Switcher available', () => {
 			const props = createDefaultProps({
 				isAiMode: false,
 				onOpenTabSwitcher: vi.fn(),
@@ -1319,7 +1319,10 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Tab Switcher')).not.toBeInTheDocument();
+			// Tab Switcher is now mode-agnostic: as long as the agent has aiTabs
+			// the command shows up so users can jump back into an AI tab even
+			// from terminal / file / browser modes.
+			expect(screen.getByText('Tab Switcher')).toBeInTheDocument();
 			expect(screen.queryByText('Rename Tab')).not.toBeInTheDocument();
 			expect(screen.queryByText('Toggle Read-Only Mode')).not.toBeInTheDocument();
 		});

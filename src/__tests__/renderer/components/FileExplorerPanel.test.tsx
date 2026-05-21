@@ -135,6 +135,11 @@ vi.mock('lucide-react', () => ({
 			🔍
 		</span>
 	),
+	FilePlus: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="file-plus-icon" className={className} style={style}>
+			➕
+		</span>
+	),
 }));
 
 // Mock @tanstack/react-virtual for virtualization
@@ -287,6 +292,10 @@ const mockFileTree = [
 	},
 	{
 		name: 'README.md',
+		type: 'file' as const,
+	},
+	{
+		name: 'index.html',
 		type: 'file' as const,
 	},
 ];
@@ -1944,6 +1953,396 @@ describe('FileExplorerPanel', () => {
 		});
 	});
 
+	describe('Drag-to-move', () => {
+		// Builds a real DataTransfer-like object so we can read what the source set
+		// during onDragStart and inject what we want for onDragOver / onDrop.
+		function makeDataTransfer(initial: Record<string, string> = {}) {
+			const data: Record<string, string> = { ...initial };
+			return {
+				data,
+				setData: vi.fn((type: string, value: string) => {
+					data[type] = value;
+				}),
+				getData: vi.fn((type: string) => data[type] ?? ''),
+				get types() {
+					return Object.keys(data);
+				},
+				dropEffect: 'none',
+				effectAllowed: 'none',
+				files: { length: 0 } as unknown as FileList,
+			};
+		}
+
+		// Render the panel with a fileTree where 'src' is expanded so the inner
+		// 'utils' folder is mounted as a drop target.
+		function renderWithExpanded(overrides: Partial<Session> = {}) {
+			const props = {
+				...defaultProps,
+				session: createMockSession({
+					fileExplorerExpanded: ['src'],
+					fileTree: mockFileTree,
+					...overrides,
+				}),
+				filteredFileTree: mockFileTree,
+			};
+			return render(<FileExplorerPanel {...props} />);
+		}
+
+		function getRow(container: HTMLElement, name: string): HTMLElement {
+			const row = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(name)
+			) as HTMLElement | undefined;
+			if (!row) throw new Error(`row not found: ${name}`);
+			return row;
+		}
+
+		it('writes the relative path under the custom MIME type on drag start', () => {
+			const { container } = renderWithExpanded();
+			const row = getRow(container, 'package.json');
+			const dt = makeDataTransfer();
+			fireEvent.dragStart(row, { dataTransfer: dt });
+			expect(dt.data['application/x-maestro-file-path']).toBe('package.json');
+			expect(dt.effectAllowed).toBe('copyMove');
+		});
+
+		it('moves a root file into a folder via fs.rename with absolute paths', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const refreshFileTree = vi.fn().mockResolvedValue({ totalChanges: 1 });
+			const onShowFlash = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+					refreshFileTree={refreshFileTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'package.json' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/package.json',
+				'/Users/test/project/src/package.json',
+				undefined
+			);
+			expect(refreshFileTree).toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "package.json"');
+		});
+
+		it('expands the destination folder after a successful move', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const setSessions = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					setSessions={setSessions}
+					session={createMockSession({ fileExplorerExpanded: ['src'], fileTree: mockFileTree })}
+					filteredFileTree={mockFileTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'package.json' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// One of the setSessions calls should be the expander adding 'src'.
+			const updaters = setSessions.mock.calls
+				.map((c) => c[0])
+				.filter((fn) => typeof fn === 'function');
+			const expanded = updaters.some((fn) => {
+				const result = fn([{ id: defaultProps.session.id, fileExplorerExpanded: [] } as Session]);
+				return (result[0].fileExplorerExpanded ?? []).includes('src');
+			});
+			expect(expanded).toBe(true);
+		});
+
+		it('passes sshRemoteId through to fs.rename for remote sessions', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: mockFileTree,
+						sshRemoteId: 'remote-42',
+					})}
+					filteredFileTree={mockFileTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'README.md' });
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/README.md',
+				'/Users/test/project/src/README.md',
+				'remote-42'
+			);
+		});
+
+		it('rejects dropping a folder into itself', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('rejects dropping a folder into one of its own descendants', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const utilsRow = getRow(container, 'utils');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src' });
+
+			await act(async () => {
+				fireEvent.drop(utilsRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('skips moves where source already lives directly in the destination folder', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			const { container } = renderWithExpanded();
+			const srcRow = getRow(container, 'src');
+			// index.ts is already inside src/, dropping it onto src/ is a no-op.
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'src/index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+		});
+
+		it('opens the name-conflict modal when the destination already has the file', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+
+			// Tree where both root and src/ contain index.ts so a move triggers conflict.
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(rename).not.toHaveBeenCalled();
+			expect(screen.getByText('Name conflict')).toBeInTheDocument();
+			// Auto-rename preview shows the next free name ("index (2).ts").
+			expect(screen.getByText(/Rename to "index \(2\)\.ts"/)).toBeInTheDocument();
+		});
+
+		it('auto-rename move uses the suffixed name', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename } };
+			const onShowFlash = vi.fn();
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const autoRenameButton = screen
+				.getByText(/Rename to "index \(2\)\.ts"/)
+				.closest('button') as HTMLButtonElement;
+			await act(async () => {
+				fireEvent.click(autoRenameButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/index.ts',
+				'/Users/test/project/src/index (2).ts',
+				undefined
+			);
+			expect(onShowFlash).toHaveBeenCalledWith('Moved "index (2).ts"');
+		});
+
+		it('overwrite deletes the existing destination before renaming', async () => {
+			const rename = vi.fn().mockResolvedValue({ success: true });
+			const deleteFn = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { rename, delete: deleteFn } };
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			const overwriteButton = screen.getByText('Overwrite existing').closest('button')!;
+			await act(async () => {
+				fireEvent.click(overwriteButton);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(deleteFn).toHaveBeenCalledWith(
+				'/Users/test/project/src/index.ts',
+				expect.objectContaining({ recursive: true })
+			);
+			expect(rename).toHaveBeenCalledWith(
+				'/Users/test/project/index.ts',
+				'/Users/test/project/src/index.ts',
+				undefined
+			);
+		});
+
+		it('cancel closes the conflict modal without calling fs', async () => {
+			const rename = vi.fn();
+			const deleteFn = vi.fn();
+			(window as any).maestro = { fs: { rename, delete: deleteFn } };
+
+			const conflictTree = [
+				{ name: 'index.ts', type: 'file' as const },
+				{
+					name: 'src',
+					type: 'folder' as const,
+					children: [{ name: 'index.ts', type: 'file' as const }],
+				},
+			];
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({
+						fileExplorerExpanded: ['src'],
+						fileTree: conflictTree,
+					})}
+					filteredFileTree={conflictTree}
+				/>
+			);
+
+			const srcRow = getRow(container, 'src');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'index.ts' });
+
+			await act(async () => {
+				fireEvent.drop(srcRow, { dataTransfer: dt });
+				await Promise.resolve();
+			});
+
+			expect(screen.getByText('Name conflict')).toBeInTheDocument();
+			// The conflict modal has its own Cancel option (matching button label).
+			const cancelButtons = screen.getAllByText('Cancel');
+			fireEvent.click(cancelButtons[cancelButtons.length - 1]);
+
+			expect(screen.queryByText('Name conflict')).not.toBeInTheDocument();
+			expect(rename).not.toHaveBeenCalled();
+			expect(deleteFn).not.toHaveBeenCalled();
+		});
+
+		it('does not register drop handlers on file rows', () => {
+			const rename = vi.fn();
+			(window as any).maestro = { fs: { rename } };
+			const { container } = renderWithExpanded();
+			const fileRow = getRow(container, 'package.json');
+			const dt = makeDataTransfer({ 'application/x-maestro-file-path': 'README.md' });
+			fireEvent.drop(fileRow, { dataTransfer: dt });
+			expect(rename).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Context Menu', () => {
 		it('shows context menu on right-click', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
@@ -2152,6 +2551,176 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Rename File')).not.toBeInTheDocument();
 		});
 
+		it('shows "New File" option on folder context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			expect(screen.getByText('New File')).toBeInTheDocument();
+		});
+
+		it('does not show "New File" option on file context menu', () => {
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('package.json')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+			expect(screen.queryByText('New File')).not.toBeInTheDocument();
+		});
+
+		it('creates a new file inside the right-clicked folder', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+			const refreshFileTree = vi.fn().mockResolvedValue({ totalChanges: 1 });
+			const onShowFlash = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					refreshFileTree={refreshFileTree}
+					onShowFlash={onShowFlash}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/src/newthing.ts', '', undefined);
+			expect(refreshFileTree).toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('Created "newthing.ts"');
+		});
+
+		it('expands the parent folder after creating a new file in it', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+			const setSessions = vi.fn();
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					setSessions={setSessions}
+					session={createMockSession({ fileExplorerExpanded: [] })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'newthing.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// setSessions is called with an updater that adds 'src' to expanded list.
+			const updater = setSessions.mock.calls
+				.map((c) => c[0])
+				.find((fn) => typeof fn === 'function');
+			expect(updater).toBeDefined();
+			const result = updater([
+				{ id: defaultProps.session.id, fileExplorerExpanded: [] } as Session,
+			]);
+			expect(result[0].fileExplorerExpanded).toContain('src');
+		});
+
+		it('rejects new file name with slashes', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(<FileExplorerPanel {...defaultProps} />);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'nested/foo.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+			});
+
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(screen.getByText('Name cannot contain slashes')).toBeInTheDocument();
+		});
+
+		it('rejects new file name that already exists in the folder', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			// session.fileTree is the source of truth for the duplicate check, not
+			// filteredFileTree — pass it in explicitly so src/index.ts is known.
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ fileTree: mockFileTree })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'index.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+			});
+
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(screen.getByText('"index.ts" already exists in this folder')).toBeInTheDocument();
+		});
+
+		it('passes sshRemoteId to writeFile for remote sessions', async () => {
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			(window as any).maestro = { fs: { writeFile } };
+
+			const { container } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={createMockSession({ sshRemoteId: 'remote-42' })}
+				/>
+			);
+			const folderItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('src')
+			);
+			fireEvent.contextMenu(folderItem!, { clientX: 100, clientY: 200 });
+			fireEvent.click(screen.getByText('New File'));
+
+			const input = screen.getByPlaceholderText('Enter file name...') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: 'foo.ts' } });
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create'));
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(writeFile).toHaveBeenCalledWith('/Users/test/project/src/foo.ts', '', 'remote-42');
+		});
+
 		it('shows Open in Default App option for files', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
@@ -2220,7 +2789,20 @@ describe('FileExplorerPanel', () => {
 			expect(mockShell.openPath).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
-		it('shows Open in Maestro Browser option when onOpenBrowserTabAt is provided', () => {
+		it('shows Open in Maestro Browser option for HTML files when onOpenBrowserTabAt is provided', () => {
+			const onOpenBrowserTabAt = vi.fn();
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
+			);
+			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('index.html')
+			);
+			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+			expect(screen.getByText('Open in Maestro Browser')).toBeInTheDocument();
+		});
+
+		it('does not show Open in Maestro Browser option for non-HTML files', () => {
 			const onOpenBrowserTabAt = vi.fn();
 			const { container } = render(
 				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
@@ -2230,13 +2812,13 @@ describe('FileExplorerPanel', () => {
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 
-			expect(screen.getByText('Open in Maestro Browser')).toBeInTheDocument();
+			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
 		});
 
 		it('does not show Open in Maestro Browser option when handler is missing', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
+				el.textContent?.includes('index.html')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 
@@ -2249,14 +2831,14 @@ describe('FileExplorerPanel', () => {
 				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
 			);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
+				el.textContent?.includes('index.html')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 
 			fireEvent.click(screen.getByText('Open in Maestro Browser'));
 
-			expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///Users/test/project/package.json', {
-				title: 'package.json',
+			expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///Users/test/project/index.html', {
+				title: 'index.html',
 			});
 		});
 
@@ -2273,7 +2855,7 @@ describe('FileExplorerPanel', () => {
 				/>
 			);
 			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
+				el.textContent?.includes('index.html')
 			);
 			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
 

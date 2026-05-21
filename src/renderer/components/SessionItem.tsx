@@ -12,9 +12,11 @@ import {
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
+import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
+import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -170,7 +172,21 @@ export const SessionItem = memo(function SessionItem({
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
 	const showLeftPanelLocationPills = useSettingsStore((s) => s.showLeftPanelLocationPills);
+	const showLeftPanelGitIndicator = useSettingsStore((s) => s.showLeftPanelGitIndicator);
+	const showLeftPanelCueIndicator = useSettingsStore((s) => s.showLeftPanelCueIndicator);
+	const showLeftPanelStartupCommandIndicator = useSettingsStore(
+		(s) => s.showLeftPanelStartupCommandIndicator
+	);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator;
+	const startupCommandTabCount =
+		session.terminalTabs?.reduce(
+			(acc, tab) => (tab.startupCommand && tab.startupCommand.trim().length > 0 ? acc + 1 : acc),
+			0
+		) ?? 0;
+	const startupCommandIndicatorActive =
+		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
 	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
@@ -302,10 +318,19 @@ export const SessionItem = memo(function SessionItem({
 						>
 							{session.name}
 						</span>
-						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running). */}
-						<CueIndicator
-							subscriptionCount={cueSubscriptionCount ?? 0}
-							activeRun={!!cueActiveRun}
+						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running).
+						    Hidden when the Cue Encore Feature is off, or when the user has hidden it. */}
+						{cueIndicatorVisible && (
+							<CueIndicator
+								subscriptionCount={cueSubscriptionCount ?? 0}
+								activeRun={!!cueActiveRun}
+							/>
+						)}
+						{/* Persistent-terminal indicator: agent has at least one terminal tab with
+						    a saved startup command. Hidden when the user disables the setting. */}
+						<StartupCommandIndicator
+							active={startupCommandIndicatorActive}
+							count={startupCommandTabCount}
 						/>
 						{/* Inline wizard indicator: shown while /wizard is in dialog or doc-gen phase. */}
 						<WizardIndicator active={wizardActive} generatingDocs={wizardGeneratingDocs} />
@@ -345,31 +370,36 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
-						{/* Group badge (only in bookmark variant when session belongs to a group) */}
-						{variant === 'bookmark' && group && (
-							<span
-								className="text-[9px] px-1 py-0.5 rounded"
-								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							>
-								{group.name}
-							</span>
-						)}
 					</div>
 				)}
 			</div>
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
-				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
-				{leftSidebarOpen && session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
-					<div
-						className="flex items-center gap-0.5 text-[10px]"
-						style={{ color: theme.colors.warning }}
+				{/* Group badge (only in bookmark variant when session belongs to a group) */}
+				{variant === 'bookmark' && group && (
+					<span
+						className="text-[9px] px-1 py-0.5 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						title={group.name}
 					>
-						<GitBranch className="w-2.5 h-2.5" />
-						<span>{gitFileCount}</span>
-					</div>
+						{abbreviateGroupName(group.name)}
+					</span>
 				)}
+				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
+				{showLeftPanelGitIndicator &&
+					leftSidebarOpen &&
+					session.isGitRepo &&
+					gitFileCount !== undefined &&
+					gitFileCount > 0 && (
+						<div
+							className="flex items-center gap-0.5 text-[10px]"
+							style={{ color: theme.colors.warning }}
+						>
+							<GitBranch className="w-2.5 h-2.5" />
+							<span>{gitFileCount}</span>
+						</div>
+					)}
 
 				{/* Location Indicator Pills */}
 				{showLocationPills &&
@@ -464,7 +494,7 @@ export const SessionItem = memo(function SessionItem({
 								e.stopPropagation();
 								onToggleBookmark();
 							}}
-							className={`p-0.5 rounded hover:bg-white/10 transition-all ${session.bookmarked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+							className="p-0.5 rounded hover:bg-white/10 transition-all"
 							title={session.bookmarked ? 'Remove bookmark' : 'Add bookmark'}
 						>
 							<Bookmark
@@ -490,8 +520,8 @@ export const SessionItem = memo(function SessionItem({
 						</GhostIconButton>
 					))}
 
-				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
-				<div className="relative ml-auto w-2 h-2">
+				{/* AI Status Indicator with Unread Badge */}
+				<div className="relative w-2 h-2 ml-auto">
 					{/* Pulse ring: only renders for animated states, sits behind the dot */}
 					{statusInfo.animate && (
 						<span

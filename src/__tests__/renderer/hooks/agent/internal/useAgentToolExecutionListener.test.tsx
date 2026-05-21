@@ -135,4 +135,46 @@ describe('useAgentToolExecutionListener', () => {
 
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
 	});
+
+	it('tags new tool logs with renderStyle:text-stream when session is in interactive mode', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Bash',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+		expect(log.renderStyle).toBe('text-stream');
+	});
+
+	it('omits renderStyle on tool logs when session is in api mode', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			claudeInteractive: { mode: 'api', modeReason: 'auto' },
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Bash',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+		expect(log.renderStyle).toBeUndefined();
+	});
 });

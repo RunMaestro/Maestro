@@ -10,7 +10,11 @@ import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
-const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:']);
+// `file:` is allowed so users can open local HTML they just generated
+// (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
+// browser. The webview is still hardened (sandbox, no node, webSecurity true)
+// and only renders content the user explicitly opens.
+const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
 const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 

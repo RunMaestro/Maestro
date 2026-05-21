@@ -290,6 +290,26 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Symphony registry URLs
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
+		// File Edit & Preview settings
+		fileEditWordWrap: true,
+		setFileEditWordWrap: vi.fn(),
+		fileEditShowLineNumbers: true,
+		setFileEditShowLineNumbers: vi.fn(),
+		filePreviewToolbarVisibility: {
+			save: true,
+			wordWrap: true,
+			remoteImages: true,
+			htmlRender: true,
+			previewTier: true,
+			editToggle: true,
+			copyContent: true,
+			publishGist: true,
+			documentGraph: true,
+			openInBrowser: true,
+			openInDefault: true,
+			copyPath: true,
+		},
+		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -616,8 +636,11 @@ describe('SettingsModal', () => {
 	});
 
 	describe('keyboard tab navigation', () => {
-		it('should navigate to next tab with Cmd+Shift+]', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		// Sidebar is alphabetized by label, so the order under no LLM flag is:
+		// AI Commands, Display, Encore Features, Environment, General,
+		// Maestro Prompts, Notifications, Shortcuts, SSH Hosts, Themes.
+		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -626,18 +649,18 @@ describe('SettingsModal', () => {
 			// Start on general tab
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to go to display
+			// Press Cmd+Shift+] — alphabetically the next tab after General is Maestro Prompts
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			// Maestro Prompts tab should now be the active sidebar entry
+			expect(screen.getByTitle('Maestro Prompts')).toHaveClass('font-bold');
 		});
 
-		it('should navigate to previous tab with Cmd+Shift+[', async () => {
+		it('should navigate to previous tab with Cmd+Shift+[ from shortcuts', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'shortcuts' })} />);
 
 			await act(async () => {
@@ -647,56 +670,54 @@ describe('SettingsModal', () => {
 			// Start on shortcuts tab
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to go back to display
+			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Notifications
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Display tab has Font Size
-			expect(screen.getByText('Font Size')).toBeInTheDocument();
+			expect(screen.getByText('Operating System Notifications')).toBeInTheDocument();
 		});
 
-		it('should wrap around when navigating past last tab', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'encore' })} />);
+		it('should wrap around when navigating past last tab (Themes)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'theme' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on Encore Features tab (last tab)
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			// Themes is the last tab alphabetically
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] to wrap to general
+			// Press Cmd+Shift+] to wrap to AI Commands (first tab alphabetically)
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// General tab has Default Terminal Shell
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
 		});
 
-		it('should wrap around when navigating before first tab', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		it('should wrap around when navigating before first tab (AI Commands)', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'aicommands' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on general tab (first tab)
-			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
+			// AI Commands is the first tab alphabetically
+			expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to wrap to Encore Features (last tab)
+			// Press Cmd+Shift+[ to wrap to Themes (last tab alphabetically)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.getByText('dark Mode')).toBeInTheDocument();
 		});
 	});
 

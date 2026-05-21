@@ -648,31 +648,42 @@ export const HistoryPanel = React.memo(
 					{/* Search Filter — above buttons when open */}
 					{searchFilterOpen && (
 						<div>
-							<input
-								ref={searchInputRef}
-								autoFocus
-								type="text"
-								placeholder="Filter history..."
-								value={searchFilter}
-								onChange={(e) => setSearchFilter(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Escape') {
-										setSearchFilterOpen(false);
-										setSearchFilter('');
-										// Return focus to the list
-										listRef.current?.focus();
-									} else if (e.key === 'ArrowDown') {
-										e.preventDefault();
-										// Move focus to list and select first item
-										listRef.current?.focus();
-										if (filteredEntries.length > 0) {
-											setSelectedIndex(0);
+							<div className="relative">
+								<input
+									ref={searchInputRef}
+									autoFocus
+									type="text"
+									placeholder="Filter history..."
+									value={searchFilter}
+									onChange={(e) => setSearchFilter(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Escape') {
+											setSearchFilterOpen(false);
+											setSearchFilter('');
+											// Return focus to the list
+											listRef.current?.focus();
+										} else if (e.key === 'ArrowDown') {
+											e.preventDefault();
+											// Move focus to list and select first item
+											listRef.current?.focus();
+											if (filteredEntries.length > 0) {
+												setSelectedIndex(0);
+											}
 										}
-									}
-								}}
-								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
-							/>
+									}}
+									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
+									style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+								/>
+								<div
+									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textDim,
+									}}
+								>
+									ESC
+								</div>
+							</div>
 							{searchFilter && (
 								<div
 									className="text-[10px] mt-1 text-right"

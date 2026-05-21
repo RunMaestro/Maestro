@@ -1,5 +1,20 @@
-import { useState, useRef, useEffect, useMemo, useImperativeHandle, forwardRef } from 'react';
-import { ChevronDown, RefreshCw, FolderOpen, Plus, Search } from 'lucide-react';
+import React, {
+	useState,
+	useRef,
+	useEffect,
+	useMemo,
+	useImperativeHandle,
+	forwardRef,
+} from 'react';
+import {
+	ChevronDown,
+	ChevronRight,
+	RefreshCw,
+	FolderOpen,
+	Plus,
+	Folder,
+	Search,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks';
 import { getExplorerFileIcon } from '../../utils/theme';
@@ -61,6 +76,7 @@ export const AutoRunDocumentSelector = forwardRef<
 	const [newDocName, setNewDocName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
 	const [selectedCreateFolder, setSelectedCreateFolder] = useState<string>(''); // For creating in subfolder
+	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const createInputRef = useRef<HTMLInputElement>(null);
@@ -79,43 +95,139 @@ export const AutoRunDocumentSelector = forwardRef<
 		[]
 	);
 
+	// Set of document paths that match the current filter (file paths only).
+	// Null when the filter is empty — the tree renders unchanged in that case.
+	const matchingPaths = useMemo<Set<string> | null>(() => {
+		if (!filterQuery.trim()) return null;
+		const set = new Set<string>();
+		for (const doc of documents) {
+			if (fuzzyMatchWithScore(doc, filterQuery, '/').matches) set.add(doc);
+		}
+		return set;
+	}, [documents, filterQuery]);
+
+	// Pruned tree: when filtering, drop files that don't match and folders that
+	// have no matching descendants. Folders that survive get auto-expanded
+	// below so the matches are actually visible.
+	const filteredTree = useMemo<DocTreeNode[] | null>(() => {
+		if (!documentTree) return null;
+		if (!matchingPaths) return documentTree;
+		const prune = (nodes: DocTreeNode[]): DocTreeNode[] => {
+			const kept: DocTreeNode[] = [];
+			for (const n of nodes) {
+				if (n.type === 'file') {
+					if (matchingPaths.has(n.path)) kept.push(n);
+				} else if (n.children) {
+					const childKept = prune(n.children);
+					if (childKept.length > 0) kept.push({ ...n, children: childKept });
+				}
+			}
+			return kept;
+		};
+		return prune(documentTree);
+	}, [documentTree, matchingPaths]);
+
+	// Effective set of expanded folders. While filtering, force-expand every
+	// folder that survived pruning so the matched files are immediately
+	// visible; otherwise honor the user's manual expansion state.
+	const effectiveExpanded = useMemo<Set<string>>(() => {
+		if (!matchingPaths || !filteredTree) return expandedFolders;
+		const all = new Set<string>();
+		const walk = (nodes: DocTreeNode[]) => {
+			for (const n of nodes) {
+				if (n.type === 'folder') {
+					all.add(n.path);
+					if (n.children) walk(n.children);
+				}
+			}
+		};
+		walk(filteredTree);
+		return all;
+	}, [matchingPaths, filteredTree, expandedFolders]);
+
+	// Flat, in-order list of file paths currently visible to the user. This is
+	// the keyboard-navigation cursor's domain — ArrowUp/Down cycle through it,
+	// Enter opens the highlighted entry.
+	const visibleFiles = useMemo<string[]>(() => {
+		// Flat-list fallback when no tree structure is provided.
+		if (!filteredTree) {
+			return matchingPaths ? documents.filter((d) => matchingPaths.has(d)) : documents;
+		}
+		const out: string[] = [];
+		const walk = (nodes: DocTreeNode[]) => {
+			for (const n of nodes) {
+				if (n.type === 'file') {
+					out.push(n.path);
+				} else if (n.children && effectiveExpanded.has(n.path)) {
+					walk(n.children);
+				}
+			}
+		};
+		walk(filteredTree);
+		return out;
+	}, [filteredTree, effectiveExpanded, matchingPaths, documents]);
+
+	// Toggle a folder's manual expansion state (no-op visually while filtering
+	// since effectiveExpanded ignores this set in that mode, but we still
+	// update it so the state is right when the filter is cleared).
+	const toggleFolder = (folderPath: string) => {
+		setExpandedFolders((prev) => {
+			const next = new Set(prev);
+			if (next.has(folderPath)) next.delete(folderPath);
+			else next.add(folderPath);
+			return next;
+		});
+	};
+
 	// Reset filter every time the dropdown opens. Start the keyboard highlight
 	// on the currently-selected document so the first ArrowUp/Down move feels
 	// natural (and Enter without typing reopens the same doc).
 	useEffect(() => {
 		if (isOpen) {
 			setFilterQuery('');
-			const selectedIdx = selectedDocument ? documents.indexOf(selectedDocument) : -1;
-			setHighlightedIndex(selectedIdx >= 0 ? selectedIdx : 0);
+			// Auto-expand ancestor folders of the selected doc so it's revealed
+			// in the tree (mirrors the pre-flatten behavior).
+			if (selectedDocument && selectedDocument.includes('/')) {
+				const parts = selectedDocument.split('/');
+				const ancestors: string[] = [];
+				for (let i = 1; i < parts.length; i++) {
+					ancestors.push(parts.slice(0, i).join('/'));
+				}
+				setExpandedFolders((prev) => {
+					const next = new Set(prev);
+					for (const a of ancestors) next.add(a);
+					return next;
+				});
+			}
 			// Focus the filter input shortly after open so keystrokes flow into it.
 			requestAnimationFrame(() => {
 				filterInputRef.current?.focus();
 			});
 		}
 		// `documents`/`selectedDocument` intentionally omitted: we only want to
-		// snap the highlight when the dropdown transitions to open, not when
-		// the underlying list mutates while it's already open.
+		// snap state when the dropdown transitions to open, not when the
+		// underlying list mutates while it's already open.
 	}, [isOpen]);
 
-	// Flat, ranked list of documents that match the current filter. Backs both
-	// the rendered list and the arrow-key cursor — empty filter returns every
-	// doc so ArrowUp/Down work immediately on open without typing.
-	const filteredDocuments = useMemo(() => {
-		if (!filterQuery.trim()) return documents;
-		const scored = documents
-			.map((doc) => ({ doc, ...fuzzyMatchWithScore(doc, filterQuery, '/') }))
-			.filter((entry) => entry.matches)
-			.sort((a, b) => b.score - a.score);
-		return scored.map((entry) => entry.doc);
-	}, [documents, filterQuery]);
-
-	// Clamp highlight whenever the filtered list shrinks so we never point past
-	// the end of the array (e.g. after typing a more restrictive query).
+	// Anchor the initial highlight on the selected doc once visibleFiles is
+	// computed for the freshly-opened dropdown (separate effect so it can react
+	// to visibleFiles becoming available).
 	useEffect(() => {
-		if (highlightedIndex >= filteredDocuments.length) {
-			setHighlightedIndex(Math.max(0, filteredDocuments.length - 1));
+		if (!isOpen) return;
+		const idx = selectedDocument ? visibleFiles.indexOf(selectedDocument) : -1;
+		setHighlightedIndex(idx >= 0 ? idx : 0);
+		// Run only on open, not on every visibleFiles mutation.
+	}, [isOpen]);
+
+	// Clamp highlight whenever the visible list shrinks so we never point past
+	// the end (e.g. after typing a more restrictive query).
+	useEffect(() => {
+		if (highlightedIndex >= visibleFiles.length) {
+			setHighlightedIndex(Math.max(0, visibleFiles.length - 1));
 		}
-	}, [filteredDocuments.length, highlightedIndex]);
+	}, [visibleFiles.length, highlightedIndex]);
+
+	const highlightedPath = visibleFiles[highlightedIndex];
 
 	// Keep the highlighted row visible inside the scrollable list as the user
 	// arrow-navigates (whether or not a filter is active).
@@ -157,6 +269,86 @@ export const AutoRunDocumentSelector = forwardRef<
 
 	// Get the selected document's task percentage for the button
 	const selectedTaskPercentage = selectedDocument ? getTaskPercentage(selectedDocument) : null;
+
+	// Render a tree node recursively. File nodes participate in arrow-key
+	// highlight via `highlightedPath`; folder nodes toggle their own expansion
+	// (no-op visually while filtering, since effectiveExpanded ignores the
+	// manual set in that mode).
+	const renderTreeNode = (node: DocTreeNode, depth: number = 0): React.ReactNode => {
+		const isExpanded = effectiveExpanded.has(node.path);
+		const paddingLeft = depth * 16 + 12;
+
+		if (node.type === 'folder') {
+			return (
+				<div key={node.path}>
+					<button
+						onClick={() => toggleFolder(node.path)}
+						className="w-full flex items-center gap-1.5 py-1.5 text-sm transition-colors hover:bg-white/5"
+						style={{ paddingLeft, color: theme.colors.textDim }}
+					>
+						{isExpanded ? (
+							<ChevronDown className="w-3 h-3 shrink-0" />
+						) : (
+							<ChevronRight className="w-3 h-3 shrink-0" />
+						)}
+						<Folder className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
+						<span className="truncate">{node.name}</span>
+					</button>
+					{isExpanded && node.children && (
+						<div>{node.children.map((child) => renderTreeNode(child, depth + 1))}</div>
+					)}
+				</div>
+			);
+		}
+
+		// File node
+		const isSelected = node.path === selectedDocument;
+		const isHighlighted = node.path === highlightedPath;
+		const taskPct = getTaskPercentage(node.path);
+		return (
+			<button
+				key={node.path}
+				onClick={() => handleSelectDocument(node.path)}
+				onMouseEnter={() => {
+					const idx = visibleFiles.indexOf(node.path);
+					if (idx >= 0) setHighlightedIndex(idx);
+				}}
+				data-selected={isSelected || undefined}
+				data-highlighted={isHighlighted || undefined}
+				className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors"
+				style={{
+					paddingLeft,
+					color: isSelected ? theme.colors.accent : theme.colors.textMain,
+					backgroundColor: isHighlighted
+						? `${theme.colors.accent}25`
+						: isSelected
+							? theme.colors.bgActivity
+							: 'transparent',
+				}}
+			>
+				{/* Spacer matching chevron width for alignment with folders */}
+				<span className="w-3 shrink-0" />
+				<span
+					className="shrink-0 w-3.5 h-3.5 flex items-center justify-center"
+					style={{ color: theme.colors.textDim }}
+				>
+					{getExplorerFileIcon(`${node.name}.md`, theme)}
+				</span>
+				<span className="truncate">{node.name}.md</span>
+				{taskPct !== null && (
+					<span
+						className="shrink-0 text-xs ml-auto px-1.5 py-0.5 rounded"
+						style={{
+							backgroundColor: taskPct === 100 ? theme.colors.success : theme.colors.accentDim,
+							color: taskPct === 100 ? '#000' : theme.colors.textDim,
+						}}
+					>
+						{taskPct}%
+					</span>
+				)}
+			</button>
+		);
+	};
 
 	// Close dropdown when clicking outside
 	useClickOutside(dropdownRef, () => setIsOpen(false), isOpen);
@@ -321,17 +513,17 @@ export const AutoRunDocumentSelector = forwardRef<
 										}}
 										onKeyDown={(e) => {
 											if (e.key === 'ArrowDown') {
-												if (filteredDocuments.length === 0) return;
+												if (visibleFiles.length === 0) return;
 												e.preventDefault();
-												setHighlightedIndex((i) => (i + 1) % filteredDocuments.length);
+												setHighlightedIndex((i) => (i + 1) % visibleFiles.length);
 											} else if (e.key === 'ArrowUp') {
-												if (filteredDocuments.length === 0) return;
+												if (visibleFiles.length === 0) return;
 												e.preventDefault();
 												setHighlightedIndex(
-													(i) => (i - 1 + filteredDocuments.length) % filteredDocuments.length
+													(i) => (i - 1 + visibleFiles.length) % visibleFiles.length
 												);
 											} else if (e.key === 'Enter') {
-												const target = filteredDocuments[highlightedIndex];
+												const target = visibleFiles[highlightedIndex];
 												if (target) {
 													e.preventDefault();
 													handleSelectDocument(target);
@@ -350,21 +542,29 @@ export const AutoRunDocumentSelector = forwardRef<
 									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
 										No markdown files found
 									</div>
-								) : filteredDocuments.length === 0 ? (
+								) : visibleFiles.length === 0 ? (
 									<div className="px-3 py-2 text-sm" style={{ color: theme.colors.textDim }}>
 										No matches for &ldquo;{filterQuery}&rdquo;
 									</div>
+								) : filteredTree ? (
+									// Nested tree view. Empty filter → full tree honoring the user's
+									// manual folder expansion. Non-empty filter → tree pruned to
+									// matches with surviving folders auto-expanded.
+									<div className="py-1">{filteredTree.map((node) => renderTreeNode(node))}</div>
 								) : (
-									// Unified flat keyboard-navigable list (empty filter shows all docs).
-									filteredDocuments.map((doc, idx) => {
+									// Flat fallback (no documentTree provided) — still keyboard-navigable.
+									visibleFiles.map((doc) => {
 										const taskPct = getTaskPercentage(doc);
 										const isDocSelected = doc === selectedDocument;
-										const isHighlighted = idx === highlightedIndex;
+										const isHighlighted = doc === highlightedPath;
 										return (
 											<button
 												key={doc}
 												onClick={() => handleSelectDocument(doc)}
-												onMouseEnter={() => setHighlightedIndex(idx)}
+												onMouseEnter={() => {
+													const idx = visibleFiles.indexOf(doc);
+													if (idx >= 0) setHighlightedIndex(idx);
+												}}
 												data-selected={isDocSelected || undefined}
 												data-highlighted={isHighlighted || undefined}
 												className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors"
