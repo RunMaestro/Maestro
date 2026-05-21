@@ -1520,6 +1520,72 @@ describe('TabBar', () => {
 	});
 
 	describe('hover overlay', () => {
+		it('moves the current agent to a new window from the tab context menu', async () => {
+			vi.useRealTimers();
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const createWindow = vi.fn().mockResolvedValue({
+				id: 'window-2',
+				isMain: false,
+				sessionIds: ['session-1'],
+				activeSessionId: 'session-1',
+			});
+			window.maestro = {
+				...window.maestro,
+				windows: {
+					...window.maestro?.windows,
+					getState: vi.fn().mockResolvedValue({
+						id: 'window-1',
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					}),
+					list: vi.fn().mockResolvedValue([
+						{
+							id: 'window-1',
+							isMain: true,
+							sessionIds: ['session-1'],
+							activeSessionId: 'session-1',
+						},
+					]),
+					create: createWindow,
+					onSessionMoved: vi.fn(() => vi.fn()),
+					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
+				},
+			} as typeof window.maestro;
+
+			render(
+				<WindowProvider>
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+					/>
+				</WindowProvider>
+			);
+
+			await waitFor(() => expect(window.maestro.windows.getState).toHaveBeenCalled());
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			fireEvent.contextMenu(tab, { clientX: 120, clientY: 48 });
+
+			const moveButton = screen.getByText('Move to New Window');
+			expect(moveButton).toBeInTheDocument();
+
+			fireEvent.click(moveButton);
+
+			await waitFor(() => expect(createWindow).toHaveBeenCalledWith(['session-1']));
+		});
+
 		it('shows overlay after hover delay for tabs with agentSessionId', async () => {
 			const tabs = [
 				createTab({
