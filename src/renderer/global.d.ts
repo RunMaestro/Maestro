@@ -142,6 +142,13 @@ interface MaestroWindowSessionMovedEvent {
 	windows: MaestroWindowInfo[];
 }
 
+interface MaestroWindowSessionsMovedToPrimaryEvent {
+	sessionIds: string[];
+	fromWindowId: string;
+	toWindowId: string;
+	windows: MaestroWindowInfo[];
+}
+
 interface MaestroWindowDropZoneHighlightEvent {
 	highlighted: boolean;
 }
@@ -3668,6 +3675,9 @@ interface MaestroAPI {
 		getState: () => Promise<MaestroWindowState>;
 		updateState: (update: MaestroWindowStateUpdate) => Promise<MaestroWindowState>;
 		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
+		onSessionsMovedToPrimary: (
+			handler: (event: MaestroWindowSessionsMovedToPrimaryEvent) => void
+		) => () => void;
 		onDropZoneHighlightChanged: (
 			handler: (event: MaestroWindowDropZoneHighlightEvent) => void
 		) => () => void;

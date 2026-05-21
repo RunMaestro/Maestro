@@ -593,6 +593,7 @@ export type {
 	MultiWindowState,
 	WindowDropZoneHighlightEvent,
 	WindowInfo,
+	WindowSessionsMovedToPrimaryEvent,
 	WindowState,
 } from './window';
 

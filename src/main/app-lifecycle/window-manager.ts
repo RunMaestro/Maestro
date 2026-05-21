@@ -7,6 +7,7 @@ import { BrowserWindow, Menu, ipcMain, screen } from 'electron';
 import type { BrowserWindowConstructorOptions } from 'electron';
 import type Store from 'electron-store';
 import type { MultiWindowState, WindowState } from '../stores/types';
+import type { WindowInfo, WindowSessionsMovedToPrimaryEvent } from '../../shared/types/window';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 import { WindowRegistry } from '../window-registry';
@@ -160,6 +161,40 @@ function appendWindowIdToUrl(url: string, windowId: string): string {
 	const parsedUrl = new URL(url);
 	parsedUrl.searchParams.set('windowId', windowId);
 	return parsedUrl.toString();
+}
+
+function findStoredWindowState(
+	windowStateStore: Store<MultiWindowState>,
+	windowId: string
+): WindowState | undefined {
+	return windowStateStore.store.windows.find((windowState) => windowState.id === windowId);
+}
+
+function getWindowList(
+	windowRegistry: WindowRegistry,
+	windowStateStore: Store<MultiWindowState>
+): WindowInfo[] {
+	return windowRegistry.getEntries().map(([windowId, entry]) => {
+		const storedState = findStoredWindowState(windowStateStore, windowId);
+		return {
+			id: windowId,
+			isMain: entry.isMain,
+			sessionIds: entry.sessionIds,
+			activeSessionId: storedState?.activeSessionId ?? null,
+		};
+	});
+}
+
+function broadcastSessionsMovedToPrimary(
+	windowRegistry: WindowRegistry,
+	payload: WindowSessionsMovedToPrimaryEvent
+): void {
+	for (const entry of windowRegistry.getAll()) {
+		if (entry.browserWindow.isDestroyed() || entry.browserWindow.webContents.isDestroyed()) {
+			continue;
+		}
+		entry.browserWindow.webContents.send('windows:sessionsMovedToPrimary', payload);
+	}
 }
 
 /**
@@ -347,7 +382,22 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			}, 250);
 		};
 
-		mainWindow.on('close', saveWindowState);
+		mainWindow.on('close', () => {
+			if (!entry.isMain && !(deps.isQuitting?.() ?? false)) {
+				const transfer = windowRegistry.moveSessionsToPrimary(registryWindowId);
+				if (transfer) {
+					windowRegistry.saveWindowState(transfer.toWindowId);
+					broadcastSessionsMovedToPrimary(windowRegistry, {
+						sessionIds: transfer.sessionIds,
+						fromWindowId: registryWindowId,
+						toWindowId: transfer.toWindowId,
+						windows: getWindowList(windowRegistry, windowStateStore),
+					});
+				}
+			}
+
+			saveWindowState();
+		});
 		mainWindow.on('move', scheduleWindowStateSave);
 		mainWindow.on('resize', scheduleWindowStateSave);
 		mainWindow.on('maximize', scheduleWindowStateSave);

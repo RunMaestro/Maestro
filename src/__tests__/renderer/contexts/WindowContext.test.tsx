@@ -2,9 +2,11 @@ import React, { type ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WindowProvider, useWindowContext } from '../../../renderer/contexts/WindowContext';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type {
 	WindowDropZoneHighlightEvent,
 	WindowSessionMovedEvent,
+	WindowSessionsMovedToPrimaryEvent,
 } from '../../../shared/types/window';
 
 const initialWindowState = {
@@ -27,12 +29,25 @@ function wrapper({ children }: { children: ReactNode }) {
 
 describe('WindowContext', () => {
 	let sessionMovedHandler: ((event: WindowSessionMovedEvent) => void) | undefined;
+	let sessionsMovedToPrimaryHandler:
+		| ((event: WindowSessionsMovedToPrimaryEvent) => void)
+		| undefined;
 	let dropZoneHighlightHandler: ((event: WindowDropZoneHighlightEvent) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sessionMovedHandler = undefined;
+		sessionsMovedToPrimaryHandler = undefined;
 		dropZoneHighlightHandler = undefined;
+		useNotificationStore.setState({
+			toasts: [],
+			config: {
+				defaultDuration: 20,
+				audioFeedbackEnabled: false,
+				audioFeedbackCommand: '',
+				osNotificationsEnabled: false,
+			},
+		});
 
 		(window as any).maestro = {
 			...(window as any).maestro,
@@ -62,6 +77,10 @@ describe('WindowContext', () => {
 				}),
 				onSessionMoved: vi.fn((handler) => {
 					sessionMovedHandler = handler;
+					return vi.fn();
+				}),
+				onSessionsMovedToPrimary: vi.fn((handler) => {
+					sessionsMovedToPrimaryHandler = handler;
 					return vi.fn();
 				}),
 				onDropZoneHighlightChanged: vi.fn((handler) => {
@@ -209,6 +228,37 @@ describe('WindowContext', () => {
 
 		expect(result.current.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
 		expect(result.current.activeSessionId).toBe('session-1');
+	});
+
+	it('updates primary tabs and shows a toast when a secondary window closes', async () => {
+		const { result } = renderHook(() => useWindowContext(), { wrapper });
+		await waitFor(() => expect(result.current.windowId).toBe('window-1'));
+		await waitFor(() =>
+			expect(window.maestro.windows.onSessionsMovedToPrimary).toHaveBeenCalledTimes(1)
+		);
+
+		act(() => {
+			sessionsMovedToPrimaryHandler?.({
+				sessionIds: ['session-3', 'session-4'],
+				fromWindowId: 'window-2',
+				toWindowId: 'window-1',
+				windows: [
+					{
+						id: 'window-1',
+						isMain: true,
+						sessionIds: ['session-1', 'session-2', 'session-3', 'session-4'],
+						activeSessionId: 'session-1',
+					},
+				],
+			});
+		});
+
+		expect(result.current.sessionIds).toEqual(['session-1', 'session-2', 'session-3', 'session-4']);
+		expect(useNotificationStore.getState().toasts[0]).toMatchObject({
+			type: 'info',
+			title: '2 sessions moved to main window',
+			message: '',
+		});
 	});
 
 	it('updates drop zone highlight state from window events', async () => {

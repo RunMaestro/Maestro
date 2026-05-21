@@ -1371,6 +1371,7 @@ describe('TabBar', () => {
 					highlightDropZone: vi.fn().mockResolvedValue(true),
 					moveSession,
 					onSessionMoved: vi.fn(() => vi.fn()),
+					onSessionsMovedToPrimary: vi.fn(() => vi.fn()),
 					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 				},
 			} as typeof window.maestro;
@@ -1466,6 +1467,7 @@ describe('TabBar', () => {
 					create: createWindow,
 					moveSession: vi.fn(),
 					onSessionMoved: vi.fn(() => vi.fn()),
+					onSessionsMovedToPrimary: vi.fn(() => vi.fn()),
 					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 				},
 			} as typeof window.maestro;
@@ -1557,6 +1559,7 @@ describe('TabBar', () => {
 				create: vi.fn(),
 				moveSession: vi.fn(),
 				onSessionMoved: vi.fn(() => vi.fn()),
+				onSessionsMovedToPrimary: vi.fn(() => vi.fn()),
 				onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 			},
 		} as typeof window.maestro;
@@ -1638,6 +1641,7 @@ describe('TabBar', () => {
 					]),
 					create: createWindow,
 					onSessionMoved: vi.fn(() => vi.fn()),
+					onSessionsMovedToPrimary: vi.fn(() => vi.fn()),
 					onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
 				},
 			} as typeof window.maestro;

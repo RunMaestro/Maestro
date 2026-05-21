@@ -30,6 +30,7 @@ const mockGuestWebContents = {
 // Mock BrowserWindow instance methods
 const mockWebContents = {
 	send: vi.fn(),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	openDevTools: vi.fn(),
 	reload: vi.fn(),
 	getType: vi.fn(() => 'window'),
@@ -184,6 +185,7 @@ describe('app-lifecycle/window-manager', () => {
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
 		mockWindowInstance.isMinimized.mockReturnValue(false);
 		mockWindowInstance.isDestroyed.mockReturnValue(false);
+		mockWebContents.isDestroyed.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 		mockWebContents.getType.mockReturnValue('window');
 		mockGuestWebContents.getType.mockReturnValue('webview');
@@ -590,6 +592,53 @@ describe('app-lifecycle/window-manager', () => {
 				'primary',
 			]);
 			expect(windowManager.windowRegistry.get('2')).toBeUndefined();
+		});
+
+		it('should move secondary window sessions to primary before close', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2', 'session-3'], {});
+			windowCloseHandler!();
+
+			expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual([
+				'session-1',
+				'session-2',
+				'session-3',
+			]);
+			expect(windowManager.windowRegistry.get('2')?.sessionIds).toEqual([]);
+			expect(mockWebContents.send).toHaveBeenCalledWith('windows:sessionsMovedToPrimary', {
+				sessionIds: ['session-2', 'session-3'],
+				fromWindowId: '2',
+				toWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						isMain: true,
+						sessionIds: ['session-1', 'session-2', 'session-3'],
+						activeSessionId: null,
+					},
+					{
+						id: '2',
+						isMain: false,
+						sessionIds: [],
+						activeSessionId: null,
+					},
+				],
+			});
 		});
 
 		it('should keep secondary window state when closing during app quit', async () => {

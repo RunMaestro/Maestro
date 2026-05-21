@@ -15,6 +15,7 @@ import type {
 	WindowDropZoneHighlightEvent,
 	WindowInfo,
 	WindowSessionMovedEvent,
+	WindowSessionsMovedToPrimaryEvent,
 	WindowState,
 	WindowStateUpdate,
 } from '../../shared/types/window';
@@ -60,6 +61,14 @@ export function createWindowsApi() {
 				handler(payload);
 			ipcRenderer.on('windows:sessionMoved', wrappedHandler);
 			return () => ipcRenderer.removeListener('windows:sessionMoved', wrappedHandler);
+		},
+		onSessionsMovedToPrimary: (handler: (event: WindowSessionsMovedToPrimaryEvent) => void) => {
+			const wrappedHandler = (
+				_event: IpcRendererEvent,
+				payload: WindowSessionsMovedToPrimaryEvent
+			) => handler(payload);
+			ipcRenderer.on('windows:sessionsMovedToPrimary', wrappedHandler);
+			return () => ipcRenderer.removeListener('windows:sessionsMovedToPrimary', wrappedHandler);
 		},
 		onDropZoneHighlightChanged: (handler: (event: WindowDropZoneHighlightEvent) => void) => {
 			const wrappedHandler = (_event: IpcRendererEvent, payload: WindowDropZoneHighlightEvent) =>
