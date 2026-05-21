@@ -9,9 +9,11 @@ import React, {
 } from 'react';
 import type { WindowInfo, WindowState } from '../../shared/types/window';
 import { notifyToast } from '../stores/notificationStore';
+import { getWindowNumberById } from '../utils/windowSessionOwnership';
 
 export interface WindowContextValue {
 	windowId: string | null;
+	windowNumber: number | null;
 	isMainWindow: boolean;
 	sessionIds: string[];
 	activeSessionId: string | null;
@@ -62,6 +64,7 @@ function getValidActiveSessionId(
 
 export function WindowProvider({ children }: WindowProviderProps) {
 	const [windowId, setWindowId] = useState<string | null>(null);
+	const [windowNumber, setWindowNumber] = useState<number | null>(null);
 	const [isMainWindow, setIsMainWindow] = useState(false);
 	const [sessionIds, setSessionIds] = useState<string[]>([]);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -80,6 +83,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			}
 
 			setWindowId(state.id);
+			setWindowNumber(getWindowNumberById(windows).get(state.id) ?? null);
 			setIsMainWindow(windowInfo?.isMain ?? false);
 			setSessionIds(state.sessionIds);
 			setActiveSessionId(state.activeSessionId);
@@ -104,6 +108,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			}
 
 			setSessionIds(currentWindow.sessionIds);
+			setWindowNumber(getWindowNumberById(event.windows).get(windowId) ?? null);
 			setIsMainWindow(currentWindow.isMain);
 			setActiveSessionId((currentActiveSessionId) =>
 				getValidActiveSessionId(
@@ -127,6 +132,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			}
 
 			setSessionIds(currentWindow.sessionIds);
+			setWindowNumber(getWindowNumberById(event.windows).get(windowId) ?? null);
 			setIsMainWindow(currentWindow.isMain);
 			setActiveSessionId((currentActiveSessionId) =>
 				getValidActiveSessionId(
@@ -207,6 +213,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 	const value = useMemo<WindowContextValue>(
 		() => ({
 			windowId,
+			windowNumber,
 			isMainWindow,
 			sessionIds,
 			activeSessionId,
@@ -217,6 +224,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 		}),
 		[
 			windowId,
+			windowNumber,
 			isMainWindow,
 			sessionIds,
 			activeSessionId,

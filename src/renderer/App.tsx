@@ -218,6 +218,7 @@ function MaestroConsoleInner() {
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
 	const {
 		windowId,
+		windowNumber,
 		sessionIds: windowSessionIds,
 		activeSessionId: windowContextActiveSessionId,
 	} = useWindowContext();
@@ -648,6 +649,13 @@ function MaestroConsoleInner() {
 	} = useUIStore.getState();
 
 	useWindowState({ windowId });
+
+	useEffect(() => {
+		document.title =
+			windowNumber && windowNumber > 1
+				? `Maestro [${windowNumber}]`
+				: 'Maestro - Agent Orchestration Command Center';
+	}, [windowNumber]);
 
 	const {
 		setSelectedFileIndex: _setSelectedFileIndex,
@@ -2905,47 +2913,61 @@ function MaestroConsoleInner() {
 							} as React.CSSProperties
 						}
 					>
-						{activeGroupChat ? (
-							<span
-								className="text-xs select-none opacity-50"
-								style={{ color: theme.colors.textDim }}
-							>
-								Maestro Group Chat: {activeGroupChat?.name || 'Unknown'}
-							</span>
-						) : (
-							activeSession && (
+						<div className="flex items-center gap-2 min-w-0 max-w-[70vw]">
+							{windowNumber && (
 								<span
-									className="text-xs select-none opacity-50"
+									className="text-[10px] leading-none select-none opacity-50 px-1.5 py-0.5 rounded border"
+									style={{
+										color: theme.colors.textDim,
+										borderColor: theme.colors.border,
+										backgroundColor: theme.colors.bgActivity,
+									}}
+								>
+									W{windowNumber}
+								</span>
+							)}
+							{activeGroupChat ? (
+								<span
+									className="text-xs select-none opacity-50 truncate"
 									style={{ color: theme.colors.textDim }}
 								>
-									{(() => {
-										const parts: string[] = [];
-										// Group name (if grouped)
-										const group = groups.find((g) => g.id === activeSession.groupId);
-										if (group) {
-											parts.push(`${group.emoji} ${group.name}`);
-										}
-										// Agent name (user-given name for this agent instance)
-										parts.push(activeSession.name);
-										// Active tab name or UUID octet
-										const activeTab = activeSession.aiTabs?.find(
-											(t) => t.id === activeSession.activeTabId
-										);
-										if (activeTab) {
-											const tabLabel =
-												activeTab.name ||
-												(activeTab.agentSessionId
-													? activeTab.agentSessionId.split('-')[0].toUpperCase()
-													: null);
-											if (tabLabel) {
-												parts.push(tabLabel);
-											}
-										}
-										return parts.join(' | ');
-									})()}
+									Maestro Group Chat: {activeGroupChat?.name || 'Unknown'}
 								</span>
-							)
-						)}
+							) : (
+								activeSession && (
+									<span
+										className="text-xs select-none opacity-50 truncate"
+										style={{ color: theme.colors.textDim }}
+									>
+										{(() => {
+											const parts: string[] = [];
+											// Group name (if grouped)
+											const group = groups.find((g) => g.id === activeSession.groupId);
+											if (group) {
+												parts.push(`${group.emoji} ${group.name}`);
+											}
+											// Agent name (user-given name for this agent instance)
+											parts.push(activeSession.name);
+											// Active tab name or UUID octet
+											const activeTab = activeSession.aiTabs?.find(
+												(t) => t.id === activeSession.activeTabId
+											);
+											if (activeTab) {
+												const tabLabel =
+													activeTab.name ||
+													(activeTab.agentSessionId
+														? activeTab.agentSessionId.split('-')[0].toUpperCase()
+														: null);
+												if (tabLabel) {
+													parts.push(tabLabel);
+												}
+											}
+											return parts.join(' | ');
+										})()}
+									</span>
+								)
+							)}
+						</div>
 					</div>
 				)}
 
