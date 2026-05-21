@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, powerMonitor, protocol } from 'electron';
+import { app, BrowserWindow, Menu, powerMonitor, protocol, screen } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
@@ -503,7 +503,8 @@ function createWindow(windowId?: string, sessionIds?: string[]) {
 function restoreStartupWindows() {
 	const startupWindows = getStartupWindowStates(
 		windowStateStore,
-		sessionsStore.get('sessions', [])
+		sessionsStore.get('sessions', []),
+		screen
 	);
 
 	for (const windowState of startupWindows) {
