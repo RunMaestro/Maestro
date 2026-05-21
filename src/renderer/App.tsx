@@ -1915,6 +1915,9 @@ function MaestroConsoleInner() {
 	// cycleSession — provided by useCycleSession hook
 	const { cycleSession } = useCycleSession({
 		sortedSessions,
+		windowId,
+		windowSessionIds,
+		windowActiveSessionId: windowContextActiveSessionId,
 		handleOpenGroupChat,
 		starredItems,
 		activateStarredItem,

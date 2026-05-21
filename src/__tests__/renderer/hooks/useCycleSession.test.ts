@@ -198,6 +198,116 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
+	// Window-scoped cycling
+	// =========================================================================
+	describe('window-scoped cycling', () => {
+		it('cycles next through only the current window sessions in WindowContext order', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+			const sessD = makeSession({ id: 'd', name: 'Delta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC, sessD],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+
+			const deps = makeDeps({
+				windowId: 'window-1',
+				windowSessionIds: ['c', 'a'],
+			});
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
+			expect(deps.handleOpenGroupChat).not.toHaveBeenCalled();
+		});
+
+		it('cycles prev through only the current window sessions in WindowContext order', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'c',
+				cyclePosition: -1,
+			} as any);
+
+			const deps = makeDeps({
+				windowId: 'window-1',
+				windowSessionIds: ['c', 'a'],
+			});
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('prev');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(useSessionStore.getState().cyclePosition).toBe(1);
+		});
+
+		it('uses the window active session when the global active session belongs to another window', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'b',
+				cyclePosition: -1,
+			} as any);
+
+			const deps = makeDeps({
+				windowId: 'window-1',
+				windowSessionIds: ['a', 'c'],
+				windowActiveSessionId: 'c',
+			});
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+
+		it('does not include visible group chats when cycling a window-scoped agent list', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useGroupChatStore.setState({
+				groupChats: [makeGroupChat('chat-1', 'Chat One')],
+			} as any);
+
+			const deps = makeDeps({
+				windowId: 'window-1',
+				windowSessionIds: ['a', 'b'],
+			});
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+			expect(deps.handleOpenGroupChat).not.toHaveBeenCalled();
+		});
+	});
+
+	// =========================================================================
 	// Empty visual order — no-op
 	// =========================================================================
 	describe('empty visual order', () => {
