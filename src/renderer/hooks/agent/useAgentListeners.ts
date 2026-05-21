@@ -50,6 +50,7 @@ import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useOptionalWindowContext } from '../../contexts/WindowContext';
 
 // ============================================================================
 // Types
@@ -157,6 +158,17 @@ export function getErrorTitleForType(type: AgentError['type']): string {
 	}
 }
 
+function getWindowScopedSessionId(sessionId: string): string {
+	if (sessionId.startsWith('group-chat-')) {
+		return sessionId;
+	}
+	if (sessionId.endsWith('-terminal')) {
+		return sessionId.slice(0, -'-terminal'.length);
+	}
+
+	return parseSessionId(sessionId).baseSessionId;
+}
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -174,6 +186,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// Internal refs — only used by IPC listeners, not needed outside this hook
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
+	const windowContext = useOptionalWindowContext();
+	const windowIdRef = useRef<string | null | undefined>(undefined);
+	const windowSessionIdsRef = useRef<string[] | null>(null);
+
+	useEffect(() => {
+		windowIdRef.current = windowContext?.windowId;
+		windowSessionIdsRef.current = windowContext ? windowContext.sessionIds : null;
+	}, [windowContext?.windowId, windowContext?.sessionIds]);
 
 	useEffect(() => {
 		// Copy ref value to local variable for cleanup (React ESLint rule)
@@ -187,11 +207,24 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getGroups = () => useSessionStore.getState().groups;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
+		const isSessionInCurrentWindow = (sessionId: string) => {
+			const scopedSessionIds = windowSessionIdsRef.current;
+			if (!scopedSessionIds || windowIdRef.current == null) {
+				return true;
+			}
+			if (sessionId.startsWith('group-chat-')) {
+				return true;
+			}
+
+			return scopedSessionIds.includes(getWindowScopedSessionId(sessionId));
+		};
 
 		// ================================================================
 		// onData — Handle process output data (BATCHED for performance)
 		// ================================================================
 		const unsubscribeData = window.maestro.process.onData((sessionId: string, data: string) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
+
 			// Parse sessionId to determine which process this is from
 			let actualSessionId: string;
 			let isFromAi: boolean;
@@ -288,6 +321,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeExit = window.maestro.process.onExit(
 			async (sessionId: string, code: number) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				console.log('[onExit] Process exit event received:', {
 					rawSessionId: sessionId,
 					exitCode: code,
@@ -904,6 +939,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeSessionId = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				if (isBatchSession(sessionId)) {
 					return;
 				}
@@ -1019,6 +1056,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeSlashCommands = window.maestro.process.onSlashCommands(
 			(sessionId: string, slashCommands: string[]) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const actualSessionId = parseSessionId(sessionId).baseSessionId;
 
 				const commands = slashCommands.map((cmd) => ({
@@ -1039,6 +1078,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// onStderr — Handle stderr from processes (BATCHED)
 		// ================================================================
 		const unsubscribeStderr = window.maestro.process.onStderr((sessionId: string, data: string) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
 			if (!data.trim()) return;
 
 			let actualSessionId: string;
@@ -1068,6 +1108,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeCommandExit = window.maestro.process.onCommandExit(
 			(sessionId: string, code: number) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const actualSessionId = sessionId;
 
 				setSessions((prev) =>
@@ -1108,6 +1150,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// onUsage — Handle usage statistics (BATCHED)
 		// ================================================================
 		const unsubscribeUsage = window.maestro.process.onUsage((sessionId: string, usageStats) => {
+			if (!isSessionInCurrentWindow(sessionId)) return;
+
 			const parsed = parseSessionId(sessionId);
 			const { actualSessionId, tabId, baseSessionId } = parsed;
 
@@ -1148,6 +1192,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeAgentError = window.maestro.process.onAgentError(
 			(sessionId: string, error) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const agentError: AgentError = {
 					type: error.type as AgentError['type'],
 					message: error.message,
@@ -1354,6 +1400,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeThinkingChunk = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
 				if (!aiTabMatch) return;
 
@@ -1473,6 +1521,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeSshRemote = window.maestro.process.onSshRemote?.(
 			(sessionId: string, sshRemote: { id: string; name: string; host: string } | null) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				let actualSessionId: string;
 				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
 				if (aiTabMatch) {
@@ -1546,6 +1596,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					timestamp: number;
 				}
 			) => {
+				if (!isSessionInCurrentWindow(sessionId)) return;
+
 				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
 				if (!aiTabMatch) return;
 

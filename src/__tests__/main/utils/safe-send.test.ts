@@ -102,6 +102,45 @@ describe('utils/safe-send', () => {
 
 				expect(getMainWindow).toHaveBeenCalledTimes(3);
 			});
+
+			it('should broadcast to all provided windows', () => {
+				const firstWebContents = {
+					send: vi.fn(),
+					isDestroyed: vi.fn().mockReturnValue(false),
+				};
+				const secondWebContents = {
+					send: vi.fn(),
+					isDestroyed: vi.fn().mockReturnValue(false),
+				};
+				const firstWindow = {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					webContents: firstWebContents,
+				} as unknown as BrowserWindow;
+				const secondWindow = {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					webContents: secondWebContents,
+				} as unknown as BrowserWindow;
+				const broadcastSafeSend = createSafeSend(
+					() => firstWindow,
+					() => [firstWindow, secondWindow]
+				);
+
+				broadcastSafeSend('process:data', 'session-1', 'output');
+
+				expect(firstWebContents.send).toHaveBeenCalledWith('process:data', 'session-1', 'output');
+				expect(secondWebContents.send).toHaveBeenCalledWith('process:data', 'session-1', 'output');
+			});
+
+			it('should de-duplicate windows returned for broadcast', () => {
+				const broadcastSafeSend = createSafeSend(
+					() => mockWindow as BrowserWindow,
+					() => [mockWindow as BrowserWindow, mockWindow as BrowserWindow]
+				);
+
+				broadcastSafeSend('process:exit', 'session-1', 0);
+
+				expect(mockWebContents.send).toHaveBeenCalledTimes(1);
+			});
 		});
 
 		describe('null window handling', () => {

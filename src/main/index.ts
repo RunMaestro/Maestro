@@ -273,7 +273,10 @@ let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
-const safeSend = createSafeSend(() => mainWindow);
+const safeSend = createSafeSend(
+	() => mainWindow,
+	() => BrowserWindow.getAllWindows()
+);
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
