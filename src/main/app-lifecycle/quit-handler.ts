@@ -4,6 +4,7 @@
  */
 
 import { app, ipcMain, BrowserWindow } from 'electron';
+import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import type { ProcessManager } from '../process-manager';
 import type { WebServer } from '../web-server';
@@ -19,6 +20,8 @@ import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushStarredMirrorsSync } from '../storage/starred-transcript-mirror';
+import type { MultiWindowState, WindowState } from '../stores/types';
+import type { WindowRegistry, WindowRegistryEntry } from '../window-registry';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -112,6 +115,10 @@ export interface QuitHandlerDependencies {
 	 * flush every open starred tab's transcript to Maestro's mirror before exit.
 	 */
 	getPersistedSessions?: () => Array<Record<string, unknown>>;
+	/** Function to get the window registry */
+	getWindowRegistry?: () => WindowRegistry | null;
+	/** Store for multi-window state persistence */
+	windowStateStore?: Store<MultiWindowState>;
 }
 
 /** Quit handler state */
@@ -168,10 +175,12 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		closeStatsDB,
 		stopCliWatcher,
 		stopSettingsWatcher,
-		powerManager,
-		stopSessionCleanup,
-		getPersistedSessions,
-	} = deps;
+	powerManager,
+	stopSessionCleanup,
+	getPersistedSessions,
+	getWindowRegistry,
+	windowStateStore,
+} = deps;
 
 	const state: QuitHandlerState = {
 		quitConfirmed: false,
@@ -331,6 +340,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 	function performCleanup(): void {
 		logger.info('Application shutting down', 'Shutdown');
 
+		saveAllWindowStates();
+
 		// Stop history manager watcher
 		getHistoryManager().stopWatching();
 
@@ -427,5 +438,71 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		closeStatsDB();
 
 		logger.info('Shutdown complete', 'Shutdown');
+	}
+
+	/** Saves all registered window states before app shutdown begins. */
+	function saveAllWindowStates(): void {
+		const windowRegistry = getWindowRegistry?.();
+		if (!windowRegistry || !windowStateStore) {
+			return;
+		}
+
+		try {
+			const currentState = windowStateStore.store;
+			const windows: WindowState[] = [];
+			let primaryWindowId = currentState.primaryWindowId;
+
+			for (const entry of windowRegistry.getAll()) {
+				const windowId = windowRegistry.getWindowId(entry.browserWindow);
+				if (!windowId || entry.browserWindow.isDestroyed()) {
+					continue;
+				}
+
+				if (entry.isMain) {
+					primaryWindowId = windowId;
+				}
+
+				windows.push(createWindowState(windowId, entry, currentState));
+			}
+
+			if (windows.length === 0) {
+				return;
+			}
+
+			windowStateStore.store = {
+				...currentState,
+				primaryWindowId,
+				windows,
+			};
+			logger.info(`Saved state for ${windows.length} window(s) before quit`, 'Shutdown');
+		} catch (err) {
+			logger.warn(`Failed to save window state before quit: ${err}`, 'Shutdown');
+		}
+	}
+
+	function createWindowState(
+		windowId: string,
+		entry: WindowRegistryEntry,
+		currentState: MultiWindowState
+	): WindowState {
+		const browserWindow = entry.browserWindow;
+		const bounds = browserWindow.getBounds();
+		const existingWindowState = currentState.windows.find(
+			(windowState) => windowState.id === windowId
+		);
+
+		return {
+			id: windowId,
+			x: bounds.x,
+			y: bounds.y,
+			width: bounds.width,
+			height: bounds.height,
+			isMaximized: browserWindow.isMaximized(),
+			isFullScreen: browserWindow.isFullScreen(),
+			sessionIds: entry.sessionIds,
+			activeSessionId: existingWindowState?.activeSessionId ?? null,
+			leftPanelCollapsed: existingWindowState?.leftPanelCollapsed ?? false,
+			rightPanelCollapsed: existingWindowState?.rightPanelCollapsed ?? false,
+		};
 	}
 }

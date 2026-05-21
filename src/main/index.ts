@@ -1350,6 +1350,8 @@ quitHandler = createQuitHandler({
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+	getWindowRegistry: () => windowManager?.windowRegistry ?? null,
+	windowStateStore,
 });
 quitHandler.setup();
 

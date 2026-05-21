@@ -103,6 +103,24 @@ describe('app-lifecycle/quit-handler', () => {
 	let mockPowerManager: {
 		clearAllReasons: ReturnType<typeof vi.fn>;
 	};
+	let mockWindowStateStore: {
+		store: {
+			primaryWindowId: string;
+			windows: Array<{
+				id: string;
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>;
+		};
+	};
 
 	let deps: {
 		getMainWindow: ReturnType<typeof vi.fn>;
@@ -116,6 +134,8 @@ describe('app-lifecycle/quit-handler', () => {
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
 		stopSessionCleanup: ReturnType<typeof vi.fn>;
+		getWindowRegistry: ReturnType<typeof vi.fn>;
+		windowStateStore?: typeof mockWindowStateStore;
 	};
 
 	beforeEach(() => {
@@ -147,6 +167,12 @@ describe('app-lifecycle/quit-handler', () => {
 		mockPowerManager = {
 			clearAllReasons: vi.fn(),
 		};
+		mockWindowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [],
+			},
+		};
 
 		deps = {
 			getMainWindow: vi.fn().mockReturnValue(mockMainWindow),
@@ -160,6 +186,7 @@ describe('app-lifecycle/quit-handler', () => {
 			stopCliWatcher: vi.fn(),
 			powerManager: mockPowerManager,
 			stopSessionCleanup: vi.fn(),
+			getWindowRegistry: vi.fn().mockReturnValue(null),
 		};
 	});
 
@@ -376,6 +403,111 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
+		});
+
+		it('should save all registered window states before cleanup when quit is confirmed', async () => {
+			const primaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				getBounds: vi.fn().mockReturnValue({ x: 10, y: 20, width: 1200, height: 800 }),
+				isMaximized: vi.fn().mockReturnValue(true),
+				isFullScreen: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				getBounds: vi.fn().mockReturnValue({ x: 1300, y: 40, width: 900, height: 700 }),
+				isMaximized: vi.fn().mockReturnValue(false),
+				isFullScreen: vi.fn().mockReturnValue(true),
+			};
+			const primaryEntry = {
+				browserWindow: primaryWindow,
+				sessionIds: ['session-1', 'session-2'],
+				isMain: true,
+			};
+			const secondaryEntry = {
+				browserWindow: secondaryWindow,
+				sessionIds: ['session-3'],
+				isMain: false,
+			};
+			const mockWindowRegistry = {
+				getAll: vi.fn().mockReturnValue([primaryEntry, secondaryEntry]),
+				getWindowId: vi.fn((browserWindow) =>
+					browserWindow === primaryWindow ? 'primary' : 'secondary'
+				),
+			};
+			mockWindowStateStore.store = {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 0,
+						y: 0,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: 'session-2',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: false,
+					},
+					{
+						id: 'secondary',
+						x: 0,
+						y: 0,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: 'session-3',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: true,
+					},
+				],
+			};
+			deps.getWindowRegistry.mockReturnValue(mockWindowRegistry);
+			deps.windowStateStore = mockWindowStateStore;
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(mockWindowRegistry.getAll).toHaveBeenCalled();
+			expect(mockWindowStateStore.store).toEqual({
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 10,
+						y: 20,
+						width: 1200,
+						height: 800,
+						isMaximized: true,
+						isFullScreen: false,
+						sessionIds: ['session-1', 'session-2'],
+						activeSessionId: 'session-2',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: false,
+					},
+					{
+						id: 'secondary',
+						x: 1300,
+						y: 40,
+						width: 900,
+						height: 700,
+						isMaximized: false,
+						isFullScreen: true,
+						sessionIds: ['session-3'],
+						activeSessionId: 'session-3',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: true,
+					},
+				],
+			});
 		});
 
 		it('should cleanup grooming sessions if any are active', async () => {
