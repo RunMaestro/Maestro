@@ -158,6 +158,7 @@ import {
 	type QuitHandler,
 	attachPrimaryWindowClosePolicy,
 } from './app-lifecycle';
+import { getStartupWindowStates } from './app-lifecycle/window-state-restore';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
@@ -464,18 +465,26 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
+function createWindow(windowId?: string, sessionIds?: string[]) {
 	if (!windowManager) {
 		throw new Error('Window manager has not been initialized');
 	}
 
-	mainWindow = windowManager.createWindow();
-	attachPrimaryWindowClosePolicy({
-		getPrimaryWindow: () => mainWindow,
-		quitHandler,
-	});
+	const createdWindow = windowManager.createWindow(windowId, sessionIds);
+	const createdWindowId = windowManager.windowRegistry.getWindowId(createdWindow);
+	const createdEntry = createdWindowId
+		? windowManager.windowRegistry.get(createdWindowId)
+		: undefined;
+	if (createdEntry?.isMain || !mainWindow) {
+		mainWindow = createdWindow;
+	}
+	if (createdEntry?.isMain) {
+		attachPrimaryWindowClosePolicy({
+			getPrimaryWindow: () => mainWindow,
+			quitHandler,
+		});
+	}
 	// Handle closed event to clear the reference
-	const createdWindow = mainWindow;
 	createdWindow.on('closed', () => {
 		if (mainWindow === createdWindow) {
 			mainWindow = null;
@@ -486,9 +495,20 @@ function createWindow() {
 	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
 	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
 	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
-	mainWindow.webContents.on('render-process-gone', () => {
+	createdWindow.webContents.on('render-process-gone', () => {
 		processManager?.killAll();
 	});
+}
+
+function restoreStartupWindows() {
+	const startupWindows = getStartupWindowStates(
+		windowStateStore,
+		sessionsStore.get('sessions', [])
+	);
+
+	for (const windowState of startupWindows) {
+		createWindow(windowState.id, windowState.sessionIds);
+	}
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -1230,9 +1250,9 @@ app
 			Menu.setApplicationMenu(null);
 		}
 
-		// Create main window
-		logger.info('Creating main window', 'Startup');
-		createWindow();
+		// Restore saved windows, falling back to a single primary window for first-run/legacy state.
+		logger.info('Restoring startup windows', 'Startup');
+		restoreStartupWindows();
 
 		// Wire the global "summon Maestro" hotkey. Register the saved binding (if
 		// any) and re-register live when the setting changes from any source
