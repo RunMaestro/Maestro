@@ -4,6 +4,7 @@ vi.mock('../../../cli/services/paseo', () => ({
 	createPaseoSchedule: vi.fn(),
 	listPaseoSchedules: vi.fn(),
 	getPaseoScheduleLogs: vi.fn(),
+	runPaseoAgent: vi.fn(),
 }));
 
 vi.mock('../../../cli/output/formatter', () => ({
@@ -11,6 +12,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import {
+	paseoRun,
 	paseoScheduleCreate,
 	paseoScheduleList,
 	paseoScheduleLogs,
@@ -19,6 +21,7 @@ import {
 	createPaseoSchedule,
 	getPaseoScheduleLogs,
 	listPaseoSchedules,
+	runPaseoAgent,
 } from '../../../cli/services/paseo';
 
 describe('paseo command', () => {
@@ -67,6 +70,29 @@ describe('paseo command', () => {
 			expiresIn: '10m',
 		});
 		expect(consoleSpy).toHaveBeenCalledWith('ID NAME\nabc demo');
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('runs a titled Paseo agent and prints stdout', async () => {
+		vi.mocked(runPaseoAgent).mockResolvedValue({
+			stdout: 'agent-123\n',
+			stderr: '',
+		});
+
+		await paseoRun('do visible work', {
+			title: 'Visible Work',
+			provider: 'codex',
+			cwd: '/repo',
+			detach: true,
+		});
+
+		expect(runPaseoAgent).toHaveBeenCalledWith('do visible work', {
+			title: 'Visible Work',
+			provider: 'codex',
+			cwd: '/repo',
+			detach: true,
+		});
+		expect(consoleSpy).toHaveBeenCalledWith('agent-123');
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 

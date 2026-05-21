@@ -31,6 +31,19 @@ export interface PaseoScheduleCreateOptions extends PaseoExecOptions {
 	json?: boolean;
 }
 
+export interface PaseoRunOptions extends PaseoExecOptions {
+	title?: string;
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	mode?: string;
+	cwd?: string;
+	detach?: boolean;
+	waitTimeout?: string;
+	host?: string;
+	json?: boolean;
+}
+
 export interface PaseoScheduleListOptions extends PaseoExecOptions {
 	host?: string;
 	json?: boolean;
@@ -138,6 +151,28 @@ export function createPaseoSchedule(
 		args.push('--no-run-now');
 	}
 
+	addCommonOptions(args, options);
+	args.push(prompt);
+
+	return runPaseoCommand(args, options);
+}
+
+export function runPaseoAgent(
+	prompt: string,
+	options: PaseoRunOptions
+): Promise<PaseoCommandResult> {
+	const args = ['run'];
+
+	addOption(args, '--title', options.title);
+	addOption(args, '--provider', options.provider);
+	addOption(args, '--model', options.model);
+	addOption(args, '--thinking', options.thinking);
+	addOption(args, '--mode', options.mode);
+	addOption(args, '--cwd', options.cwd);
+	if (options.detach !== false) {
+		args.push('--detach');
+	}
+	addOption(args, '--wait-timeout', options.waitTimeout);
 	addCommonOptions(args, options);
 	args.push(prompt);
 

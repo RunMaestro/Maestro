@@ -4,6 +4,7 @@ import {
 	createPaseoSchedule,
 	getPaseoScheduleLogs,
 	listPaseoSchedules,
+	runPaseoAgent,
 	type PaseoCommandResult,
 } from '../services/paseo';
 import { formatError } from '../output/formatter';
@@ -27,6 +28,17 @@ interface PaseoScheduleCreateCommandOptions extends PaseoBaseOptions {
 	runNow?: boolean;
 }
 
+interface PaseoRunCommandOptions extends PaseoBaseOptions {
+	title?: string;
+	provider?: string;
+	model?: string;
+	thinking?: string;
+	mode?: string;
+	cwd?: string;
+	detach?: boolean;
+	waitTimeout?: string;
+}
+
 function printResult(result: PaseoCommandResult): void {
 	if (result.stdout.trim()) {
 		console.log(result.stdout.trimEnd());
@@ -44,6 +56,15 @@ function printError(error: unknown, json?: boolean): void {
 		console.error(formatError(message));
 	}
 	process.exit(1);
+}
+
+export async function paseoRun(prompt: string, options: PaseoRunCommandOptions): Promise<void> {
+	try {
+		const result = await runPaseoAgent(prompt, options);
+		printResult(result);
+	} catch (error) {
+		printError(error, options.json);
+	}
 }
 
 export async function paseoScheduleCreate(

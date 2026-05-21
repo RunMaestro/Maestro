@@ -23,7 +23,12 @@ import {
 	settingsAgentSet,
 	settingsAgentReset,
 } from './commands/settings-agent';
-import { paseoScheduleCreate, paseoScheduleList, paseoScheduleLogs } from './commands/paseo';
+import {
+	paseoRun,
+	paseoScheduleCreate,
+	paseoScheduleList,
+	paseoScheduleLogs,
+} from './commands/paseo';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -123,6 +128,24 @@ program
 
 // Paseo commands - create and inspect Paseo-managed schedules from Maestro
 const paseo = program.command('paseo').description('Manage Paseo tasks from Maestro');
+
+paseo
+	.command('run <prompt>')
+	.description('Create and start a titled Paseo agent')
+	.option('--title <title>', 'Paseo agent title')
+	.option('--provider <provider>', 'Paseo provider, or provider/model')
+	.option('--model <model>', 'Model to use')
+	.option('--thinking <id>', 'Thinking option ID to use for this run')
+	.option('--mode <mode>', 'Provider-specific mode')
+	.option('--cwd <path>', 'Working directory for the agent')
+	.option('--detach', 'Run in background', true)
+	.option('--no-detach', 'Wait for the run instead of detaching')
+	.option('--wait-timeout <duration>', 'Maximum time to wait when not detached')
+	.option('--host <host>', 'Paseo daemon host target')
+	.option('--cli-path <path>', 'Path to the Paseo CLI binary')
+	.option('--json', 'Ask Paseo for JSON output')
+	.action(paseoRun);
+
 const paseoSchedule = paseo.command('schedule').description('Manage Paseo recurring schedules');
 
 paseoSchedule

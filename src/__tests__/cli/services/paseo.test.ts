@@ -25,6 +25,7 @@ import {
 	listPaseoSchedules,
 	resolvePaseoCliPath,
 	runPaseoCommand,
+	runPaseoAgent,
 } from '../../../cli/services/paseo';
 
 function mockSpawnChild(): EventEmitter & {
@@ -194,6 +195,71 @@ describe('paseo service', () => {
 		expect(spawn).toHaveBeenLastCalledWith(
 			'/bin/paseo',
 			['schedule', 'create', '--every', '2m', '--no-run-now', 'do work later'],
+			expect.any(Object)
+		);
+	});
+
+	it('builds run arguments with title and detached execution by default', async () => {
+		mockSpawnResult(0, 'agent-123\n');
+
+		await runPaseoAgent('do visible work', {
+			cliPath: '/bin/paseo',
+			title: 'Visible Work',
+			provider: 'codex',
+			mode: 'bypass',
+			cwd: '/repo',
+			host: '127.0.0.1:6767',
+			json: true,
+		});
+
+		expect(spawn).toHaveBeenLastCalledWith(
+			'/bin/paseo',
+			[
+				'run',
+				'--title',
+				'Visible Work',
+				'--provider',
+				'codex',
+				'--mode',
+				'bypass',
+				'--cwd',
+				'/repo',
+				'--detach',
+				'--host',
+				'127.0.0.1:6767',
+				'--json',
+				'do visible work',
+			],
+			expect.any(Object)
+		);
+	});
+
+	it('builds run arguments without detach when explicitly disabled', async () => {
+		mockSpawnResult(0, 'done\n');
+
+		await runPaseoAgent('do foreground work', {
+			cliPath: '/bin/paseo',
+			title: 'Foreground Work',
+			model: 'gpt-5.4',
+			thinking: 'high',
+			detach: false,
+			waitTimeout: '5m',
+		});
+
+		expect(spawn).toHaveBeenLastCalledWith(
+			'/bin/paseo',
+			[
+				'run',
+				'--title',
+				'Foreground Work',
+				'--model',
+				'gpt-5.4',
+				'--thinking',
+				'high',
+				'--wait-timeout',
+				'5m',
+				'do foreground work',
+			],
 			expect.any(Object)
 		);
 	});
