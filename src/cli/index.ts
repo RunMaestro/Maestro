@@ -23,6 +23,7 @@ import {
 	settingsAgentSet,
 	settingsAgentReset,
 } from './commands/settings-agent';
+import { paseoScheduleCreate, paseoScheduleList, paseoScheduleLogs } from './commands/paseo';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -119,6 +120,45 @@ program
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.action(send);
+
+// Paseo commands - create and inspect Paseo-managed schedules from Maestro
+const paseo = program.command('paseo').description('Manage Paseo tasks from Maestro');
+const paseoSchedule = paseo.command('schedule').description('Manage Paseo recurring schedules');
+
+paseoSchedule
+	.command('create <prompt>')
+	.description('Create a Paseo schedule')
+	.option('--every <duration>', 'Fixed interval cadence (for example: 5m, 1h)')
+	.option('--cron <expr>', 'Cron cadence expression')
+	.option('--name <name>', 'Schedule name')
+	.option('--target <target>', 'Run target: self, new-agent, or agent id')
+	.option('--provider <provider>', 'Paseo provider, or provider/model')
+	.option('--mode <mode>', 'Provider-specific mode')
+	.option('--cwd <path>', 'Working directory for scheduled runs')
+	.option('--max-runs <n>', 'Maximum number of runs')
+	.option('--expires-in <duration>', 'Time to live for the schedule')
+	.option('--run-now', 'Fire one immediate run on creation')
+	.option('--no-run-now', 'Wait for the first cadence interval')
+	.option('--host <host>', 'Paseo daemon host target')
+	.option('--cli-path <path>', 'Path to the Paseo CLI binary')
+	.option('--json', 'Ask Paseo for JSON output')
+	.action(paseoScheduleCreate);
+
+paseoSchedule
+	.command('ls')
+	.description('List Paseo schedules')
+	.option('--host <host>', 'Paseo daemon host target')
+	.option('--cli-path <path>', 'Path to the Paseo CLI binary')
+	.option('--json', 'Ask Paseo for JSON output')
+	.action(paseoScheduleList);
+
+paseoSchedule
+	.command('logs <schedule-id>')
+	.description('Show Paseo schedule run logs')
+	.option('--host <host>', 'Paseo daemon host target')
+	.option('--cli-path <path>', 'Path to the Paseo CLI binary')
+	.option('--json', 'Ask Paseo for JSON output')
+	.action(paseoScheduleLogs);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
