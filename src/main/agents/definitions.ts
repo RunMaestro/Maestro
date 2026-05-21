@@ -249,6 +249,70 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 	},
 	{
+		id: 'hermes',
+		name: 'Hermes',
+		binaryName: 'hermes',
+		command: 'hermes',
+		args: [],
+		batchModePrefix: ['chat'],
+		batchModeArgs: ['-Q'],
+		yoloModeArgs: ['--yolo'],
+		promptArgs: (prompt: string) => ['-q', prompt],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		modelArgs: (modelId: string) => ['-m', modelId],
+		imageArgs: (imagePath: string) => ['--image', imagePath],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Documented Hermes model override (for example, anthropic/claude-sonnet-4-20250514). Leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Hermes reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
+		id: 'pi',
+		name: 'Pi',
+		binaryName: 'pi',
+		command: 'pi',
+		args: [],
+		batchModeArgs: ['--mode', 'json'],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		resumeArgs: (sessionId: string) => ['--session', sessionId],
+		modelArgs: (modelId: string) => ['-m', modelId],
+		imageArgs: (imagePath: string) => ['-i', imagePath],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Documented Pi model override (for example, claude-sonnet-4.5). Leave empty for the CLI default.',
+				default: '',
+				argBuilder: (value: string) => (value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Fallback context window size in tokens until Pi reports a runtime-specific value.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'opencode',
 		name: 'OpenCode',
 		binaryName: 'opencode',

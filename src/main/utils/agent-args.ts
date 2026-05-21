@@ -101,6 +101,10 @@ export function buildAgentArgs(
 		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
 	}
 
+	if (options.prompt && agent.promptArgs) {
+		finalArgs = [...finalArgs, ...agent.promptArgs(options.prompt)];
+	}
+
 	// Deduplicate repeated flag-style arguments while preserving order.
 	// Positional arguments (non-flags) are intentionally left untouched.
 	const seenFlags = new Set<string>();

@@ -289,6 +289,66 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Hermes - first-pass experimental registration based on documented CLI behavior.
+	 * Session storage and structured-output parsing stay gated until later runtime work lands.
+	 */
+	hermes: {
+		supportsResume: true,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
+	},
+
+	/**
+	 * Pi - first-pass experimental registration based on documented CLI behavior.
+	 * JSON/session-storage plumbing stays gated until dedicated runtime phases land.
+	 */
+	pi: {
+		supportsResume: true,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: true,
+		supportsImageInput: true,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: true,
+		requiresPromptToStart: true,
+		supportsStreaming: true,
+		supportsResultMessages: true,
+		supportsModelSelection: true,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: true,
+		supportsContextMerge: true,
+		supportsContextExport: false,
+		supportsWizard: false,
+		supportsGroupChatModeration: false,
+		usesJsonLineOutput: false,
+		usesCombinedContextWindow: false,
+	},
+
+	/**
 	 * OpenCode - Open source coding assistant
 	 * https://github.com/opencode-ai/opencode
 	 *

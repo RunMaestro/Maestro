@@ -85,6 +85,43 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- promptArgs --
+	it('adds promptArgs when prompt provided', () => {
+		const agent = makeAgent({
+			promptArgs: (prompt: string) => ['--prompt', prompt],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: 'hello',
+		});
+		expect(result).toEqual(['--print', '--prompt', 'hello']);
+	});
+
+	it('does not add promptArgs when prompt is missing', () => {
+		const agent = makeAgent({
+			promptArgs: (prompt: string) => ['--prompt', prompt],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+		});
+		expect(result).toEqual(['--print']);
+	});
+
+	it('appends promptArgs after resume args for single-shot resume flows', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['chat'],
+			batchModeArgs: ['-Q'],
+			resumeArgs: (sid: string) => ['--resume', sid],
+			promptArgs: (prompt: string) => ['-q', prompt],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'continue this task',
+			agentSessionId: 'sess-123',
+		});
+		expect(result).toEqual(['chat', '-Q', '--resume', 'sess-123', '-q', 'continue this task']);
+	});
+
 	// -- jsonOutputArgs --
 	it('adds jsonOutputArgs when not already present', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
