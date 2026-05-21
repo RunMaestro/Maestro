@@ -183,6 +183,24 @@ describe('stores/instances', () => {
 				isMaximized: true,
 				isFullScreen: false,
 			});
+			mockStoreDataByName.set('maestro-sessions', {
+				sessions: [
+					{
+						id: 'session-1',
+						name: 'Session 1',
+						toolType: 'claude-code',
+						cwd: '/repo',
+						projectRoot: '/repo',
+					},
+					{
+						id: 'session-2',
+						name: 'Session 2',
+						toolType: 'codex',
+						cwd: '/repo',
+						projectRoot: '/repo',
+					},
+				],
+			});
 
 			initializeStores({ productionDataPath: '/mock/production/path' });
 
@@ -197,10 +215,55 @@ describe('stores/instances', () => {
 						height: 720,
 						isMaximized: true,
 						isFullScreen: false,
-						sessionIds: [],
-						activeSessionId: null,
+						sessionIds: ['session-1', 'session-2'],
+						activeSessionId: 'session-1',
 						leftPanelCollapsed: false,
 						rightPanelCollapsed: false,
+					},
+				],
+			});
+		});
+
+		it('should preserve valid legacy active session and panel state during migration', () => {
+			mockStoreDataByName.set('maestro-window-state', {
+				x: 100,
+				y: 120,
+				width: 1280,
+				height: 720,
+				isMaximized: false,
+				isFullScreen: false,
+				activeSessionId: 'session-2',
+				leftPanelCollapsed: true,
+				rightPanelCollapsed: true,
+			});
+			mockStoreDataByName.set('maestro-sessions', {
+				sessions: [
+					{
+						id: 'session-1',
+						name: 'Session 1',
+						toolType: 'claude-code',
+						cwd: '/repo',
+						projectRoot: '/repo',
+					},
+					{
+						id: 'session-2',
+						name: 'Session 2',
+						toolType: 'codex',
+						cwd: '/repo',
+						projectRoot: '/repo',
+					},
+				],
+			});
+
+			initializeStores({ productionDataPath: '/mock/production/path' });
+
+			expect(getStoreInstances().windowStateStore?.store).toMatchObject({
+				windows: [
+					{
+						sessionIds: ['session-1', 'session-2'],
+						activeSessionId: 'session-2',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: true,
 					},
 				],
 			});

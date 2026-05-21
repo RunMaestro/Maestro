@@ -126,7 +126,16 @@ function isLegacyWindowState(value: unknown): value is LegacyWindowState {
 	);
 }
 
-function createPrimaryWindowStateFromLegacy(legacyState: LegacyWindowState): WindowState {
+function createPrimaryWindowStateFromLegacy(
+	legacyState: LegacyWindowState,
+	sessions: SessionsData['sessions']
+): WindowState {
+	const sessionIds = sessions.map((session) => session.id);
+	const activeSessionId =
+		legacyState.activeSessionId && sessionIds.includes(legacyState.activeSessionId)
+			? legacyState.activeSessionId
+			: (sessionIds[0] ?? null);
+
 	return {
 		id: 'primary',
 		x: legacyState.x ?? 0,
@@ -135,14 +144,17 @@ function createPrimaryWindowStateFromLegacy(legacyState: LegacyWindowState): Win
 		height: legacyState.height,
 		isMaximized: legacyState.isMaximized,
 		isFullScreen: legacyState.isFullScreen,
-		sessionIds: [],
-		activeSessionId: null,
-		leftPanelCollapsed: false,
-		rightPanelCollapsed: false,
+		sessionIds,
+		activeSessionId,
+		leftPanelCollapsed: legacyState.leftPanelCollapsed ?? false,
+		rightPanelCollapsed: legacyState.rightPanelCollapsed ?? false,
 	};
 }
 
-function migrateLegacyWindowStateStore(windowStateStore: Store<MultiWindowState>): void {
+function migrateLegacyWindowStateStore(
+	windowStateStore: Store<MultiWindowState>,
+	sessions: SessionsData['sessions']
+): void {
 	const rawState = windowStateStore.store as MultiWindowState & Partial<LegacyWindowState>;
 
 	if (!isLegacyWindowState(rawState)) {
@@ -151,7 +163,7 @@ function migrateLegacyWindowStateStore(windowStateStore: Store<MultiWindowState>
 
 	windowStateStore.store = {
 		primaryWindowId: rawState.primaryWindowId || 'primary',
-		windows: [createPrimaryWindowStateFromLegacy(rawState)],
+		windows: [createPrimaryWindowStateFromLegacy(rawState, sessions)],
 	};
 }
 
@@ -232,7 +244,7 @@ export function initializeStores(options: StoreInitOptions): {
 		defaults: WINDOW_STATE_DEFAULTS,
 		deserialize: deserializeStoreJson,
 	});
-	migrateLegacyWindowStateStore(_windowStateStore);
+	migrateLegacyWindowStateStore(_windowStateStore, _sessionsStore.store.sessions);
 
 	// Claude session origins - tracks which sessions were created by Maestro
 	_claudeSessionOriginsStore = new Store<ClaudeSessionOriginsData>({

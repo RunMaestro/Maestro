@@ -141,6 +141,9 @@ export interface LegacyWindowState {
 	height: number;
 	isMaximized: boolean;
 	isFullScreen: boolean;
+	activeSessionId?: string | null;
+	leftPanelCollapsed?: boolean;
+	rightPanelCollapsed?: boolean;
 }
 
 // ============================================================================
