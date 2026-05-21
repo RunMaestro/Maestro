@@ -159,6 +159,17 @@ describe('windows IPC handlers', () => {
 		]);
 	});
 
+	it('prevents creating a secondary window with the primary window last session', async () => {
+		const primary = windowManager.createWindow('primary', ['session-1']);
+		windowStateStore.store.windows = [{ id: 'primary', activeSessionId: 'session-1' } as any];
+
+		const handler = mockState.registeredHandlers.get('windows:create');
+		await expect(handler!({ sender: primary.webContents }, ['session-1'], {})).rejects.toThrow(
+			'Cannot move the last tab out of the primary window'
+		);
+		expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-1']);
+	});
+
 	it('prevents closing the primary window', async () => {
 		const primary = windowManager.createWindow('primary', []);
 
@@ -196,7 +207,7 @@ describe('windows IPC handlers', () => {
 	});
 
 	it('moves sessions between windows and looks up session ownership', async () => {
-		windowManager.createWindow('primary', ['session-1']);
+		windowManager.createWindow('primary', ['session-1', 'session-3']);
 		const secondary = windowManager.createSecondaryWindow([], {});
 		windowStateStore.store.windows = [
 			{ id: 'primary', activeSessionId: 'session-1' } as any,
@@ -213,10 +224,26 @@ describe('windows IPC handlers', () => {
 			fromWindowId: 'primary',
 			toWindowId: '2',
 			windows: [
-				{ id: 'primary', isMain: true, sessionIds: [], activeSessionId: null },
+				{ id: 'primary', isMain: true, sessionIds: ['session-3'], activeSessionId: 'session-3' },
 				{ id: '2', isMain: false, sessionIds: ['session-1'], activeSessionId: 'session-1' },
 			],
 		});
+	});
+
+	it('prevents moving the last session out of the primary window', async () => {
+		windowManager.createWindow('primary', ['session-1']);
+		windowManager.createSecondaryWindow([], {});
+		windowStateStore.store.windows = [
+			{ id: 'primary', activeSessionId: 'session-1' } as any,
+			{ id: '2', activeSessionId: null } as any,
+		];
+
+		const moveHandler = mockState.registeredHandlers.get('windows:moveSession');
+		await expect(moveHandler!({}, 'session-1', 'primary', '2')).rejects.toThrow(
+			'Cannot move the last tab out of the primary window'
+		);
+		expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-1']);
+		expect(windowManager.windowRegistry.get('2')?.sessionIds).toEqual([]);
 	});
 
 	it('focuses existing windows', async () => {

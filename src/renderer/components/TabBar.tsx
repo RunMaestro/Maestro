@@ -24,6 +24,7 @@ import {
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import type { WindowBounds } from '../../shared/types/window';
 import { useOptionalWindowContext } from '../contexts/WindowContext';
+import { notifyToast } from '../stores/notificationStore';
 import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
@@ -1806,6 +1807,27 @@ function TabBarInner({
 		[clearHighlightedDropZone]
 	);
 
+	const isLastPrimarySessionTab = useCallback(
+		(tabId: string) => {
+			const primarySessionId = windowContext?.sessionIds[0];
+			return Boolean(
+				windowContext?.isMainWindow &&
+				windowContext.sessionIds.length === 1 &&
+				(primarySessionId === tabId || primarySessionId === windowContext.activeSessionId)
+			);
+		},
+		[windowContext?.activeSessionId, windowContext?.isMainWindow, windowContext?.sessionIds]
+	);
+
+	const showPrimaryLastTabToast = useCallback(() => {
+		notifyToast({
+			type: 'warning',
+			title: 'Primary Window Needs a Tab',
+			message: 'Move another tab into the primary window before moving its last tab out.',
+			skipCustomNotification: true,
+		});
+	}, []);
+
 	const getDragPreviewLabel = useCallback(
 		(tabId: string) => {
 			const aiTab = tabs.find((tab) => tab.id === tabId);
@@ -1878,6 +1900,12 @@ function TabBarInner({
 
 	const handleDragStart = useCallback(
 		(tabId: string, e: React.DragEvent) => {
+			if (isLastPrimarySessionTab(tabId)) {
+				e.preventDefault();
+				showPrimaryLastTabToast();
+				return;
+			}
+
 			e.dataTransfer.effectAllowed = 'move';
 			e.dataTransfer.setData('text/plain', tabId);
 			setDraggingTabId(tabId);
@@ -1899,7 +1927,12 @@ function TabBarInner({
 				return;
 			}
 
-			void getWindowBounds().then((bounds) => {
+			const windowBoundsPromise = getWindowBounds();
+			if (!windowBoundsPromise) {
+				return;
+			}
+
+			void windowBoundsPromise.then((bounds) => {
 				windowBoundsRef.current = bounds;
 				setDragPreview({
 					label,
@@ -1909,7 +1942,14 @@ function TabBarInner({
 				updateDragWindowExitState(e.screenX, e.screenY);
 			});
 		},
-		[clearHighlightedDropZone, getDragPreviewLabel, theme, updateDragWindowExitState]
+		[
+			clearHighlightedDropZone,
+			getDragPreviewLabel,
+			isLastPrimarySessionTab,
+			showPrimaryLastTabToast,
+			theme,
+			updateDragWindowExitState,
+		]
 	);
 
 	const handleDrag = useCallback(
@@ -1931,7 +1971,7 @@ function TabBarInner({
 	);
 
 	const handleDragEnd = useCallback(
-		(_tabId: string, e: React.DragEvent) => {
+		(tabId: string, e: React.DragEvent) => {
 			const dropScreenX = e.screenX;
 			const dropScreenY = e.screenY;
 			const targetWindowId = dragTargetWindowIdRef.current;
@@ -1966,7 +2006,9 @@ function TabBarInner({
 				}
 			};
 
-			if (targetWindowId) {
+			if (isLastPrimarySessionTab(tabId)) {
+				showPrimaryLastTabToast();
+			} else if (targetWindowId) {
 				moveSessionToWindow(targetWindowId);
 			} else if (
 				windowBoundsRef.current &&
@@ -1990,6 +2032,8 @@ function TabBarInner({
 		},
 		[
 			clearHighlightedDropZone,
+			isLastPrimarySessionTab,
+			showPrimaryLastTabToast,
 			windowContext?.activeSessionId,
 			windowContext?.closeTab,
 			windowContext?.windowId,
@@ -2107,14 +2151,24 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
-	const handleMoveToNewWindow = useCallback(() => {
-		const sessionId = windowContext?.activeSessionId;
-		if (!sessionId) {
-			return;
-		}
+	const handleMoveToNewWindow = useCallback(
+		(tabId: string) => {
+			const sessionId = windowContext?.sessionIds.includes(tabId)
+				? tabId
+				: windowContext?.activeSessionId;
+			if (!sessionId) {
+				return;
+			}
 
-		void windowContext.moveSessionToNewWindow(sessionId);
-	}, [windowContext]);
+			if (isLastPrimarySessionTab(sessionId)) {
+				showPrimaryLastTabToast();
+				return;
+			}
+
+			void windowContext?.moveSessionToNewWindow(sessionId);
+		},
+		[isLastPrimarySessionTab, showPrimaryLastTabToast, windowContext]
+	);
 
 	// Stable callback wrappers that receive tabId from the Tab component
 	// These avoid creating new function references on each render

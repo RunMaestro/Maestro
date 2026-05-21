@@ -6,6 +6,12 @@ import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
+const mockNotifyToast = vi.hoisted(() => vi.fn());
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({
+	notifyToast: mockNotifyToast,
+}));
+
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -1104,7 +1110,7 @@ describe('TabBar', () => {
 					list: vi.fn().mockResolvedValue([
 						{
 							id: 'window-1',
-							isMain: true,
+							isMain: false,
 							sessionIds: ['session-1'],
 							activeSessionId: 'session-1',
 						},
@@ -1209,7 +1215,7 @@ describe('TabBar', () => {
 					list: vi.fn().mockResolvedValue([
 						{
 							id: 'window-1',
-							isMain: true,
+							isMain: false,
 							sessionIds: ['session-1'],
 							activeSessionId: 'session-1',
 						},
@@ -1283,15 +1289,92 @@ describe('TabBar', () => {
 		});
 	});
 
+	it('blocks dragging the last tab out of the primary window', async () => {
+		vi.useRealTimers();
+		const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+		window.maestro = {
+			...window.maestro,
+			windows: {
+				...window.maestro?.windows,
+				getState: vi.fn().mockResolvedValue({
+					id: 'window-1',
+					x: 10,
+					y: 20,
+					width: 1200,
+					height: 800,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['tab-1'],
+					activeSessionId: 'tab-1',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: false,
+				}),
+				list: vi.fn().mockResolvedValue([
+					{
+						id: 'window-1',
+						isMain: true,
+						sessionIds: ['tab-1'],
+						activeSessionId: 'tab-1',
+					},
+				]),
+				getWindowBounds: vi.fn(),
+				findWindowAtPoint: vi.fn(),
+				create: vi.fn(),
+				moveSession: vi.fn(),
+				onSessionMoved: vi.fn(() => vi.fn()),
+				onDropZoneHighlightChanged: vi.fn(() => vi.fn()),
+			},
+		} as typeof window.maestro;
+
+		render(
+			<WindowProvider>
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			</WindowProvider>
+		);
+
+		await waitFor(() => expect(window.maestro.windows.getState).toHaveBeenCalled());
+
+		const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+		fireEvent.dragStart(tab, {
+			screenX: 100,
+			screenY: 100,
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('tab-1'),
+			},
+		});
+
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'warning',
+				title: 'Primary Window Needs a Tab',
+			})
+		);
+		expect(window.maestro.windows.getWindowBounds).not.toHaveBeenCalled();
+		expect(window.maestro.windows.create).not.toHaveBeenCalled();
+		expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
+	});
+
 	describe('hover overlay', () => {
 		it('moves the current agent to a new window from the tab context menu', async () => {
 			vi.useRealTimers();
-			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
 			const createWindow = vi.fn().mockResolvedValue({
 				id: 'window-2',
 				isMain: false,
-				sessionIds: ['session-1'],
-				activeSessionId: 'session-1',
+				sessionIds: ['tab-1'],
+				activeSessionId: 'tab-1',
 			});
 			window.maestro = {
 				...window.maestro,
@@ -1305,8 +1388,8 @@ describe('TabBar', () => {
 						height: 800,
 						isMaximized: false,
 						isFullScreen: false,
-						sessionIds: ['session-1'],
-						activeSessionId: 'session-1',
+						sessionIds: ['tab-1', 'tab-2'],
+						activeSessionId: 'tab-1',
 						leftPanelCollapsed: false,
 						rightPanelCollapsed: false,
 					}),
@@ -1314,8 +1397,8 @@ describe('TabBar', () => {
 						{
 							id: 'window-1',
 							isMain: true,
-							sessionIds: ['session-1'],
-							activeSessionId: 'session-1',
+							sessionIds: ['tab-1', 'tab-2'],
+							activeSessionId: 'tab-1',
 						},
 					]),
 					create: createWindow,
@@ -1347,7 +1430,7 @@ describe('TabBar', () => {
 
 			fireEvent.click(moveButton);
 
-			await waitFor(() => expect(createWindow).toHaveBeenCalledWith(['session-1']));
+			await waitFor(() => expect(createWindow).toHaveBeenCalledWith(['tab-1']));
 		});
 
 		it('shows overlay after hover delay for tabs with agentSessionId', async () => {
