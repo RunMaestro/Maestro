@@ -578,6 +578,8 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		sessionsStore,
+		windowManager: windowManager ?? undefined,
+		windowStateStore,
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
