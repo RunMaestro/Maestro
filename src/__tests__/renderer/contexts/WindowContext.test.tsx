@@ -97,9 +97,27 @@ describe('WindowContext', () => {
 		await waitFor(() => expect(result.current.windowId).toBe('window-1'));
 
 		expect(result.current.isMainWindow).toBe(true);
+		expect(result.current.windowNumber).toBe(1);
 		expect(result.current.sessionIds).toEqual(['session-1', 'session-2']);
 		expect(result.current.activeSessionId).toBe('session-1');
 		expect(window.maestro.windows.getState).toHaveBeenCalledTimes(1);
+	});
+
+	it('derives the current window number from the window list order', async () => {
+		vi.mocked(window.maestro.windows.getState).mockResolvedValue({
+			...initialWindowState,
+			id: 'window-2',
+			sessionIds: ['session-3'],
+			activeSessionId: 'session-3',
+		});
+
+		const { result } = renderHook(() => useWindowContext(), { wrapper });
+
+		await waitFor(() => expect(result.current.windowId).toBe('window-2'));
+
+		expect(result.current.isMainWindow).toBe(false);
+		expect(result.current.windowNumber).toBe(2);
+		expect(result.current.sessionIds).toEqual(['session-3']);
 	});
 
 	it('activates a session that is already open in this window', async () => {
@@ -149,6 +167,7 @@ describe('WindowContext', () => {
 		});
 
 		expect(result.current.sessionIds).toEqual(['session-2']);
+		expect(result.current.windowNumber).toBe(1);
 		expect(result.current.activeSessionId).toBe('session-2');
 	});
 
@@ -227,6 +246,7 @@ describe('WindowContext', () => {
 		});
 
 		expect(result.current.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
+		expect(result.current.windowNumber).toBe(1);
 		expect(result.current.activeSessionId).toBe('session-1');
 	});
 
