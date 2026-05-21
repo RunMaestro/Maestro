@@ -246,6 +246,44 @@ describe('windows IPC handlers', () => {
 		expect(windowManager.windowRegistry.get('2')?.sessionIds).toEqual([]);
 	});
 
+	it('serializes rapid session moves and resolves stale source windows', async () => {
+		windowManager.createWindow('primary', ['session-1', 'session-2']);
+		windowManager.createSecondaryWindow([], {});
+		windowManager.createSecondaryWindow([], {});
+		windowStateStore.store.windows = [
+			{ id: 'primary', activeSessionId: 'session-1' } as any,
+			{ id: '2', activeSessionId: null } as any,
+			{ id: '3', activeSessionId: null } as any,
+		];
+
+		const moveHandler = mockState.registeredHandlers.get('windows:moveSession');
+		const firstMove = moveHandler!({}, 'session-1', 'primary', '2');
+		const staleSourceMove = moveHandler!({}, 'session-1', 'primary', '3');
+
+		await expect(Promise.all([firstMove, staleSourceMove])).resolves.toEqual([true, true]);
+		expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-2']);
+		expect(windowManager.windowRegistry.get('2')?.sessionIds).toEqual([]);
+		expect(windowManager.windowRegistry.get('3')?.sessionIds).toEqual(['session-1']);
+		expect(windowManager.windowRegistry.getWindowForSession('session-1')).toBe('3');
+		expect(windowStateStore.store.windows).toEqual([
+			expect.objectContaining({
+				id: 'primary',
+				sessionIds: ['session-2'],
+				activeSessionId: 'session-2',
+			}),
+			expect.objectContaining({
+				id: '2',
+				sessionIds: [],
+				activeSessionId: null,
+			}),
+			expect.objectContaining({
+				id: '3',
+				sessionIds: ['session-1'],
+				activeSessionId: 'session-1',
+			}),
+		]);
+	});
+
 	it('focuses existing windows', async () => {
 		const primary = windowManager.createWindow('primary', []);
 
