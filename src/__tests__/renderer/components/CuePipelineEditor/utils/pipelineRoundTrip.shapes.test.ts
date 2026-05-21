@@ -405,6 +405,46 @@ describe('round-trip: trigger event configs survive serialization', () => {
 		expect(data.config.repo).toBe('org/repo');
 		expect(data.config.poll_minutes).toBe(15);
 	});
+
+	it('github.pull_request preserves retrigger_on_comments + max_notifications', () => {
+		const data = getReconstructedTriggerConfig('github.pull_request', {
+			repo: 'org/repo',
+			poll_minutes: 5,
+			retrigger_on_comments: true,
+			max_notifications: 100,
+		});
+		expect(data.config.retrigger_on_comments).toBe(true);
+		expect(data.config.max_notifications).toBe(100);
+	});
+
+	it('github.issue preserves retrigger_on_comments with default cap (max omitted)', () => {
+		const data = getReconstructedTriggerConfig('github.issue', {
+			repo: 'org/repo',
+			poll_minutes: 10,
+			retrigger_on_comments: true,
+		});
+		expect(data.config.retrigger_on_comments).toBe(true);
+		// max_notifications absent in YAML = use the default at runtime,
+		// so the reconstructed config also leaves it undefined.
+		expect(data.config.max_notifications).toBeUndefined();
+	});
+
+	it('github.pull_request preserves max_notifications=0 (unlimited sentinel)', () => {
+		const data = getReconstructedTriggerConfig('github.pull_request', {
+			repo: 'org/repo',
+			retrigger_on_comments: true,
+			max_notifications: 0,
+		});
+		expect(data.config.max_notifications).toBe(0);
+	});
+
+	it('github.pull_request omits retrigger fields when toggle is off', () => {
+		const data = getReconstructedTriggerConfig('github.pull_request', {
+			repo: 'org/repo',
+		});
+		expect(data.config.retrigger_on_comments).toBeUndefined();
+		expect(data.config.max_notifications).toBeUndefined();
+	});
 });
 
 // ─── Shape: double round-trip is a no-op (idempotence) ──────────────────────

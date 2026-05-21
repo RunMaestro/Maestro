@@ -23,6 +23,7 @@ export function NewInstanceModal({
 	theme,
 	existingSessions,
 	sourceSession,
+	presetGroupId,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
@@ -40,6 +41,9 @@ export function NewInstanceModal({
 	const [customAgentEnvVars, setCustomAgentEnvVars] = useState<
 		Record<string, Record<string, string>>
 	>({});
+	const [enableMaestroPByAgent, setEnableMaestroPByAgent] = useState<Record<string, boolean>>({});
+	const [maestroPPathByAgent, setMaestroPPathByAgent] = useState<Record<string, string>>({});
+	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
@@ -61,6 +65,14 @@ export function NewInstanceModal({
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
 		window.maestro.fs.homeDir().then(setHomeDir);
+	}, []);
+
+	// Resolve the auto-detected maestro-p path for the Batch Mode toggle's helper text.
+	useEffect(() => {
+		void window.maestro.agents
+			.getMaestroPDetectedPath()
+			.then((p) => setDetectedMaestroPPath(p ?? undefined))
+			.catch(() => setDetectedMaestroPPath(undefined));
 	}, []);
 
 	// Expand tilde in path
@@ -165,6 +177,8 @@ export function NewInstanceModal({
 				setCustomAgentPaths({});
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
+				setEnableMaestroPByAgent({});
+				setMaestroPPathByAgent({});
 				setAgentSshRemoteConfigs({});
 			}
 
@@ -415,8 +429,16 @@ export function NewInstanceModal({
 					};
 
 		// Inherit the source session's group when duplicating so the copy lands
-		// alongside the original (issue #827).
-		const inheritedGroupId = sourceSession?.groupId;
+		// alongside the original (issue #827). When not duplicating, honor an
+		// explicit presetGroupId from the caller (e.g. "New Agent in Group"
+		// from the group context menu).
+		const targetGroupId = sourceSession?.groupId ?? presetGroupId ?? undefined;
+
+		const agentEnableMaestroP = enableMaestroPByAgent[selectedAgent] || undefined;
+		const agentMaestroPPath =
+			agentEnableMaestroP && maestroPPathByAgent[selectedAgent]?.trim()
+				? maestroPPathByAgent[selectedAgent].trim()
+				: undefined;
 
 		onCreate(
 			selectedAgent,
@@ -432,7 +454,9 @@ export function NewInstanceModal({
 			agentCustomProviderPath,
 			sessionSshRemoteConfig,
 			agentCustomEffort,
-			inheritedGroupId
+			targetGroupId ?? undefined,
+			agentEnableMaestroP,
+			agentMaestroPPath
 		);
 		onClose();
 
@@ -445,6 +469,8 @@ export function NewInstanceModal({
 		setCustomAgentPaths((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setCustomAgentArgs((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setCustomAgentEnvVars((prev) => ({ ...prev, [selectedAgent]: {} }));
+		setEnableMaestroPByAgent((prev) => ({ ...prev, [selectedAgent]: false }));
+		setMaestroPPathByAgent((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setAgentSshRemoteConfigs((prev) => {
 			const newConfigs = { ...prev };
 			delete newConfigs[selectedAgent];
@@ -459,6 +485,8 @@ export function NewInstanceModal({
 		customAgentPaths,
 		customAgentArgs,
 		customAgentEnvVars,
+		enableMaestroPByAgent,
+		maestroPPathByAgent,
 		agentConfigs,
 		agentSshRemoteConfigs,
 		onCreate,
@@ -467,6 +495,7 @@ export function NewInstanceModal({
 		handleWorkingDirChange,
 		existingSessions,
 		sourceSession?.groupId,
+		presetGroupId,
 	]);
 
 	// Check if form is valid for submission
@@ -670,6 +699,9 @@ export function NewInstanceModal({
 					customAgentPaths={customAgentPaths}
 					customAgentArgs={customAgentArgs}
 					customAgentEnvVars={customAgentEnvVars}
+					enableMaestroPByAgent={enableMaestroPByAgent}
+					maestroPPathByAgent={maestroPPathByAgent}
+					detectedMaestroPPath={detectedMaestroPPath}
 					agentConfigs={agentConfigs}
 					availableModels={availableModels}
 					loadingModels={loadingModels}
@@ -682,6 +714,12 @@ export function NewInstanceModal({
 					}}
 					onCustomArgsChange={(agentId, value) => {
 						setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
+					}}
+					onEnableMaestroPChange={(agentId, value) => {
+						setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
+					}}
+					onMaestroPPathChange={(agentId, value) => {
+						setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));
 					}}
 					onEnvVarKeyChange={(agentId, oldKey, newKey, value) => {
 						const currentVars = { ...customAgentEnvVars[agentId] };

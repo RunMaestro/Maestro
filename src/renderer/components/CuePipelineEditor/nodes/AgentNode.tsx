@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
-import { MessageSquare, GripVertical, Settings } from 'lucide-react';
+import { GripVertical, Settings } from 'lucide-react';
 import type { Theme } from '../../../types';
 
 export interface AgentNodeDataProps {
@@ -117,12 +117,6 @@ export const AgentNode = memo(function AgentNode({
 						{data.sessionName}
 						{data.instanceLabel != null ? ` (${data.instanceLabel})` : ''}
 					</span>
-					{data.hasPrompt && (
-						<MessageSquare
-							size={12}
-							style={{ color: theme?.colors.textDim ?? '#9ca3af', flexShrink: 0 }}
-						/>
-					)}
 				</div>
 				<span
 					style={{

@@ -39,6 +39,8 @@ export function createCueGitHubPollerTriggerSource(
 				triggerName: ctx.subscription.name,
 				subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
 				ghState: ctx.subscription.gh_state,
+				retriggerOnComments: ctx.subscription.retrigger_on_comments === true,
+				maxNotifications: ctx.subscription.max_notifications,
 				onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
 				isActive: isCueActive,
 				onEvent: (event) => {

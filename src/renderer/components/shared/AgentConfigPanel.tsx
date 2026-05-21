@@ -16,6 +16,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
 import { logger } from '../../utils/logger';
 
@@ -298,6 +299,16 @@ export interface AgentConfigPanelProps {
 	showBuiltInEnvVars?: boolean;
 	// SSH remote execution enabled for this session
 	isSshEnabled?: boolean;
+	// === Claude Code Batch Mode (claude-code agent only) ===
+	// When true, the spawner auto-switches between maestro-p (Time Limits) and
+	// `claude --print` (API Limits) based on the latest usage snapshot. Off by default.
+	enableMaestroP?: boolean;
+	onEnableMaestroPChange?: (value: boolean) => void;
+	maestroPPath?: string;
+	onMaestroPPathChange?: (value: string) => void;
+	onMaestroPPathBlur?: () => void;
+	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
+	detectedMaestroPPath?: string;
 }
 
 export function AgentConfigPanel({
@@ -328,6 +339,12 @@ export function AgentConfigPanel({
 	compact = false,
 	showBuiltInEnvVars = false,
 	isSshEnabled = false,
+	enableMaestroP = false,
+	onEnableMaestroPChange,
+	maestroPPath = '',
+	onMaestroPPathChange,
+	onMaestroPPathBlur,
+	detectedMaestroPPath,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -446,6 +463,57 @@ export function AgentConfigPanel({
 						: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
 				</p>
 			</div>
+
+			{/* Adaptive Mode toggle — Claude Code only. When enabled, the spawner uses
+			    maestro-p to drive the Claude TUI against your Max plan ("Time Limits")
+			    and falls back to `claude --print` ("API Limits") when the 5-hour or
+			    weekly window is near exhaustion (>=99%). Holds the fallback until
+			    BOTH windows have reset, then snaps back to Time Limits. Hidden over
+			    SSH — the wrapper needs the real claude binary on the local machine. */}
+			{agent.id === 'claude-code' && !isSshEnabled && onEnableMaestroPChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
+							Adaptive Mode
+						</span>
+						<ToggleSwitch
+							checked={enableMaestroP}
+							onChange={onEnableMaestroPChange}
+							theme={theme}
+							ariaLabel="Adaptive Mode"
+						/>
+					</div>
+					<p className="text-xs opacity-50">Automatically Manage Claude Token Source</p>
+					{enableMaestroP && (
+						<div className="mt-3">
+							<label
+								className="block text-xs font-medium mb-2"
+								style={{ color: theme.colors.textDim }}
+							>
+								Maestro-P Path (optional)
+							</label>
+							<input
+								type="text"
+								value={maestroPPath}
+								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
+								onBlur={onMaestroPPathBlur}
+								onClick={(e) => e.stopPropagation()}
+								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								{detectedMaestroPPath
+									? `Auto-detected: ${detectedMaestroPPath}. Override only if you want a different build.`
+									: 'No bundled maestro-p found. Point this at a built copy or rebuild Maestro.'}
+							</p>
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Custom CLI arguments input */}
 			<div

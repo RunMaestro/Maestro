@@ -39,6 +39,11 @@ describe('sanitizeBlock', () => {
 		expect(out).toContain('href="maestro-file://path/to/file.md"');
 	});
 
+	it('preserves the maestro:// deep link protocol', () => {
+		const out = sanitizeBlock('<a href="maestro://session/abc/tab/xyz">x</a>');
+		expect(out).toContain('href="maestro://session/abc/tab/xyz"');
+	});
+
 	it('preserves mailto: and tel: URIs', () => {
 		expect(sanitizeBlock('<a href="mailto:a@b.com">x</a>')).toContain('mailto:a@b.com');
 		expect(sanitizeBlock('<a href="tel:+1234">x</a>')).toContain('tel:+1234');

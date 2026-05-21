@@ -8,9 +8,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
+import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../../hooks/utils';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
 import { CueSelect } from '../CueSelect';
+
+/** Sentinel value matching `cue-github-poller.UNLIMITED_NOTIFICATIONS`. */
+const UNLIMITED_NOTIFICATIONS = 0;
+const DEFAULT_MAX_NOTIFICATIONS = 10;
+/** Inclusive bounds for the per-item cap slider. Values outside this range
+ *  remain valid in YAML — the slider just clamps for visual display. */
+const MAX_NOTIFICATIONS_SLIDER_MIN = 1;
+const MAX_NOTIFICATIONS_SLIDER_MAX = 25;
 
 interface TriggerConfigProps {
 	node: PipelineNode;
@@ -61,6 +70,31 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		[localConfig, debouncedUpdate]
 	);
 
+	/**
+	 * Handle numeric input changes that need to support a blank state. Empty
+	 * input drops the key from config (so the runtime falls back to its
+	 * default), otherwise stores the parsed integer. Non-numeric junk is
+	 * ignored entirely so transient typing states don't clobber the value.
+	 * The keys here match TriggerNodeData['config'] entries; the cast keeps
+	 * the index signature happy without enumerating each one.
+	 */
+	const updateNumericConfig = useCallback(
+		(key: keyof TriggerNodeData['config'], raw: string) => {
+			const next = { ...localConfig } as Record<string, unknown>;
+			if (raw === '') {
+				delete next[key as string];
+			} else {
+				const parsed = parseInt(raw, 10);
+				if (!Number.isFinite(parsed)) return;
+				next[key as string] = parsed;
+			}
+			const updated = next as TriggerNodeData['config'];
+			setLocalConfig(updated);
+			debouncedUpdate(updated);
+		},
+		[localConfig, debouncedUpdate]
+	);
+
 	const updateFilter = useCallback(
 		(key: string, value: string) => {
 			const updated = {
@@ -97,7 +131,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							type="number"
 							min={1}
 							value={localConfig.interval_minutes ?? ''}
-							onChange={(e) => updateConfig('interval_minutes', parseInt(e.target.value) || 1)}
+							onChange={(e) => updateNumericConfig('interval_minutes', e.target.value)}
 							placeholder="30"
 							style={themedInputStyle}
 						/>
@@ -206,7 +240,8 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 				</div>
 			);
 		case 'github.pull_request':
-		case 'github.issue':
+		case 'github.issue': {
+			const retriggerEnabled = localConfig.retrigger_on_comments === true;
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
@@ -226,13 +261,52 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							type="number"
 							min={1}
 							value={localConfig.poll_minutes ?? ''}
-							onChange={(e) => updateConfig('poll_minutes', parseInt(e.target.value) || 5)}
+							onChange={(e) => updateNumericConfig('poll_minutes', e.target.value)}
 							placeholder="5"
 							style={themedInputStyle}
 						/>
 					</label>
+					<label
+						style={{
+							...themedLabelStyle,
+							display: 'flex',
+							flexDirection: 'row',
+							alignItems: 'center',
+							gap: 6,
+							cursor: 'pointer',
+						}}
+					>
+						<input
+							type="checkbox"
+							checked={retriggerEnabled}
+							onChange={(e) => {
+								const next = {
+									...localConfig,
+									retrigger_on_comments: e.target.checked,
+								};
+								// Drop max_notifications when the toggle goes off so the
+								// YAML stays clean — the cap is meaningless without it.
+								if (!e.target.checked) delete next.max_notifications;
+								setLocalConfig(next);
+								debouncedUpdate(next);
+							}}
+							style={{ accentColor: CUE_COLOR }}
+						/>
+						<span>Re-trigger on new activity (comments, edits, reviews)</span>
+					</label>
+					{retriggerEnabled && (
+						<MaxNotificationsControl
+							key={node.id}
+							entityLabel={data.eventType === 'github.pull_request' ? 'PR' : 'issue'}
+							stored={localConfig.max_notifications}
+							theme={theme}
+							onChange={(value) => updateConfig('max_notifications', value)}
+							labelStyle={themedLabelStyle}
+						/>
+					)}
 				</div>
 			);
+		}
 		case 'task.pending':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -272,4 +346,129 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		default:
 			return null;
 	}
+}
+
+interface MaxNotificationsControlProps {
+	entityLabel: 'PR' | 'issue';
+	/** Current `max_notifications` value from the trigger config.
+	 *  - `undefined` → user hasn't set a value; default of 10 applies at runtime.
+	 *  - `0`         → infinite sentinel.
+	 *  - positive    → explicit cap. */
+	stored: number | undefined;
+	theme: Theme;
+	onChange: (value: number) => void;
+	labelStyle: React.CSSProperties;
+}
+
+/**
+ * Slider + "Infinite" checkbox for the per-item re-trigger cap.
+ *
+ * Mounted with `key={node.id}` so the local `lastFinite` memory resets when
+ * the user switches to a different trigger node, preventing one trigger's
+ * prior slider position from leaking into another.
+ *
+ * Values from YAML that fall outside [1, 25] (e.g. hand-edited `100`) display
+ * clamped on the slider track but are preserved in the count label until the
+ * user drags — at which point the slider value wins.
+ */
+function MaxNotificationsControl({
+	entityLabel,
+	stored,
+	theme,
+	onChange,
+	labelStyle,
+}: MaxNotificationsControlProps) {
+	const isInfinite = stored === UNLIMITED_NOTIFICATIONS;
+	const initialFinite =
+		stored === undefined || stored === UNLIMITED_NOTIFICATIONS
+			? DEFAULT_MAX_NOTIFICATIONS
+			: clampSliderValue(stored);
+	// `lastFinite` remembers the slider position so unchecking Infinite
+	// restores it instead of always snapping back to the default.
+	const [lastFinite, setLastFinite] = useState(initialFinite);
+	const sliderValue = isInfinite
+		? lastFinite
+		: clampSliderValue(stored ?? DEFAULT_MAX_NOTIFICATIONS);
+	// Display the raw stored value when it sits outside the slider's range so
+	// legacy hand-edited YAML doesn't appear to silently truncate.
+	const displayValue =
+		!isInfinite && stored !== undefined && stored > MAX_NOTIFICATIONS_SLIDER_MAX
+			? stored
+			: sliderValue;
+	const percent =
+		((sliderValue - MAX_NOTIFICATIONS_SLIDER_MIN) /
+			(MAX_NOTIFICATIONS_SLIDER_MAX - MAX_NOTIFICATIONS_SLIDER_MIN)) *
+		100;
+
+	return (
+		<div style={labelStyle}>
+			<div
+				style={{
+					display: 'flex',
+					justifyContent: 'space-between',
+					alignItems: 'baseline',
+					marginBottom: 4,
+				}}
+			>
+				<span>Max re-triggers per {entityLabel}</span>
+				<span
+					style={{
+						fontVariantNumeric: 'tabular-nums',
+						color: isInfinite ? theme.colors.accent : theme.colors.textMain,
+						fontSize: 14,
+					}}
+				>
+					{isInfinite ? '∞' : displayValue}
+				</span>
+			</div>
+			<input
+				type="range"
+				min={MAX_NOTIFICATIONS_SLIDER_MIN}
+				max={MAX_NOTIFICATIONS_SLIDER_MAX}
+				step={1}
+				value={sliderValue}
+				disabled={isInfinite}
+				onChange={(e) => {
+					const v = parseInt(e.target.value, 10);
+					setLastFinite(v);
+					onChange(v);
+				}}
+				style={{
+					width: '100%',
+					height: 4,
+					borderRadius: 4,
+					appearance: 'none',
+					accentColor: CUE_COLOR,
+					cursor: isInfinite ? 'not-allowed' : 'pointer',
+					opacity: isInfinite ? 0.35 : 1,
+					background: `linear-gradient(to right, ${CUE_COLOR} 0%, ${CUE_COLOR} ${percent}%, ${theme.colors.bgActivity} ${percent}%, ${theme.colors.bgActivity} 100%)`,
+				}}
+			/>
+			<label
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					gap: 6,
+					marginTop: 6,
+					cursor: 'pointer',
+					fontSize: 12,
+					color: theme.colors.textDim,
+				}}
+			>
+				<input
+					type="checkbox"
+					checked={isInfinite}
+					onChange={(e) => onChange(e.target.checked ? UNLIMITED_NOTIFICATIONS : lastFinite)}
+					style={{ accentColor: CUE_COLOR }}
+				/>
+				<span>Infinite</span>
+			</label>
+		</div>
+	);
+}
+
+function clampSliderValue(n: number): number {
+	if (n < MAX_NOTIFICATIONS_SLIDER_MIN) return MAX_NOTIFICATIONS_SLIDER_MIN;
+	if (n > MAX_NOTIFICATIONS_SLIDER_MAX) return MAX_NOTIFICATIONS_SLIDER_MAX;
+	return n;
 }

@@ -183,6 +183,26 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
 			}
 
+			// Migration: backfill createdAt for sessions persisted before the field
+			// existed. Prefer the earliest known timestamp on the session's own
+			// data (oldest tab, oldest log, oldest workLog entry) so the age
+			// reflects something closer to reality than "today". Falls back to
+			// Date.now() only when no historical timestamps are available.
+			if (!session.createdAt) {
+				const candidates: number[] = [];
+				for (const tab of session.aiTabs ?? []) {
+					if (tab.createdAt) candidates.push(tab.createdAt);
+					for (const log of tab.logs ?? []) {
+						if (log.timestamp) candidates.push(log.timestamp);
+					}
+				}
+				for (const item of session.workLog ?? []) {
+					if (item.timestamp) candidates.push(item.timestamp);
+				}
+				const backfill = candidates.length > 0 ? Math.min(...candidates) : Date.now();
+				session = { ...session, createdAt: backfill };
+			}
+
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
 			// Create a default tab to prevent crashes when code calls .find() on aiTabs
 			if (!session.aiTabs || session.aiTabs.length === 0) {

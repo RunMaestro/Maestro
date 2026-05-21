@@ -621,3 +621,67 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 | `src/main/ipc/handlers/`                     | All IPC handler modules                                    |
 | `src/main/utils/sentry.ts`                   | Sentry utilities and memory monitoring                     |
 | `src/main/utils/logger.ts`                   | Structured logging                                         |
+
+## Electron Major-Bump Smoke Test
+
+Use this checklist any time Electron jumps majors (it last did so for the 28 → 41 bump). Unit tests don't exercise the BrowserWindow / webContents / native-module surface where Electron API drift bites; this list does. Run on each target platform (macOS, Windows, Linux) before tagging an RC.
+
+**Boot + window**
+
+- [ ] App boots from `npm start` and the main window appears
+- [ ] Native title bar / hidden-inset title bar renders correctly per setting
+- [ ] Saved window state (size, position, maximized, fullscreen) is restored
+- [ ] `Cmd/Ctrl+Q` quits cleanly; no zombie processes in `ps`/Task Manager
+
+**AI Terminal (PTY native module)**
+
+- [ ] Create a Claude Code agent in a non-trivial cwd, send a prompt, see streamed output
+- [ ] Same on Codex, OpenCode, Factory Droid (whichever are configured)
+- [ ] Resize the window mid-stream — output reflows without stalling
+- [ ] Kill the agent mid-stream (`Ctrl+C`); next agent starts cleanly
+
+**Command Terminal (PTY shell)**
+
+- [ ] Open a Command Terminal, run a long-running TUI (`vim`, `htop`)
+- [ ] DECRQM / cursor-mode escape sequences don't freeze the tab (xterm CSI parser regression)
+- [ ] Switch tabs back and forth — no orphaned PTYs
+
+**SSH remote spawning**
+
+- [ ] If any agent is configured with an SSH remote, launch it and confirm streamed output reaches the renderer
+
+**Native modules (rebuild gate)**
+
+- [ ] `node-pty` loads (terminal works at all) — implies `electron-rebuild` succeeded
+- [ ] `better-sqlite3` loads — open Usage Dashboard / stats; queries return without "module did not self-register" or NODE_MODULE_VERSION mismatch errors
+
+**Auto-updater**
+
+- [ ] On launch, no Sentry crash from `electron-updater` initialization
+- [ ] `app.commandLine.appendSwitch` / channel detection still works
+
+**Crash reporting (Sentry)**
+
+- [ ] Trigger a deliberate uncaught error in dev (e.g. via DevTools console eval) and confirm Sentry receives it via `@sentry/electron/main`
+- [ ] `'render-process-gone'` event still fires on a forced renderer crash (`Ctrl+Alt+I` + `process.crash()`) and triggers the auto-reload guard
+
+**File / system dialogs**
+
+- [ ] Open a folder via the project picker — folder selection dialog works
+- [ ] Drop a file onto the renderer — dropped paths reach IPC
+
+**Webview (browser tab)**
+
+- [ ] Open the embedded browser tab, load `https://example.com`, navigate within
+- [ ] Try to navigate to a `file://` or `javascript:` URL — blocked per the existing security guards
+
+**Packaging**
+
+- [ ] `npm run package:mac && npm run package:win && npm run package:linux` produce installers; the resulting `.dmg`, `.exe`, `.AppImage` each launch and reach the main window
+- [ ] macOS: notarization passes (or is skipped per `notarize: false` in `package.json`)
+- [ ] Windows: code signing passes (if configured) and SmartScreen does not block the installer
+
+**Post-merge observation window (24-48h)**
+
+- [ ] Watch Sentry for any new top-N renderer crash signature attributable to the new Electron major
+- [ ] Watch for new `node-pty` / `better-sqlite3` loader errors in user logs (would indicate `electron-rebuild` shipped wrong artifacts in the packaged build)

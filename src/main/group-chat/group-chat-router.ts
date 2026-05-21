@@ -54,6 +54,14 @@ const LOG_CONTEXT = '[GroupChatRouter]';
 // Re-export setGetCustomShellPathCallback for index.ts to use
 export { setGetCustomShellPathCallback };
 
+function isModeratorInactiveAutoAddRace(error: unknown, groupChatId: string): boolean {
+	if (!(error instanceof Error)) return false;
+	return (
+		error.message ===
+		`Moderator must be active before adding participants to group chat: ${groupChatId}`
+	);
+}
+
 /**
  * Session info for matching @mentions to available Maestro sessions.
  */
@@ -620,6 +628,14 @@ export async function routeUserMessage(
 						);
 					}
 				} catch (error) {
+					if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
+						logger.warn(
+							`Skipped auto-adding participant ${mentionedName}: moderator is no longer active`,
+							LOG_CONTEXT,
+							{ groupChatId }
+						);
+						continue;
+					}
 					logger.error(
 						`Failed to auto-add participant ${mentionedName} from user mention`,
 						LOG_CONTEXT,
@@ -1033,6 +1049,14 @@ export async function routeModeratorResponse(
 						);
 					}
 				} catch (error) {
+					if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
+						logger.warn(
+							`Skipped auto-adding participant ${mentionedName}: moderator is no longer active`,
+							LOG_CONTEXT,
+							{ groupChatId }
+						);
+						continue;
+					}
 					logger.error(`Failed to auto-add participant ${mentionedName}`, LOG_CONTEXT, {
 						error,
 						groupChatId,

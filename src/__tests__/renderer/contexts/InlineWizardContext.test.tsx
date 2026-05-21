@@ -123,6 +123,7 @@ describe('InlineWizardContext', () => {
 				subfolderName: null,
 				subfolderPath: null,
 				autoRunFolderPath: null,
+				extractedProjectName: null,
 			});
 		});
 	});
@@ -304,6 +305,7 @@ describe('InlineWizardContext', () => {
 				subfolderName: null,
 				subfolderPath: null,
 				autoRunFolderPath: null,
+				extractedProjectName: null,
 			});
 		});
 	});

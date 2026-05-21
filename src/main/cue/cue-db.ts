@@ -79,6 +79,8 @@ const CREATE_CUE_GITHUB_SEEN_SQL = `
     subscription_id TEXT NOT NULL,
     item_key TEXT NOT NULL,
     seen_at INTEGER NOT NULL,
+    last_revision TEXT,
+    fire_count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (subscription_id, item_key)
   )
 `;
@@ -86,6 +88,22 @@ const CREATE_CUE_GITHUB_SEEN_SQL = `
 const CREATE_CUE_GITHUB_SEEN_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_github_seen_at ON cue_github_seen(seen_at)
 `;
+
+/**
+ * Additive columns added to `cue_github_seen` to support per-item re-trigger
+ * tracking. `last_revision` stores the GitHub `updatedAt` value at the last
+ * fire (so the poller can detect new activity since then). `fire_count` counts
+ * re-trigger fires only — the initial discovery fire is always allowed and
+ * does NOT increment this counter. Migrated via ALTER TABLE on existing DBs
+ * to keep schema in sync with CREATE TABLE.
+ */
+const CUE_GITHUB_SEEN_ADDITIVE_COLUMNS = [
+	{ name: 'last_revision', sql: 'ALTER TABLE cue_github_seen ADD COLUMN last_revision TEXT' },
+	{
+		name: 'fire_count',
+		sql: 'ALTER TABLE cue_github_seen ADD COLUMN fire_count INTEGER NOT NULL DEFAULT 0',
+	},
+] as const;
 
 // Phase 12A — persisted queue table. Rows here survive engine shutdown / crash
 // so the queue can be reconstructed on next start. Stores the full serialized
@@ -196,6 +214,7 @@ export function initCueDb(
 	}
 	db.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
 	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
+	migrateCueGitHubSeenAdditiveColumns(db);
 	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
 	db.prepare(CREATE_CUE_EVENT_QUEUE_SQL).run();
 	migrateCueEventQueueAdditiveColumns(db);
@@ -266,6 +285,24 @@ function migrateCueEventQueueAdditiveColumns(database: Database.Database): void 
 	for (const column of CUE_EVENT_QUEUE_ADDITIVE_COLUMNS) {
 		if (!existingNames.has(column)) {
 			database.prepare(`ALTER TABLE cue_event_queue ADD COLUMN ${column} TEXT`).run();
+		}
+	}
+}
+
+/**
+ * Idempotent migration: ensures the `cue_github_seen` table carries the
+ * per-item re-trigger tracking columns (`last_revision`, `fire_count`).
+ * Older databases predating the GitHub re-trigger feature only had
+ * `(subscription_id, item_key, seen_at)`; this ALTER backfills the missing
+ * columns. New columns default to NULL / 0 so legacy seeded items behave
+ * exactly as before until they re-fire.
+ */
+function migrateCueGitHubSeenAdditiveColumns(database: Database.Database): void {
+	const existing = database.pragma('table_info(cue_github_seen)') as Array<{ name: string }>;
+	const existingNames = new Set(existing.map((row) => row.name));
+	for (const column of CUE_GITHUB_SEEN_ADDITIVE_COLUMNS) {
+		if (!existingNames.has(column.name)) {
+			database.prepare(column.sql).run();
 		}
 	}
 }
@@ -498,8 +535,16 @@ export function isGitHubItemSeen(subscriptionId: string, itemKey: string): boole
 
 /**
  * Mark a GitHub item as seen for a given subscription.
+ *
+ * `lastRevision` (optional) stores the item's `updatedAt` at the time it was
+ * first seen so the re-trigger detector has a reference point on the very next
+ * poll. Callers that don't track revisions (legacy code paths) can omit it.
  */
-export function markGitHubItemSeen(subscriptionId: string, itemKey: string): void {
+export function markGitHubItemSeen(
+	subscriptionId: string,
+	itemKey: string,
+	lastRevision?: string
+): void {
 	if (!db) {
 		log(
 			'warn',
@@ -509,9 +554,67 @@ export function markGitHubItemSeen(subscriptionId: string, itemKey: string): voi
 	}
 	getDb()
 		.prepare(
-			`INSERT OR IGNORE INTO cue_github_seen (subscription_id, item_key, seen_at) VALUES (?, ?, ?)`
+			`INSERT OR IGNORE INTO cue_github_seen (subscription_id, item_key, seen_at, last_revision, fire_count)
+			 VALUES (?, ?, ?, ?, 0)`
 		)
-		.run(subscriptionId, itemKey, Date.now());
+		.run(subscriptionId, itemKey, Date.now(), lastRevision ?? null);
+}
+
+export interface CueGitHubItemState {
+	/** Last known `updatedAt` for this item, or null if never tracked. */
+	lastRevision: string | null;
+	/** Number of re-trigger fires so far (initial discovery NOT counted). */
+	fireCount: number;
+}
+
+/**
+ * Read the tracked revision + re-trigger count for a specific item, or null
+ * if the item has never been seen. Used by the poller to decide whether new
+ * activity warrants a re-fire and whether the cap has been reached.
+ */
+export function getGitHubItemState(
+	subscriptionId: string,
+	itemKey: string
+): CueGitHubItemState | null {
+	if (!db) return null;
+	const row = getDb()
+		.prepare(
+			`SELECT last_revision, fire_count FROM cue_github_seen WHERE subscription_id = ? AND item_key = ?`
+		)
+		.get(subscriptionId, itemKey) as
+		| { last_revision: string | null; fire_count: number }
+		| undefined;
+	if (!row) return null;
+	return {
+		lastRevision: row.last_revision,
+		fireCount: row.fire_count ?? 0,
+	};
+}
+
+/**
+ * Record a re-trigger fire: bump `fire_count` and update `last_revision` so
+ * subsequent polls only fire on activity newer than this point. Caller is
+ * responsible for the cap check — this helper always advances state.
+ */
+export function recordGitHubRetrigger(
+	subscriptionId: string,
+	itemKey: string,
+	newRevision: string
+): void {
+	if (!db) {
+		log(
+			'warn',
+			`Dropping recordGitHubRetrigger (subscriptionId=${subscriptionId}, itemKey=${itemKey}): Cue DB not initialized`
+		);
+		return;
+	}
+	getDb()
+		.prepare(
+			`UPDATE cue_github_seen
+			 SET fire_count = fire_count + 1, last_revision = ?, seen_at = ?
+			 WHERE subscription_id = ? AND item_key = ?`
+		)
+		.run(newRevision, Date.now(), subscriptionId, itemKey);
 }
 
 /**

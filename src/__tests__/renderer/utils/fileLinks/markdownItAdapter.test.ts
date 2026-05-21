@@ -180,6 +180,21 @@ describe('applyFileLinks — plain path references in running text', () => {
 	});
 });
 
+describe('applyFileLinks — bare maestro:// deep links', () => {
+	it('auto-linkifies a bare maestro:// URL in running text', () => {
+		const html = render('See maestro://session/abc/tab/xyz now.');
+		expect(html).toContain('href="maestro://session/abc/tab/xyz"');
+		expect(html).toContain('>maestro://session/abc/tab/xyz</a>');
+	});
+
+	it('does not rewrite an existing markdown link with a maestro:// href', () => {
+		const html = render('[label](maestro://group/grp1)');
+		// Should leave the href unchanged (not turned into maestro-file://)
+		expect(html).toContain('href="maestro://group/grp1"');
+		expect(html).not.toContain('maestro-file://');
+	});
+});
+
 describe('applyFileLinks — edge cases', () => {
 	it('is safe to call with no fileLinks options at all', () => {
 		const md = new MarkdownIt({ html: true });

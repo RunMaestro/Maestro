@@ -67,6 +67,10 @@ export interface ManagedProcess {
 	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
+	/** Agent-reported session id once extracted from the output stream.
+	 *  Currently only populated for agents whose post-exit lifecycle we
+	 *  need to inspect on disk (Copilot CLI events.jsonl). */
+	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
 	startTime: number;
@@ -88,6 +92,11 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
+	 *  Inherited system env is NOT included — this is the actionable set shown in the
+	 *  Process Details modal. */
+	maestroEnvVars?: Record<string, string>;
 }
 
 export interface UsageTotals {

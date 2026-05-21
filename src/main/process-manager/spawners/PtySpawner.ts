@@ -5,7 +5,11 @@ import { logger } from '../../utils/logger';
 import { needsWindowsShell } from '../../utils/execFile';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
-import { buildPtyTerminalEnv, buildChildProcessEnv } from '../utils/envBuilder';
+import {
+	buildPtyTerminalEnv,
+	buildChildProcessEnv,
+	collectMaestroEnvVars,
+} from '../utils/envBuilder';
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
@@ -133,6 +137,12 @@ export class PtySpawner {
 				startTime: Date.now(),
 				command: ptyCommand,
 				args: ptyArgs,
+				// Terminal PTY env only honors shellEnvVars; agents-in-PTY also honor customEnvVars.
+				maestroEnvVars: collectMaestroEnvVars(
+					shellEnvVars,
+					isTerminal ? undefined : customEnvVars,
+					false
+				),
 			};
 
 			this.processes.set(sessionId, managedProcess);

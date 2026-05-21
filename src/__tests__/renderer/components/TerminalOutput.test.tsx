@@ -285,6 +285,33 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
+		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
+			// Issue #775: agent error messages contain status + explanation separated by
+			// newlines; rendering them inside a plain <p> collapsed the whitespace, so
+			// the status and the explanation ended up on a single line in chat.
+			const errorText = 'fatal: not a git repository\n\nhint: run `git init` first.';
+			const logs: LogEntry[] = [createLogEntry({ text: errorText, source: 'error' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Error badge still shows up next to the icon.
+			expect(screen.getByText('Error')).toBeInTheDocument();
+
+			// The full error text is handed to react-markdown (mocked here as a div with
+			// data-testid="react-markdown"). This guarantees newlines/markdown render
+			// the same way they do for normal AI responses, instead of being flattened.
+			const markdown = screen.getByTestId('react-markdown');
+			expect(markdown).toHaveTextContent('fatal: not a git repository');
+			expect(markdown).toHaveTextContent('hint: run');
+			expect(markdown.textContent).toBe(errorText);
+		});
+
 		it('collapses consecutive AI responses in AI mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
@@ -2471,6 +2498,111 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText(/日本語テスト.*🎉.*émojis/)).toBeInTheDocument();
+		});
+	});
+
+	describe('mode pill rendering', () => {
+		it('labels TUI and API turns separately when both render styles coexist', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'api-resp',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'interactive-resp',
+					text: 'response captured from interactive TUI',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('API')).toBeInTheDocument();
+			expect(screen.getByText('TUI')).toBeInTheDocument();
+		});
+
+		it('uses the "Adaptive" prefix when the session has Adaptive Mode enabled', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-tui',
+					text: 'tui response',
+					source: 'stdout',
+					renderStyle: 'text-stream',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-api',
+					text: 'api response',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				enableMaestroP: true,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Adaptive TUI')).toBeInTheDocument();
+			expect(screen.getByText('Adaptive API')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on user messages even when tagged text-stream', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					renderStyle: 'text-stream',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pill on non-Claude agents', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.queryByText('TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('API')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive TUI')).not.toBeInTheDocument();
+			expect(screen.queryByText('Adaptive API')).not.toBeInTheDocument();
 		});
 	});
 });

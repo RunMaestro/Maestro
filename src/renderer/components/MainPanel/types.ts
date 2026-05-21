@@ -155,6 +155,7 @@ export interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabEnterToSend?: () => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	/** Handler to open output/message search (Cmd+F) */
@@ -297,6 +298,9 @@ export interface MainPanelProps {
 
 	// Document Graph
 	onOpenInGraph?: () => void;
+
+	/** Open the currently previewed file in a new Maestro browser tab. */
+	onOpenInBrowser?: () => void;
 
 	// Wizard document generation callbacks
 	/** Called when wizard document generation completes and user clicks Done */

@@ -5,7 +5,12 @@ import {
 	validatePathReference,
 	type FileTreeIndices,
 } from './matcher';
-import { IMAGE_EMBED_PATTERN, PATH_PATTERN, WIKI_LINK_PATTERN } from './patterns';
+import {
+	IMAGE_EMBED_PATTERN,
+	MAESTRO_DEEP_LINK_PATTERN,
+	PATH_PATTERN,
+	WIKI_LINK_PATTERN,
+} from './patterns';
 
 type ParserToken = ReturnType<MarkdownIt['parse']>[number];
 
@@ -75,6 +80,7 @@ function rewriteStandardLinks(
 		// Skip already-rewritten and out-of-scope hrefs.
 		if (
 			hrefAttr.startsWith('maestro-file://') ||
+			hrefAttr.startsWith('maestro://') ||
 			hrefAttr.startsWith('http://') ||
 			hrefAttr.startsWith('https://') ||
 			hrefAttr.startsWith('mailto:') ||
@@ -180,7 +186,8 @@ function rewriteInlineWikiAndImageEmbeds(
 interface InlineMatch {
 	start: number;
 	end: number;
-	kind: 'wiki' | 'image';
+	kind: 'wiki' | 'image' | 'deep-link';
+	/** For wiki/image: relative path resolved against the file tree. For deep-link: the full `maestro://` URL. */
 	resolvedPath: string;
 	display: string;
 	imageWidth?: number;
@@ -221,6 +228,17 @@ function expandTextToken(
 			const before = newToken('text', '', 0);
 			before.content = text.slice(cursor, match.start);
 			out.push(before);
+		}
+
+		if (match.kind === 'deep-link') {
+			const open = newToken('link_open', 'a', 1);
+			open.attrSet('href', match.resolvedPath);
+			const label = newToken('text', '', 0);
+			label.content = match.display;
+			const close = newToken('link_close', 'a', -1);
+			out.push(open, label, close);
+			cursor = match.end;
+			continue;
 		}
 
 		if (match.kind === 'image') {
@@ -264,7 +282,20 @@ function expandTextToken(
 function collectInlineMatches(text: string, indices: FileTreeIndices, cwd: string): InlineMatch[] {
 	const matches: InlineMatch[] = [];
 
-	// Image embeds first; their `![[…]]` envelope contains a `[[…]]` substring,
+	// Bare `maestro://` deep link URLs — auto-linkify so they are clickable.
+	for (const deepLinkMatch of text.matchAll(MAESTRO_DEEP_LINK_PATTERN)) {
+		const url = deepLinkMatch[0];
+		const start = deepLinkMatch.index ?? 0;
+		matches.push({
+			start,
+			end: start + url.length,
+			kind: 'deep-link',
+			resolvedPath: url,
+			display: url,
+		});
+	}
+
+	// Image embeds; their `![[…]]` envelope contains a `[[…]]` substring,
 	// so we record image ranges before scanning wiki links and skip overlapping
 	// wiki matches in the second pass.
 	IMAGE_EMBED_PATTERN.lastIndex = 0;

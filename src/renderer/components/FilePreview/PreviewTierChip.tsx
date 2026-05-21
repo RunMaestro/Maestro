@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Zap, Sparkles, Database } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { PreviewTier } from './filePreviewUtils';
+import { HoverTooltip } from '../ui/HoverTooltip';
 
 export interface PreviewTierChipProps {
 	/** The tier the auto-picker would choose for the current file. */
@@ -103,22 +104,26 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 	const triggerTitle = override
 		? `Forced ${TIER_META[effective].label} preview · click to change`
 		: `Auto · ${TIER_META[effective].label} preview · click to change`;
+	const hoverLabel = override
+		? `Forced ${TIER_META[effective].label} preview`
+		: `Auto · ${TIER_META[effective].label} preview`;
 
 	return (
 		<div ref={wrapperRef} className="relative" data-testid="preview-tier-chip">
 			{iconOnly ? (
-				<button
-					type="button"
-					onClick={() => setOpen((v) => !v)}
-					className={headerBtnClass}
-					style={{ color: override ? theme.colors.accent : theme.colors.textDim }}
-					aria-haspopup="menu"
-					aria-expanded={open}
-					data-testid="preview-tier-chip-button"
-					title={triggerTitle}
-				>
-					<Icon className={headerIconClass} />
-				</button>
+				<HoverTooltip theme={theme} label={hoverLabel} disabled={open}>
+					<button
+						type="button"
+						onClick={() => setOpen((v) => !v)}
+						className={headerBtnClass}
+						style={{ color: override ? theme.colors.accent : theme.colors.textDim }}
+						aria-haspopup="menu"
+						aria-expanded={open}
+						data-testid="preview-tier-chip-button"
+					>
+						<Icon className={headerIconClass} />
+					</button>
+				</HoverTooltip>
 			) : (
 				<button
 					type="button"
@@ -206,9 +211,15 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		role="menuitem"
 		onClick={onClick}
 		aria-current={active ? 'true' : undefined}
-		className="w-full text-left px-3 py-2 flex items-start gap-2 transition-colors"
+		// Inactive rows get the standard hover-bg from Tailwind. Active rows
+		// keep the accent-tinted background via inline style — leaving that off
+		// when inactive lets `:hover` win (an inline `background: transparent`
+		// would otherwise override the hover class).
+		className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${
+			active ? '' : 'hover:bg-white/10'
+		}`}
 		style={{
-			backgroundColor: active ? theme.colors.accent + '20' : 'transparent',
+			backgroundColor: active ? theme.colors.accent + '20' : undefined,
 			color: active ? theme.colors.accent : theme.colors.textMain,
 		}}
 	>

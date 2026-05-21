@@ -211,6 +211,34 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	maestroCue: false,
 };
 
+// File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
+// Settings → Display → File Edit & Preview. Buttons can be hidden but the
+// underlying actions stay reachable via the command palette and hotkeys.
+export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
+	'save',
+	'wordWrap',
+	'remoteImages',
+	'htmlRender',
+	'previewTier',
+	'editToggle',
+	'copyContent',
+	'publishGist',
+	'documentGraph',
+	'openInBrowser',
+	'openInDefault',
+	'copyPath',
+] as const;
+
+export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
+
+export type FilePreviewToolbarVisibility = Record<FilePreviewToolbarButton, boolean>;
+
+export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibility =
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.reduce((acc, k) => {
+		acc[k] = true;
+		return acc;
+	}, {} as FilePreviewToolbarVisibility);
+
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
@@ -270,6 +298,7 @@ function getBadgeLevelForTime(cumulativeTimeMs: number): number {
 export interface SettingsStoreState {
 	settingsLoaded: boolean;
 	conductorProfile: string;
+	globalShowHotkey: string[];
 	llmProvider: LLMProvider;
 	modelSlug: string;
 	apiKey: string;
@@ -332,6 +361,7 @@ export interface SettingsStoreState {
 	colorBlindMode: boolean;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
+	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -351,6 +381,7 @@ export interface SettingsStoreState {
 	sshRemoteHonorGitignore: boolean;
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
+	htmlDoubleClickOpensInBrowser: boolean;
 	automaticTabNamingEnabled: boolean;
 	newTabPlacement: 'end' | 'after-current';
 	newBrowserTabPlacement: 'end' | 'after-current';
@@ -372,6 +403,15 @@ export interface SettingsStoreState {
 	showSessionCostPill: boolean;
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
+	showLeftPanelGroupMemberCount: boolean;
+	showLeftPanelLocationPills: boolean;
+	showLeftPanelGitIndicator: boolean;
+	showLeftPanelCueIndicator: boolean;
+	showLeftPanelStartupCommandIndicator: boolean;
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	fileEditShowLineNumbers: boolean;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	dotfilesToggleHidden: boolean;
@@ -388,11 +428,16 @@ export interface SettingsStoreState {
 	annotatorStreamline: number;
 	annotatorTaperStart: number;
 	annotatorTaperEnd: number;
+	annotatorTextColor: string;
+	annotatorTextSize: number;
+	annotatorTextFont: string;
+	annotatorTextBgColor: string;
 }
 
 export interface SettingsStoreActions {
 	// Simple setters
 	setConductorProfile: (value: string) => void;
+	setGlobalShowHotkey: (value: string[]) => void;
 	setLlmProvider: (value: LLMProvider) => void;
 	setModelSlug: (value: string) => void;
 	setApiKey: (value: string) => void;
@@ -447,6 +492,7 @@ export interface SettingsStoreActions {
 	setColorBlindMode: (value: boolean) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -465,6 +511,7 @@ export interface SettingsStoreActions {
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;
 	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
@@ -486,6 +533,14 @@ export interface SettingsStoreActions {
 	setShowSessionCostPill: (value: boolean) => void;
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
+	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	setShowLeftPanelLocationPills: (value: boolean) => void;
+	setShowLeftPanelGitIndicator: (value: boolean) => void;
+	setShowLeftPanelCueIndicator: (value: boolean) => void;
+	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+	setFileEditWordWrap: (value: boolean) => void;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setDotfilesToggleHidden: (value: boolean) => void;
@@ -502,6 +557,10 @@ export interface SettingsStoreActions {
 	setAnnotatorStreamline: (value: number) => void;
 	setAnnotatorTaperStart: (value: number) => void;
 	setAnnotatorTaperEnd: (value: number) => void;
+	setAnnotatorTextColor: (value: string) => void;
+	setAnnotatorTextSize: (value: number) => void;
+	setAnnotatorTextFont: (value: string) => void;
+	setAnnotatorTextBgColor: (value: string) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -578,6 +637,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 		settingsLoaded: false,
 		conductorProfile: '',
+		globalShowHotkey: [],
 		llmProvider: 'openrouter',
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
@@ -640,6 +700,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		colorBlindMode: false,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
+		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -659,6 +720,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		sshRemoteHonorGitignore: true,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+		htmlDoubleClickOpensInBrowser: false,
 		automaticTabNamingEnabled: true,
 		newTabPlacement: 'end',
 		newBrowserTabPlacement: 'after-current',
@@ -680,6 +742,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showSessionCostPill: true,
 		showWorktreePill: false,
 		showWorktreeBranchName: false,
+		showLeftPanelGroupMemberCount: false,
+		showLeftPanelLocationPills: true,
+		showLeftPanelGitIndicator: true,
+		showLeftPanelCueIndicator: true,
+		showLeftPanelStartupCommandIndicator: true,
+		fileEditWordWrap: true,
+		fileEditShowLineNumbers: true,
+		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		dotfilesToggleHidden: false,
@@ -696,6 +766,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		annotatorStreamline: 0.5,
 		annotatorTaperStart: 0,
 		annotatorTaperEnd: 0,
+		annotatorTextColor: '#9146FF',
+		annotatorTextSize: 24,
+		annotatorTextFont: 'sans-serif',
+		annotatorTextBgColor: '',
 
 		// ============================================================================
 		// Simple Setters
@@ -705,6 +779,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const trimmed = value.slice(0, 5000);
 			set({ conductorProfile: trimmed });
 			window.maestro.settings.set('conductorProfile', trimmed);
+		},
+
+		setGlobalShowHotkey: (value) => {
+			set({ globalShowHotkey: value });
+			window.maestro.settings.set('globalShowHotkey', value);
 		},
 
 		setLlmProvider: (value) => {
@@ -1053,6 +1132,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
 		},
 
+		setUseCmd0AsLastTab: (value) => {
+			set({ useCmd0AsLastTab: value });
+			window.maestro.settings.set('useCmd0AsLastTab', value);
+		},
+
 		setDocumentGraphShowExternalLinks: (value) => {
 			set({ documentGraphShowExternalLinks: value });
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
@@ -1162,6 +1246,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('browserHomeUrl', value);
 		},
 
+		setHtmlDoubleClickOpensInBrowser: (value) => {
+			set({ htmlDoubleClickOpensInBrowser: value });
+			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
+		},
+
 		setAutomaticTabNamingEnabled: (value) => {
 			set({ automaticTabNamingEnabled: value });
 			window.maestro.settings.set('automaticTabNamingEnabled', value);
@@ -1267,6 +1356,50 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('showWorktreeBranchName', value);
 		},
 
+		setShowLeftPanelGroupMemberCount: (value) => {
+			set({ showLeftPanelGroupMemberCount: value });
+			window.maestro.settings.set('showLeftPanelGroupMemberCount', value);
+		},
+
+		setShowLeftPanelLocationPills: (value) => {
+			set({ showLeftPanelLocationPills: value });
+			window.maestro.settings.set('showLeftPanelLocationPills', value);
+		},
+
+		setShowLeftPanelGitIndicator: (value) => {
+			set({ showLeftPanelGitIndicator: value });
+			window.maestro.settings.set('showLeftPanelGitIndicator', value);
+		},
+
+		setShowLeftPanelCueIndicator: (value) => {
+			set({ showLeftPanelCueIndicator: value });
+			window.maestro.settings.set('showLeftPanelCueIndicator', value);
+		},
+
+		setShowLeftPanelStartupCommandIndicator: (value) => {
+			set({ showLeftPanelStartupCommandIndicator: value });
+			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
+		},
+
+		setFileEditWordWrap: (value) => {
+			set({ fileEditWordWrap: value });
+			window.maestro.settings.set('fileEditWordWrap', value);
+		},
+
+		setFileEditShowLineNumbers: (value) => {
+			set({ fileEditShowLineNumbers: value });
+			window.maestro.settings.set('fileEditShowLineNumbers', value);
+		},
+
+		setFilePreviewToolbarButtonVisibility: (button, value) => {
+			const next: FilePreviewToolbarVisibility = {
+				...get().filePreviewToolbarVisibility,
+				[button]: value,
+			};
+			set({ filePreviewToolbarVisibility: next });
+			window.maestro.settings.set('filePreviewToolbarVisibility', next);
+		},
+
 		setModeratorStandingInstructions: (value) => {
 			const trimmed = value.slice(0, 2000);
 			set({ moderatorStandingInstructions: trimmed });
@@ -1349,6 +1482,26 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAnnotatorTaperEnd: (value) => {
 			set({ annotatorTaperEnd: value });
 			window.maestro.settings.set('annotatorTaperEnd', value);
+		},
+
+		setAnnotatorTextColor: (value) => {
+			set({ annotatorTextColor: value });
+			window.maestro.settings.set('annotatorTextColor', value);
+		},
+
+		setAnnotatorTextSize: (value) => {
+			set({ annotatorTextSize: value });
+			window.maestro.settings.set('annotatorTextSize', value);
+		},
+
+		setAnnotatorTextFont: (value) => {
+			set({ annotatorTextFont: value });
+			window.maestro.settings.set('annotatorTextFont', value);
+		},
+
+		setAnnotatorTextBgColor: (value) => {
+			set({ annotatorTextBgColor: value });
+			window.maestro.settings.set('annotatorTextBgColor', value);
 		},
 
 		// ============================================================================
@@ -1915,6 +2068,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['conductorProfile'] !== undefined)
 			patch.conductorProfile = allSettings['conductorProfile'] as string;
 
+		if (Array.isArray(allSettings['globalShowHotkey']))
+			patch.globalShowHotkey = allSettings['globalShowHotkey'] as string[];
+
 		if (allSettings['llmProvider'] !== undefined)
 			patch.llmProvider = allSettings['llmProvider'] as LLMProvider;
 
@@ -2225,6 +2381,9 @@ export async function loadAllSettings(): Promise<void> {
 				'showFilePreviewsInUnreadFilter'
 			] as boolean;
 
+		if (allSettings['useCmd0AsLastTab'] !== undefined)
+			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
+
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
 			patch.documentGraphShowExternalLinks = allSettings[
@@ -2348,6 +2507,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['browserHomeUrl'] !== undefined)
 			patch.browserHomeUrl = allSettings['browserHomeUrl'] as string;
 
+		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
+			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
+
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
 
@@ -2441,6 +2603,38 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showWorktreeBranchName'] !== undefined)
 			patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
 
+		if (allSettings['showLeftPanelGroupMemberCount'] !== undefined)
+			patch.showLeftPanelGroupMemberCount = allSettings['showLeftPanelGroupMemberCount'] as boolean;
+
+		if (allSettings['showLeftPanelLocationPills'] !== undefined)
+			patch.showLeftPanelLocationPills = allSettings['showLeftPanelLocationPills'] as boolean;
+
+		if (allSettings['showLeftPanelGitIndicator'] !== undefined)
+			patch.showLeftPanelGitIndicator = allSettings['showLeftPanelGitIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelCueIndicator'] !== undefined)
+			patch.showLeftPanelCueIndicator = allSettings['showLeftPanelCueIndicator'] as boolean;
+
+		if (allSettings['showLeftPanelStartupCommandIndicator'] !== undefined)
+			patch.showLeftPanelStartupCommandIndicator = allSettings[
+				'showLeftPanelStartupCommandIndicator'
+			] as boolean;
+
+		if (allSettings['fileEditWordWrap'] !== undefined)
+			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
+
+		if (allSettings['fileEditShowLineNumbers'] !== undefined)
+			patch.fileEditShowLineNumbers = allSettings['fileEditShowLineNumbers'] as boolean;
+
+		// Toolbar visibility merges with defaults so new buttons added in a
+		// future release default to visible even for users with persisted state.
+		if (allSettings['filePreviewToolbarVisibility'] !== undefined) {
+			patch.filePreviewToolbarVisibility = {
+				...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY,
+				...(allSettings['filePreviewToolbarVisibility'] as Partial<FilePreviewToolbarVisibility>),
+			};
+		}
+
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
@@ -2489,6 +2683,18 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['annotatorTaperEnd'] !== undefined)
 			patch.annotatorTaperEnd = allSettings['annotatorTaperEnd'] as number;
 
+		if (allSettings['annotatorTextColor'] !== undefined)
+			patch.annotatorTextColor = allSettings['annotatorTextColor'] as string;
+
+		if (allSettings['annotatorTextSize'] !== undefined)
+			patch.annotatorTextSize = allSettings['annotatorTextSize'] as number;
+
+		if (allSettings['annotatorTextFont'] !== undefined)
+			patch.annotatorTextFont = allSettings['annotatorTextFont'] as string;
+
+		if (allSettings['annotatorTextBgColor'] !== undefined)
+			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -2511,6 +2717,7 @@ export function getSettingsActions() {
 	const state = useSettingsStore.getState();
 	return {
 		setConductorProfile: state.setConductorProfile,
+		setGlobalShowHotkey: state.setGlobalShowHotkey,
 		setLlmProvider: state.setLlmProvider,
 		setModelSlug: state.setModelSlug,
 		setApiKey: state.setApiKey,
@@ -2616,6 +2823,14 @@ export function getSettingsActions() {
 		setShowSessionCostPill: state.setShowSessionCostPill,
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
+		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setShowLeftPanelLocationPills: state.setShowLeftPanelLocationPills,
+		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
+		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
+		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setFileEditWordWrap: state.setFileEditWordWrap,
+		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
+		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
 		setAutoRunDisabled: state.setAutoRunDisabled,

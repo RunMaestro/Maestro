@@ -4,19 +4,16 @@
  * The Fast tier virtualizes blocks, so most of the rendered HTML is not in
  * the DOM at any given time. Cmd+F can't rely on DOM scanning — instead we
  * search the SOURCE string and map each match to the index of the block it
- * lives in. Navigation then calls `virtuoso.scrollToIndex(blockIndex)`.
+ * lives in. Navigation then calls `virtuoso.scrollToIndex(blockIndex)`, and
+ * the `offsetWithinBlock` field lets the caller scroll precisely to the
+ * matching text node (not just the block top).
  *
  * Pure (no DOM, no React) and exhaustively tested.
  */
 
-export interface SearchHit {
-	/** Character offset in the source string where the match starts. */
-	sourceOffset: number;
-	/** Length of the match (always > 0). */
-	length: number;
-	/** Index of the block that contains the match (0-based). */
-	blockIndex: number;
-}
+import type { SearchHit } from '../search/types';
+
+export type { SearchHit };
 
 export interface BlockRange {
 	/** Inclusive start offset within the source string. */
@@ -54,10 +51,19 @@ export function findHits(
 	while (from <= haystack.length) {
 		const idx = haystack.indexOf(needle, from);
 		if (idx === -1) break;
+		const blockIndex = blockIndexAtOffset(blockRanges, idx);
+		// Offset relative to the block's source start, so MarkdownPreviewFast can
+		// walk text nodes inside the mounted block and land on the exact match.
+		// Clamp at 0 — if the offset falls before the block (only possible when
+		// blockIndexAtOffset clamped to 0 for a pre-frontmatter hit), we still
+		// want a non-negative within-block offset.
+		const blockStart = blockRanges[blockIndex]?.start ?? 0;
+		const offsetWithinBlock = Math.max(0, idx - blockStart);
 		hits.push({
 			sourceOffset: idx,
 			length: query.length,
-			blockIndex: blockIndexAtOffset(blockRanges, idx),
+			blockIndex,
+			offsetWithinBlock,
 		});
 		// Advance past the match so we don't loop on the same position. If the
 		// match is empty we'd infinite-loop, but the early-return above guards

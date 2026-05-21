@@ -16,6 +16,7 @@
 
 import React, { memo, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
@@ -23,6 +24,10 @@ import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
 import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
+
+// Mobile chat surfaces (#622): single `\n` should render as a hard break,
+// not be collapsed into a space the way CommonMark does for document prose.
+const MOBILE_CHAT_REMARK_PLUGINS = [...REMARK_GFM_PLUGINS, remarkBreaks];
 
 /**
  * Props for MobileMarkdownRenderer
@@ -319,7 +324,7 @@ export const MobileMarkdownRenderer = memo(
           }
         `}</style>
 				<ReactMarkdown
-					remarkPlugins={REMARK_GFM_PLUGINS}
+					remarkPlugins={MOBILE_CHAT_REMARK_PLUGINS}
 					components={{
 						// Links open in new tab
 						a: ({ href, children }) => (

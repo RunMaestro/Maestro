@@ -116,7 +116,7 @@ show
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(showPlaybook);
 
-// Playbook command (lazy-loaded to avoid eager resolution of generated/prompts)
+// Playbook command (lazy-loaded to keep CLI startup lean)
 program
 	.command('playbook <playbook-id>')
 	.description('Run a playbook')
@@ -150,6 +150,10 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option(
+		'--no-system-prompt',
+		'Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.'
+	)
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -251,6 +255,10 @@ program
 		'Run the auto-run inside a git worktree (requires --launch, --branch, --worktree-path)'
 	)
 	.option('--branch <name>', 'Branch name for the worktree (created if it does not exist)')
+	.option(
+		'--base-branch <name>',
+		'Ref the new branch should be based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the main repo HEAD.'
+	)
 	.option(
 		'--worktree-path <path>',
 		'Filesystem path for the worktree (must be a sibling of the repo)'

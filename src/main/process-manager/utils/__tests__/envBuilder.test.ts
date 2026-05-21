@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildChildProcessEnv, buildPtyTerminalEnv } from '../envBuilder';
+import { buildChildProcessEnv, buildPtyTerminalEnv, collectMaestroEnvVars } from '../envBuilder';
 
 describe('envBuilder - Global Environment Variables', () => {
 	let originalProcessEnv: NodeJS.ProcessEnv;
@@ -624,6 +624,39 @@ describe('envBuilder - Global Environment Variables', () => {
 
 			expect(env2.VAR2).toBe('value2');
 			expect(env2.VAR1).toBeUndefined();
+		});
+	});
+
+	describe('collectMaestroEnvVars', () => {
+		it('returns an empty object when no inputs are provided', () => {
+			expect(collectMaestroEnvVars()).toEqual({});
+		});
+
+		it('merges global and custom env vars with custom taking precedence', () => {
+			const result = collectMaestroEnvVars(
+				{ DEBUG: 'global', PROXY: 'http://global' },
+				{ DEBUG: 'session' }
+			);
+			expect(result).toEqual({ DEBUG: 'session', PROXY: 'http://global' });
+		});
+
+		it('expands ~/ paths in both global and custom values', () => {
+			const result = collectMaestroEnvVars({ WORKSPACE: '~/work' }, { CACHE_DIR: '~/cache' });
+			expect(result.WORKSPACE).toBe(path.join(os.homedir(), 'work'));
+			expect(result.CACHE_DIR).toBe(path.join(os.homedir(), 'cache'));
+		});
+
+		it('includes MAESTRO_SESSION_RESUMED only when isResuming is true', () => {
+			expect(
+				collectMaestroEnvVars(undefined, undefined, false).MAESTRO_SESSION_RESUMED
+			).toBeUndefined();
+			expect(collectMaestroEnvVars(undefined, undefined, true).MAESTRO_SESSION_RESUMED).toBe('1');
+		});
+
+		it('does not include inherited process env', () => {
+			process.env.SOMETHING_INHERITED = 'inherited';
+			const result = collectMaestroEnvVars({ ONLY_GLOBAL: 'g' });
+			expect(result).toEqual({ ONLY_GLOBAL: 'g' });
 		});
 	});
 });

@@ -12,7 +12,7 @@ import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
-import { buildChildProcessEnv } from '../utils/envBuilder';
+import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
@@ -409,6 +409,7 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 
 			this.processes.set(sessionId, managedProcess);
@@ -496,7 +497,12 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
-				this.exitHandler.handleExit(sessionId, code || 0);
+				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
+					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			});
 
 			// Handle errors

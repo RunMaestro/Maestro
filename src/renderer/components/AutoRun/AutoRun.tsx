@@ -8,13 +8,39 @@ import {
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
 // Module-level constant — react-markdown re-parses the document if rehypePlugins
 // changes by reference, so the array must be hoisted out of render.
 const REHYPE_PLUGINS = [rehypeSlug];
+
+// Memoized ReactMarkdown wrapper. AutoRunInner re-renders on every keystroke in
+// the AI input (input state lives in App.tsx and cascades down), and ReactMarkdown
+// has no internal memo — re-parsing a 100KB+ doc on each keystroke cost ~170ms
+// per keystroke. Shallow-compare so the parse is skipped when content, plugins,
+// and components are reference-equal. The hook already memoizes the latter two.
+const MemoizedMarkdownPreview = memo(function MemoizedMarkdownPreview(props: {
+	content: string;
+	remarkPlugins: any[];
+	components: any;
+}) {
+	return (
+		<ReactMarkdown
+			remarkPlugins={props.remarkPlugins}
+			rehypePlugins={REHYPE_PLUGINS}
+			urlTransform={urlTransformAllowingMaestro}
+			components={props.components}
+		>
+			{props.content}
+		</ReactMarkdown>
+	);
+});
 import { ResetTasksConfirmModal } from '../ResetTasksConfirmModal';
-import { AutoRunDocumentSelector } from './AutoRunDocumentSelector';
+import {
+	AutoRunDocumentSelector,
+	type AutoRunDocumentSelectorHandle,
+} from './AutoRunDocumentSelector';
 import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
@@ -160,6 +186,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const [resetTasksModalOpen, setResetTasksModalOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
+	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
@@ -358,6 +385,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				}
 			},
 			getCompletedTaskCount: getCompletedTaskCountFromContent,
+			openDocumentSelector: () => documentSelectorRef.current?.open(),
 		}),
 		[
 			mode,
@@ -567,6 +595,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			{folderPath && (
 				<div className="px-2 mb-2" data-tour="autorun-document-selector">
 					<AutoRunDocumentSelector
+						ref={documentSelectorRef}
 						theme={theme}
 						documents={documentList}
 						documentTree={
@@ -698,13 +727,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							}}
 						>
 							<style>{proseStyles}</style>
-							<ReactMarkdown
+							<MemoizedMarkdownPreview
 								remarkPlugins={remarkPlugins}
-								rehypePlugins={REHYPE_PLUGINS}
 								components={markdownComponents}
-							>
-								{localContent || '*No content yet. Switch to Edit mode to start writing.*'}
-							</ReactMarkdown>
+								content={localContent || '*No content yet. Switch to Edit mode to start writing.*'}
+							/>
 						</div>
 					)}
 				</div>

@@ -987,6 +987,48 @@ describe('useInlineWizard', () => {
 			);
 		});
 
+		it('should prefer AI-extracted projectName over sessionName when present', async () => {
+			const { sendWizardMessage } =
+				await import('../../../renderer/services/inlineWizardConversation');
+			const mockSendWizardMessage = vi.mocked(sendWizardMessage);
+			mockSendWizardMessage.mockResolvedValueOnce({
+				success: true,
+				response: {
+					confidence: 90,
+					ready: true,
+					message: 'Ready to build it.',
+					projectName: 'HTML Chat Interface',
+				},
+			});
+
+			const { result } = renderHook(() => useInlineWizard());
+
+			await act(async () => {
+				await result.current.startWizard(
+					'add a chat UI',
+					undefined,
+					'/test/project',
+					'claude-code',
+					'rc'
+				);
+			});
+
+			// One conversation turn that returns the projectName
+			await act(async () => {
+				await result.current.sendMessage('Build me a chat interface');
+			});
+
+			await act(async () => {
+				await result.current.generateDocuments();
+			});
+
+			expect(mockGenerateInlineDocuments).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					projectName: 'HTML Chat Interface',
+				})
+			);
+		});
+
 		it('should update generatedDocuments on success', async () => {
 			const { result } = renderHook(() => useInlineWizard());
 

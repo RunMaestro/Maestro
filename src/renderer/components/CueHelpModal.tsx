@@ -10,6 +10,8 @@ import {
 	Filter,
 	GitMerge,
 	ExternalLink,
+	Brain,
+	Megaphone,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -919,6 +921,83 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<span>
 							Use the Pipeline Editor to visually build these patterns by dragging and connecting
 							triggers and agents.
+						</span>
+					</div>
+
+					<div
+						className="flex items-start gap-2 px-3 py-2 rounded"
+						style={{ backgroundColor: theme.colors.accent + '15' }}
+					>
+						<Brain
+							className="w-4 h-4 flex-shrink-0 mt-0.5"
+							style={{ color: theme.colors.accent }}
+						/>
+						<span>
+							<strong style={{ color: theme.colors.textMain }}>Case study:</strong> combine{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								agent.completed
+							</code>
+							,{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								time.scheduled
+							</code>
+							, and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								file.changed
+							</code>{' '}
+							to build a <strong style={{ color: theme.colors.textMain }}>Karpathy Loop</strong> —
+							an agent that scores its own runs, detects drift, and proposes edits to its own
+							program for you to approve.{' '}
+							<button
+								onClick={() =>
+									openUrl(buildMaestroUrl('https://docs.runmaestro.ai/maestro-cue-karpathy-loop'))
+								}
+								className="underline hover:opacity-80 transition-colors"
+								style={{ color: theme.colors.accent }}
+							>
+								Read the case study
+							</button>
+							.
+						</span>
+					</div>
+
+					<div
+						className="flex items-start gap-2 px-3 py-2 rounded"
+						style={{ backgroundColor: theme.colors.accent + '15' }}
+					>
+						<Megaphone
+							className="w-4 h-4 flex-shrink-0 mt-0.5"
+							style={{ color: theme.colors.accent }}
+						/>
+						<span>
+							<strong style={{ color: theme.colors.textMain }}>Case study:</strong> the eight-chain{' '}
+							<strong style={{ color: theme.colors.textMain }}>
+								@RunMaestroAI marketing pipeline
+							</strong>{' '}
+							is a production Karpathy Loop with two-tier evaluation, auto-tunable section markers,
+							two-strikes campaign graduation, and async filesystem handoff between scheduled
+							chains.{' '}
+							<button
+								onClick={() =>
+									openUrl(
+										buildMaestroUrl('https://docs.runmaestro.ai/maestro-cue-marketing-example')
+									)
+								}
+								className="underline hover:opacity-80 transition-colors"
+								style={{ color: theme.colors.accent }}
+							>
+								Read the case study
+							</button>
+							.
 						</span>
 					</div>
 				</div>

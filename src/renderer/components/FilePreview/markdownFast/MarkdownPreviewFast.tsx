@@ -11,9 +11,11 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { buildBlocks } from './pipeline';
 import { sanitizeBlock } from './sanitize';
 import { resolveLinkAction } from './linkRouter';
+import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { createCodeHighlighter } from './codeHighlighter';
 import { createMermaidRenderer } from './mermaidRenderer';
 import { findHits } from './searchHits';
+import { buildRangeAtOffset, scrollRangeIntoView } from '../search/scrollToOffset';
 import { FAST_BLOCK_CLASS, generateProseCss } from './proseStyles';
 import type { MarkdownBlock, MarkdownPreviewFastHandle, MarkdownPreviewFastProps } from './types';
 
@@ -79,12 +81,37 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 						.map((b) => ({ start: b.sourceStart, end: b.sourceEnd }));
 					return findHits(contentRef.current, query, blockRanges);
 				},
-				scrollToMatch: (match) => {
-					if (match.blockIndex < 0 || match.blockIndex >= blocksRef.current.length) return;
+				scrollToMatch: (hit) => {
+					// Defensive: an out-of-range index in useFilePreviewSearch can
+					// occasionally pass undefined here during the same-render race
+					// between count-effect setState and navigate-effect dispatch.
+					if (!hit || hit.blockIndex < 0 || hit.blockIndex >= blocksRef.current.length) {
+						return;
+					}
 					virtuosoRef.current?.scrollToIndex({
-						index: match.blockIndex,
+						index: hit.blockIndex,
 						align: 'center',
 						behavior: 'auto',
+					});
+					// After the virtualizer mounts the target block, walk the block's
+					// text nodes to find the exact match offset and nudge it into
+					// view. Virtuoso updates the DOM in a layout-effect; rAF runs
+					// after that paint cycle, so the block is mounted by the time
+					// we query for it.
+					requestAnimationFrame(() => {
+						const root = containerRef.current;
+						if (!root) return;
+						const blockEls = root.querySelectorAll<HTMLElement>(`.${FAST_BLOCK_CLASS}`);
+						// Virtuoso renders only the visible window. The block at the
+						// matched index is the one we just scrolled to; it should now
+						// be present. If not (rare race), bail — the block-level
+						// scroll already landed the user close enough.
+						const targetBlock = Array.from(blockEls).find(
+							(el) => el.getAttribute('data-block-index') === String(hit.blockIndex)
+						);
+						if (!targetBlock) return;
+						const range = buildRangeAtOffset(targetBlock, hit.offsetWithinBlock, hit.length);
+						scrollRangeIntoView(range);
 					});
 				},
 			}),
@@ -130,11 +157,13 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 		}, [content, fileLinksOptions]);
 
 		// Sanitize lazily per-block so blocks the user never scrolls to don't pay
-		// the cost.
-		const renderBlock = useCallback((_index: number, block: MarkdownBlock) => {
+		// the cost. `data-block-index` lets the imperative scrollToMatch helper
+		// locate the matched block in the (sparse) Virtuoso-rendered DOM.
+		const renderBlock = useCallback((index: number, block: MarkdownBlock) => {
 			return (
 				<div
 					className={FAST_BLOCK_CLASS}
+					data-block-index={index}
 					dangerouslySetInnerHTML={{ __html: sanitizeBlock(block.html) }}
 				/>
 			);
@@ -163,6 +192,10 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 					case 'maestro-file':
 						event.preventDefault();
 						onFileClick?.(action.path, { openInNewTab: action.openInNewTab });
+						return;
+					case 'maestro-deep-link':
+						event.preventDefault();
+						openMaestroLink(action.href);
 						return;
 					case 'external':
 						event.preventDefault();

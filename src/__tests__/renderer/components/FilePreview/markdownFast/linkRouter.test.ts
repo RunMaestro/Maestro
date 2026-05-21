@@ -82,6 +82,24 @@ describe('resolveLinkAction', () => {
 		});
 	});
 
+	describe('maestro deep-link routing', () => {
+		it('routes maestro:// URLs to the deep-link kind', () => {
+			const action = resolveLinkAction(
+				link('maestro://session/abc/tab/xyz'),
+				NO_MODIFIERS
+			) as Extract<LinkAction, { kind: 'maestro-deep-link' }>;
+			expect(action).toEqual({
+				kind: 'maestro-deep-link',
+				href: 'maestro://session/abc/tab/xyz',
+			});
+		});
+
+		it('routes group deep links', () => {
+			const action = resolveLinkAction(link('maestro://group/grp1'), NO_MODIFIERS);
+			expect(action.kind).toBe('maestro-deep-link');
+		});
+	});
+
 	describe('anchor routing', () => {
 		it('returns anchor action for hash hrefs', () => {
 			expect(resolveLinkAction(link('#section'), NO_MODIFIERS)).toEqual({

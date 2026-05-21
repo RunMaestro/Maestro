@@ -129,7 +129,10 @@ export function buildAgentArgs(
 	}
 
 	if (agent.workingDirArgs && options.cwd) {
-		finalArgs = [...finalArgs, ...agent.workingDirArgs(options.cwd)];
+		// Prepend so the directory flag lands before any subcommand (e.g. Codex
+		// `exec`). Codex treats `-C` as a root-level global flag — placing it
+		// after the subcommand makes it silently ignored (#959).
+		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
 	}
 
 	if (options.readOnlyMode && agent.readOnlyArgs) {

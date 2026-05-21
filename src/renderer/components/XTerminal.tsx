@@ -72,7 +72,7 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// Let Ctrl+Shift combos through (cross-platform app shortcuts)
 	if (e.ctrlKey && e.shiftKey) return 'passthrough';
 	// Let Alt key combos through so Maestro shortcuts like Alt+Q (Cue),
-	// Alt+J (jump to terminal), Alt+Shift+U (toggle tab unread) work.
+	// Alt+J (jump to terminal), Alt+U (filter unread agents) work.
 	// macOptionIsMeta is not enabled, so Alt doesn't send escape sequences
 	// by default — these events would just produce dead/special characters
 	// that aren't useful in the terminal context.

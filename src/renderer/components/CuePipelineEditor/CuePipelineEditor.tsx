@@ -81,6 +81,10 @@ function CuePipelineEditorInner({
 	// Canvas interaction mode: hand (pan on drag) vs pointer (box-select on drag).
 	const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>('hand');
 
+	// Canvas lock — when true, drag / select / connect are disabled (pan + zoom
+	// still work). Lifted here so the L keyboard shortcut can toggle it.
+	const [isLocked, setIsLocked] = useState(false);
+
 	// Selection bridge: usePipelineState needs selection IDs for its mutation
 	// callbacks, but usePipelineSelection needs pipelineState. We resolve the
 	// circular dep via a stable ref that's mutated in the render body AFTER
@@ -386,6 +390,10 @@ function CuePipelineEditorInner({
 		setAgentDrawerOpen,
 		setInteractionMode,
 		handleSave,
+		zoomIn: reactFlowInstance.zoomIn,
+		zoomOut: reactFlowInstance.zoomOut,
+		fitView: reactFlowInstance.fitView,
+		setIsLocked,
 		containerRef,
 	});
 
@@ -509,6 +517,8 @@ function CuePipelineEditorInner({
 				isLoading={graphLoading || (graphSessions.length > 0 && !pipelinesLoaded)}
 				interactionMode={interactionMode}
 				setInteractionMode={setInteractionMode}
+				isLocked={isLocked}
+				setIsLocked={setIsLocked}
 			/>
 
 			{contextMenu && (

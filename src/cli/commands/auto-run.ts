@@ -14,6 +14,7 @@ interface AutoRunOptions {
 	resetOnCompletion?: boolean;
 	worktree?: boolean;
 	branch?: string;
+	baseBranch?: string;
 	worktreePath?: string;
 	createPr?: boolean;
 	prTargetBranch?: string;
@@ -71,6 +72,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 				enabled: boolean;
 				path: string;
 				branchName: string;
+				baseBranch: string;
 				createPROnCompletion: boolean;
 				prTargetBranch: string;
 		  }
@@ -90,13 +92,20 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 				enabled: true,
 				path: path.resolve(options.worktreePath),
 				branchName: options.branch.trim(),
+				baseBranch: options.baseBranch?.trim() || '',
 				createPROnCompletion: options.createPr || false,
 				prTargetBranch: options.prTargetBranch?.trim() || '',
 			};
 		}
-	} else if (options.branch || options.worktreePath || options.createPr || options.prTargetBranch) {
+	} else if (
+		options.branch ||
+		options.baseBranch ||
+		options.worktreePath ||
+		options.createPr ||
+		options.prTargetBranch
+	) {
 		console.error(
-			'Error: --branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree'
+			'Error: --branch, --base-branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree'
 		);
 		process.exit(1);
 	}

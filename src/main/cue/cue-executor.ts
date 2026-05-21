@@ -17,7 +17,7 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import { sliceHeadByChars } from './cue-text-utils';
-import { buildCueRunSummary } from '../../shared/cue/cue-summary';
+import { buildCueRunSummary, extractCueOutputExcerpt } from '../../shared/cue/cue-summary';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -267,11 +267,13 @@ export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo
 			? sliceHeadByChars(result.stdout, MAX_HISTORY_RESPONSE_LENGTH)
 			: result.stdout;
 
+	const excerpt = extractCueOutputExcerpt(result.stdout);
+
 	return {
 		id: crypto.randomUUID(),
 		type: 'CUE',
 		timestamp: Date.now(),
-		summary: buildCueRunSummary(result),
+		summary: excerpt ?? buildCueRunSummary(result),
 		fullResponse: fullResponse || undefined,
 		projectPath: session.projectRoot || session.cwd,
 		sessionId: session.id,

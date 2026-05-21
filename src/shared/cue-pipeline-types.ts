@@ -65,6 +65,11 @@ export interface TriggerNodeData {
 		repo?: string;
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
+		/** GitHub re-trigger toggle. See `CueSubscription.retrigger_on_comments`. */
+		retrigger_on_comments?: boolean;
+		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.
+		 *  `0` in the wire format = unlimited; the UI renders this as "∞". */
+		max_notifications?: number;
 	};
 	/** Name of the underlying Cue subscription this trigger represents on disk.
 	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-

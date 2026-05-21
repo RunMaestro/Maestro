@@ -203,6 +203,7 @@ function MaestroConsoleInner() {
 		// New Instance Modal
 		newInstanceModalOpen,
 		duplicatingSessionId,
+		newInstancePresetGroupId,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -834,11 +835,13 @@ function MaestroConsoleInner() {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 		handleOpenFileTab,
 		handleSelectFileTab,
 		handleCloseFileTab,
 		handleNewFileTab,
 		handleNewBrowserTab,
+		handleOpenBrowserTabAt,
 		handleSelectBrowserTab,
 		handleCloseBrowserTab,
 		handleUpdateBrowserTab,
@@ -1022,11 +1025,11 @@ function MaestroConsoleInner() {
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	const {
-		handleImageDragEnter,
-		handleImageDragLeave,
-		handleImageDragOver,
-		isDraggingImage,
-		setIsDraggingImage,
+		handleFileDragEnter,
+		handleFileDragLeave,
+		handleFileDragOver,
+		isDraggingFile,
+		setIsDraggingFile,
 		dragCounterRef,
 		handleFileClick,
 		updateSessionWorkingDirectory,
@@ -1272,15 +1275,22 @@ function MaestroConsoleInner() {
 	const thinkingItems: ThinkingItem[] = useMemo(() => {
 		const items: ThinkingItem[] = [];
 		for (const session of sessions) {
-			if (session.state !== 'busy' || session.busySource !== 'ai') continue;
-			const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
-			if (busyTabs && busyTabs.length > 0) {
-				for (const tab of busyTabs) {
-					items.push({ session, tab });
+			if (session.state === 'busy' && session.busySource === 'ai') {
+				const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
+				if (busyTabs && busyTabs.length > 0) {
+					for (const tab of busyTabs) {
+						items.push({ session, tab });
+					}
+				} else if (!session.orphanedThinkingTabs?.length) {
+					// Legacy: session is busy but no individual tab-level tracking
+					items.push({ session, tab: null });
 				}
-			} else {
-				// Legacy: session is busy but no individual tab-level tracking
-				items.push({ session, tab: null });
+			}
+			// Closed-but-still-thinking tabs: keep showing them on the pill until
+			// the agent process actually exits. The exit/error listeners remove
+			// entries from orphanedThinkingTabs when the underlying process is gone.
+			for (const orphan of session.orphanedThinkingTabs ?? []) {
+				items.push({ session, tab: orphan });
 			}
 		}
 		return items;
@@ -1484,7 +1494,7 @@ function MaestroConsoleInner() {
 		terminalOutputRef,
 		fileTreeKeyboardNavRef,
 		dragCounterRef,
-		setIsDraggingImage,
+		setIsDraggingFile,
 		getBatchState,
 		activeBatchRunState,
 		processQueuedItemRef,
@@ -2021,12 +2031,14 @@ function MaestroConsoleInner() {
 	// Quick Actions modal handlers — extracted to useQuickActionsHandlers hook
 	const {
 		handleQuickActionsToggleReadOnlyMode,
+		handleQuickActionsToggleTabEnterToSend,
 		handleQuickActionsToggleTabShowThinking,
 		handleQuickActionsRefreshGitFileState,
 		handleQuickActionsDebugReleaseQueuedItem,
 		handleQuickActionsToggleMarkdownEditMode,
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
+		handleQuickActionsToggleAutoRunExpanded,
 		handleQuickActionsClearActiveTerminal,
 		handleQuickActionsFocusActiveTab,
 		handleQuickActionsCloseCurrentTab,
@@ -2208,6 +2220,9 @@ function MaestroConsoleInner() {
 		// Edit agent modal
 		setEditAgentSession,
 		setEditAgentModalOpen,
+
+		// Execution queue browser (Cmd+Shift+X)
+		handleOpenQueueBrowser,
 
 		// Auto Run state for keyboard handler
 		activeBatchRunState,
@@ -2404,6 +2419,7 @@ function MaestroConsoleInner() {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 		toggleUnreadFilter,
 		handleOpenTabSearch,
 		handleOpenOutputSearch,
@@ -2477,6 +2493,10 @@ function MaestroConsoleInner() {
 		setGraphFocusFilePath: useFileExplorerStore.getState().focusFileInGraph,
 		setLastGraphFocusFilePath: () => {}, // no-op: focusFileInGraph sets both atomically
 		setIsGraphViewOpen: useFileExplorerStore.getState().setIsGraphViewOpen,
+
+		// "Open in Maestro Browser" toolbar button on FilePreview routes through
+		// the same handler the file-tree context menu uses.
+		handleOpenBrowserTabAt,
 
 		// Wizard callbacks
 		generateInlineWizardDocuments,
@@ -2609,6 +2629,9 @@ function MaestroConsoleInner() {
 
 		// Document Graph handlers
 		handleFocusFileInGraph,
+
+		// Browser tab handler (used by file-tree "Open in Maestro Browser")
+		handleOpenBrowserTabAt,
 	});
 
 	return (
@@ -2623,19 +2646,26 @@ function MaestroConsoleInner() {
 					fontFamily: fontFamily,
 					fontSize: `${fontSize}px`,
 				}}
-				onDragEnter={handleImageDragEnter}
-				onDragLeave={handleImageDragLeave}
-				onDragOver={handleImageDragOver}
+				onDragEnter={handleFileDragEnter}
+				onDragLeave={handleFileDragLeave}
+				onDragOver={handleFileDragOver}
 				onDrop={handleDrop}
 			>
-				{/* Image Drop Overlay */}
-				{isDraggingImage && (
+				{/* External File Drop Overlay */}
+				{isDraggingFile && (
 					<div
-						className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center"
+						className="fixed inset-0 z-[9999] flex items-center justify-center cursor-pointer"
 						style={{ backgroundColor: `${theme.colors.accent}20` }}
+						onClick={() => {
+							// Escape hatch: if the overlay ever gets stuck (drag canceled in
+							// a way that didn't fire dragend or dragleave), clicking it
+							// resets the drag state.
+							dragCounterRef.current = 0;
+							setIsDraggingFile(false);
+						}}
 					>
 						<div
-							className="pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-4"
+							className="pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-3"
 							style={{
 								borderColor: theme.colors.accent,
 								backgroundColor: `${theme.colors.bgMain}ee`,
@@ -2656,7 +2686,10 @@ function MaestroConsoleInner() {
 								/>
 							</svg>
 							<span className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
-								Drop image to attach
+								Drop file or folder
+							</span>
+							<span className="text-sm" style={{ color: theme.colors.textDim }}>
+								Images attach as thumbnails. Anything else becomes an @reference.
 							</span>
 						</div>
 					</div>
@@ -2757,6 +2790,7 @@ function MaestroConsoleInner() {
 					onCreateSession={createNewSession}
 					existingSessions={sessionsForValidation}
 					duplicatingSessionId={duplicatingSessionId}
+					newInstancePresetGroupId={newInstancePresetGroupId}
 					onCloseEditAgentModal={handleCloseEditAgentModal}
 					onSaveEditAgent={handleSaveEditAgent}
 					editAgentSession={editAgentSession}
@@ -2829,6 +2863,7 @@ function MaestroConsoleInner() {
 					onQuickActionsRenameTab={handleQuickActionsRenameTab}
 					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
 					onQuickActionsToggleTabShowThinking={handleQuickActionsToggleTabShowThinking}
+					onQuickActionsToggleTabEnterToSend={handleQuickActionsToggleTabEnterToSend}
 					onQuickActionsOpenTabSwitcher={handleQuickActionsOpenTabSwitcher}
 					onCloseAllTabs={handleCloseAllTabs}
 					onCloseOtherTabs={handleCloseOtherTabs}
@@ -2870,6 +2905,7 @@ function MaestroConsoleInner() {
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
 					onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
+					onToggleAutoRunExpanded={handleQuickActionsToggleAutoRunExpanded}
 					onClearActiveTerminal={handleQuickActionsClearActiveTerminal}
 					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
 					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
@@ -2962,7 +2998,12 @@ function MaestroConsoleInner() {
 					}
 					promptEnterToSend={enterToSendAIExpanded}
 					onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
+					onOpenQueueBrowser={handleOpenQueueBrowser}
 					onCloseQueueBrowser={handleCloseQueueBrowser}
+					onQuickActionsNewTab={handleNewTab}
+					onQuickActionsNewFileTab={handleNewFileTab}
+					onQuickActionsNewBrowserTab={handleNewBrowserTab}
+					onQuickActionsNewTerminalTab={handleOpenTerminalTab}
 					onRemoveQueueItem={handleRemoveQueueItem}
 					onSwitchQueueSession={handleSwitchQueueSession}
 					onReorderQueueItems={handleReorderQueueItems}

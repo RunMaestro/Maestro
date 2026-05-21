@@ -23,6 +23,7 @@ import {
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
+	restoreOrphanedTab,
 } from '../../utils/tabHelpers';
 import {
 	closeTerminalTab as closeTerminalTabHelper,
@@ -42,6 +43,7 @@ import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -87,6 +89,9 @@ interface FileTabOpenParams {
 	isLoading?: boolean;
 	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
 	loadRequestId?: string;
+	/** If set, FilePreview flips to edit mode and scrolls the editor to this
+	 *  1-based line on next render. Set by maestro://file/...#L<n> deep links. */
+	pendingScrollToLine?: number;
 }
 
 export interface TabHandlersReturn {
@@ -127,6 +132,7 @@ export interface TabHandlersReturn {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 
 	// File Tab handlers
 	handleOpenFileTab: (
@@ -152,6 +158,7 @@ export interface TabHandlersReturn {
 
 	// Browser Tab handlers
 	handleNewBrowserTab: () => void;
+	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 	handleSelectBrowserTab: (tabId: string) => void;
 	handleCloseBrowserTab: (tabId: string) => void;
 	handleUpdateBrowserTab: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
@@ -169,6 +176,11 @@ export interface TabHandlersReturn {
 export function useTabHandlers(): TabHandlersReturn {
 	// --- Reactive subscriptions for derived state ---
 	const activeSession = useSessionStore(selectActiveSession);
+
+	// Inline-wizard context: needed so closing a wizard tab evicts its entry from the hook's
+	// in-memory tabStates map. Without this, `wizardActiveSessions` retains a stale entry and the
+	// Left Bar wand indicator stays on for an agent that no longer has any wizard tab.
+	const { endWizard: endInlineWizard } = useInlineWizardContext();
 
 	// --- Derived state (useMemo) ---
 
@@ -279,6 +291,12 @@ export function useTabHandlers(): TabHandlersReturn {
 										lastModified: file.lastModified ?? tab.lastModified,
 										isLoading: file.isLoading ?? false,
 										loadRequestId: file.isLoading ? file.loadRequestId : undefined,
+										// Only overwrite when the caller is explicitly requesting
+										// a jump; otherwise keep whatever was there.
+										pendingScrollToLine:
+											file.pendingScrollToLine !== undefined
+												? file.pendingScrollToLine
+												: tab.pendingScrollToLine,
 									}
 								: tab
 						);
@@ -361,6 +379,7 @@ export function useTabHandlers(): TabHandlersReturn {
 								loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
+								pendingScrollToLine: file.pendingScrollToLine,
 							};
 						});
 						return {
@@ -393,6 +412,7 @@ export function useTabHandlers(): TabHandlersReturn {
 						loadRequestId: file.isLoading ? file.loadRequestId : undefined,
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
+						pendingScrollToLine: file.pendingScrollToLine,
 					};
 
 					// Create the unified tab reference. Insert directly to the right of the
@@ -445,6 +465,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				// If the requested tab is an orphan (closed while still thinking),
+				// restore it back into aiTabs first so the tab bar shows it and
+				// streaming output resumes routing to the visible tab.
+				if (s.orphanedThinkingTabs?.some((t) => t.id === tabId)) {
+					const restored = restoreOrphanedTab(s, tabId);
+					if (restored) return restored.session;
+				}
 				const result = setActiveTab(s, tabId);
 				return result ? result.session : s;
 			})
@@ -759,6 +786,45 @@ export function useTabHandlers(): TabHandlersReturn {
 		);
 	}, []);
 
+	// Open a new browser tab pointed at a specific URL. Used by file-tree
+	// "Open in Maestro Browser" so JS-heavy local HTML (Plotly dashboards, etc.)
+	// renders in the full Electron webview instead of the sandboxed file preview
+	// iframe.
+	const handleOpenBrowserTabAt = useCallback((url: string, options?: { title?: string }) => {
+		if (!url) return;
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const newBrowserTab: BrowserTab = {
+					id: generateId(),
+					url,
+					title: options?.title ?? url,
+					createdAt: Date.now(),
+					partition: getBrowserTabPartition(s.id),
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: true,
+					favicon: null,
+				};
+
+				return {
+					...s,
+					browserTabs: [...(s.browserTabs || []), newBrowserTab],
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
+						type: 'browser',
+						id: newBrowserTab.id,
+					}),
+				};
+			})
+		);
+	}, []);
+
 	const handleSelectBrowserTab = useCallback((tabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
 		setSessions((prev: Session[]) =>
@@ -863,26 +929,44 @@ export function useTabHandlers(): TabHandlersReturn {
 	/**
 	 * Internal tab close handler that performs the actual close.
 	 */
-	const performTabClose = useCallback((tabId: string) => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
-		clearLiveDraft(tabId);
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				const isWizardTab = tab && hasActiveWizard(tab);
-				const unifiedIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === 'ai' && ref.id === tabId
+	const performTabClose = useCallback(
+		(tabId: string) => {
+			const { setSessions, activeSessionId } = useSessionStore.getState();
+			const sessionBeforeClose = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === activeSessionId);
+			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
+			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
+
+			clearLiveDraft(tabId);
+			setSessions((prev: Session[]) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					const tab = s.aiTabs.find((t) => t.id === tabId);
+					const isWizardTab = tab && hasActiveWizard(tab);
+					const unifiedIndex = s.unifiedTabOrder.findIndex(
+						(ref) => ref.type === 'ai' && ref.id === tabId
+					);
+					const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
+					if (!result) return s;
+					if (!isWizardTab && tab) {
+						return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
+					}
+					return result.session;
+				})
+			);
+
+			// Evict the wizard's in-memory tabStates entry so the Left Bar wand indicator clears.
+			// closeTab only removes the tab from session.aiTabs — the inline-wizard hook owns its own
+			// per-tab Map and never sees the close otherwise.
+			if (wasWizardTab) {
+				endInlineWizard(tabId).catch((error) =>
+					logger.warn('[useTabHandlers] Failed to end wizard on tab close:', undefined, error)
 				);
-				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab });
-				if (!result) return s;
-				if (!isWizardTab && tab) {
-					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
-				}
-				return result.session;
-			})
-		);
-	}, []);
+			}
+		},
+		[endInlineWizard]
+	);
 
 	const handleTabClose = useCallback(
 		(tabId: string) => {
@@ -929,6 +1013,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		const { setSessions, activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
 		activeSession?.aiTabs.forEach((t) => clearLiveDraft(t.id));
+
+		// Snapshot wizard tab ids before mutation — we need to evict them from the inline-wizard
+		// hook's tabStates after closeTab strips them from session.aiTabs.
+		const wizardTabIds = (activeSession?.aiTabs ?? [])
+			.filter((t) => hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -946,7 +1037,13 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
-	}, []);
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-all:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseAllTabs = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
@@ -976,6 +1073,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		);
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
 		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
+
+		// Snapshot wizard tab ids before mutation so we can evict them from the inline-wizard hook.
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
 
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
@@ -1019,7 +1123,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		for (const tabId of terminalTabIds) {
 			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		}
-	}, []);
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-others:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseOtherTabs = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
@@ -1055,6 +1165,12 @@ export function useTabHandlers(): TabHandlersReturn {
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
 		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
 
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -1097,7 +1213,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		for (const tabId of terminalTabIds) {
 			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		}
-	}, []);
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-left:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseTabsLeft = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
@@ -1142,6 +1264,12 @@ export function useTabHandlers(): TabHandlersReturn {
 		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
 		tabsToClose.filter((r) => r.type === 'ai').forEach((r) => clearLiveDraft(r.id));
 
+		const wizardTabIds = tabsToClose
+			.filter((ref) => ref.type === 'ai')
+			.map((ref) => session.aiTabs.find((t) => t.id === ref.id))
+			.filter((t): t is AITab => !!t && hasActiveWizard(t))
+			.map((t) => t.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -1184,7 +1312,13 @@ export function useTabHandlers(): TabHandlersReturn {
 		for (const tabId of terminalTabIds) {
 			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		}
-	}, []);
+
+		for (const tabId of wizardTabIds) {
+			endInlineWizard(tabId).catch((error) =>
+				logger.warn('[useTabHandlers] Failed to end wizard on close-right:', undefined, error)
+			);
+		}
+	}, [endInlineWizard]);
 
 	const handleCloseTabsRight = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
@@ -1542,6 +1676,21 @@ export function useTabHandlers(): TabHandlersReturn {
 		});
 	}, []);
 
+	const handleToggleTabEnterToSend = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		const globalDefault = useSettingsStore.getState().enterToSendAI;
+		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
+			...tab,
+			// Flip the *effective* value (override if set, otherwise global default).
+			// Result becomes a sticky per-tab override; future tabs still follow the
+			// global default until they're toggled themselves.
+			enterToSend: !(tab.enterToSend ?? globalDefault),
+		}));
+	}, []);
+
 	// ========================================================================
 	// Scroll State
 	// ========================================================================
@@ -1765,6 +1914,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleToggleTabEnterToSend,
 
 		// File Tab handlers
 		handleOpenFileTab,
@@ -1783,6 +1933,7 @@ export function useTabHandlers(): TabHandlersReturn {
 
 		// Browser Tab handlers
 		handleNewBrowserTab,
+		handleOpenBrowserTabAt,
 		handleSelectBrowserTab,
 		handleCloseBrowserTab,
 		handleUpdateBrowserTab,
@@ -1823,7 +1974,26 @@ export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
 
 	const handleCloseTerminalTab = useCallback(
 		(tabId: string) => {
-			closeTerminalTab(tabId);
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) {
+				closeTerminalTab(tabId);
+				return;
+			}
+			const ptySessionId = getTerminalSessionId(session.id, tabId);
+			window.maestro.process
+				.isTerminalBusy(ptySessionId)
+				.then((busy) => {
+					if (busy) {
+						useModalStore.getState().openModal('confirm', {
+							message: 'This terminal is running a command. Close it and stop the command?',
+							onConfirm: () => closeTerminalTab(tabId),
+							destructive: true,
+						});
+					} else {
+						closeTerminalTab(tabId);
+					}
+				})
+				.catch(() => closeTerminalTab(tabId));
 		},
 		[closeTerminalTab]
 	);

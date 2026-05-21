@@ -65,9 +65,30 @@ describe('findHits', () => {
 	it('case-insensitive by default', () => {
 		const hits = findHits(content, 'hello', ranges);
 		expect(hits.length).toBe(3);
-		expect(hits[0]).toEqual({ sourceOffset: 0, length: 5, blockIndex: 0 });
+		expect(hits[0]).toEqual({
+			sourceOffset: 0,
+			length: 5,
+			blockIndex: 0,
+			offsetWithinBlock: 0,
+		});
 		expect(hits[1].sourceOffset).toBe(13);
 		expect(hits[2].sourceOffset).toBe(26);
+	});
+
+	it('annotates each hit with its offset relative to the containing block', () => {
+		const hits = findHits(content, 'hello', ranges);
+		// Block 0 starts at 0 → match at 0 is offset 0.
+		// Block 1 starts at 12 → match at 13 is offset 1.
+		// Block 2 starts at 25 → match at 26 is offset 1.
+		expect(hits.map((h) => h.offsetWithinBlock)).toEqual([0, 1, 1]);
+	});
+
+	it('clamps offsetWithinBlock to 0 when match precedes the resolved block start', () => {
+		// Defensive: if blockIndexAtOffset clamps a hit before block 0's start
+		// (theoretically impossible with sorted ranges starting at 0, but the
+		// helper is structurally robust), offsetWithinBlock must not go negative.
+		const hits = findHits('hello', 'hello', [{ start: 10, end: 20 }]);
+		expect(hits[0].offsetWithinBlock).toBe(0);
 	});
 
 	it('case-sensitive when explicitly requested', () => {

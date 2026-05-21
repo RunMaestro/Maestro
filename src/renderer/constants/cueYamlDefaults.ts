@@ -29,13 +29,17 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #   - name: "review new PRs"
 #     event: github.pull_request
 #     poll_minutes: 5
-#     prompt: prompts/pr-review.md
+#     # retrigger_on_comments: true   # re-fire when a PR receives new activity
+#     # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
+#     prompt: prompts/pr-review.md    # reference {{CUE_NEW_COMMENTS}} for comment context
 #     enabled: true
 #
 #   - name: "triage issues"
 #     event: github.issue
 #     poll_minutes: 10
-#     prompt: prompts/issue-triage.md
+#     # retrigger_on_comments: true   # re-fire when an issue receives new activity
+#     # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
+#     prompt: prompts/issue-triage.md # reference {{CUE_NEW_COMMENTS}} for comment context
 #     enabled: true
 #
 #   - name: "process task queue"

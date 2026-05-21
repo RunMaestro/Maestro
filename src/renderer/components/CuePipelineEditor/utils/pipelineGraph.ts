@@ -85,7 +85,16 @@ const PIPELINE_GROUP_PADDING = 28;
  * Pipelines with a manual `viewOffset` are excluded from the auto-stack
  * chain — they're placed by the user, so they shouldn't push the rest
  * of the auto-stacked pipelines around. Their offset comes from
- * `computePipelineOffsets` instead.
+ * `resolvePipelineOffset` instead.
+ *
+ * Mixed state (some pipelines with `viewOffset`, some without) used to
+ * render the auto-stacked subset starting at y=0 with no awareness of
+ * where manual pipelines actually live in the render frame, producing
+ * overlapping group cards on first open until any drag triggered the
+ * `onNodeDragStop` snapshot that converts every pipeline to manual mode.
+ * To avoid that "first open is jumbled" symptom, auto-stack now starts
+ * BELOW the rendered bottom of every manually-positioned pipeline so the
+ * two coordinate frames can never collide.
  *
  * Exported so `onNodesChange` can subtract offsets before writing
  * ReactFlow's screen-space positions back to the canonical state.
@@ -97,7 +106,21 @@ export function computePipelineYOffsets(
 	const offsets = new Map<string, number>();
 	if (selectedPipelineId !== null || pipelines.length <= 1) return offsets;
 
-	let currentY = 0;
+	// Establish a floor: auto-stacked pipelines must land below the rendered
+	// bottom of every manually-positioned pipeline so the two regimes share
+	// one global y-axis instead of overlapping in independent frames.
+	let manualFloor = -Infinity;
+	for (const pipeline of pipelines) {
+		if (!pipeline.viewOffset || pipeline.nodes.length === 0) continue;
+		let manualMaxY = -Infinity;
+		for (const node of pipeline.nodes) {
+			manualMaxY = Math.max(manualMaxY, node.position.y);
+		}
+		const renderedBottom = pipeline.viewOffset.y + manualMaxY + NODE_HEIGHT;
+		manualFloor = Math.max(manualFloor, renderedBottom + PIPELINE_GAP);
+	}
+
+	let currentY = manualFloor === -Infinity ? 0 : manualFloor;
 	for (const pipeline of pipelines) {
 		if (pipeline.nodes.length === 0) continue;
 		// Manually-positioned pipelines opt out of auto-stack.

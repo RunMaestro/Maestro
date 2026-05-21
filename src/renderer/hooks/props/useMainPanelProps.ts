@@ -184,6 +184,7 @@ export interface UseMainPanelPropsDeps {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleToggleTabEnterToSend: () => void;
 	toggleUnreadFilter: () => void;
 	handleOpenTabSearch: () => void;
 	handleOpenOutputSearch: () => void;
@@ -272,6 +273,9 @@ export interface UseMainPanelPropsDeps {
 	setGraphFocusFilePath: (path: string) => void;
 	setLastGraphFocusFilePath: (path: string) => void;
 	setIsGraphViewOpen: (open: boolean) => void;
+
+	// Open the active file preview in a new Maestro browser tab
+	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 
 	// Wizard callbacks
 	generateInlineWizardDocuments: (
@@ -427,6 +431,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onReloadFileTab: deps.handleReloadFileTab,
 			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
+			onToggleTabEnterToSend: deps.handleToggleTabEnterToSend,
 			onScrollPositionChange: deps.handleScrollPositionChange,
 			onAtBottomChange: deps.handleAtBottomChange,
 			onInputBlur: deps.handleMainPanelInputBlur,
@@ -485,6 +490,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				if (result.newLevel !== null) {
 					deps.onKeyboardMasteryLevelUp(result.newLevel);
 				}
+				// Also bump the daily-firings counter so the Usage Dashboard bar
+				// chart reflects shortcuts handled inside subcomponents (not just
+				// the ones routed through useMainKeyboardHandler).
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),
@@ -507,6 +516,17 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 					deps.setLastGraphFocusFilePath(relativePath);
 					deps.setIsGraphViewOpen(true);
 				}
+			},
+			// Open the active file preview in a new Maestro browser tab. Encodes
+			// each path segment so spaces and reserved chars survive the file:// URL.
+			onOpenInBrowser: () => {
+				if (!deps.activeFileTab) return;
+				const encodedPath = deps.activeFileTab.path
+					.split('/')
+					.map((seg) => encodeURIComponent(seg))
+					.join('/');
+				const url = `file://${encodedPath}`;
+				deps.handleOpenBrowserTabAt(url, { title: deps.activeFileTab.name });
 			},
 			// Inline wizard callbacks handled inline to maintain closure access
 			onExitWizard: deps.endInlineWizard,
@@ -625,6 +645,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleToggleTabReadOnlyMode,
 			deps.handleToggleTabSaveToHistory,
 			deps.handleToggleTabShowThinking,
+			deps.handleToggleTabEnterToSend,
 			deps.toggleUnreadFilter,
 			deps.handleOpenTabSearch,
 			deps.handleOpenOutputSearch,
@@ -687,6 +708,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setGraphFocusFilePath,
 			deps.setLastGraphFocusFilePath,
 			deps.setIsGraphViewOpen,
+			deps.handleOpenBrowserTabAt,
 			deps.endInlineWizard,
 			// Complex wizard handlers
 			deps.onWizardComplete,

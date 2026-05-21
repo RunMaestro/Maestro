@@ -207,6 +207,12 @@ export function useBatchedSessionUpdates(
 
 					// Apply AI tab logs
 					if (aiTabLogs.size > 0 && updatedSession.aiTabs) {
+						// When the session's resolved Claude mode is interactive, tag
+						// non-stderr entries with renderStyle: 'text-stream' so the
+						// "Captured via interactive TUI" footer pill renders on them.
+						// stderr stays untagged — error frames aren't interactive output.
+						const isInteractive = updatedSession.claudeInteractive?.mode === 'interactive';
+
 						updatedSession = {
 							...updatedSession,
 							aiTabs: updatedSession.aiTabs.map((tab) => {
@@ -251,12 +257,15 @@ export function useBatchedSessionUpdates(
 									lastLog.source === logSource &&
 									logData.timestamp - lastLog.timestamp < 500;
 
+								const shouldTagInteractive = isInteractive && !logData.isStderr;
+
 								let updatedLogs: LogEntry[];
 								if (shouldGroup) {
 									updatedLogs = [...existingLogs];
 									updatedLogs[updatedLogs.length - 1] = {
 										...lastLog,
 										text: lastLog.text + logData.data,
+										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
 									};
 								} else {
 									const newLog: LogEntry = {
@@ -264,6 +273,7 @@ export function useBatchedSessionUpdates(
 										timestamp: logData.timestamp,
 										source: logSource,
 										text: logData.data,
+										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
 									};
 									updatedLogs = [...existingLogs, newLog];
 								}

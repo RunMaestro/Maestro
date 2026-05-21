@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { X, History, Sparkles, Clapperboard, HelpCircle } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
@@ -10,6 +10,7 @@ import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
 import { useModalStore, selectModalData } from '../../stores/modalStore';
+import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -44,12 +45,23 @@ export function DirectorNotesModal({
 	fileTree,
 	onFileClick,
 }: DirectorNotesModalProps) {
-	const { directorNotesSettings: _directorNotesSettings, shortcuts } = useSettings();
+	const { directorNotesSettings, shortcuts } = useSettings();
 	const directorNotesData = useModalStore(selectModalData('directorNotes'));
 	const cached = hasCachedSynopsis();
 	const [activeTab, setActiveTab] = useState<TabId>(directorNotesData?.initialTab ?? 'history');
 	const [overviewReady, setOverviewReady] = useState(cached);
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
+	const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
+		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
+	);
+
+	// "Director's Notes Since Friday May 8th" — updates live when the
+	// user changes the lookback period in the activity graph. "All time"
+	// suppresses the suffix.
+	const titleText = useMemo(() => {
+		const since = formatLookbackSinceDate(lookbackHours);
+		return since ? `Director's Notes Since ${since}` : "Director's Notes";
+	}, [lookbackHours]);
 
 	// Layer stack registration for Escape handling
 	const modalRef = useRef<HTMLDivElement>(null);
@@ -198,7 +210,7 @@ export function DirectorNotesModal({
 							className="text-lg font-semibold"
 							style={{ color: theme.colors.textMain }}
 						>
-							Director's Notes
+							{titleText}
 						</h2>
 					</div>
 
@@ -262,6 +274,8 @@ export function DirectorNotesModal({
 								onResumeSession={onResumeSession}
 								fileTree={fileTree}
 								onFileClick={onFileClick}
+								lookbackHours={lookbackHours}
+								onLookbackChange={setLookbackHours}
 							/>
 						</div>
 						<div

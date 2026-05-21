@@ -217,9 +217,10 @@ Generates Auto Run documents from wizard conversation results. The largest servi
   1. Creates date-prefixed subfolder (e.g., "2026-03-21-Feature-Name")
   2. Sets up file watcher on subfolder for real-time streaming
   3. Spawns agent process with generation prompt
-  4. Watches for files created by agent, notifies callbacks
-  5. Falls back to parsing document markers from output if watcher misses them
+  4. Routes both chokidar file-change events and a periodic disk poll through a shared `createPlaybookDocumentEmitter` so each doc surfaces to the UI exactly once (the poll backstops the macOS fsevents cold-start window where add events go missing)
+  5. Falls back to parsing document markers from output if neither watcher nor poll caught the file
   6. Creates a playbook configuration for generated documents
+- `createPlaybookDocumentEmitter(options)` - Factory returning a `PlaybookDocumentEmitter` that owns the dedup set across watcher + poll inputs. Exposes `tryEmitFile`, `pollAndEmit`, `getEmittedDocuments`, `hasEmitted`. Built as a factory (not a class) so tests can mock `window.maestro.fs` / `window.maestro.autorun` without subclassing.
 - `generateDocumentPrompt(config, subfolder?)` - Builds prompt from mode-specific templates
 - `parseGeneratedDocuments(output)` - Extracts `---BEGIN DOCUMENT---` / `---END DOCUMENT---` blocks with FILENAME, UPDATE, and CONTENT fields
 - `splitIntoPhases(content)` - Fallback splitter when agent produces single large document

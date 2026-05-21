@@ -69,8 +69,8 @@ function refreshCliDiscoveryFile(port: number, token: string): void {
 
 /**
  * Verify the discovery file on disk matches the running server. Used by
- * `ensureCliServer` and the watchdog to detect silent write failures or
- * external interference (deleted file, stale pid, etc.).
+ * `ensureCliServer` to detect silent write failures or external interference
+ * (deleted file, stale pid, etc.).
  */
 function discoveryFileMatches(port: number, token: string): boolean {
 	const info = readCliServerInfo();
@@ -159,17 +159,26 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boo
 /** Active watchdog timer, if any. */
 let cliDiscoveryWatchdog: ReturnType<typeof setInterval> | null = null;
 
-/** Default interval between watchdog checks. */
-const CLI_WATCHDOG_INTERVAL_MS = 30_000;
+/**
+ * Default interval between watchdog checks.
+ *
+ * Short on purpose: maestro-cli is the user's hands-off entry point and a 30s
+ * window of "command says app isn't running" is enough to retrain muscle
+ * memory toward toggling Live Mode. 5s self-heals well before the user gives
+ * up and reaches for the UI.
+ */
+const CLI_WATCHDOG_INTERVAL_MS = 5_000;
 
 /**
  * Start a periodic watchdog that re-publishes the CLI discovery file whenever
  * it goes missing or drifts out of sync with the running server. Defense in
  * depth for cases the main-path retry can't catch (file deleted externally,
- * disk hiccup after a successful write, etc.).
+ * disk hiccup after a successful write, ensureCliServer racing with a Live
+ * Mode toggle, etc.). Also self-heals if the initial ensureCliServer attempt
+ * gave up — the next time the server is reachable, the watchdog republishes.
  *
  * Safe to call multiple times — the previous timer is cleared first. Pass
- * `intervalMs` only for tests; production uses the default 30s interval.
+ * `intervalMs` only for tests; production uses the default 5s interval.
  */
 export function startCliDiscoveryWatchdog(
 	deps: WebHandlerDependencies,
@@ -178,7 +187,18 @@ export function startCliDiscoveryWatchdog(
 	stopCliDiscoveryWatchdog();
 	cliDiscoveryWatchdog = setInterval(() => {
 		const webServer = deps.getWebServer();
-		if (!webServer || !webServer.isActive()) {
+		if (!webServer) {
+			// No server yet (initial ensureCliServer never succeeded) — try to
+			// bring one up so maestro-cli works without forcing a Live Mode toggle.
+			void ensureCliServer(deps).catch((err: unknown) => {
+				logger.error(
+					`Watchdog ensureCliServer failed: ${err instanceof Error ? err.message : String(err)}`,
+					'CliServer'
+				);
+			});
+			return;
+		}
+		if (!webServer.isActive()) {
 			return;
 		}
 		const port = webServer.getPort();

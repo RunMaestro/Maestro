@@ -10,6 +10,7 @@ import {
 	FileText,
 	Bot,
 	User,
+	Terminal,
 } from 'lucide-react';
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -232,6 +233,64 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 								</div>
 							))}
 						</div>
+					</div>
+				</section>
+
+				{/* From the CLI */}
+				<section>
+					<div className={sectionHeaderClass}>
+						<Terminal className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">From the CLI</h3>
+					</div>
+					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
+						<p>
+							Pull the same unified history and AI synopsis from your terminal with{' '}
+							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								maestro-cli director-notes
+							</code>
+							— great for scripts, cron jobs, or piping into your own tooling.
+						</p>
+						<div
+							className="rounded border p-3 font-mono text-[11px] space-y-1.5"
+							style={{
+								borderColor: theme.colors.border,
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+							}}
+						>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>
+									# Markdown recap of the last day
+								</span>
+							</div>
+							<div>maestro-cli director-notes history -f markdown -d 1</div>
+							<div className="pt-1">
+								<span style={{ color: theme.colors.textDim }}>
+									# Weekly report → dated markdown file
+								</span>
+							</div>
+							<div>maestro-cli director-notes synopsis -d 7 -f markdown \</div>
+							<div>{'  > ~/maestro-weekly-$(date +%Y-%m-%d).md'}</div>
+						</div>
+						<p>
+							Schedule it with{' '}
+							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								cron
+							</code>
+							,{' '}
+							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								launchd
+							</code>
+							, or Maestro Cue to wake up to a fresh weekly report every Monday.{' '}
+							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								history
+							</code>{' '}
+							works offline;{' '}
+							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								synopsis
+							</code>{' '}
+							needs the desktop app running.
+						</p>
 					</div>
 				</section>
 			</div>

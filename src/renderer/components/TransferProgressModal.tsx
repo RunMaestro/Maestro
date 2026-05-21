@@ -318,7 +318,7 @@ export function TransferProgressModal({
 			tabIndex={-1}
 		>
 			<div
-				className="w-[450px] rounded-xl shadow-2xl border outline-none relative overflow-hidden"
+				className="modal-w-sm rounded-xl shadow-2xl border outline-none relative overflow-hidden"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

@@ -100,7 +100,11 @@ describe('wizardPrompts', () => {
 				expect(STRUCTURED_OUTPUT_SCHEMA.properties.message.type).toBe('string');
 			});
 
-			it('should require all three fields', () => {
+			it('should define projectName as an optional string', () => {
+				expect(STRUCTURED_OUTPUT_SCHEMA.properties.projectName.type).toBe('string');
+			});
+
+			it('should require confidence, ready, and message (projectName is optional)', () => {
 				expect(STRUCTURED_OUTPUT_SCHEMA.required).toEqual(['confidence', 'ready', 'message']);
 			});
 		});
@@ -111,6 +115,7 @@ describe('wizardPrompts', () => {
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('confidence');
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('ready');
 				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('message');
+				expect(STRUCTURED_OUTPUT_SUFFIX).toContain('projectName');
 			});
 		});
 	});
@@ -162,6 +167,32 @@ describe('wizardPrompts', () => {
 				expect(result.parseSuccess).toBe(true);
 				// Confidence should be rounded
 				expect(result.structured?.confidence).toBe(76);
+			});
+
+			it('should extract optional projectName when present', () => {
+				const input =
+					'{"confidence": 90, "ready": true, "message": "Ready!", "projectName": "Dark Mode Toggle"}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBe('Dark Mode Toggle');
+			});
+
+			it('should leave projectName undefined when omitted', () => {
+				const input = '{"confidence": 60, "ready": false, "message": "More info please"}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBeUndefined();
+			});
+
+			it('should treat whitespace-only projectName as missing', () => {
+				const input =
+					'{"confidence": 90, "ready": true, "message": "Ready!", "projectName": "   "}';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.projectName).toBeUndefined();
 			});
 		});
 

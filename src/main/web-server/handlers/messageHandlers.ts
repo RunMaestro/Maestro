@@ -212,6 +212,7 @@ export interface MessageHandlerCallbacks {
 				enabled: boolean;
 				path: string;
 				branchName: string;
+				baseBranch: string;
 				createPROnCompletion: boolean;
 				prTargetBranch: string;
 			};
@@ -1588,6 +1589,7 @@ export class WebSocketMessageHandler {
 					enabled: boolean;
 					path: string;
 					branchName: string;
+					baseBranch: string;
 					createPROnCompletion: boolean;
 					prTargetBranch: string;
 			  }
@@ -1610,6 +1612,10 @@ export class WebSocketMessageHandler {
 				this.sendError(client, 'worktree.branchName must be a non-empty string');
 				return;
 			}
+			if (w.baseBranch !== undefined && typeof w.baseBranch !== 'string') {
+				this.sendError(client, 'worktree.baseBranch must be a string');
+				return;
+			}
 			if (w.createPROnCompletion !== undefined && typeof w.createPROnCompletion !== 'boolean') {
 				this.sendError(client, 'worktree.createPROnCompletion must be a boolean');
 				return;
@@ -1622,6 +1628,7 @@ export class WebSocketMessageHandler {
 				enabled: w.enabled,
 				path: w.path,
 				branchName: w.branchName,
+				baseBranch: (w.baseBranch as string | undefined) ?? '',
 				createPROnCompletion: Boolean(w.createPROnCompletion),
 				prTargetBranch: (w.prTargetBranch as string | undefined) ?? '',
 			};

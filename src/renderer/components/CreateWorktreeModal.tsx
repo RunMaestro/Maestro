@@ -7,13 +7,15 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { openUrl } from '../utils/openUrl';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
+import { gitService } from '../services/git';
+import { captureException } from '../utils/sentry';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	theme: Theme;
 	session: Session;
-	onCreateWorktree: (branchName: string) => Promise<void>;
+	onCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 }
 
 /**
@@ -39,6 +41,9 @@ export function CreateWorktreeModal({
 
 	// Form state
 	const [branchName, setBranchName] = useState('');
+	const [baseBranch, setBaseBranch] = useState('');
+	const [branches, setBranches] = useState<string[]>([]);
+	const [branchLoadError, setBranchLoadError] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -48,16 +53,61 @@ export function CreateWorktreeModal({
 	// Input ref for auto-focus
 	const inputRef = useRef<HTMLInputElement>(null);
 
+	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
 	// Check gh CLI status and reset state on open
 	useEffect(() => {
 		if (isOpen) {
 			checkGhCli();
 			setBranchName('');
+			setBaseBranch('');
+			setBranches([]);
+			setBranchLoadError(false);
 			setError(null);
 			// Auto-focus the input
 			setTimeout(() => inputRef.current?.focus(), 50);
 		}
 	}, [isOpen]);
+
+	// Fetch branches when the modal opens so the user can pick a base.
+	// Sort current branch first, then main/master, then alphabetical — same
+	// ordering as the Auto Run worktree picker so the two flows feel uniform.
+	useEffect(() => {
+		if (!isOpen) return;
+
+		let cancelled = false;
+		Promise.all([
+			gitService.getBranches(session.cwd, sshRemoteId),
+			window.maestro.git.branch(session.cwd, sshRemoteId),
+		])
+			.then(([result, branchResult]) => {
+				if (cancelled) return;
+				const currentBranch = branchResult.stdout?.trim() || '';
+				const sorted = [...result].sort((a, b) => {
+					if (a === currentBranch && b !== currentBranch) return -1;
+					if (a !== currentBranch && b === currentBranch) return 1;
+					const aIsMain = a === 'main' || a === 'master';
+					const bIsMain = b === 'main' || b === 'master';
+					if (aIsMain && !bIsMain) return -1;
+					if (!aIsMain && bIsMain) return 1;
+					return a.localeCompare(b);
+				});
+				setBranches(sorted);
+				if (sorted.length > 0) {
+					setBaseBranch(sorted[0]);
+				}
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				captureException(err, { extra: { cwd: session.cwd, sshRemoteId } });
+				setBranchLoadError(true);
+				setBranches([]);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, session.cwd, sshRemoteId]);
 
 	const checkGhCli = async () => {
 		try {
@@ -79,7 +129,7 @@ export function CreateWorktreeModal({
 		setError(null);
 
 		try {
-			await onCreateWorktree(trimmedName);
+			await onCreateWorktree(trimmedName, baseBranch || undefined);
 			onClose();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create worktree');
@@ -182,6 +232,41 @@ export function CreateWorktreeModal({
 							</div>
 						</div>
 					)}
+
+					{/* Base Branch Selector */}
+					<div>
+						<label
+							className="text-xs font-bold uppercase mb-1.5 block"
+							style={{ color: theme.colors.textDim }}
+						>
+							Base Branch
+						</label>
+						<select
+							value={baseBranch}
+							onChange={(e) => setBaseBranch(e.target.value)}
+							disabled={isCreating || branchLoadError || branches.length === 0}
+							className="w-full px-3 py-2 rounded border outline-none text-sm"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: branchLoadError ? theme.colors.error : theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						>
+							{branches.length === 0 && !branchLoadError && (
+								<option value="">Loading branches…</option>
+							)}
+							{branches.map((b) => (
+								<option key={b} value={b}>
+									{b}
+								</option>
+							))}
+						</select>
+						{branchLoadError && (
+							<p className="text-xs mt-1" style={{ color: theme.colors.error }}>
+								Could not load branches — new branch will be created from current HEAD.
+							</p>
+						)}
+					</div>
 
 					{/* Branch Name Input */}
 					<div>

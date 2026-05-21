@@ -70,6 +70,7 @@ vi.mock('../../../../main/agents', () => ({
 
 vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 	buildChildProcessEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
+	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({

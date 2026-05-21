@@ -34,6 +34,10 @@ function setup(opts: SetupOpts = {}) {
 	const setAgentDrawerOpen = vi.fn();
 	const setInteractionMode = vi.fn();
 	const handleSave = vi.fn();
+	const zoomIn = vi.fn();
+	const zoomOut = vi.fn();
+	const fitView = vi.fn();
+	const setIsLocked = vi.fn();
 
 	const container =
 		opts.container ??
@@ -63,6 +67,10 @@ function setup(opts: SetupOpts = {}) {
 			setAgentDrawerOpen,
 			setInteractionMode,
 			handleSave,
+			zoomIn,
+			zoomOut,
+			fitView,
+			setIsLocked,
 			containerRef,
 		})
 	);
@@ -76,6 +84,10 @@ function setup(opts: SetupOpts = {}) {
 		setAgentDrawerOpen,
 		setInteractionMode,
 		handleSave,
+		zoomIn,
+		zoomOut,
+		fitView,
+		setIsLocked,
 		container,
 	};
 }
@@ -227,6 +239,10 @@ describe('usePipelineKeyboard', () => {
 					setAgentDrawerOpen: vi.fn(),
 					setInteractionMode: vi.fn(),
 					handleSave: vi.fn(),
+					zoomIn: vi.fn(),
+					zoomOut: vi.fn(),
+					fitView: vi.fn(),
+					setIsLocked: vi.fn(),
 					containerRef: { current: container },
 				})
 			);
