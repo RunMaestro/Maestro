@@ -164,12 +164,26 @@ function broadcastSessionMoved(
 	}
 }
 
+function createMoveSessionQueue() {
+	let queue = Promise.resolve();
+
+	return function enqueueMoveSession<T>(operation: () => T | Promise<T>): Promise<T> {
+		const result = queue.then(operation, operation);
+		queue = result.then(
+			() => undefined,
+			() => undefined
+		);
+		return result;
+	};
+}
+
 /**
  * Register all multi-window IPC handlers.
  */
 export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void {
 	const { windowManager, windowStateStore } = deps;
 	const { windowRegistry } = windowManager;
+	const enqueueMoveSession = createMoveSessionQueue();
 
 	ipcMain.handle(
 		'windows:create',
@@ -251,46 +265,53 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			fromWindowId: string,
 			toWindowId: string
 		): Promise<boolean> => {
-			const fromWindow = windowRegistry.get(fromWindowId);
-			const toWindow = windowRegistry.get(toWindowId);
-			if (!fromWindow) {
-				throw new Error(`Source window not registered: ${fromWindowId}`);
-			}
-			if (!toWindow) {
-				throw new Error(`Destination window not registered: ${toWindowId}`);
-			}
-			if (wouldEmptyPrimaryWindow(fromWindow.sessionIds, [sessionId], fromWindow.isMain)) {
-				throw new Error('Cannot move the last tab out of the primary window');
-			}
+			return enqueueMoveSession(() => {
+				const currentOwnerWindowId = windowRegistry.getWindowForSession(sessionId);
+				const effectiveFromWindowId = currentOwnerWindowId ?? fromWindowId;
+				const fromWindow = windowRegistry.get(effectiveFromWindowId);
+				const toWindow = windowRegistry.get(toWindowId);
+				if (!fromWindow) {
+					throw new Error(`Source window not registered: ${effectiveFromWindowId}`);
+				}
+				if (!toWindow) {
+					throw new Error(`Destination window not registered: ${toWindowId}`);
+				}
+				if (effectiveFromWindowId === toWindowId) {
+					return true;
+				}
+				if (wouldEmptyPrimaryWindow(fromWindow.sessionIds, [sessionId], fromWindow.isMain)) {
+					throw new Error('Cannot move the last tab out of the primary window');
+				}
 
-			const sourceStoredState = findStoredWindowState(windowStateStore, fromWindowId);
-			const nextSourceActiveSessionId =
-				sourceStoredState?.activeSessionId === sessionId
-					? getNextActiveSessionId(fromWindow.sessionIds, sessionId)
-					: sourceStoredState?.activeSessionId;
+				const sourceStoredState = findStoredWindowState(windowStateStore, effectiveFromWindowId);
+				const nextSourceActiveSessionId =
+					sourceStoredState?.activeSessionId === sessionId
+						? getNextActiveSessionId(fromWindow.sessionIds, sessionId)
+						: sourceStoredState?.activeSessionId;
 
-			windowRegistry.moveSession(sessionId, fromWindowId, toWindowId);
-			upsertStoredWindowState(
-				windowStateStore,
-				fromWindowId,
-				fromWindow.browserWindow,
-				fromWindow.sessionIds,
-				{ activeSessionId: nextSourceActiveSessionId ?? null }
-			);
-			upsertStoredWindowState(
-				windowStateStore,
-				toWindowId,
-				toWindow.browserWindow,
-				toWindow.sessionIds,
-				{ activeSessionId: sessionId }
-			);
-			broadcastSessionMoved(windowManager, {
-				sessionId,
-				fromWindowId,
-				toWindowId,
-				windows: getWindowList(windowManager, windowStateStore),
+				windowRegistry.moveSession(sessionId, effectiveFromWindowId, toWindowId);
+				upsertStoredWindowState(
+					windowStateStore,
+					effectiveFromWindowId,
+					fromWindow.browserWindow,
+					fromWindow.sessionIds,
+					{ activeSessionId: nextSourceActiveSessionId ?? null }
+				);
+				upsertStoredWindowState(
+					windowStateStore,
+					toWindowId,
+					toWindow.browserWindow,
+					toWindow.sessionIds,
+					{ activeSessionId: sessionId }
+				);
+				broadcastSessionMoved(windowManager, {
+					sessionId,
+					fromWindowId: effectiveFromWindowId,
+					toWindowId,
+					windows: getWindowList(windowManager, windowStateStore),
+				});
+				return true;
 			});
-			return true;
 		}
 	);
 
