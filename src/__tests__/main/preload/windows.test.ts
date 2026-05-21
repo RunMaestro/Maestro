@@ -133,6 +133,15 @@ describe('Windows Preload API', () => {
 		expect(result).toEqual(windowInfo);
 	});
 
+	it('should invoke windows:highlightDropZone with window ID and state', async () => {
+		mockInvoke.mockResolvedValue(true);
+
+		const result = await api.highlightDropZone('window-2', true);
+
+		expect(mockInvoke).toHaveBeenCalledWith('windows:highlightDropZone', 'window-2', true);
+		expect(result).toBe(true);
+	});
+
 	it('should invoke windows:getState', async () => {
 		const state = {
 			id: 'window-1',
@@ -188,5 +197,21 @@ describe('Windows Preload API', () => {
 		expect(mockOn).toHaveBeenCalledWith('windows:sessionMoved', expect.any(Function));
 		expect(handler).toHaveBeenCalledWith({ sessionId: 'session-1' });
 		expect(mockRemoveListener).toHaveBeenCalledWith('windows:sessionMoved', wrappedHandler);
+	});
+
+	it('should subscribe to windows:dropZoneHighlightChanged events', () => {
+		const handler = vi.fn();
+
+		const unsubscribe = api.onDropZoneHighlightChanged(handler);
+		const wrappedHandler = mockOn.mock.calls[0][1] as Function;
+		wrappedHandler({}, { highlighted: true });
+		unsubscribe();
+
+		expect(mockOn).toHaveBeenCalledWith('windows:dropZoneHighlightChanged', expect.any(Function));
+		expect(handler).toHaveBeenCalledWith({ highlighted: true });
+		expect(mockRemoveListener).toHaveBeenCalledWith(
+			'windows:dropZoneHighlightChanged',
+			wrappedHandler
+		);
 	});
 });

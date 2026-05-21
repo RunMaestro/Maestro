@@ -14,6 +14,7 @@ export interface WindowContextValue {
 	isMainWindow: boolean;
 	sessionIds: string[];
 	activeSessionId: string | null;
+	isDropZoneHighlighted: boolean;
 	openSession: (sessionId: string) => Promise<void>;
 	closeTab: (sessionId: string) => void;
 	moveSessionToNewWindow: (sessionId: string) => Promise<WindowInfo>;
@@ -63,6 +64,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 	const [isMainWindow, setIsMainWindow] = useState(false);
 	const [sessionIds, setSessionIds] = useState<string[]>([]);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+	const [isDropZoneHighlighted, setIsDropZoneHighlighted] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -111,6 +113,12 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			);
 		});
 	}, [windowId]);
+
+	useEffect(() => {
+		return window.maestro.windows.onDropZoneHighlightChanged((event) => {
+			setIsDropZoneHighlighted(event.highlighted);
+		});
+	}, []);
 
 	const closeTab = useCallback((sessionId: string) => {
 		setSessionIds((currentSessionIds) => {
@@ -168,6 +176,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			isMainWindow,
 			sessionIds,
 			activeSessionId,
+			isDropZoneHighlighted,
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,
@@ -177,6 +186,7 @@ export function WindowProvider({ children }: WindowProviderProps) {
 			isMainWindow,
 			sessionIds,
 			activeSessionId,
+			isDropZoneHighlighted,
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,
