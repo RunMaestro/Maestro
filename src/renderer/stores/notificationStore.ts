@@ -33,6 +33,7 @@ export interface Toast {
 	// Session navigation - allows clicking toast to jump to session
 	sessionId?: string; // Maestro session ID for navigation
 	tabId?: string; // Tab ID within the session for navigation
+	windowId?: string; // Maestro window ID for OS notification click routing
 	// Action link - clickable URL shown below message (e.g., PR URL)
 	actionUrl?: string; // URL to open when clicked
 	actionLabel?: string; // Label for the action link (defaults to URL)
@@ -264,8 +265,19 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 
 			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
 			const notifBody = prefix + firstSentence;
+			const metadata =
+				toast.windowId || toast.sessionId || toast.tabId
+					? {
+							windowId: toast.windowId,
+							sessionId: toast.sessionId,
+							tabId: toast.tabId,
+						}
+					: undefined;
 
-			window.maestro.notification.show(notifTitle, notifBody).catch((err) => {
+			const showPromise = metadata
+				? window.maestro.notification.show(notifTitle, notifBody, metadata)
+				: window.maestro.notification.show(notifTitle, notifBody);
+			showPromise.catch((err) => {
 				console.error('[notificationStore] Failed to show OS notification:', err);
 			});
 		}

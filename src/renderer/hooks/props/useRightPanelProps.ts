@@ -2,7 +2,8 @@
  * useRightPanelProps Hook
  *
  * Assembles handler props for the RightPanel component.
- * Data/state props are now read directly from Zustand stores inside RightPanel.
+ * Data/state props are mostly read directly from Zustand stores inside RightPanel.
+ * The active session is passed from App.tsx because App applies window scoping.
  * This hook only passes domain-logic handlers that can't be replaced with
  * direct store calls, plus the theme (computed externally) and refs.
  */
@@ -18,6 +19,7 @@ import type { FileTreeChanges } from '../../utils/fileExplorer';
 export interface UseRightPanelPropsDeps {
 	// Theme (computed from settingsStore by App.tsx — not a raw store value)
 	theme: Theme;
+	activeSession: Session | null;
 
 	// Refs
 	fileTreeContainerRef: React.RefObject<HTMLDivElement>;
@@ -99,6 +101,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 		() => ({
 			// Theme & refs
 			theme: deps.theme,
+			activeSession: deps.activeSession,
 			fileTreeContainerRef: deps.fileTreeContainerRef,
 			fileTreeFilterInputRef: deps.fileTreeFilterInputRef,
 
@@ -150,6 +153,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 		}),
 		[
 			deps.theme,
+			deps.activeSession,
 			deps.currentSessionBatchState,
 			// Stable callbacks
 			deps.handleSetActiveRightTab,

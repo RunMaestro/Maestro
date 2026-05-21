@@ -9,14 +9,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { recordMultiWindowUsage } from '../../../main/stats/multi-window-recorder';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+let windowEventHandlers: Record<string, Array<() => void>> = {};
+let nextBrowserWindowId = 1;
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
 	send: vi.fn(),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	openDevTools: vi.fn(),
+	reload: vi.fn(),
 	on: vi.fn(),
 	setWindowOpenHandler: vi.fn(),
 	session: {
@@ -31,9 +36,11 @@ const mockWindowInstance = {
 	setFullScreen: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
+		windowEventHandlers[event] = [...(windowEventHandlers[event] ?? []), handler];
 		if (event === 'close') windowCloseHandler = handler;
 	}),
 };
@@ -43,17 +50,21 @@ let lastBrowserWindowOptions: Record<string, unknown> | null = null;
 
 // Create a class-based mock for BrowserWindow
 class MockBrowserWindow {
+	id: number;
 	loadURL = mockWindowInstance.loadURL;
 	loadFile = mockWindowInstance.loadFile;
 	maximize = mockWindowInstance.maximize;
 	setFullScreen = mockWindowInstance.setFullScreen;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
+	isDestroyed = mockWindowInstance.isDestroyed;
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
 
 	constructor(options: unknown) {
+		this.id = nextBrowserWindowId;
+		nextBrowserWindowId += 1;
 		lastBrowserWindowOptions = options as Record<string, unknown>;
 	}
 }
@@ -63,6 +74,12 @@ const mockHandle = vi.fn();
 
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
+	screen: {
+		getDisplayMatching: vi.fn(() => ({
+			id: 1,
+			workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		})),
+	},
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
 	},
@@ -86,6 +103,10 @@ vi.mock('../../../main/auto-updater', () => ({
 	initAutoUpdater: (...args: unknown[]) => mockInitAutoUpdater(...args),
 }));
 
+vi.mock('../../../main/stats/multi-window-recorder', () => ({
+	recordMultiWindowUsage: vi.fn(),
+}));
+
 // Mock electron-devtools-installer (for development mode)
 vi.mock('electron-devtools-installer', () => ({
 	default: vi.fn().mockResolvedValue('React DevTools'),
@@ -95,12 +116,20 @@ vi.mock('electron-devtools-installer', () => ({
 describe('app-lifecycle/window-manager', () => {
 	let mockWindowStateStore: {
 		store: {
-			x: number;
-			y: number;
-			width: number;
-			height: number;
-			isMaximized: boolean;
-			isFullScreen: boolean;
+			primaryWindowId: string;
+			windows: Array<{
+				id: string;
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+				isMaximized: boolean;
+				isFullScreen: boolean;
+				sessionIds: string[];
+				activeSessionId: string | null;
+				leftPanelCollapsed: boolean;
+				rightPanelCollapsed: boolean;
+			}>;
 		};
 		set: ReturnType<typeof vi.fn>;
 	};
@@ -109,16 +138,28 @@ describe('app-lifecycle/window-manager', () => {
 		vi.clearAllMocks();
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
+		windowEventHandlers = {};
+		nextBrowserWindowId = 1;
 		lastBrowserWindowOptions = null;
 
 		mockWindowStateStore = {
 			store: {
-				x: 50,
-				y: 50,
-				width: 1400,
-				height: 900,
-				isMaximized: false,
-				isFullScreen: false,
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 50,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
 			},
 			set: vi.fn(),
 		};
@@ -126,10 +167,13 @@ describe('app-lifecycle/window-manager', () => {
 		// Reset mock implementations
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
+		mockWindowInstance.isDestroyed.mockReturnValue(false);
+		mockWebContents.isDestroyed.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -150,7 +194,10 @@ describe('app-lifecycle/window-manager', () => {
 			});
 
 			expect(windowManager).toHaveProperty('createWindow');
+			expect(windowManager).toHaveProperty('createSecondaryWindow');
+			expect(windowManager).toHaveProperty('windowRegistry');
 			expect(typeof windowManager.createWindow).toBe('function');
+			expect(typeof windowManager.createSecondaryWindow).toBe('function');
 		});
 	});
 
@@ -175,8 +222,68 @@ describe('app-lifecycle/window-manager', () => {
 			expect(result).toBeInstanceOf(MockBrowserWindow);
 		});
 
+		it('should register created windows with explicit session ownership', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+
+			expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual(['session-1']);
+			expect(windowManager.windowRegistry.getWindowForSession('session-1')).toBe('primary');
+		});
+
+		it('should create secondary windows with provided sessions and bounds', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			const secondaryWindow = windowManager.createSecondaryWindow(['session-2'], {
+				x: 300,
+				y: 200,
+				width: 900,
+				height: 700,
+			});
+
+			expect(secondaryWindow).toBeInstanceOf(MockBrowserWindow);
+			expect(windowManager.windowRegistry.getWindowForSession('session-2')).toBe('2');
+			expect(lastBrowserWindowOptions).toMatchObject({
+				x: 300,
+				y: 200,
+				width: 900,
+				height: 700,
+				webPreferences: expect.objectContaining({
+					preload: '/path/to/preload.js',
+				}),
+			});
+			expect(mockWindowInstance.loadFile).toHaveBeenLastCalledWith('/path/to/index.html', {
+				query: { windowId: '2' },
+			});
+		});
+
 		it('should maximize window if saved state is maximized', async () => {
-			mockWindowStateStore.store.isMaximized = true;
+			mockWindowStateStore.store.windows[0].isMaximized = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -198,7 +305,7 @@ describe('app-lifecycle/window-manager', () => {
 		});
 
 		it('should set fullscreen if saved state is fullscreen', async () => {
-			mockWindowStateStore.store.isFullScreen = true;
+			mockWindowStateStore.store.windows[0].isFullScreen = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -237,7 +344,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html');
+			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html', {
+				query: { windowId: 'primary' },
+			});
 			expect(mockWindowInstance.loadURL).not.toHaveBeenCalled();
 		});
 
@@ -258,7 +367,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith('http://localhost:5173');
+			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith(
+				'http://localhost:5173/?windowId=primary'
+			);
 			expect(mockWindowInstance.loadFile).not.toHaveBeenCalled();
 		});
 
@@ -325,12 +436,67 @@ describe('app-lifecycle/window-manager', () => {
 			expect(windowCloseHandler).not.toBeNull();
 			windowCloseHandler!();
 
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('x', 100);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('y', 100);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('width', 1200);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('height', 800);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', false);
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isFullScreen', false);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 100,
+				y: 100,
+				width: 1200,
+				height: 800,
+				isMaximized: false,
+				isFullScreen: false,
+			});
+		});
+
+		it('should debounce window state saves after geometry and display-state changes', async () => {
+			vi.useFakeTimers();
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('move', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('resize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('maximize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('unmaximize', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('enter-full-screen', expect.any(Function));
+			expect(mockWindowInstance.on).toHaveBeenCalledWith('leave-full-screen', expect.any(Function));
+
+			mockWindowInstance.getBounds.mockReturnValue({ x: 150, y: 160, width: 1000, height: 700 });
+			windowEventHandlers.move![0]();
+			mockWindowInstance.getBounds.mockReturnValue({ x: 175, y: 185, width: 1100, height: 750 });
+			windowEventHandlers.resize![0]();
+
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+			});
+
+			vi.advanceTimersByTime(249);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+			});
+
+			vi.advanceTimersByTime(1);
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 175,
+				y: 185,
+				width: 1100,
+				height: 750,
+			});
 		});
 
 		it('should not save bounds when maximized', async () => {
@@ -354,9 +520,159 @@ describe('app-lifecycle/window-manager', () => {
 			windowCloseHandler!();
 
 			// Should save isMaximized but not bounds
-			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', true);
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('x', expect.anything());
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('y', expect.anything());
+			expect(mockWindowStateStore.store.windows[0]).toMatchObject({
+				x: 50,
+				y: 50,
+				width: 1400,
+				height: 900,
+				isMaximized: true,
+			});
+		});
+
+		it('should remove secondary windows from persisted state after they close', async () => {
+			mockWindowStateStore.store.windows = [
+				{
+					...mockWindowStateStore.store.windows[0],
+					id: 'primary',
+					sessionIds: ['session-1'],
+				},
+				{
+					id: '2',
+					x: 300,
+					y: 200,
+					width: 900,
+					height: 700,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['session-2'],
+					activeSessionId: 'session-2',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: true,
+				},
+			];
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2'], {});
+			windowEventHandlers.closed![1]();
+
+			expect(mockWindowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+				'primary',
+			]);
+			expect(windowManager.windowRegistry.get('2')).toBeUndefined();
+		});
+
+		it('should move secondary window sessions to primary before close', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => false,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2', 'session-3'], {});
+			windowCloseHandler!();
+
+			expect(windowManager.windowRegistry.get('primary')?.sessionIds).toEqual([
+				'session-1',
+				'session-2',
+				'session-3',
+			]);
+			expect(windowManager.windowRegistry.get('2')?.sessionIds).toEqual([]);
+			expect(mockWebContents.send).toHaveBeenCalledWith('windows:sessionsMovedToPrimary', {
+				sessionIds: ['session-2', 'session-3'],
+				fromWindowId: '2',
+				toWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						isMain: true,
+						sessionIds: ['session-1', 'session-2', 'session-3'],
+						activeSessionId: null,
+					},
+					{
+						id: '2',
+						isMain: false,
+						sessionIds: [],
+						activeSessionId: null,
+					},
+				],
+			});
+			expect(recordMultiWindowUsage).toHaveBeenCalledWith(
+				undefined,
+				windowManager.windowRegistry,
+				'window_closed',
+				1
+			);
+		});
+
+		it('should keep secondary window state when closing during app quit', async () => {
+			mockWindowStateStore.store.windows = [
+				{
+					...mockWindowStateStore.store.windows[0],
+					id: 'primary',
+					sessionIds: ['session-1'],
+				},
+				{
+					id: '2',
+					x: 300,
+					y: 200,
+					width: 900,
+					height: 700,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: ['session-2'],
+					activeSessionId: 'session-2',
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: true,
+				},
+			];
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				isQuitting: () => true,
+			});
+
+			windowManager.createWindow('primary', ['session-1']);
+			windowManager.createSecondaryWindow(['session-2'], {});
+			windowEventHandlers.closed![1]();
+
+			expect(mockWindowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+				'primary',
+				'2',
+			]);
+			expect(windowManager.windowRegistry.get('2')).toBeUndefined();
 		});
 
 		it('should log window creation details', async () => {

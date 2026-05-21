@@ -22,6 +22,9 @@ import {
 	FolderOpen,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
+import type { WindowBounds } from '../../shared/types/window';
+import { useOptionalWindowContext } from '../contexts/WindowContext';
+import { notifyToast } from '../stores/notificationStore';
 import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
@@ -82,6 +85,13 @@ interface TabBarProps {
 	colorBlindMode?: boolean;
 }
 
+interface DragPreviewState {
+	label: string;
+	x: number;
+	y: number;
+	targetWindowId: string | null;
+}
+
 interface TabProps {
 	tab: AITab;
 	tabId: string;
@@ -95,8 +105,10 @@ interface TabProps {
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -123,6 +135,8 @@ interface TabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/** Stable callback - receives tabId */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -185,6 +199,62 @@ function getTabDisplayName(tab: AITab): string {
 	return 'New Session';
 }
 
+function isPointOutsideBounds(screenX: number, screenY: number, bounds: WindowBounds): boolean {
+	return (
+		screenX < bounds.x ||
+		screenX > bounds.x + bounds.width ||
+		screenY < bounds.y ||
+		screenY > bounds.y + bounds.height
+	);
+}
+
+function getDragPreviewPosition(
+	screenX: number,
+	screenY: number,
+	bounds: WindowBounds
+): Pick<DragPreviewState, 'x' | 'y'> {
+	return {
+		x: screenX - bounds.x + 12,
+		y: screenY - bounds.y + 12,
+	};
+}
+
+function setTabDragImage(
+	dataTransfer: DataTransfer,
+	label: string,
+	theme: Theme
+): HTMLDivElement | null {
+	if (!dataTransfer.setDragImage || typeof document === 'undefined') {
+		return null;
+	}
+
+	const dragImage = document.createElement('div');
+	dragImage.textContent = label;
+	Object.assign(dragImage.style, {
+		position: 'fixed',
+		top: '-1000px',
+		left: '-1000px',
+		maxWidth: '220px',
+		padding: '6px 10px',
+		borderRadius: '6px',
+		border: `1px solid ${theme.colors.accent}`,
+		background: theme.colors.bgMain,
+		color: theme.colors.textMain,
+		boxShadow: '0 10px 24px rgba(0, 0, 0, 0.32)',
+		fontSize: '12px',
+		fontWeight: '500',
+		whiteSpace: 'nowrap',
+		overflow: 'hidden',
+		textOverflow: 'ellipsis',
+		pointerEvents: 'none',
+		zIndex: '9999',
+	});
+	document.body.appendChild(dragImage);
+	dataTransfer.setDragImage(dragImage, 12, 12);
+
+	return dragImage;
+}
+
 /**
  * Individual tab component styled like browser tabs (Safari/Chrome).
  * All tabs have visible borders; active tab connects to content area.
@@ -201,6 +271,7 @@ const Tab = memo(function Tab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -217,6 +288,7 @@ const Tab = memo(function Tab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -285,6 +357,15 @@ const Tab = memo(function Tab({
 			}
 		}, 100);
 	};
+
+	const openOverlayAt = useCallback((left: number, top: number) => {
+		if (hoverTimeoutRef.current) {
+			clearTimeout(hoverTimeoutRef.current);
+			hoverTimeoutRef.current = null;
+		}
+		setOverlayPosition({ top, left });
+		setOverlayOpen(true);
+	}, []);
 
 	// Event handlers using stable tabId to avoid inline closure captures
 	const handleMouseDown = useCallback(
@@ -391,6 +472,15 @@ const Tab = memo(function Tab({
 		[onMoveToLast, tabId]
 	);
 
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId]
+	);
+
 	const handleCopyContextClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -466,6 +556,13 @@ const Tab = memo(function Tab({
 		[onDragStart, tabId]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tabId, e);
+		},
+		[onDrag, tabId]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tabId, e);
@@ -473,11 +570,27 @@ const Tab = memo(function Tab({
 		[onDragOver, tabId]
 	);
 
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tabId, e);
+		},
+		[onDragEnd, tabId]
+	);
+
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
 			onDrop(tabId, e);
 		},
 		[onDrop, tabId]
+	);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			openOverlayAt(e.clientX, e.clientY);
+		},
+		[openOverlayAt]
 	);
 
 	// Memoize display name to avoid recalculation on every render
@@ -538,9 +651,11 @@ const Tab = memo(function Tab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
+			onContextMenu={handleContextMenu}
 		>
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
 			{tab.state === 'busy' && (
@@ -848,6 +963,23 @@ const Tab = memo(function Tab({
 									</button>
 								)}
 
+								{/* Window Move Actions Section */}
+								{onMoveToNewWindow && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{/* Move current agent to a separate window */}
+								{onMoveToNewWindow && (
+									<button
+										onClick={handleMoveToNewWindowClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to New Window
+									</button>
+								)}
+
 								{/* Tab Close Actions Section - divider and close options */}
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
@@ -937,8 +1069,10 @@ interface FileTabProps {
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
-	onDragEnd: () => void;
+	onDragEnd: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
@@ -985,6 +1119,7 @@ const FileTab = memo(function FileTab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -1182,11 +1317,25 @@ const FileTab = memo(function FileTab({
 		[onDragStart, tab.id]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tab.id, e);
+		},
+		[onDrag, tab.id]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tab.id, e);
 		},
 		[onDragOver, tab.id]
+	);
+
+	const handleTabDragEnd = useCallback(
+		(e: React.DragEvent) => {
+			onDragEnd(tab.id, e);
+		},
+		[onDragEnd, tab.id]
 	);
 
 	const handleTabDrop = useCallback(
@@ -1258,8 +1407,9 @@ const FileTab = memo(function FileTab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
+			onDragEnd={handleTabDragEnd}
 			onDrop={handleTabDrop}
 		>
 			{/* Unsaved edits indicator - pencil icon */}
@@ -1540,6 +1690,8 @@ function TabBarInner({
 }: TabBarProps) {
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+	const [draggingOutsideWindow, setDraggingOutsideWindow] = useState(false);
+	const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
 	// Use prop if provided (controlled), otherwise use local state (uncontrolled)
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
@@ -1550,7 +1702,12 @@ function TabBarInner({
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
 	const stickyRightRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+	const windowBoundsRef = useRef<WindowBounds | null>(null);
+	const dragTargetWindowIdRef = useRef<string | null>(null);
+	const highlightedWindowIdRef = useRef<string | null>(null);
+	const lastWindowPointLookupRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
+	const windowContext = useOptionalWindowContext();
 
 	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
 	const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -1625,11 +1782,182 @@ function TabBarInner({
 		});
 	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId]);
 
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
+	const clearHighlightedDropZone = useCallback(() => {
+		const highlightedWindowId = highlightedWindowIdRef.current;
+		if (!highlightedWindowId) {
+			return;
+		}
+
+		highlightedWindowIdRef.current = null;
+		void window.maestro?.windows?.highlightDropZone?.(highlightedWindowId, false);
 	}, []);
+
+	const setHighlightedDropZone = useCallback(
+		(windowId: string | null) => {
+			if (highlightedWindowIdRef.current === windowId) {
+				return;
+			}
+
+			clearHighlightedDropZone();
+			highlightedWindowIdRef.current = windowId;
+			if (windowId) {
+				void window.maestro?.windows?.highlightDropZone?.(windowId, true);
+			}
+		},
+		[clearHighlightedDropZone]
+	);
+
+	const isLastPrimarySessionTab = useCallback(
+		(tabId: string) => {
+			const primarySessionId = windowContext?.sessionIds[0];
+			return Boolean(
+				windowContext?.isMainWindow &&
+				windowContext.sessionIds.length === 1 &&
+				(primarySessionId === tabId || primarySessionId === windowContext.activeSessionId)
+			);
+		},
+		[windowContext?.activeSessionId, windowContext?.isMainWindow, windowContext?.sessionIds]
+	);
+
+	const showPrimaryLastTabToast = useCallback(() => {
+		notifyToast({
+			type: 'warning',
+			title: 'Primary Window Needs a Tab',
+			message: 'Move another tab into the primary window before moving its last tab out.',
+			skipCustomNotification: true,
+		});
+	}, []);
+
+	const getDragPreviewLabel = useCallback(
+		(tabId: string) => {
+			const aiTab = tabs.find((tab) => tab.id === tabId);
+			if (aiTab) {
+				return getTabDisplayName(aiTab);
+			}
+
+			const fileTab = unifiedTabs?.find((tab) => tab.id === tabId && tab.type === 'file');
+			return fileTab?.type === 'file' ? `${fileTab.data.name}${fileTab.data.extension}` : 'Tab';
+		},
+		[tabs, unifiedTabs]
+	);
+
+	const lookupDragTargetWindow = useCallback(
+		(screenX: number, screenY: number) => {
+			const findWindowAtPoint = window.maestro?.windows?.findWindowAtPoint;
+			if (!findWindowAtPoint || (screenX === 0 && screenY === 0)) {
+				dragTargetWindowIdRef.current = null;
+				setHighlightedDropZone(null);
+				return;
+			}
+
+			const lookupKey = `${screenX}:${screenY}`;
+			if (lastWindowPointLookupRef.current === lookupKey) {
+				return;
+			}
+			lastWindowPointLookupRef.current = lookupKey;
+
+			void findWindowAtPoint(screenX, screenY).then((windowInfo) => {
+				if (lastWindowPointLookupRef.current === lookupKey) {
+					const nextTargetWindowId = windowInfo?.id ?? null;
+					dragTargetWindowIdRef.current = nextTargetWindowId;
+					setDragPreview((currentPreview) =>
+						currentPreview
+							? { ...currentPreview, targetWindowId: nextTargetWindowId }
+							: currentPreview
+					);
+					setHighlightedDropZone(nextTargetWindowId);
+				}
+			});
+		},
+		[setHighlightedDropZone]
+	);
+
+	const updateDragWindowExitState = useCallback(
+		(screenX: number, screenY: number) => {
+			const bounds = windowBoundsRef.current;
+			if (!bounds || (screenX === 0 && screenY === 0)) {
+				return;
+			}
+
+			const isOutsideWindow = isPointOutsideBounds(screenX, screenY, bounds);
+			setDraggingOutsideWindow(isOutsideWindow);
+			if (isOutsideWindow) {
+				setDragPreview((currentPreview) =>
+					currentPreview
+						? { ...currentPreview, ...getDragPreviewPosition(screenX, screenY, bounds) }
+						: currentPreview
+				);
+				lookupDragTargetWindow(screenX, screenY);
+			} else {
+				dragTargetWindowIdRef.current = null;
+				lastWindowPointLookupRef.current = null;
+				setDragPreview(null);
+				setHighlightedDropZone(null);
+			}
+		},
+		[lookupDragTargetWindow, setHighlightedDropZone]
+	);
+
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			if (isLastPrimarySessionTab(tabId)) {
+				e.preventDefault();
+				showPrimaryLastTabToast();
+				return;
+			}
+
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+			setDraggingOutsideWindow(false);
+			setDragPreview(null);
+			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
+			clearHighlightedDropZone();
+
+			const label = getDragPreviewLabel(tabId);
+			const dragImage = setTabDragImage(e.dataTransfer, label, theme);
+			if (dragImage) {
+				setTimeout(() => dragImage.remove(), 0);
+			}
+
+			const getWindowBounds = window.maestro?.windows?.getWindowBounds;
+			if (!getWindowBounds) {
+				return;
+			}
+
+			const windowBoundsPromise = getWindowBounds();
+			if (!windowBoundsPromise) {
+				return;
+			}
+
+			void windowBoundsPromise.then((bounds) => {
+				windowBoundsRef.current = bounds;
+				setDragPreview({
+					label,
+					...getDragPreviewPosition(e.screenX, e.screenY, bounds),
+					targetWindowId: null,
+				});
+				updateDragWindowExitState(e.screenX, e.screenY);
+			});
+		},
+		[
+			clearHighlightedDropZone,
+			getDragPreviewLabel,
+			isLastPrimarySessionTab,
+			showPrimaryLastTabToast,
+			theme,
+			updateDragWindowExitState,
+		]
+	);
+
+	const handleDrag = useCallback(
+		(_tabId: string, e: React.DragEvent) => {
+			updateDragWindowExitState(e.screenX, e.screenY);
+		},
+		[updateDragWindowExitState]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -1642,10 +1970,75 @@ function TabBarInner({
 		[draggingTabId]
 	);
 
-	const handleDragEnd = useCallback(() => {
-		setDraggingTabId(null);
-		setDragOverTabId(null);
-	}, []);
+	const handleDragEnd = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			const dropScreenX = e.screenX;
+			const dropScreenY = e.screenY;
+			const targetWindowId = dragTargetWindowIdRef.current;
+			const sourceWindowId = windowContext?.windowId;
+			const sessionId = windowContext?.activeSessionId;
+			const closeSourceTab = windowContext?.closeTab;
+			const createSessionWindowAtPoint = (screenX: number, screenY: number) => {
+				if (!sessionId || !window.maestro?.windows?.create) {
+					return;
+				}
+
+				void window.maestro.windows
+					.create([sessionId], { x: screenX - 100, y: screenY - 50 })
+					.then(() => closeSourceTab?.(sessionId));
+			};
+			const moveSessionToWindow = (nextTargetWindowId: string | null | undefined) => {
+				if (
+					nextTargetWindowId &&
+					sourceWindowId &&
+					sessionId &&
+					nextTargetWindowId !== sourceWindowId &&
+					window.maestro?.windows?.moveSession
+				) {
+					void window.maestro.windows.moveSession(sessionId, sourceWindowId, nextTargetWindowId);
+				}
+			};
+			const handleOutsideDrop = (nextTargetWindowId: string | null | undefined) => {
+				if (nextTargetWindowId) {
+					moveSessionToWindow(nextTargetWindowId);
+				} else {
+					createSessionWindowAtPoint(dropScreenX, dropScreenY);
+				}
+			};
+
+			if (isLastPrimarySessionTab(tabId)) {
+				showPrimaryLastTabToast();
+			} else if (targetWindowId) {
+				moveSessionToWindow(targetWindowId);
+			} else if (
+				windowBoundsRef.current &&
+				(dropScreenX !== 0 || dropScreenY !== 0) &&
+				isPointOutsideBounds(dropScreenX, dropScreenY, windowBoundsRef.current) &&
+				window.maestro?.windows?.findWindowAtPoint
+			) {
+				void window.maestro.windows
+					.findWindowAtPoint(dropScreenX, dropScreenY)
+					.then((windowInfo) => handleOutsideDrop(windowInfo?.id));
+			}
+
+			setDraggingTabId(null);
+			setDragOverTabId(null);
+			setDraggingOutsideWindow(false);
+			setDragPreview(null);
+			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
+			clearHighlightedDropZone();
+		},
+		[
+			clearHighlightedDropZone,
+			isLastPrimarySessionTab,
+			showPrimaryLastTabToast,
+			windowContext?.activeSessionId,
+			windowContext?.closeTab,
+			windowContext?.windowId,
+		]
+	);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
@@ -1674,8 +2067,14 @@ function TabBarInner({
 
 			setDraggingTabId(null);
 			setDragOverTabId(null);
+			setDraggingOutsideWindow(false);
+			setDragPreview(null);
+			windowBoundsRef.current = null;
+			dragTargetWindowIdRef.current = null;
+			lastWindowPointLookupRef.current = null;
+			clearHighlightedDropZone();
 		},
-		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder, clearHighlightedDropZone]
 	);
 
 	const handleRenameRequest = useCallback(
@@ -1687,6 +2086,12 @@ function TabBarInner({
 		},
 		[onRequestRename]
 	);
+
+	useEffect(() => {
+		return () => {
+			clearHighlightedDropZone();
+		};
+	}, [clearHighlightedDropZone]);
 
 	// Check if tabs overflow the container (need sticky + button)
 	useEffect(() => {
@@ -1744,6 +2149,25 @@ function TabBarInner({
 			}
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+	);
+
+	const handleMoveToNewWindow = useCallback(
+		(tabId: string) => {
+			const sessionId = windowContext?.sessionIds.includes(tabId)
+				? tabId
+				: windowContext?.activeSessionId;
+			if (!sessionId) {
+				return;
+			}
+
+			if (isLastPrimarySessionTab(sessionId)) {
+				showPrimaryLastTabToast();
+				return;
+			}
+
+			void windowContext?.moveSessionToNewWindow(sessionId);
+		},
+		[isLastPrimarySessionTab, showPrimaryLastTabToast, windowContext]
 	);
 
 	// Stable callback wrappers that receive tabId from the Tab component
@@ -1838,110 +2262,248 @@ function TabBarInner({
 	}, []);
 
 	return (
-		<div
-			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
-			data-tour="tab-bar"
-			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-			}}
-		>
-			{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
+		<>
 			<div
-				ref={stickyLeftRef}
-				className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
-				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
+				ref={tabBarRef}
+				className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-shadow duration-150"
+				data-tour="tab-bar"
+				data-drag-outside-window={draggingOutsideWindow ? 'true' : undefined}
+				data-drop-zone-highlighted={windowContext?.isDropZoneHighlighted ? 'true' : undefined}
+				style={{
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: windowContext?.isDropZoneHighlighted
+						? theme.colors.accent
+						: theme.colors.border,
+					boxShadow: windowContext?.isDropZoneHighlighted
+						? `inset 0 0 0 2px ${theme.colors.accent}`
+						: undefined,
+				}}
 			>
-				{/* Tab search button */}
-				{onOpenTabSearch && (
-					<button
-						onClick={onOpenTabSearch}
-						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						title={`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`}
-					>
-						<Search className="w-4 h-4" />
-					</button>
-				)}
-				{/* Unread filter toggle */}
-				<button
-					onClick={toggleUnreadFilter}
-					className="relative flex items-center justify-center w-6 h-6 rounded transition-colors"
-					style={{
-						color: showUnreadOnly ? theme.colors.accent : theme.colors.textDim,
-						opacity: showUnreadOnly ? 1 : 0.5,
-					}}
-					title={
-						showUnreadOnly
-							? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`
-							: `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`
-					}
+				{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
+				<div
+					ref={stickyLeftRef}
+					className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
+					style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 				>
-					<Mail className="w-4 h-4" />
-					{/* Notification dot */}
-					<div
-						className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
-						style={{ backgroundColor: theme.colors.accent }}
-					/>
-				</button>
-			</div>
-
-			{/* Empty state when filter is on but no unread tabs */}
-			{showUnreadOnly &&
-				(displayedUnifiedTabs ? displayedUnifiedTabs.length === 0 : displayedTabs.length === 0) && (
-					<div
-						className="flex items-center px-3 py-1.5 text-xs italic shrink-0 self-center mb-1"
-						style={{ color: theme.colors.textDim }}
+					{/* Tab search button */}
+					{onOpenTabSearch && (
+						<button
+							onClick={onOpenTabSearch}
+							className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+							title={`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`}
+						>
+							<Search className="w-4 h-4" />
+						</button>
+					)}
+					{/* Unread filter toggle */}
+					<button
+						onClick={toggleUnreadFilter}
+						className="relative flex items-center justify-center w-6 h-6 rounded transition-colors"
+						style={{
+							color: showUnreadOnly ? theme.colors.accent : theme.colors.textDim,
+							opacity: showUnreadOnly ? 1 : 0.5,
+						}}
+						title={
+							showUnreadOnly
+								? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`
+								: `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`
+						}
 					>
-						No unread tabs
-					</div>
-				)}
+						<Mail className="w-4 h-4" />
+						{/* Notification dot */}
+						<div
+							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
+							style={{ backgroundColor: theme.colors.accent }}
+						/>
+					</button>
+				</div>
 
-			{/* Tabs with separators between inactive tabs */}
-			{/* When unifiedTabs is provided, render both AI and file tabs from unified list */}
-			{displayedUnifiedTabs
-				? displayedUnifiedTabs.map((unifiedTab, index) => {
-						// Determine if this tab is active (based on type)
-						// AI tabs are active when: they match activeTabId AND no file tab is selected
-						// File tabs are active when: they match activeFileTabId
-						const isActive =
-							unifiedTab.type === 'ai'
-								? unifiedTab.id === activeTabId && !activeFileTabId
-								: unifiedTab.id === activeFileTabId;
+				{/* Empty state when filter is on but no unread tabs */}
+				{showUnreadOnly &&
+					(displayedUnifiedTabs
+						? displayedUnifiedTabs.length === 0
+						: displayedTabs.length === 0) && (
+						<div
+							className="flex items-center px-3 py-1.5 text-xs italic shrink-0 self-center mb-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							No unread tabs
+						</div>
+					)}
 
-						// Check previous tab's active state for separator logic
-						const prevUnifiedTab = index > 0 ? displayedUnifiedTabs[index - 1] : null;
-						const isPrevActive = prevUnifiedTab
-							? prevUnifiedTab.type === 'ai'
-								? prevUnifiedTab.id === activeTabId && !activeFileTabId
-								: prevUnifiedTab.id === activeFileTabId
-							: false;
+				{/* Tabs with separators between inactive tabs */}
+				{/* When unifiedTabs is provided, render both AI and file tabs from unified list */}
+				{displayedUnifiedTabs
+					? displayedUnifiedTabs.map((unifiedTab, index) => {
+							// Determine if this tab is active (based on type)
+							// AI tabs are active when: they match activeTabId AND no file tab is selected
+							// File tabs are active when: they match activeFileTabId
+							const isActive =
+								unifiedTab.type === 'ai'
+									? unifiedTab.id === activeTabId && !activeFileTabId
+									: unifiedTab.id === activeFileTabId;
 
-						// Get original index in the FULL unified list (not filtered)
-						const allTabs = unifiedTabs ?? [];
-						const originalIndex = allTabs.findIndex((ut) => ut.id === unifiedTab.id);
+							// Check previous tab's active state for separator logic
+							const prevUnifiedTab = index > 0 ? displayedUnifiedTabs[index - 1] : null;
+							const isPrevActive = prevUnifiedTab
+								? prevUnifiedTab.type === 'ai'
+									? prevUnifiedTab.id === activeTabId && !activeFileTabId
+									: prevUnifiedTab.id === activeFileTabId
+								: false;
 
-						// Show separator between inactive tabs
-						const showSeparator = index > 0 && !isActive && !isPrevActive;
+							// Get original index in the FULL unified list (not filtered)
+							const allTabs = unifiedTabs ?? [];
+							const originalIndex = allTabs.findIndex((ut) => ut.id === unifiedTab.id);
 
-						// Position info for move actions
-						const isFirstTab = originalIndex === 0;
-						const isLastTab = originalIndex === allTabs.length - 1;
+							// Show separator between inactive tabs
+							const showSeparator = index > 0 && !isActive && !isPrevActive;
 
-						// Shortcut hint: 1-9 for first 9 tabs, 0 for last tab (Cmd+0)
-						const shortcutHint = !showUnreadOnly
-							? isLastTab
-								? 0
-								: originalIndex < 9
-									? originalIndex + 1
-									: null
-							: null;
+							// Position info for move actions
+							const isFirstTab = originalIndex === 0;
+							const isLastTab = originalIndex === allTabs.length - 1;
 
-						if (unifiedTab.type === 'ai') {
-							const tab = unifiedTab.data;
+							// Shortcut hint: 1-9 for first 9 tabs, 0 for last tab (Cmd+0)
+							const shortcutHint = !showUnreadOnly
+								? isLastTab
+									? 0
+									: originalIndex < 9
+										? originalIndex + 1
+										: null
+								: null;
+
+							if (unifiedTab.type === 'ai') {
+								const tab = unifiedTab.data;
+								return (
+									<React.Fragment key={unifiedTab.id}>
+										{showSeparator && (
+											<div
+												className="w-px h-4 self-center shrink-0"
+												style={{ backgroundColor: theme.colors.border }}
+											/>
+										)}
+										<Tab
+											tab={tab}
+											tabId={tab.id}
+											isActive={isActive}
+											theme={theme}
+											canClose={canClose}
+											onSelect={onTabSelect}
+											onClose={onTabClose}
+											onDragStart={handleDragStart}
+											onDrag={handleDrag}
+											onDragOver={handleDragOver}
+											onDragEnd={handleDragEnd}
+											onDrop={handleDrop}
+											isDragging={draggingTabId === tab.id}
+											isDragOver={dragOverTabId === tab.id}
+											onRename={handleRenameRequest}
+											onStar={onTabStar && tab.agentSessionId ? handleTabStar : undefined}
+											onMarkUnread={onTabMarkUnread ? handleTabMarkUnread : undefined}
+											onMergeWith={onMergeWith ? handleTabMergeWith : undefined}
+											onSendToAgent={onSendToAgent ? handleTabSendToAgent : undefined}
+											onSummarizeAndContinue={
+												onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5
+													? handleTabSummarizeAndContinue
+													: undefined
+											}
+											onCopyContext={
+												onCopyContext && (tab.logs?.length ?? 0) >= 1
+													? handleTabCopyContext
+													: undefined
+											}
+											onExportHtml={onExportHtml ? handleTabExportHtml : undefined}
+											onPublishGist={
+												onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1
+													? handleTabPublishGist
+													: undefined
+											}
+											onMoveToFirst={
+												!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+											}
+											onMoveToLast={
+												!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined
+											}
+											onMoveToNewWindow={
+												windowContext?.activeSessionId ? handleMoveToNewWindow : undefined
+											}
+											isFirstTab={isFirstTab}
+											isLastTab={isLastTab}
+											shortcutHint={shortcutHint}
+											hasDraft={hasDraft(tab)}
+											registerRef={(el) => registerTabRef(tab.id, el)}
+											onCloseAllTabs={onCloseAllTabs}
+											onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+											onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+											onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+											totalTabs={allTabs.length}
+											tabIndex={originalIndex}
+										/>
+									</React.Fragment>
+								);
+							} else {
+								// File tab
+								const fileTab = unifiedTab.data;
+								return (
+									<React.Fragment key={unifiedTab.id}>
+										{showSeparator && (
+											<div
+												className="w-px h-4 self-center shrink-0"
+												style={{ backgroundColor: theme.colors.border }}
+											/>
+										)}
+										<FileTab
+											tab={fileTab}
+											isActive={isActive}
+											theme={theme}
+											onSelect={onFileTabSelect || (() => {})}
+											onClose={onFileTabClose || (() => {})}
+											onDragStart={handleDragStart}
+											onDrag={handleDrag}
+											onDragOver={handleDragOver}
+											onDragEnd={handleDragEnd}
+											onDrop={handleDrop}
+											isDragging={draggingTabId === fileTab.id}
+											isDragOver={dragOverTabId === fileTab.id}
+											registerRef={(el) => registerTabRef(fileTab.id, el)}
+											onMoveToFirst={
+												!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+											}
+											onMoveToLast={
+												!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined
+											}
+											isFirstTab={isFirstTab}
+											isLastTab={isLastTab}
+											onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+											onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+											onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+											totalTabs={allTabs.length}
+											tabIndex={originalIndex}
+											colorBlindMode={colorBlindMode}
+											shortcutHint={shortcutHint}
+										/>
+									</React.Fragment>
+								);
+							}
+						})
+					: // Fallback: render AI tabs only (legacy mode when unifiedTabs not provided)
+						displayedTabs.map((tab, index) => {
+							// AI tabs are active when: they match activeTabId AND no file tab is selected
+							const isActive = tab.id === activeTabId && !activeFileTabId;
+							const prevTab = index > 0 ? displayedTabs[index - 1] : null;
+							const isPrevActive = prevTab?.id === activeTabId && !activeFileTabId;
+							// Get original index for shortcut hints (Cmd+1-9)
+							const originalIndex = tabs.findIndex((t) => t.id === tab.id);
+
+							// Show separator between inactive tabs (not adjacent to active tab)
+							const showSeparator = index > 0 && !isActive && !isPrevActive;
+
+							// Calculate position info for move actions (within FULL tabs array, not filtered)
+							const isFirstTab = originalIndex === 0;
+							const isLastTab = originalIndex === tabs.length - 1;
+
 							return (
-								<React.Fragment key={unifiedTab.id}>
+								<React.Fragment key={tab.id}>
 									{showSeparator && (
 										<div
 											className="w-px h-4 self-center shrink-0"
@@ -1957,6 +2519,7 @@ function TabBarInner({
 										onSelect={onTabSelect}
 										onClose={onTabClose}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}
@@ -1983,168 +2546,75 @@ function TabBarInner({
 												? handleTabPublishGist
 												: undefined
 										}
-										onMoveToFirst={
-											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
+										onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
+										onMoveToNewWindow={
+											windowContext?.activeSessionId ? handleMoveToNewWindow : undefined
 										}
-										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
-										shortcutHint={shortcutHint}
+										shortcutHint={
+											!showUnreadOnly
+												? isLastTab
+													? 0
+													: originalIndex < 9
+														? originalIndex + 1
+														: null
+												: null
+										}
 										hasDraft={hasDraft(tab)}
 										registerRef={(el) => registerTabRef(tab.id, el)}
 										onCloseAllTabs={onCloseAllTabs}
 										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
 										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
 										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
-										totalTabs={allTabs.length}
+										totalTabs={tabs.length}
 										tabIndex={originalIndex}
 									/>
 								</React.Fragment>
 							);
-						} else {
-							// File tab
-							const fileTab = unifiedTab.data;
-							return (
-								<React.Fragment key={unifiedTab.id}>
-									{showSeparator && (
-										<div
-											className="w-px h-4 self-center shrink-0"
-											style={{ backgroundColor: theme.colors.border }}
-										/>
-									)}
-									<FileTab
-										tab={fileTab}
-										isActive={isActive}
-										theme={theme}
-										onSelect={onFileTabSelect || (() => {})}
-										onClose={onFileTabClose || (() => {})}
-										onDragStart={handleDragStart}
-										onDragOver={handleDragOver}
-										onDragEnd={handleDragEnd}
-										onDrop={handleDrop}
-										isDragging={draggingTabId === fileTab.id}
-										isDragOver={dragOverTabId === fileTab.id}
-										registerRef={(el) => registerTabRef(fileTab.id, el)}
-										onMoveToFirst={
-											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
-										}
-										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
-										isFirstTab={isFirstTab}
-										isLastTab={isLastTab}
-										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
-										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
-										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
-										totalTabs={allTabs.length}
-										tabIndex={originalIndex}
-										colorBlindMode={colorBlindMode}
-										shortcutHint={shortcutHint}
-									/>
-								</React.Fragment>
-							);
-						}
-					})
-				: // Fallback: render AI tabs only (legacy mode when unifiedTabs not provided)
-					displayedTabs.map((tab, index) => {
-						// AI tabs are active when: they match activeTabId AND no file tab is selected
-						const isActive = tab.id === activeTabId && !activeFileTabId;
-						const prevTab = index > 0 ? displayedTabs[index - 1] : null;
-						const isPrevActive = prevTab?.id === activeTabId && !activeFileTabId;
-						// Get original index for shortcut hints (Cmd+1-9)
-						const originalIndex = tabs.findIndex((t) => t.id === tab.id);
+						})}
 
-						// Show separator between inactive tabs (not adjacent to active tab)
-						const showSeparator = index > 0 && !isActive && !isPrevActive;
-
-						// Calculate position info for move actions (within FULL tabs array, not filtered)
-						const isFirstTab = originalIndex === 0;
-						const isLastTab = originalIndex === tabs.length - 1;
-
-						return (
-							<React.Fragment key={tab.id}>
-								{showSeparator && (
-									<div
-										className="w-px h-4 self-center shrink-0"
-										style={{ backgroundColor: theme.colors.border }}
-									/>
-								)}
-								<Tab
-									tab={tab}
-									tabId={tab.id}
-									isActive={isActive}
-									theme={theme}
-									canClose={canClose}
-									onSelect={onTabSelect}
-									onClose={onTabClose}
-									onDragStart={handleDragStart}
-									onDragOver={handleDragOver}
-									onDragEnd={handleDragEnd}
-									onDrop={handleDrop}
-									isDragging={draggingTabId === tab.id}
-									isDragOver={dragOverTabId === tab.id}
-									onRename={handleRenameRequest}
-									onStar={onTabStar && tab.agentSessionId ? handleTabStar : undefined}
-									onMarkUnread={onTabMarkUnread ? handleTabMarkUnread : undefined}
-									onMergeWith={onMergeWith ? handleTabMergeWith : undefined}
-									onSendToAgent={onSendToAgent ? handleTabSendToAgent : undefined}
-									onSummarizeAndContinue={
-										onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5
-											? handleTabSummarizeAndContinue
-											: undefined
-									}
-									onCopyContext={
-										onCopyContext && (tab.logs?.length ?? 0) >= 1 ? handleTabCopyContext : undefined
-									}
-									onExportHtml={onExportHtml ? handleTabExportHtml : undefined}
-									onPublishGist={
-										onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1
-											? handleTabPublishGist
-											: undefined
-									}
-									onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
-									onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
-									isFirstTab={isFirstTab}
-									isLastTab={isLastTab}
-									shortcutHint={
-										!showUnreadOnly
-											? isLastTab
-												? 0
-												: originalIndex < 9
-													? originalIndex + 1
-													: null
-											: null
-									}
-									hasDraft={hasDraft(tab)}
-									registerRef={(el) => registerTabRef(tab.id, el)}
-									onCloseAllTabs={onCloseAllTabs}
-									onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
-									onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
-									onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
-									totalTabs={tabs.length}
-									tabIndex={originalIndex}
-								/>
-							</React.Fragment>
-						);
-					})}
-
-			{/* New Tab Button - sticky on right when tabs overflow, with full-height opaque background */}
-			<div
-				ref={stickyRightRef}
-				className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
-				style={{
-					backgroundColor: theme.colors.bgSidebar,
-					zIndex: 5,
-				}}
-			>
-				<button
-					onClick={onNewTab}
-					className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title={`New tab (${formatShortcutKeys(['Meta', 't'])})`}
+				{/* New Tab Button - sticky on right when tabs overflow, with full-height opaque background */}
+				<div
+					ref={stickyRightRef}
+					className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						zIndex: 5,
+					}}
 				>
-					<Plus className="w-4 h-4" />
-				</button>
+					<button
+						onClick={onNewTab}
+						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						title={`New tab (${formatShortcutKeys(['Meta', 't'])})`}
+					>
+						<Plus className="w-4 h-4" />
+					</button>
+				</div>
 			</div>
-		</div>
+			{draggingOutsideWindow &&
+				dragPreview &&
+				createPortal(
+					<div
+						className="fixed z-[9999] pointer-events-none max-w-[220px] truncate rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-xl"
+						style={{
+							left: dragPreview.x,
+							top: dragPreview.y,
+							backgroundColor: theme.colors.bgMain,
+							borderColor: dragPreview.targetWindowId ? theme.colors.accent : theme.colors.border,
+							color: theme.colors.textMain,
+							boxShadow: dragPreview.targetWindowId
+								? `0 0 0 2px ${theme.colors.accent}55, 0 12px 28px rgba(0, 0, 0, 0.35)`
+								: '0 12px 28px rgba(0, 0, 0, 0.35)',
+						}}
+					>
+						{dragPreview.label}
+					</div>,
+					document.body
+				)}
+		</>
 	);
 }
 

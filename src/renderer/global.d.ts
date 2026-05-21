@@ -149,6 +149,68 @@ interface UsageStats {
 
 type HistoryEntryType = 'AUTO' | 'USER';
 
+interface MaestroWindowState {
+	id: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	isMaximized: boolean;
+	isFullScreen: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
+}
+
+interface MaestroWindowInfo {
+	id: string;
+	isMain: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+}
+
+interface MaestroWindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+interface MaestroWindowCreateBounds {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+}
+
+interface MaestroWindowCloseResult {
+	closed: boolean;
+	reason?: 'primary-window' | 'not-found';
+}
+
+interface MaestroWindowSessionMovedEvent {
+	sessionId: string;
+	fromWindowId: string;
+	toWindowId: string;
+	windows: MaestroWindowInfo[];
+}
+
+interface MaestroWindowSessionsMovedToPrimaryEvent {
+	sessionIds: string[];
+	fromWindowId: string;
+	toWindowId: string;
+	windows: MaestroWindowInfo[];
+}
+
+interface MaestroWindowDropZoneHighlightEvent {
+	highlighted: boolean;
+}
+
+type MaestroWindowStateUpdate = Partial<
+	Pick<MaestroWindowState, 'activeSessionId' | 'leftPanelCollapsed' | 'rightPanelCollapsed'>
+>;
+
 /**
  * Result type for reading session messages from agent storage.
  * Used by context merging operations.
@@ -173,6 +235,7 @@ type GroupChatData = {
 	createdAt: number;
 	updatedAt?: number;
 	moderatorAgentId: string;
+	initiatorWindowId?: string | null;
 	moderatorSessionId: string;
 	moderatorAgentSessionId?: string;
 	moderatorConfig?: {
@@ -1330,7 +1393,11 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
-		show: (title: string, body: string) => Promise<{ success: boolean; error?: string }>;
+		show: (
+			title: string,
+			body: string,
+			metadata?: { windowId?: string; sessionId?: string; tabId?: string }
+		) => Promise<{ success: boolean; error?: string }>;
 		speak: (
 			text: string,
 			command?: string
@@ -1713,7 +1780,8 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
-			}
+			},
+			initiatorWindowId?: string | null
 		) => Promise<GroupChatData>;
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;
@@ -2236,6 +2304,14 @@ interface MaestroAPI {
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			multiWindowUsage?: {
+				hasUsedMultipleWindows: boolean;
+				averageWindowCount: number;
+				maxWindowCount: number;
+				totalWindowCreatedEvents: number;
+				totalWindowClosedEvents: number;
+				totalSessionMovedEvents: number;
+			};
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<string>;
@@ -2731,6 +2807,31 @@ interface MaestroAPI {
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
+	};
+
+	// Multi-window API
+	windows: {
+		create: (
+			sessionIds?: string[],
+			bounds?: MaestroWindowCreateBounds
+		) => Promise<MaestroWindowInfo>;
+		close: (windowId: string) => Promise<MaestroWindowCloseResult>;
+		list: () => Promise<MaestroWindowInfo[]>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (sessionId: string, fromWindowId: string, toWindowId: string) => Promise<boolean>;
+		focusWindow: (windowId: string) => Promise<boolean>;
+		getWindowBounds: () => Promise<MaestroWindowBounds>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<MaestroWindowInfo | null>;
+		highlightDropZone: (windowId: string, highlighted: boolean) => Promise<boolean>;
+		getState: () => Promise<MaestroWindowState>;
+		updateState: (update: MaestroWindowStateUpdate) => Promise<MaestroWindowState>;
+		onSessionMoved: (handler: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
+		onSessionsMovedToPrimary: (
+			handler: (event: MaestroWindowSessionsMovedToPrimaryEvent) => void
+		) => () => void;
+		onDropZoneHighlightChanged: (
+			handler: (event: MaestroWindowDropZoneHighlightEvent) => void
+		) => () => void;
 	};
 }
 

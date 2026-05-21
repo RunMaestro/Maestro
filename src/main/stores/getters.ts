@@ -13,7 +13,7 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
-	WindowState,
+	MultiWindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
@@ -63,7 +63,7 @@ export function getAgentConfigsStore(): Store<AgentConfigsData> {
 	return getStoreInstances().agentConfigsStore!;
 }
 
-export function getWindowStateStore(): Store<WindowState> {
+export function getWindowStateStore(): Store<MultiWindowState> {
 	ensureInitialized();
 	return getStoreInstances().windowStateStore!;
 }

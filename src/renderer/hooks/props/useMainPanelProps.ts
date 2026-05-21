@@ -76,6 +76,8 @@ export interface UseMainPanelPropsDeps {
 
 	// Batch run state (undefined matches component prop type)
 	currentSessionBatchState: BatchRunState | undefined;
+	displayBatchRunState: BatchRunState | undefined;
+	displayBatchRunSessionId: string | undefined;
 
 	// File tree
 	fileTree: FileNode[];
@@ -340,6 +342,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			getContextColor: deps.getContextColor,
 			setActiveSessionId: deps.setActiveSessionId,
 			currentSessionBatchState: deps.currentSessionBatchState,
+			displayBatchRunState: deps.displayBatchRunState,
+			displayBatchRunSessionId: deps.displayBatchRunSessionId,
 			onStopBatchRun: deps.handleStopBatchRun,
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
@@ -491,6 +495,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.atMentionSuggestions,
 			deps.selectedAtMentionIndex,
 			deps.currentSessionBatchState,
+			deps.displayBatchRunState,
+			deps.displayBatchRunSessionId,
 			deps.fileTree,
 			deps.canGoBack,
 			deps.canGoForward,

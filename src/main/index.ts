@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { app, BrowserWindow, Menu, powerMonitor, screen } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
@@ -44,6 +44,7 @@ import {
 	registerStatsHandlers,
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
+	registerWindowsHandlers,
 	registerFilesystemHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
@@ -113,11 +114,15 @@ import {
 	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
+	attachPrimaryWindowClosePolicy,
+	type WindowManager,
 } from './app-lifecycle';
+import { getStartupWindowStates } from './app-lifecycle/window-state-restore';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { WindowRegistry } from './window-registry';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -262,12 +267,16 @@ const agentSessionOriginsStore = getAgentSessionOriginsStore();
 // See src/main/history-manager.ts for details.
 
 let mainWindow: BrowserWindow | null = null;
+let windowManager: WindowManager | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
-const safeSend = createSafeSend(() => mainWindow);
+const safeSend = createSafeSend(
+	() => mainWindow,
+	() => BrowserWindow.getAllWindows()
+);
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -285,17 +294,6 @@ const settingsWatcher = createSettingsWatcher({
 const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
 const devServerUrl = `http://localhost:${devServerPort}`;
 
-// Create window manager with dependency injection (Phase 4 refactoring)
-const windowManager = createWindowManager({
-	windowStateStore,
-	isDevelopment,
-	preloadPath: path.join(__dirname, 'preload.js'),
-	rendererPath: path.join(__dirname, '../renderer/index.html'),
-	devServerUrl: devServerUrl,
-	useNativeTitleBar,
-	autoHideMenuBar,
-});
-
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
@@ -310,12 +308,43 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
-	mainWindow = windowManager.createWindow();
+function createWindow(windowId?: string, sessionIds?: string[]) {
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
+
+	const createdWindow = windowManager.createWindow(windowId, sessionIds);
+	const createdWindowId = windowManager.windowRegistry.getWindowId(createdWindow);
+	const createdEntry = createdWindowId
+		? windowManager.windowRegistry.get(createdWindowId)
+		: undefined;
+	if (createdEntry?.isMain || !mainWindow) {
+		mainWindow = createdWindow;
+	}
+	if (createdEntry?.isMain) {
+		attachPrimaryWindowClosePolicy({
+			getPrimaryWindow: () => mainWindow,
+			quitHandler,
+		});
+	}
 	// Handle closed event to clear the reference
-	mainWindow.on('closed', () => {
-		mainWindow = null;
+	createdWindow.on('closed', () => {
+		if (mainWindow === createdWindow) {
+			mainWindow = null;
+		}
 	});
+}
+
+function restoreStartupWindows() {
+	const startupWindows = getStartupWindowStates(
+		windowStateStore,
+		sessionsStore.get('sessions', []),
+		screen
+	);
+
+	for (const windowState of startupWindows) {
+		createWindow(windowState.id, windowState.sessionIds);
+	}
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -342,6 +371,18 @@ app.whenReady().then(async () => {
 	processManager = new ProcessManager();
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
+	windowManager = createWindowManager({
+		windowStateStore,
+		isDevelopment,
+		preloadPath: path.join(__dirname, 'preload.js'),
+		rendererPath: path.join(__dirname, '../renderer/index.html'),
+		devServerUrl: devServerUrl,
+		useNativeTitleBar,
+		autoHideMenuBar,
+		windowRegistry: new WindowRegistry(),
+		isQuitting: () => quitHandler.isQuitConfirmed(),
+		settingsStore: store,
+	});
 
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
@@ -420,9 +461,9 @@ app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
 	}
 
-	// Create main window
-	logger.info('Creating main window', 'Startup');
-	createWindow();
+	// Restore saved windows, falling back to a single primary window for first-run/legacy state.
+	logger.info('Restoring startup windows', 'Startup');
+	restoreStartupWindows();
 
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
@@ -472,6 +513,8 @@ const quitHandler = createQuitHandler({
 	stopSettingsWatcher: () => settingsWatcher.stop(),
 	powerManager,
 	stopSessionCleanup,
+	getWindowRegistry: () => windowManager?.windowRegistry ?? null,
+	windowStateStore,
 });
 quitHandler.setup();
 
@@ -536,6 +579,8 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		sessionsStore,
+		windowManager: windowManager ?? undefined,
+		windowStateStore,
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
@@ -641,6 +686,16 @@ function setupIpcHandlers() {
 		settingsStore: store,
 	});
 
+	// Register multi-window handlers for secondary window lifecycle and session movement
+	if (!windowManager) {
+		throw new Error('Window manager has not been initialized');
+	}
+	registerWindowsHandlers({
+		windowManager,
+		windowStateStore,
+		settingsStore: store,
+	});
+
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() => {
 		const sessions = sessionsStore.get('sessions', []);
@@ -701,7 +756,9 @@ function setupIpcHandlers() {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({
+		getWindowById: (windowId) => windowManager?.windowRegistry.get(windowId)?.browserWindow ?? null,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app });

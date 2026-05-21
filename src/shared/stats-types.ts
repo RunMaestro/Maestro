@@ -67,6 +67,18 @@ export interface SessionLifecycleEvent {
 }
 
 /**
+ * Multi-window usage event - tracks aggregate-safe window count snapshots.
+ */
+export interface MultiWindowEvent {
+	id: string;
+	eventType: 'window_created' | 'window_closed' | 'session_moved';
+	timestamp: number;
+	windowCount: number;
+	secondaryWindowCount: number;
+	sessionCount: number;
+}
+
+/**
  * Time range for querying stats
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -97,6 +109,15 @@ export interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	/** Multi-window usage telemetry derived from aggregate-safe local stats */
+	multiWindowUsage?: {
+		hasUsedMultipleWindows: boolean;
+		averageWindowCount: number;
+		maxWindowCount: number;
+		totalWindowCreatedEvents: number;
+		totalWindowClosedEvents: number;
+		totalSessionMovedEvents: number;
+	};
 }
 
 /**
@@ -112,4 +133,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 5;

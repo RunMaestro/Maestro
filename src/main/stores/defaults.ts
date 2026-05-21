@@ -13,7 +13,7 @@ import type {
 	SessionsData,
 	GroupsData,
 	AgentConfigsData,
-	WindowState,
+	MultiWindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
@@ -87,11 +87,23 @@ export const AGENT_CONFIGS_DEFAULTS: AgentConfigsData = {
 	configs: {},
 };
 
-export const WINDOW_STATE_DEFAULTS: WindowState = {
-	width: 1400,
-	height: 900,
-	isMaximized: false,
-	isFullScreen: false,
+export const WINDOW_STATE_DEFAULTS: MultiWindowState = {
+	primaryWindowId: 'primary',
+	windows: [
+		{
+			id: 'primary',
+			x: 0,
+			y: 0,
+			width: 1400,
+			height: 900,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: null,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		},
+	],
 };
 
 export const CLAUDE_SESSION_ORIGINS_DEFAULTS: ClaudeSessionOriginsData = {

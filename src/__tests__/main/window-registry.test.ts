@@ -1,0 +1,289 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+let nextBrowserWindowId = 1;
+const browserWindowOptions: unknown[] = [];
+
+class MockBrowserWindow {
+	id: number;
+	isDestroyed = vi.fn().mockReturnValue(false);
+	isMaximized = vi.fn().mockReturnValue(false);
+	isFullScreen = vi.fn().mockReturnValue(false);
+	getBounds = vi.fn().mockReturnValue({ x: 10, y: 20, width: 800, height: 600 });
+
+	constructor(options: unknown) {
+		this.id = nextBrowserWindowId;
+		nextBrowserWindowId += 1;
+		browserWindowOptions.push(options);
+	}
+}
+
+vi.mock('electron', () => ({
+	BrowserWindow: MockBrowserWindow,
+	screen: {
+		getDisplayMatching: vi.fn(() => ({
+			id: 2,
+			workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		})),
+	},
+}));
+
+describe('WindowRegistry', () => {
+	beforeEach(() => {
+		nextBrowserWindowId = 1;
+		browserWindowOptions.length = 0;
+	});
+
+	it('creates the first window as the primary window', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const entry = registry.create({
+			width: 1200,
+			height: 800,
+			sessionIds: ['session-1'],
+		});
+
+		expect(entry.isMain).toBe(true);
+		expect(entry.sessionIds).toEqual(['session-1']);
+		expect(registry.getPrimary()).toBe(entry);
+		expect(registry.get('1')).toBe(entry);
+		expect(browserWindowOptions).toEqual([{ width: 1200, height: 800 }]);
+	});
+
+	it('tracks secondary windows by explicit id', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const primary = registry.create({ id: 'primary' });
+		const secondary = registry.create({ id: 'secondary', sessionIds: ['session-2'] });
+
+		expect(registry.getAll()).toEqual([primary, secondary]);
+		expect(registry.getPrimary()).toBe(primary);
+		expect(secondary.isMain).toBe(false);
+		expect(registry.getWindowForSession('session-2')).toBe('secondary');
+	});
+
+	it('keeps session ownership unique when assigning sessions', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const primary = registry.create({ id: 'primary', sessionIds: ['session-1', 'session-2'] });
+		const secondary = registry.create({ id: 'secondary' });
+
+		registry.setSessionsForWindow('secondary', ['session-2', 'session-3', 'session-3']);
+
+		expect(primary.sessionIds).toEqual(['session-1']);
+		expect(secondary.sessionIds).toEqual(['session-2', 'session-3']);
+		expect(registry.getWindowForSession('session-2')).toBe('secondary');
+	});
+
+	it('moves a session between windows without duplicating it', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const primary = registry.create({ id: 'primary', sessionIds: ['session-1', 'session-2'] });
+		const secondary = registry.create({ id: 'secondary', sessionIds: ['session-3'] });
+
+		registry.moveSession('session-2', 'primary', 'secondary');
+		registry.moveSession('session-2', 'primary', 'secondary');
+
+		expect(primary.sessionIds).toEqual(['session-1']);
+		expect(secondary.sessionIds).toEqual(['session-3', 'session-2']);
+		expect(registry.getWindowForSession('session-2')).toBe('secondary');
+	});
+
+	it('moves all sessions from a secondary window back to primary', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		const primary = registry.create({ id: 'primary', sessionIds: ['session-1'] });
+		const secondary = registry.create({
+			id: 'secondary',
+			sessionIds: ['session-2', 'session-3'],
+		});
+
+		const result = registry.moveSessionsToPrimary('secondary');
+
+		expect(result).toEqual({
+			sessionIds: ['session-2', 'session-3'],
+			toWindowId: 'primary',
+		});
+		expect(primary.sessionIds).toEqual(['session-1', 'session-2', 'session-3']);
+		expect(secondary.sessionIds).toEqual([]);
+		expect(registry.getWindowForSession('session-2')).toBe('primary');
+	});
+
+	it('removes windows and clears the primary reference when the main window is removed', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		registry.create({ id: 'primary' });
+		registry.create({ id: 'secondary' });
+
+		registry.remove('secondary');
+		expect(registry.get('secondary')).toBeUndefined();
+		expect(registry.getPrimary()).toBeDefined();
+
+		registry.remove('primary');
+		expect(registry.getPrimary()).toBeUndefined();
+	});
+
+	it('throws for duplicate windows and unknown move targets', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const registry = new WindowRegistry();
+
+		registry.create({ id: 'primary' });
+
+		expect(() => registry.create({ id: 'primary' })).toThrow('Window already registered: primary');
+		expect(() => registry.moveSession('session-1', 'missing', 'primary')).toThrow(
+			'Source window not registered: missing'
+		);
+		expect(() => registry.moveSession('session-1', 'primary', 'missing')).toThrow(
+			'Destination window not registered: missing'
+		);
+	});
+
+	it('saves a registered window state without overwriting restored bounds while maximized', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-old'],
+						activeSessionId: 'session-old',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+		const entry = registry.create({ id: 'primary', sessionIds: ['session-1'], isMain: true });
+
+		entry.browserWindow.isMaximized = vi.fn().mockReturnValue(true);
+		entry.browserWindow.getBounds = vi.fn().mockReturnValue({
+			x: 5,
+			y: 6,
+			width: 700,
+			height: 500,
+		});
+
+		const savedState = registry.saveWindowState('primary');
+
+		expect(savedState).toMatchObject({
+			id: 'primary',
+			x: 50,
+			y: 60,
+			width: 1400,
+			height: 900,
+			displayId: 2,
+			displayWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
+			isMaximized: true,
+			isFullScreen: false,
+			sessionIds: ['session-1'],
+			activeSessionId: 'session-old',
+			leftPanelCollapsed: true,
+		});
+		expect(windowStateStore.store.primaryWindowId).toBe('primary');
+	});
+
+	it('saves the current display metadata for restored windows when not maximized', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						displayId: 1,
+						displayWorkArea: { x: 0, y: 0, width: 1440, height: 900 },
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: [],
+						activeSessionId: null,
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+		const entry = registry.create({ id: 'primary', isMain: true });
+
+		entry.browserWindow.getBounds = vi.fn().mockReturnValue({
+			x: 1980,
+			y: 100,
+			width: 1200,
+			height: 800,
+		});
+
+		const savedState = registry.saveWindowState('primary');
+
+		expect(savedState).toMatchObject({
+			x: 1980,
+			y: 100,
+			width: 1200,
+			height: 800,
+			displayId: 2,
+			displayWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
+		});
+	});
+
+	it('removes persisted state for secondary windows only', async () => {
+		const { WindowRegistry } = await import('../../main/window-registry');
+		const windowStateStore = {
+			store: {
+				primaryWindowId: 'primary',
+				windows: [
+					{
+						id: 'primary',
+						x: 50,
+						y: 60,
+						width: 1400,
+						height: 900,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-1'],
+						activeSessionId: 'session-1',
+						leftPanelCollapsed: false,
+						rightPanelCollapsed: false,
+					},
+					{
+						id: 'secondary',
+						x: 100,
+						y: 120,
+						width: 900,
+						height: 700,
+						isMaximized: false,
+						isFullScreen: false,
+						sessionIds: ['session-2'],
+						activeSessionId: 'session-2',
+						leftPanelCollapsed: true,
+						rightPanelCollapsed: true,
+					},
+				],
+			},
+		};
+		const registry = new WindowRegistry(windowStateStore as never);
+
+		registry.removeWindowState('secondary');
+		registry.removeWindowState('primary');
+
+		expect(windowStateStore.store.windows.map((windowState) => windowState.id)).toEqual([
+			'primary',
+		]);
+		expect(windowStateStore.store.primaryWindowId).toBe('primary');
+	});
+});

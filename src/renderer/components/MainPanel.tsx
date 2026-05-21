@@ -160,6 +160,8 @@ interface MainPanelProps {
 
 	// Auto mode props
 	currentSessionBatchState?: BatchRunState | null; // For current session only (input highlighting)
+	displayBatchRunState?: BatchRunState | null; // For this window's visible Auto Run progress pill
+	displayBatchRunSessionId?: string;
 	onStopBatchRun?: (sessionId?: string) => void;
 
 	// Tab management for AI sessions
@@ -379,6 +381,8 @@ export const MainPanel = React.memo(
 			getContextColor,
 			setActiveSessionId,
 			currentSessionBatchState,
+			displayBatchRunState,
+			displayBatchRunSessionId,
 			onStopBatchRun,
 			onRemoveQueuedItem,
 			onOpenQueueBrowser,
@@ -1775,8 +1779,10 @@ export const MainPanel = React.memo(
 											isAutoModeActive={isCurrentSessionAutoMode}
 											thinkingItems={thinkingItems}
 											onSessionClick={handleSessionClick}
-											autoRunState={currentSessionBatchState || undefined}
-											onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+											autoRunState={displayBatchRunState || undefined}
+											onStopAutoRun={() =>
+												onStopBatchRun?.(displayBatchRunSessionId ?? activeSession.id)
+											}
 											onOpenQueueBrowser={onOpenQueueBrowser}
 											tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
 											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}

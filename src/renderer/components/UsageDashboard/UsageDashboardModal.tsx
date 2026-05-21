@@ -88,6 +88,14 @@ interface StatsAggregation {
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	// Per-session per-day breakdown for agent usage chart
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	multiWindowUsage?: {
+		hasUsedMultipleWindows: boolean;
+		averageWindowCount: number;
+		maxWindowCount: number;
+		totalWindowCreatedEvents: number;
+		totalWindowClosedEvents: number;
+		totalSessionMovedEvents: number;
+	};
 }
 
 // View mode options for the dashboard

@@ -8,6 +8,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
+
+const mockWindowContextState = vi.hoisted(() => ({
+	value: null as {
+		windowId: string | null;
+		sessionIds: string[];
+	} | null,
+}));
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useOptionalWindowContext: () => mockWindowContextState.value,
+}));
+
 import {
 	useAgentListeners,
 	getErrorTitleForType,
@@ -194,6 +206,7 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockWindowContextState.value = null;
 
 	// Reset captured handlers
 	onDataHandler = undefined;
@@ -414,6 +427,48 @@ describe('useAgentListeners', () => {
 				expect.any(Number)
 			);
 		});
+
+		it('ignores AI data for sessions outside the current window', () => {
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['sess-1'],
+			};
+			const deps = createMockDeps();
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'sess-1',
+						aiTabs: [createMockTab({ id: 'tab-1' })],
+					}),
+					createMockSession({
+						id: 'sess-2',
+						aiTabs: [createMockTab({ id: 'tab-2' })],
+						activeTabId: 'tab-2',
+					}),
+				],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-2-ai-tab-2', 'hidden window output');
+
+			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
+		});
+
+		it('handles batch data in the window that owns the parent session', () => {
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['sess-1'],
+			};
+			const deps = createMockDeps();
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-1-batch-1700000000000', 'batch output');
+
+			expect(deps.batchedUpdater.appendLog).not.toHaveBeenCalled();
+		});
 	});
 
 	// ========================================================================
@@ -503,6 +558,30 @@ describe('useAgentListeners', () => {
 			);
 			expect(exitLog).toBeDefined();
 			expect(exitLog?.source).toBe('system');
+		});
+
+		it('ignores command exits for sessions outside the current window', () => {
+			mockWindowContextState.value = {
+				windowId: 'window-1',
+				sessionIds: ['sess-1'],
+			};
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-2',
+				state: 'busy',
+				busySource: 'terminal',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-2',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onCommandExitHandler?.('sess-2', 0);
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-2');
+			expect(updated?.state).toBe('busy');
 		});
 	});
 

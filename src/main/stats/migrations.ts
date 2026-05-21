@@ -25,6 +25,8 @@ import {
 	CREATE_SESSION_LIFECYCLE_SQL,
 	CREATE_SESSION_LIFECYCLE_INDEXES_SQL,
 	CREATE_COMPOUND_INDEXES_SQL,
+	CREATE_MULTI_WINDOW_EVENTS_SQL,
+	CREATE_MULTI_WINDOW_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -59,6 +61,11 @@ export function getMigrations(): Migration[] {
 			version: 4,
 			description: 'Add compound indexes on query_events for dashboard query performance',
 			up: (db) => migrateV4(db),
+		},
+		{
+			version: 5,
+			description: 'Add multi_window_events table for local multi-window usage telemetry',
+			up: (db) => migrateV5(db),
 		},
 	];
 }
@@ -246,4 +253,14 @@ function migrateV4(db: Database.Database): void {
 	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
 
 	logger.debug('Added compound indexes on query_events', LOG_CONTEXT);
+}
+
+/**
+ * Migration v5: Add multi-window events table
+ */
+function migrateV5(db: Database.Database): void {
+	db.prepare(CREATE_MULTI_WINDOW_EVENTS_SQL).run();
+	runStatements(db, CREATE_MULTI_WINDOW_EVENTS_INDEXES_SQL);
+
+	logger.debug('Created multi_window_events table', LOG_CONTEXT);
 }

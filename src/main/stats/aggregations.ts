@@ -9,6 +9,7 @@ import type Database from 'better-sqlite3';
 import type { StatsTimeRange, StatsAggregation } from '../../shared/stats-types';
 import { PERFORMANCE_THRESHOLDS } from '../../shared/performance-metrics';
 import { getTimeRangeStart, perfMetrics, LOG_CONTEXT } from './utils';
+import { getMultiWindowUsageStats } from './multi-window';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -322,6 +323,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const byHour = queryByHour(db, startTime);
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
+	const multiWindowUsage = getMultiWindowUsageStats(db, range);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 		range,
@@ -349,5 +351,6 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		...sessionStats,
 		byAgentByDay,
 		bySessionByDay,
+		multiWindowUsage,
 	};
 }
