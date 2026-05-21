@@ -16,7 +16,9 @@ import { ipcMain } from 'electron';
 // Create hoisted mocks for more reliable mocking
 const mocks = vi.hoisted(() => ({
 	mockNotificationShow: vi.fn(),
+	mockNotificationOn: vi.fn(),
 	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
+	mockBrowserWindowFromWebContents: vi.fn(),
 }));
 
 // Mock electron with a proper class for Notification
@@ -25,6 +27,9 @@ vi.mock('electron', () => {
 	class MockNotification {
 		constructor(_options: { title: string; body: string; silent?: boolean }) {
 			// Store options if needed for assertions
+		}
+		on(eventName: string, handler: () => void) {
+			mocks.mockNotificationOn(eventName, handler);
 		}
 		show() {
 			mocks.mockNotificationShow();
@@ -41,6 +46,7 @@ vi.mock('electron', () => {
 		Notification: MockNotification,
 		BrowserWindow: {
 			getAllWindows: vi.fn().mockReturnValue([]),
+			fromWebContents: (...args: unknown[]) => mocks.mockBrowserWindowFromWebContents(...args),
 		},
 	};
 });
@@ -107,6 +113,8 @@ describe('Notification IPC Handlers', () => {
 		// Reset mocks
 		mocks.mockNotificationIsSupported.mockReturnValue(true);
 		mocks.mockNotificationShow.mockClear();
+		mocks.mockNotificationOn.mockClear();
+		mocks.mockBrowserWindowFromWebContents.mockClear();
 
 		// Capture registered handlers
 		vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
@@ -134,10 +142,42 @@ describe('Notification IPC Handlers', () => {
 			mocks.mockNotificationIsSupported.mockReturnValue(true);
 
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Test Title', 'Test Body');
+			const result = await handler({ sender: {} }, 'Test Title', 'Test Body');
 
 			expect(result.success).toBe(true);
 			expect(mocks.mockNotificationShow).toHaveBeenCalled();
+		});
+
+		it('should focus metadata window when notification is clicked', async () => {
+			const targetWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				isMinimized: vi.fn().mockReturnValue(true),
+				restore: vi.fn(),
+				show: vi.fn(),
+				focus: vi.fn(),
+			};
+
+			registerNotificationsHandlers({
+				getWindowById: (windowId) => (windowId === 'window-2' ? (targetWindow as any) : null),
+			});
+			const handler = handlers.get('notification:show')!;
+			const result = await handler({ sender: {} }, 'Test Title', 'Test Body', {
+				windowId: 'window-2',
+				sessionId: 'session-1',
+			});
+
+			expect(result.success).toBe(true);
+			const clickHandler = mocks.mockNotificationOn.mock.calls.find(
+				([eventName]) => eventName === 'click'
+			)?.[1] as (() => void) | undefined;
+			expect(clickHandler).toBeTypeOf('function');
+
+			clickHandler!();
+
+			expect(targetWindow.restore).toHaveBeenCalled();
+			expect(targetWindow.show).toHaveBeenCalled();
+			expect(targetWindow.focus).toHaveBeenCalled();
+			expect(mocks.mockBrowserWindowFromWebContents).not.toHaveBeenCalled();
 		});
 
 		it('should return error when notifications not supported', async () => {

@@ -825,6 +825,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								tabName: toastData!.tabName,
 								sessionId: toastData!.sessionId,
 								tabId: toastData!.tabId,
+								windowId: windowIdRef.current ?? undefined,
 							});
 						}
 					}, 0);

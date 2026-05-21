@@ -379,6 +379,7 @@ export type {
 	// From notifications
 	NotificationApi,
 	NotificationShowResponse,
+	NotificationMetadata,
 	NotificationCommandResponse,
 } from './notifications';
 export type {

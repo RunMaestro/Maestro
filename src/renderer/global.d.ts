@@ -1386,7 +1386,11 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
-		show: (title: string, body: string) => Promise<{ success: boolean; error?: string }>;
+		show: (
+			title: string,
+			body: string,
+			metadata?: { windowId?: string; sessionId?: string; tabId?: string }
+		) => Promise<{ success: boolean; error?: string }>;
 		speak: (
 			text: string,
 			command?: string

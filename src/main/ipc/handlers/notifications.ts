@@ -55,6 +55,16 @@ export interface NotificationShowResponse {
 	error?: string;
 }
 
+export interface NotificationMetadata {
+	windowId?: string;
+	sessionId?: string;
+	tabId?: string;
+}
+
+export interface NotificationHandlerDependencies {
+	getWindowById?: (windowId: string) => BrowserWindow | null | undefined;
+}
+
 /**
  * Response from custom notification command operations
  */
@@ -120,6 +130,19 @@ export function parseNotificationCommand(command?: string): string {
 	}
 
 	return command.trim();
+}
+
+function focusNotificationWindow(win: BrowserWindow | null | undefined): boolean {
+	if (!win || win.isDestroyed()) {
+		return false;
+	}
+
+	if (win.isMinimized()) {
+		win.restore();
+	}
+	win.show();
+	win.focus();
+	return true;
 }
 
 /**
@@ -332,11 +355,16 @@ async function processNextNotification(): Promise<void> {
 /**
  * Register all notification-related IPC handlers
  */
-export function registerNotificationsHandlers(): void {
+export function registerNotificationsHandlers(deps: NotificationHandlerDependencies = {}): void {
 	// Show OS notification
 	ipcMain.handle(
 		'notification:show',
-		async (_event, title: string, body: string): Promise<NotificationShowResponse> => {
+		async (
+			event,
+			title: string,
+			body: string,
+			metadata?: NotificationMetadata
+		): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
 					const notification = new Notification({
@@ -344,8 +372,23 @@ export function registerNotificationsHandlers(): void {
 						body,
 						silent: true, // Don't play system sound - we have our own audio feedback option
 					});
+					notification.on('click', () => {
+						const targetWindow =
+							metadata?.windowId && deps.getWindowById
+								? (deps.getWindowById(metadata.windowId) ??
+									BrowserWindow.fromWebContents(event.sender))
+								: BrowserWindow.fromWebContents(event.sender);
+
+						const focused = focusNotificationWindow(targetWindow);
+						logger.debug('Notification click handled', 'Notification', {
+							focused,
+							windowId: metadata?.windowId,
+							sessionId: metadata?.sessionId,
+							tabId: metadata?.tabId,
+						});
+					});
 					notification.show();
-					logger.debug('Showed OS notification', 'Notification', { title, body });
+					logger.debug('Showed OS notification', 'Notification', { title, body, metadata });
 					return { success: true };
 				} else {
 					logger.warn('OS notifications not supported on this platform', 'Notification');
