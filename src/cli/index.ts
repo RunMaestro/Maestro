@@ -12,6 +12,7 @@ import { showPlaybook } from './commands/show-playbook';
 import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
+import { openFile } from './commands/open-file';
 import { listSessions } from './commands/list-sessions';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
@@ -119,6 +120,12 @@ program
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.action(send);
+
+program
+	.command('open-file <file-path>')
+	.description('Open a file as a preview tab in the Maestro desktop app')
+	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.action(openFile);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
