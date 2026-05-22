@@ -41,6 +41,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenFileTabCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
+			setConfigureAutoRunCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -370,6 +371,10 @@ describe('web-server/web-server-factory', () => {
 		it('should register refreshAutoRunDocsCallback', () => {
 			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
 		});
+
+		it('should register configureAutoRunCallback', () => {
+			expect(server.setConfigureAutoRunCallback).toHaveBeenCalled();
+		});
 	});
 
 	describe('getSessionsCallback behavior', () => {
@@ -646,6 +651,52 @@ describe('web-server/web-server-factory', () => {
 
 			expect(result).toBe(true);
 			expect(mockWebContents.send).toHaveBeenCalledWith('remote:refreshAutoRunDocs', 'session-1');
+		});
+	});
+
+	describe('configureAutoRunCallback behavior', () => {
+		it('should return an error when mainWindow is null', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setConfigureAutoRunCallback = server.setConfigureAutoRunCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setConfigureAutoRunCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', {
+				documents: [{ filename: 'task.md' }],
+			});
+
+			expect(result).toEqual({ success: false, error: 'Main window is not available' });
+		});
+
+		it('should send Auto Run config to renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setConfigureAutoRunCallback = server.setConfigureAutoRunCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setConfigureAutoRunCallback.mock.calls[0][0];
+			const config = {
+				documents: [{ filename: 'task.md', resetOnCompletion: true }],
+				prompt: 'Run these tasks',
+				loopEnabled: true,
+				maxLoops: 3,
+				saveAsPlaybook: 'My Playbook',
+				launch: true,
+			};
+
+			const result = await callback('session-1', config);
+
+			expect(result).toEqual({ success: true });
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:configureAutoRun',
+				'session-1',
+				config
+			);
 		});
 	});
 

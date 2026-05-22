@@ -16,6 +16,15 @@ type AutoRunTreeNode = {
 	children?: AutoRunTreeNode[];
 };
 
+type ConfigureAutoRunConfig = {
+	documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -324,6 +333,9 @@ interface MaestroAPI {
 		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteConfigureAutoRun: (
+			callback: (sessionId: string, config: ConfigureAutoRunConfig) => void
+		) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

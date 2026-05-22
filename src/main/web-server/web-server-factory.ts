@@ -13,6 +13,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
+import type { ConfigureAutoRunConfig } from './types';
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
@@ -562,6 +563,24 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			mainWindow.webContents.send('remote:refreshAutoRunDocs', sessionId);
 			return true;
 		});
+
+		server.setConfigureAutoRunCallback(
+			async (sessionId: string, config: ConfigureAutoRunConfig) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for configureAutoRun', 'WebServer');
+					return { success: false, error: 'Main window is not available' };
+				}
+
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for configureAutoRun', 'WebServer');
+					return { success: false, error: 'Renderer is not available' };
+				}
+
+				mainWindow.webContents.send('remote:configureAutoRun', sessionId, config);
+				return { success: true };
+			}
+		);
 
 		return server;
 	};

@@ -130,6 +130,18 @@ export interface SshRemoteInfo {
 }
 
 /**
+ * Auto Run configuration from remote CLI/web IPC.
+ */
+export interface ConfigureAutoRunConfig {
+	documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+}
+
+/**
  * Creates the process API object for preload exposure
  */
 export function createProcessApi() {
@@ -444,6 +456,18 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string) => callback(sessionId);
 			ipcRenderer.on('remote:refreshAutoRunDocs', handler);
 			return () => ipcRenderer.removeListener('remote:refreshAutoRunDocs', handler);
+		},
+
+		/**
+		 * Subscribe to remote Auto Run configuration from web interface
+		 */
+		onRemoteConfigureAutoRun: (
+			callback: (sessionId: string, config: ConfigureAutoRunConfig) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, config: ConfigureAutoRunConfig) =>
+				callback(sessionId, config);
+			ipcRenderer.on('remote:configureAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:configureAutoRun', handler);
 		},
 
 		/**

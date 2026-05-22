@@ -19,10 +19,12 @@
  * - open_file_tab: Open a file preview tab in desktop
  * - refresh_file_tree: Refresh the file tree in desktop
  * - refresh_auto_run_docs: Refresh Auto Run documents in desktop
+ * - configure_auto_run: Configure or launch Auto Run in desktop
  */
 
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import type { ConfigureAutoRunConfig, ConfigureAutoRunDocument } from '../types';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -93,6 +95,10 @@ export interface MessageHandlerCallbacks {
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
+	configureAutoRun: (
+		sessionId: string,
+		config: ConfigureAutoRunConfig
+	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -212,6 +218,10 @@ export class WebSocketMessageHandler {
 
 			case 'refresh_auto_run_docs':
 				this.handleRefreshAutoRunDocs(client, message);
+				break;
+
+			case 'configure_auto_run':
+				this.handleConfigureAutoRun(client, message);
 				break;
 
 			default:
@@ -738,6 +748,64 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to refresh Auto Run docs: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle configure_auto_run message - configure or launch Auto Run in desktop
+	 */
+	private handleConfigureAutoRun(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const documents = message.documents as ConfigureAutoRunDocument[] | undefined;
+		logger.info(`[Web] Received configure_auto_run message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.send(client, {
+				type: 'configure_auto_run_result',
+				success: false,
+				error: 'Missing sessionId',
+			});
+			return;
+		}
+
+		if (!Array.isArray(documents) || documents.length === 0) {
+			this.send(client, {
+				type: 'configure_auto_run_result',
+				success: false,
+				error: 'Missing documents',
+			});
+			return;
+		}
+
+		if (!this.callbacks.configureAutoRun) {
+			this.send(client, {
+				type: 'configure_auto_run_result',
+				success: false,
+				error: 'Auto Run configuration not configured',
+			});
+			return;
+		}
+
+		const config: ConfigureAutoRunConfig = {
+			documents,
+			prompt: message.prompt as string | undefined,
+			loopEnabled: message.loopEnabled as boolean | undefined,
+			maxLoops: message.maxLoops as number | undefined,
+			saveAsPlaybook: message.saveAsPlaybook as string | undefined,
+			launch: message.launch as boolean | undefined,
+		};
+
+		this.callbacks
+			.configureAutoRun(sessionId, config)
+			.then((result) => {
+				this.send(client, { type: 'configure_auto_run_result', ...result });
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'configure_auto_run_result',
+					success: false,
+					error: `Failed to configure Auto Run: ${error.message}`,
+				});
 			});
 	}
 
