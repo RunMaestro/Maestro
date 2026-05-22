@@ -60,6 +60,11 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 import { useBatchStore } from '../stores/batchStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import {
+	countCheckedMarkdownTasks,
+	countMarkdownTasks,
+	uncheckAllMarkdownTasks,
+} from '../../shared/markdownTasks';
 
 interface AutoRunProps {
 	theme: Theme;
@@ -730,20 +735,18 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		resetUndoHistory(content);
 	}, [selectedFile, sessionId, content, resetUndoHistory]);
 
-	// Reset completed tasks - converts all '- [x]' to '- [ ]'
+	// Reset completed tasks outside fenced examples.
 	const handleResetTasks = useCallback(async () => {
 		if (!folderPath || !selectedFile) return;
 
 		// Count how many completed tasks we're resetting
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		const resetCount = completedMatches.length;
+		const resetCount = countCheckedMarkdownTasks(localContent);
 
 		// Push undo state before resetting
 		pushUndoState();
 
 		// Replace all completed checkboxes with unchecked ones
-		const resetContent = localContent.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const resetContent = uncheckAllMarkdownTasks(localContent);
 		setLocalContent(resetContent);
 		lastUndoSnapshotRef.current = resetContent;
 
@@ -860,9 +863,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Helper function to count completed tasks (used by useImperativeHandle before taskCounts is defined)
 	const getCompletedTaskCountFromContent = useCallback(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		return completedMatches.length;
+		return countCheckedMarkdownTasks(localContent);
 	}, [localContent]);
 
 	// Expose methods to parent via ref
@@ -1370,13 +1371,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Parse task counts from saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes
 	const taskCounts = useMemo(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-		const completedMatches = savedContent.match(completedRegex) || [];
-		const uncheckedMatches = savedContent.match(uncheckedRegex) || [];
-		const completed = completedMatches.length;
-		const total = completed + uncheckedMatches.length;
-		return { completed, total };
+		return countMarkdownTasks(savedContent);
 	}, [savedContent]);
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
 	const previewBionifyReadingMode = previewBionifyOverride ?? bionifyReadingMode;

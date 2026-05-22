@@ -26,7 +26,7 @@ Use markdown checkboxes in your documents:
 - [ ] Update API documentation
 ```
 
-Completion note: The fenced example above is documentation only. Auto Run task scanning now ignores fenced code blocks so sample checkboxes are not treated as executable tasks.
+Completion note: The fenced example above is documentation only. Auto Run task scanning and editor/file-preview task counts now ignore fenced code blocks so sample checkboxes are not treated as executable tasks.
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
