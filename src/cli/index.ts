@@ -12,6 +12,7 @@ import { showPlaybook } from './commands/show-playbook';
 import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
+import { autoRun } from './commands/auto-run';
 import { openFile } from './commands/open-file';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
@@ -124,6 +125,18 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.action(send);
+
+program
+	.command('auto-run <docs...>')
+	.description('Configure or launch Auto Run in the Maestro desktop app')
+	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.option('-p, --prompt <text>', 'Custom prompt for the Auto Run')
+	.option('--loop', 'Enable looping')
+	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')
+	.option('--save-as <name>', "Save as a playbook with this name (don't launch)")
+	.option('--launch', 'Start the Auto Run immediately')
+	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
+	.action(autoRun);
 
 program
 	.command('open-file <file-path>')
