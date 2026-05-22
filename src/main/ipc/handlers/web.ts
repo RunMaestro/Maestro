@@ -27,7 +27,7 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import type { SettingsStoreInterface } from '../../stores/types';
-import { writeCliServerInfo } from '../../../shared/cli-server-discovery';
+import { deleteCliServerInfo, writeCliServerInfo } from '../../../shared/cli-server-discovery';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -265,6 +265,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		try {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
+			deleteCliServerInfo();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
 			logger.info('Web server stopped and cleaned up', 'WebServer');
 			return { success: true };
@@ -345,6 +346,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		try {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
+			deleteCliServerInfo();
 			setWebServer(null);
 			return { success: true, count };
 		} catch (error: any) {

@@ -29,11 +29,12 @@ vi.mock('../../../../main/web-server', () => ({
 }));
 
 vi.mock('../../../../shared/cli-server-discovery', () => ({
+	deleteCliServerInfo: vi.fn(),
 	writeCliServerInfo: vi.fn(),
 }));
 
 import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
-import { writeCliServerInfo } from '../../../../shared/cli-server-discovery';
+import { deleteCliServerInfo, writeCliServerInfo } from '../../../../shared/cli-server-discovery';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -333,6 +334,7 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(deleteCliServerInfo).toHaveBeenCalled();
 			expect(webServerRef.current).toBeNull();
 			expect(result).toEqual({ success: true });
 		});
@@ -360,6 +362,7 @@ describe('web handlers', () => {
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
 			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(deleteCliServerInfo).toHaveBeenCalled();
 			expect(webServerRef.current).toBeNull();
 			expect(result).toEqual({ success: true, count: 2 });
 		});

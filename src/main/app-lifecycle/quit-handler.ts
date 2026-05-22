@@ -11,6 +11,7 @@ import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { powerManager as powerManagerInstance } from '../power-manager';
+import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -245,6 +246,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		webServer?.stop().catch((err: unknown) => {
 			logger.error(`Error stopping web server: ${err}`, 'Shutdown');
 		});
+		deleteCliServerInfo();
 
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');

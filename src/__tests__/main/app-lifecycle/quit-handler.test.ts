@@ -65,6 +65,12 @@ vi.mock('../../../main/power-manager', () => ({
 	},
 }));
 
+vi.mock('../../../shared/cli-server-discovery', () => ({
+	deleteCliServerInfo: vi.fn(),
+}));
+
+import { deleteCliServerInfo } from '../../../shared/cli-server-discovery';
+
 describe('app-lifecycle/quit-handler', () => {
 	let mockMainWindow: {
 		isDestroyed: ReturnType<typeof vi.fn>;
@@ -308,7 +314,11 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(killOrder).toBeLessThan(clearOrder);
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(deleteCliServerInfo).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
+			const deleteOrder = vi.mocked(deleteCliServerInfo).mock.invocationCallOrder[0];
+			const closeStatsOrder = deps.closeStatsDB.mock.invocationCallOrder[0];
+			expect(deleteOrder).toBeLessThan(closeStatsOrder);
 		});
 
 		it('should cleanup grooming sessions if any are active', async () => {
