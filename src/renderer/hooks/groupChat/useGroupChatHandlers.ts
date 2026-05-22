@@ -21,7 +21,10 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
-import { extractCanonicalAutoRunRefs } from '../../../shared/group-chat-types';
+import {
+	extractCanonicalAutoRunRefs,
+	type GroupChatAutoRunRef,
+} from '../../../shared/group-chat-types';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -121,9 +124,9 @@ function resetGroupChatUI(): void {
 	setGroupChatError(null);
 }
 
-function hydrateAutoRunRefs<T extends { from: string; content: string; autoRunRefs?: any[] }>(
-	message: T
-): T {
+function hydrateAutoRunRefs<
+	T extends { from: string; content: string; autoRunRefs?: GroupChatAutoRunRef[] },
+>(message: T): T {
 	if (message.autoRunRefs && message.autoRunRefs.length > 0) {
 		return message;
 	}
@@ -660,12 +663,19 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		}
 	}, []);
 
+	// Debounce draft persistence to avoid triggering store updates (and full re-renders)
+	// on every keystroke. The input component keeps its own local state for immediate
+	// responsiveness; this only persists for cross-session draft recovery.
+	const draftTimerRef = useRef<ReturnType<typeof setTimeout>>();
 	const handleGroupChatDraftChange = useCallback((draft: string) => {
-		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
-		if (!activeGroupChatId) return;
-		setGroupChats((prev) =>
-			prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
-		);
+		if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+		draftTimerRef.current = setTimeout(() => {
+			const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+			if (!activeGroupChatId) return;
+			setGroupChats((prev) =>
+				prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
+			);
+		}, 300);
 	}, []);
 
 	const handleRemoveGroupChatQueueItem = useCallback((itemId: string) => {

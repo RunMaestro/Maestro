@@ -197,6 +197,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let agentSessionId: string | undefined;
 					let responseText = '';
 					let taskUsageStats: UsageStats | undefined;
+					let didError = false;
 					const queryStartTime = Date.now(); // Track start time for stats
 
 					// Array to collect cleanup functions as listeners are registered
@@ -229,6 +230,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							if (sid === targetSessionId) {
 								// Accumulate usage stats for this task (there may be multiple usage events per task)
 								taskUsageStats = accumulateUsageStats(taskUsageStats, usageStats);
+							}
+						})
+					);
+
+					// Track errors for this agent so onExit can resolve with correct success flag.
+					// The agent-error event may arrive before or after exit due to IPC ordering.
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string) => {
+							if (sid === targetSessionId) {
+								didError = true;
 							}
 						})
 					);
@@ -372,7 +383,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										) {
 											// Queue drained or session idle - safe to continue batch
 											resolve({
-												success: true,
+												success: !didError,
 												response: responseText,
 												agentSessionId,
 												usageStats: taskUsageStats,
@@ -387,7 +398,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								} else {
 									// No queued items or worktree mode - resolve immediately
 									resolve({
-										success: true,
+										success: !didError,
 										response: responseText,
 										agentSessionId,
 										usageStats: taskUsageStats,

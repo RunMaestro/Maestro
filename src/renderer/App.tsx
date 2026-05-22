@@ -7,7 +7,7 @@ import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
-// DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
+import { DEFAULT_BATCH_PROMPT } from './hooks/batch/batchUtils';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 import { AppOverlays } from './components/AppOverlays';
@@ -151,7 +151,10 @@ import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
-import { registerGroupChatAutoRun } from './utils/groupChatAutoRunRegistry';
+import {
+	registerGroupChatAutoRun,
+	consumeGroupChatAutoRun,
+} from './utils/groupChatAutoRunRegistry';
 import { resolveGroupChatAutoRunTarget } from './utils/groupChatAutoRun';
 import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
@@ -1329,13 +1332,32 @@ function MaestroConsoleInner() {
 						}));
 						const config = {
 							documents,
-							prompt: '',
+							prompt: DEFAULT_BATCH_PROMPT,
 							loopEnabled: false,
 							maxLoops: null,
 						};
 						// Register AFTER validating docs exist so no stale entry on failure
 						registerGroupChatAutoRun(session.id, groupChatId, participantName);
-						startBatchRunRef.current(session.id, config, session.autoRunFolderPath!);
+						startBatchRunRef.current(session.id, config, session.autoRunFolderPath!).then(
+							() => {
+								// startBatchRun resolved — check if onComplete consumed the registry.
+								// If it's still registered, the batch hit an early return (0 tasks,
+								// session gone, etc.) and never called onComplete. Report so the
+								// moderator doesn't wait for a response that will never come.
+								const orphaned = consumeGroupChatAutoRun(session.id);
+								if (orphaned) {
+									reportFailure(
+										`Auto Run batch finished without processing any tasks. The documents may have no unchecked tasks (- [ ]).`
+									);
+								}
+							},
+							(err) => {
+								const orphaned = consumeGroupChatAutoRun(session.id);
+								if (orphaned) {
+									reportFailure(`Auto Run batch failed: ${String(err)}`);
+								}
+							}
+						);
 					})
 					.catch((err) => {
 						reportFailure(`Failed to read Auto Run folder: ${String(err)}`);
