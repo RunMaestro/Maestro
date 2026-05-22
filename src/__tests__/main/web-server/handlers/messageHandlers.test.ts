@@ -72,6 +72,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		openFileTab: vi.fn().mockResolvedValue(true),
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
+		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -745,6 +746,79 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.type).toBe('error');
 				expect(lastResponse.message).toContain('Renderer failed');
 			});
+		});
+	});
+
+	describe('Configure Auto Run (Web → Desktop)', () => {
+		it('should configure Auto Run on desktop with valid config', async () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'first.md', resetOnCompletion: true }, { filename: 'second.md' }],
+				prompt: 'Run these tasks',
+				loopEnabled: true,
+				maxLoops: 2,
+				launch: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith('session-1', {
+					documents: [{ filename: 'first.md', resetOnCompletion: true }, { filename: 'second.md' }],
+					prompt: 'Run these tasks',
+					loopEnabled: true,
+					maxLoops: 2,
+					saveAsPlaybook: undefined,
+					launch: true,
+				});
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('configure_auto_run_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('should reject configure Auto Run with missing documents', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [],
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('configure_auto_run_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing documents');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should configure Auto Run with saveAsPlaybook set', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({
+				success: true,
+				playbookId: 'playbook-123',
+			});
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'playbook.md' }],
+				saveAsPlaybook: 'Saved Playbook',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith('session-1', {
+					documents: [{ filename: 'playbook.md' }],
+					prompt: undefined,
+					loopEnabled: undefined,
+					maxLoops: undefined,
+					saveAsPlaybook: 'Saved Playbook',
+					launch: undefined,
+				});
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('configure_auto_run_result');
+			expect(response.success).toBe(true);
+			expect(response.playbookId).toBe('playbook-123');
 		});
 	});
 
