@@ -39,6 +39,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
+			setRefreshFileTreeCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -358,6 +359,10 @@ describe('web-server/web-server-factory', () => {
 		it('should register openFileTabCallback', () => {
 			expect(server.setOpenFileTabCallback).toHaveBeenCalled();
 		});
+
+		it('should register refreshFileTreeCallback', () => {
+			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
+		});
 	});
 
 	describe('getSessionsCallback behavior', () => {
@@ -530,6 +535,38 @@ describe('web-server/web-server-factory', () => {
 				'session-1',
 				'/test/project/src/App.tsx'
 			);
+		});
+	});
+
+	describe('refreshFileTreeCallback behavior', () => {
+		it('should return false when mainWindow is null', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setRefreshFileTreeCallback = server.setRefreshFileTreeCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setRefreshFileTreeCallback.mock.calls[0][0];
+
+			const result = await callback('session-1');
+
+			expect(result).toBe(false);
+		});
+
+		it('should send refresh file tree to renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setRefreshFileTreeCallback = server.setRefreshFileTreeCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setRefreshFileTreeCallback.mock.calls[0][0];
+
+			const result = await callback('session-1');
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith('remote:refreshFileTree', 'session-1');
 		});
 	});
 

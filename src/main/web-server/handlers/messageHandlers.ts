@@ -17,6 +17,7 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file preview tab in desktop
+ * - refresh_file_tree: Refresh the file tree in desktop
  */
 
 import { WebSocket } from 'ws';
@@ -88,6 +89,7 @@ export interface MessageHandlerCallbacks {
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
+	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -199,6 +201,10 @@ export class WebSocketMessageHandler {
 
 			case 'open_file_tab':
 				this.handleOpenFileTab(client, message);
+				break;
+
+			case 'refresh_file_tree':
+				this.handleRefreshFileTree(client, message);
 				break;
 
 			default:
@@ -670,6 +676,33 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to open file tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle refresh_file_tree message - refresh the file tree in desktop
+	 */
+	private handleRefreshFileTree(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received refresh_file_tree message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.refreshFileTree) {
+			this.sendError(client, 'File tree refresh not configured');
+			return;
+		}
+
+		this.callbacks
+			.refreshFileTree(sessionId)
+			.then((success) => {
+				this.send(client, { type: 'refresh_file_tree_result', success, sessionId });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to refresh file tree: ${error.message}`);
 			});
 	}
 
