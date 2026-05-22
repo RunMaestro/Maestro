@@ -21,6 +21,7 @@ import type {
 	StarTabCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
+	OpenFileTabCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
@@ -50,6 +51,7 @@ export interface WebServerCallbacks {
 	starTab: StarTabCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
+	openFileTab: OpenFileTabCallback | null;
 	getHistory: GetHistoryCallback | null;
 }
 
@@ -72,6 +74,7 @@ export class CallbackRegistry {
 		starTab: null,
 		reorderTab: null,
 		toggleBookmark: null,
+		openFileTab: null,
 		getHistory: null,
 	};
 
@@ -159,6 +162,11 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
+	async openFileTab(sessionId: string, filePath: string): Promise<boolean> {
+		if (!this.callbacks.openFileTab) return false;
+		return this.callbacks.openFileTab(sessionId, filePath);
+	}
+
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
@@ -237,6 +245,10 @@ export class CallbackRegistry {
 
 	setToggleBookmarkCallback(callback: ToggleBookmarkCallback): void {
 		this.callbacks.toggleBookmark = callback;
+	}
+
+	setOpenFileTabCallback(callback: OpenFileTabCallback): void {
+		this.callbacks.openFileTab = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

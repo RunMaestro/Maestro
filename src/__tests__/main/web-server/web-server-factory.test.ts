@@ -38,6 +38,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setStarTabCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
+			setOpenFileTabCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -353,6 +354,10 @@ describe('web-server/web-server-factory', () => {
 			expect(server.setCloseTabCallback).toHaveBeenCalled();
 			expect(server.setRenameTabCallback).toHaveBeenCalled();
 		});
+
+		it('should register openFileTabCallback', () => {
+			expect(server.setOpenFileTabCallback).toHaveBeenCalled();
+		});
 	});
 
 	describe('getSessionsCallback behavior', () => {
@@ -492,6 +497,38 @@ describe('web-server/web-server-factory', () => {
 				'remote:switchMode',
 				'session-1',
 				'terminal'
+			);
+		});
+	});
+
+	describe('openFileTabCallback behavior', () => {
+		it('should return false when mainWindow is null', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setOpenFileTabCallback = server.setOpenFileTabCallback as ReturnType<typeof vi.fn>;
+			const callback = setOpenFileTabCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', '/test/project/src/App.tsx');
+
+			expect(result).toBe(false);
+		});
+
+		it('should send open file tab to renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setOpenFileTabCallback = server.setOpenFileTabCallback as ReturnType<typeof vi.fn>;
+			const callback = setOpenFileTabCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', '/test/project/src/App.tsx');
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:openFileTab',
+				'session-1',
+				'/test/project/src/App.tsx'
 			);
 		});
 	});

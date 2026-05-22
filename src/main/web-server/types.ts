@@ -207,6 +207,7 @@ export interface WebClientMessage {
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
+	filePath?: string;
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -287,6 +288,7 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
+export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
 
 /**
  * Callback type for fetching current theme.

@@ -16,6 +16,7 @@
  * - new_tab: Create a new tab within a session
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
+ * - open_file_tab: Open a file preview tab in desktop
  */
 
 import { WebSocket } from 'ws';
@@ -32,6 +33,7 @@ export interface WebClientMessage {
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
+	filePath?: string;
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -85,6 +87,7 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
+	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -192,6 +195,10 @@ export class WebSocketMessageHandler {
 
 			case 'toggle_bookmark':
 				this.handleToggleBookmark(client, message);
+				break;
+
+			case 'open_file_tab':
+				this.handleOpenFileTab(client, message);
 				break;
 
 			default:
@@ -632,6 +639,37 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to toggle bookmark: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_file_tab message - open a file preview tab in desktop
+	 */
+	private handleOpenFileTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const filePath = message.filePath as string;
+		logger.info(
+			`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !filePath) {
+			this.sendError(client, 'Missing sessionId or filePath');
+			return;
+		}
+
+		if (!this.callbacks.openFileTab) {
+			this.sendError(client, 'File tab opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openFileTab(sessionId, filePath)
+			.then((success) => {
+				this.send(client, { type: 'open_file_tab_result', success, sessionId, filePath });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to open file tab: ${error.message}`);
 			});
 	}
 

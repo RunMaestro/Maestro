@@ -66,6 +66,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
 		closeTab: vi.fn().mockResolvedValue(true),
 		renameTab: vi.fn().mockResolvedValue(true),
+		starTab: vi.fn().mockResolvedValue(true),
+		reorderTab: vi.fn().mockResolvedValue(true),
+		toggleBookmark: vi.fn().mockResolvedValue(true),
+		openFileTab: vi.fn().mockResolvedValue(true),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -533,6 +537,84 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.sessions).toHaveLength(1);
 			expect(response.sessions[0].agentSessionId).toBe('live-claude-456');
 			expect(response.sessions[0].isLive).toBe(true);
+		});
+	});
+
+	describe('Open File Tab (Web → Desktop)', () => {
+		it('should open file tab on desktop', async () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/test/project/src/App.tsx',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					'/test/project/src/App.tsx'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_file_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+			expect(response.filePath).toBe('/test/project/src/App.tsx');
+		});
+
+		it('should reject open file tab with missing sessionId', () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				filePath: '/test/project/src/App.tsx',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId or filePath');
+			expect(callbacks.openFileTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject open file tab with missing filePath', () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId or filePath');
+			expect(callbacks.openFileTab).not.toHaveBeenCalled();
+		});
+
+		it('should handle missing openFileTab callback', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/test/project/src/App.tsx',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+
+		it('should handle open file tab failure', async () => {
+			(callbacks.openFileTab as any).mockRejectedValue(new Error('Renderer failed'));
+
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/test/project/src/App.tsx',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('error');
+				expect(lastResponse.message).toContain('Renderer failed');
+			});
 		});
 	});
 
