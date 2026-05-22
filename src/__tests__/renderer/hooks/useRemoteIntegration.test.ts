@@ -73,6 +73,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteOpenFileTabHandler: ((sessionId: string, filePath: string) => void) | undefined;
+	let onRemoteRefreshFileTreeHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteRefreshAutoRunDocsHandler: ((sessionId: string) => void) | undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -121,6 +124,18 @@ describe('useRemoteIntegration', () => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
 		}),
+		onRemoteOpenFileTab: vi.fn().mockImplementation((handler) => {
+			onRemoteOpenFileTabHandler = handler;
+			return () => {};
+		}),
+		onRemoteRefreshFileTree: vi.fn().mockImplementation((handler) => {
+			onRemoteRefreshFileTreeHandler = handler;
+			return () => {};
+		}),
+		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation((handler) => {
+			onRemoteRefreshAutoRunDocsHandler = handler;
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
 	};
 
@@ -164,6 +179,9 @@ describe('useRemoteIntegration', () => {
 		onRemoteStarTabHandler = undefined;
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
+		onRemoteOpenFileTabHandler = undefined;
+		onRemoteRefreshFileTreeHandler = undefined;
+		onRemoteRefreshAutoRunDocsHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -444,6 +462,68 @@ describe('useRemoteIntegration', () => {
 			});
 
 			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-terminal');
+		});
+	});
+
+	describe('remote CLI IPC events', () => {
+		it('dispatches maestro:openFileTab when remote open file tab is received', () => {
+			const deps = createDeps();
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteOpenFileTabHandler?.('session-1', '/test/project/file.ts');
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:openFileTab',
+					detail: { sessionId: 'session-1', filePath: '/test/project/file.ts' },
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('dispatches maestro:refreshFileTree when remote file tree refresh is received', () => {
+			const deps = createDeps();
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteRefreshFileTreeHandler?.('session-1');
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:refreshFileTree',
+					detail: { sessionId: 'session-1' },
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('dispatches maestro:refreshAutoRunDocs when remote Auto Run docs refresh is received', () => {
+			const deps = createDeps();
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteRefreshAutoRunDocsHandler?.('session-1');
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:refreshAutoRunDocs',
+					detail: { sessionId: 'session-1' },
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
 		});
 	});
 
