@@ -276,6 +276,33 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('STDERR')).toBeInTheDocument();
 		});
 
+		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
+			// Issue #775: agent error messages contain status + explanation separated by
+			// newlines; rendering them inside a plain <p> collapsed the whitespace, so
+			// the status and the explanation ended up on a single line in chat.
+			const errorText = 'fatal: not a git repository\n\nhint: run `git init` first.';
+			const logs: LogEntry[] = [createLogEntry({ text: errorText, source: 'error' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Error badge still shows up next to the icon.
+			expect(screen.getByText('Error')).toBeInTheDocument();
+
+			// The full error text is handed to react-markdown (mocked here as a div with
+			// data-testid="react-markdown"). This guarantees newlines/markdown render
+			// the same way they do for normal AI responses, instead of being flattened.
+			const markdown = screen.getByTestId('react-markdown');
+			expect(markdown).toHaveTextContent('fatal: not a git repository');
+			expect(markdown).toHaveTextContent('hint: run');
+			expect(markdown.textContent).toBe(errorText);
+		});
+
 		it('collapses consecutive AI responses in AI mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),

@@ -45,7 +45,8 @@ interface NewInstanceModalProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		groupId?: string
 	) => void;
 	theme: any;
 	existingSessions: Session[];
@@ -423,6 +424,11 @@ export function NewInstanceModal({
 		[agents, availableModels]
 	);
 
+	// Hoist groupId out of the callback so `sourceSession` reference changes
+	// (which we already know happen mid-modal — see the prefill effect below)
+	// don't strand a stale value behind the useCallback memo.
+	const sourceGroupId = sourceSession?.groupId;
+
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
@@ -478,7 +484,8 @@ export function NewInstanceModal({
 			agentCustomModel,
 			agentCustomContextWindow,
 			agentCustomProviderPath,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			sourceGroupId
 		);
 		onClose();
 
@@ -510,6 +517,7 @@ export function NewInstanceModal({
 		expandTilde,
 		handleWorkingDirChange,
 		existingSessions,
+		sourceGroupId,
 	]);
 
 	// Check if form is valid for submission
@@ -576,6 +584,10 @@ export function NewInstanceModal({
 	}, [agents]);
 
 	// Effects - load agents and optionally pre-fill from source session
+	// Depend on sourceSession?.id (not the full object) so store updates that
+	// create a new sourceSession reference don't re-fire and overwrite the name
+	// the user has already typed.
+	const sourceSessionId = sourceSession?.id;
 	useEffect(() => {
 		if (isOpen) {
 			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
@@ -590,7 +602,7 @@ export function NewInstanceModal({
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
 		}
-	}, [isOpen, sourceSession]);
+	}, [isOpen, sourceSessionId]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails

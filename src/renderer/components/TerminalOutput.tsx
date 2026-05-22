@@ -505,9 +505,17 @@ const LogItemComponent = memo(
 									Error
 								</span>
 							</div>
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								{log.text}
-							</p>
+							<div className="text-sm" style={{ color: theme.colors.textMain }}>
+								<MarkdownRenderer
+									content={log.text}
+									theme={theme}
+									onCopy={copyToClipboard}
+									fileTree={fileTree}
+									cwd={cwd}
+									projectRoot={projectRoot}
+									onFileClick={onFileClick}
+								/>
+							</div>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
 								<button
 									onClick={() => onShowErrorDetails(log.agentError!)}
