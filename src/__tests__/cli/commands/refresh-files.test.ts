@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
-	resolveSessionId: vi.fn(),
+	resolveTargetSessionId: vi.fn(),
 	withMaestroClient: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import { refreshFiles } from '../../../cli/commands/refresh-files';
-import { resolveSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
+import { resolveTargetSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
 
 describe('refresh-files command', () => {
 	let consoleSpy: MockInstance;
@@ -27,7 +27,7 @@ describe('refresh-files command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-		vi.mocked(resolveSessionId).mockReturnValue('target-session');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('target-session');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const client = {
 				sendCommand: vi.fn().mockResolvedValue({
@@ -40,9 +40,9 @@ describe('refresh-files command', () => {
 	});
 
 	it('refreshes the file tree with an explicit session', async () => {
-		await refreshFiles({ session: 'target-session' });
+		await refreshFiles({ agent: 'target-session' });
 
-		expect(resolveSessionId).toHaveBeenCalledWith({ session: 'target-session' });
+		expect(resolveTargetSessionId).toHaveBeenCalledWith('target-session');
 		expect(withMaestroClient).toHaveBeenCalledTimes(1);
 		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
 		const sendCommand = vi.fn().mockResolvedValue({
@@ -59,7 +59,7 @@ describe('refresh-files command', () => {
 	});
 
 	it('refreshes the file tree with the resolved default session', async () => {
-		vi.mocked(resolveSessionId).mockReturnValue('resolved-session');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('resolved-session');
 
 		await refreshFiles({});
 
@@ -78,11 +78,9 @@ describe('refresh-files command', () => {
 	it('exits with an error when Maestro is not reachable', async () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
-		await refreshFiles({ session: 'target-session' });
+		await refreshFiles({ agent: 'target-session' });
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to refresh file tree: Maestro desktop app is not running'
-		);
+		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Maestro desktop app is not running');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -98,11 +96,9 @@ describe('refresh-files command', () => {
 			return action(client as never);
 		});
 
-		await refreshFiles({ session: 'target-session' });
+		await refreshFiles({ agent: 'target-session' });
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to refresh file tree: Session not found'
-		);
+		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Session not found');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });

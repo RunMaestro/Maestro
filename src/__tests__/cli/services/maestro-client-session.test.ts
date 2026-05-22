@@ -7,13 +7,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
 vi.mock('../../../cli/services/storage', () => ({
-	getSessionById: vi.fn(),
 	readSessions: vi.fn(),
-	readSettings: vi.fn(),
 }));
 
 import { resolveSessionId } from '../../../cli/services/maestro-client';
-import { getSessionById, readSessions, readSettings } from '../../../cli/services/storage';
+import { readSessions } from '../../../cli/services/storage';
 
 describe('resolveSessionId', () => {
 	const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -27,32 +25,27 @@ describe('resolveSessionId', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(readSettings).mockReturnValue({});
 		vi.mocked(readSessions).mockReturnValue([]);
-		vi.mocked(getSessionById).mockReturnValue(undefined);
 	});
 
 	it('uses an explicit session when provided', () => {
 		expect(resolveSessionId({ session: 'target-session' })).toBe('target-session');
-		expect(readSettings).not.toHaveBeenCalled();
 	});
 
-	it('uses the active session from settings when it exists', () => {
-		vi.mocked(readSettings).mockReturnValue({ activeSessionId: 'active-session' });
-		vi.mocked(getSessionById).mockReturnValue(mockSession({ id: 'active-session' }));
-
-		expect(resolveSessionId()).toBe('active-session');
-	});
-
-	it('falls back to the first stored session when there is no active session', () => {
+	it('falls back to the first stored session when no session is provided', () => {
 		vi.mocked(readSessions).mockReturnValue([mockSession({ id: 'first-session' })]);
 
 		expect(resolveSessionId()).toBe('first-session');
 	});
 
-	it('throws when no session can be resolved', () => {
-		expect(() => resolveSessionId()).toThrow(
-			'No Maestro sessions found. Pass --session <id> to target a specific session.'
+	it('exits when no session can be resolved', () => {
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+		expect(resolveSessionId()).toBe('');
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			'Error: No agents found. Create an agent in Maestro first.'
 		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
-	resolveSessionId: vi.fn(),
+	resolveTargetSessionId: vi.fn(),
 	withMaestroClient: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import { refreshAutoRun } from '../../../cli/commands/refresh-auto-run';
-import { resolveSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
+import { resolveTargetSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
 
 describe('refresh-auto-run command', () => {
 	let consoleSpy: MockInstance;
@@ -27,7 +27,7 @@ describe('refresh-auto-run command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-		vi.mocked(resolveSessionId).mockReturnValue('target-session');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('target-session');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const client = {
 				sendCommand: vi.fn().mockResolvedValue({
@@ -40,9 +40,9 @@ describe('refresh-auto-run command', () => {
 	});
 
 	it('refreshes Auto Run documents with an explicit session', async () => {
-		await refreshAutoRun({ session: 'target-session' });
+		await refreshAutoRun({ agent: 'target-session' });
 
-		expect(resolveSessionId).toHaveBeenCalledWith({ session: 'target-session' });
+		expect(resolveTargetSessionId).toHaveBeenCalledWith('target-session');
 		expect(withMaestroClient).toHaveBeenCalledTimes(1);
 		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
 		const sendCommand = vi.fn().mockResolvedValue({
@@ -59,7 +59,7 @@ describe('refresh-auto-run command', () => {
 	});
 
 	it('refreshes Auto Run documents with the resolved default session', async () => {
-		vi.mocked(resolveSessionId).mockReturnValue('resolved-session');
+		vi.mocked(resolveTargetSessionId).mockReturnValue('resolved-session');
 
 		await refreshAutoRun({});
 
@@ -78,11 +78,9 @@ describe('refresh-auto-run command', () => {
 	it('exits with an error when Maestro is not reachable', async () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
-		await refreshAutoRun({ session: 'target-session' });
+		await refreshAutoRun({ agent: 'target-session' });
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to refresh Auto Run documents: Maestro desktop app is not running'
-		);
+		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Maestro desktop app is not running');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
@@ -98,11 +96,9 @@ describe('refresh-auto-run command', () => {
 			return action(client as never);
 		});
 
-		await refreshAutoRun({ session: 'target-session' });
+		await refreshAutoRun({ agent: 'target-session' });
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to refresh Auto Run documents: Session not found'
-		);
+		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Session not found');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });

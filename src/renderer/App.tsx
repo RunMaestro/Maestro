@@ -171,6 +171,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
+import { generateId } from './utils/ids';
 
 // Import services
 // gitService — now used in useModalHandlers (Tier 3C)
@@ -187,10 +188,6 @@ import type {
 	BatchDocumentEntry,
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
-import { THEMES } from './constants/themes';
-import { usePluginContributions } from './hooks/usePluginContributions';
-import { resolvePluginTheme } from './utils/pluginThemes';
-import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
@@ -2351,7 +2348,7 @@ function MaestroConsoleInner() {
 
 				if (config.launch) {
 					try {
-						await startBatchRunRef.current(sessionId, batchConfig, session.autoRunFolderPath);
+						await startBatchRun(sessionId, batchConfig, session.autoRunFolderPath);
 						sendResponse({ success: true });
 					} catch (error) {
 						sendResponse({
@@ -2423,6 +2420,7 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		setAutoRunDocumentList,
 		openBatchRunnerWithConfig,
+		startBatchRun,
 	]);
 
 	// --- FILE EXPLORER EFFECTS ---
