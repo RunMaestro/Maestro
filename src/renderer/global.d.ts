@@ -321,6 +321,9 @@ interface MaestroAPI {
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
+		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
+		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

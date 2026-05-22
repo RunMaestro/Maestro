@@ -417,6 +417,36 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote file tab open from web interface
+		 */
+		onRemoteOpenFileTab: (
+			callback: (sessionId: string, filePath: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, filePath: string) =>
+				callback(sessionId, filePath);
+			ipcRenderer.on('remote:openFileTab', handler);
+			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
+		},
+
+		/**
+		 * Subscribe to remote file tree refresh from web interface
+		 */
+		onRemoteRefreshFileTree: (callback: (sessionId: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+			ipcRenderer.on('remote:refreshFileTree', handler);
+			return () => ipcRenderer.removeListener('remote:refreshFileTree', handler);
+		},
+
+		/**
+		 * Subscribe to remote Auto Run document refresh from web interface
+		 */
+		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+			ipcRenderer.on('remote:refreshAutoRunDocs', handler);
+			return () => ipcRenderer.removeListener('remote:refreshAutoRunDocs', handler);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {
