@@ -226,6 +226,57 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, [setSessions]);
 
+	// Handle remote file tab open requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeOpenFileTab = window.maestro.process.onRemoteOpenFileTab(
+			(sessionId: string, filePath: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: { sessionId, filePath },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeOpenFileTab();
+		};
+	}, []);
+
+	// Handle remote file tree refresh requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeRefreshFileTree = window.maestro.process.onRemoteRefreshFileTree(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshFileTree', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeRefreshFileTree();
+		};
+	}, []);
+
+	// Handle remote Auto Run document refresh requests from CLI IPC
+	useEffect(() => {
+		const unsubscribeRefreshAutoRunDocs = window.maestro.process.onRemoteRefreshAutoRunDocs(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:refreshAutoRunDocs', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeRefreshAutoRunDocs();
+		};
+	}, []);
+
 	// Handle remote interrupts from web interface
 	// This allows web interrupts to go through the same code path as desktop (handleInterrupt)
 	useEffect(() => {

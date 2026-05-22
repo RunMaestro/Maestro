@@ -2197,6 +2197,78 @@ function MaestroConsoleInner() {
 			sshReduceEntryCapFraction: settings.sshReduceEntryCapFraction,
 		});
 
+	// CLI IPC remote events dispatched by useRemoteIntegration.
+	useEffect(() => {
+		const handleRemoteOpenFileTab = async (event: Event) => {
+			const { sessionId, filePath } = (
+				event as CustomEvent<{ sessionId: string; filePath: string }>
+			).detail;
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session || !filePath) return;
+
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+			const fileName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+
+			try {
+				const [content, stat] = await Promise.all([
+					window.maestro.fs.readFile(filePath, sshRemoteId),
+					window.maestro.fs.stat(filePath, sshRemoteId),
+				]);
+				if (content === null) return;
+
+				setActiveSessionId(sessionId);
+				handleOpenFileTab({
+					path: filePath,
+					name: fileName,
+					content,
+					sshRemoteId,
+					lastModified: stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now(),
+				});
+				setActiveFocus('main');
+			} catch (error) {
+				console.error('[Remote] Failed to open file tab:', error);
+			}
+		};
+
+		const handleRemoteRefreshFileTree = (event: Event) => {
+			const { sessionId } = (event as CustomEvent<{ sessionId: string }>).detail;
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) return;
+			refreshFileTree(sessionId);
+		};
+
+		const handleRemoteRefreshAutoRunDocs = (event: Event) => {
+			const { sessionId } = (event as CustomEvent<{ sessionId: string }>).detail;
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) return;
+
+			if (activeSessionIdRef.current !== sessionId) {
+				setActiveSessionId(sessionId);
+				return;
+			}
+			handleAutoRunRefresh();
+		};
+
+		window.addEventListener('maestro:openFileTab', handleRemoteOpenFileTab);
+		window.addEventListener('maestro:refreshFileTree', handleRemoteRefreshFileTree);
+		window.addEventListener('maestro:refreshAutoRunDocs', handleRemoteRefreshAutoRunDocs);
+
+		return () => {
+			window.removeEventListener('maestro:openFileTab', handleRemoteOpenFileTab);
+			window.removeEventListener('maestro:refreshFileTree', handleRemoteRefreshFileTree);
+			window.removeEventListener('maestro:refreshAutoRunDocs', handleRemoteRefreshAutoRunDocs);
+		};
+	}, [
+		activeSessionIdRef,
+		handleAutoRunRefresh,
+		handleOpenFileTab,
+		refreshFileTree,
+		setActiveFocus,
+		setActiveSessionId,
+		sessionsRef,
+	]);
+
 	// --- FILE EXPLORER EFFECTS ---
 	// Extracted hook for file explorer side effects and keyboard navigation (Phase 2.6)
 	const { stableFileTree, handleMainPanelFileClick } = useFileExplorerEffects({
