@@ -221,6 +221,20 @@ text - [ ] This should not count
 			expect(result.taskCount).toBe(1);
 		});
 
+		it('should not count unchecked tasks inside fenced code blocks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
+\`\`\`markdown
+- [ ] Example task
+\`\`\`
+
+- [ ] Real task
+      `);
+
+			const result = readDocAndCountTasks('/playbooks', 'tasks');
+
+			expect(result.taskCount).toBe(1);
+		});
+
 		it('should count empty checkbox tasks', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ]
