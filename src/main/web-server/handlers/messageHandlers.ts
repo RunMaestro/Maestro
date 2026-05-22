@@ -36,6 +36,7 @@ export interface WebClientMessage {
 	tabId?: string;
 	command?: string;
 	filePath?: string;
+	focus?: boolean;
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -81,7 +82,7 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal'
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
-	selectSession: (sessionId: string, tabId?: string) => Promise<boolean>;
+	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
@@ -362,8 +363,9 @@ export class WebSocketMessageHandler {
 	private handleSelectSession(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
 		const tabId = message.tabId as string | undefined;
+		const focus = message.focus === true;
 		logger.info(
-			`[Web] Received select_session message: session=${sessionId}, tab=${tabId || 'none'}`,
+			`[Web] Received select_session message: session=${sessionId}, tab=${tabId || 'none'}, focus=${focus}`,
 			LOG_CONTEXT
 		);
 
@@ -380,11 +382,11 @@ export class WebSocketMessageHandler {
 
 		// Forward to desktop's session selection logic (include tabId if provided)
 		logger.info(
-			`[Web] Calling selectSessionCallback for session ${sessionId}${tabId ? `, tab ${tabId}` : ''}`,
+			`[Web] Calling selectSessionCallback for session ${sessionId}${tabId ? `, tab ${tabId}` : ''}${focus ? ', focus' : ''}`,
 			LOG_CONTEXT
 		);
 		this.callbacks
-			.selectSession(sessionId, tabId)
+			.selectSession(sessionId, tabId, focus)
 			.then((success) => {
 				if (success) {
 					// Subscribe client to this session's output so they receive session_output messages

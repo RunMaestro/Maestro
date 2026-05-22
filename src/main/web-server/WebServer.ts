@@ -496,8 +496,8 @@ export class WebServer {
 				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
-			selectSession: async (sessionId: string, tabId?: string) =>
-				this.callbackRegistry.selectSession(sessionId, tabId),
+			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
+				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
 			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),

@@ -128,9 +128,9 @@ export class CallbackRegistry {
 		return this.callbacks.switchMode(sessionId, mode);
 	}
 
-	async selectSession(sessionId: string, tabId?: string): Promise<boolean> {
+	async selectSession(sessionId: string, tabId?: string, focus?: boolean): Promise<boolean> {
 		if (!this.callbacks.selectSession) return false;
-		return this.callbacks.selectSession(sessionId, tabId);
+		return this.callbacks.selectSession(sessionId, tabId, focus);
 	}
 
 	async selectTab(sessionId: string, tabId: string): Promise<boolean> {

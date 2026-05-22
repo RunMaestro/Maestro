@@ -457,7 +457,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.selectSession('session-10');
 
-			expect(callback).toHaveBeenCalledWith('session-10', undefined);
+			expect(callback).toHaveBeenCalledWith('session-10', undefined, undefined);
 		});
 
 		it('passes sessionId and tabId arguments to the callback', async () => {
@@ -466,7 +466,16 @@ describe('CallbackRegistry', () => {
 
 			await registry.selectSession('session-10', 'tab-2');
 
-			expect(callback).toHaveBeenCalledWith('session-10', 'tab-2');
+			expect(callback).toHaveBeenCalledWith('session-10', 'tab-2', undefined);
+		});
+
+		it('passes focus argument to the callback', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setSelectSessionCallback(callback);
+
+			await registry.selectSession('session-10', undefined, true);
+
+			expect(callback).toHaveBeenCalledWith('session-10', undefined, true);
 		});
 	});
 

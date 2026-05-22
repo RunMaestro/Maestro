@@ -289,7 +289,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined);
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined, false);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -305,7 +305,19 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', 'tab-5');
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', 'tab-5', false);
+			});
+		});
+
+		it('should forward session selection with focus', async () => {
+			handler.handleMessage(client, {
+				type: 'select_session',
+				sessionId: 'session-2',
+				focus: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined, true);
 			});
 		});
 

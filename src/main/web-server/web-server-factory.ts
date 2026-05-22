@@ -350,9 +350,9 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// Set up callback for web server to select/switch to a session in the desktop
 		// This forwards to the renderer which handles state updates and broadcasts
 		// If tabId is provided, also switches to that tab within the session
-		server.setSelectSessionCallback(async (sessionId: string, tabId?: string) => {
+		server.setSelectSessionCallback(async (sessionId: string, tabId?: string, focus?: boolean) => {
 			logger.info(
-				`[Web→Desktop] Session select callback invoked: session=${sessionId}, tab=${tabId || 'none'}`,
+				`[Web→Desktop] Session select callback invoked: session=${sessionId}, tab=${tabId || 'none'}, focus=${focus === true}`,
 				'WebServer'
 			);
 			const mainWindow = getMainWindow();
@@ -366,6 +366,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			if (!isWebContentsAvailable(mainWindow)) {
 				logger.warn('webContents is not available for selectSession', 'WebServer');
 				return false;
+			}
+			if (focus === true) {
+				mainWindow.show();
+				mainWindow.focus();
 			}
 			mainWindow.webContents.send('remote:selectSession', sessionId, tabId);
 			return true;

@@ -151,6 +151,8 @@ describe('web-server/web-server-factory', () => {
 
 		mockMainWindow = {
 			isDestroyed: vi.fn().mockReturnValue(false),
+			show: vi.fn(),
+			focus: vi.fn(),
 			webContents: mockWebContents as WebContents,
 		};
 
@@ -507,6 +509,46 @@ describe('web-server/web-server-factory', () => {
 				'remote:switchMode',
 				'session-1',
 				'terminal'
+			);
+		});
+	});
+
+	describe('selectSessionCallback behavior', () => {
+		it('should send session selection to renderer without focusing by default', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setSelectSessionCallback = server.setSelectSessionCallback as ReturnType<typeof vi.fn>;
+			const callback = setSelectSessionCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', 'tab-1');
+
+			expect(result).toBe(true);
+			expect(mockMainWindow.show).not.toHaveBeenCalled();
+			expect(mockMainWindow.focus).not.toHaveBeenCalled();
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:selectSession',
+				'session-1',
+				'tab-1'
+			);
+		});
+
+		it('should focus window before sending session selection when requested', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setSelectSessionCallback = server.setSelectSessionCallback as ReturnType<typeof vi.fn>;
+			const callback = setSelectSessionCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', undefined, true);
+
+			expect(result).toBe(true);
+			expect(mockMainWindow.show).toHaveBeenCalled();
+			expect(mockMainWindow.focus).toHaveBeenCalled();
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:selectSession',
+				'session-1',
+				undefined
 			);
 		});
 	});
