@@ -156,6 +156,14 @@ export class MaestroClient {
 		}
 	}
 
+	private rejectAllPending(error: Error): void {
+		for (const [, pending] of this.pendingRequests) {
+			clearTimeout(pending.timeout);
+			pending.reject(error);
+		}
+		this.pendingRequests.clear();
+	}
+
 	private setupMessageHandler(): void {
 		if (!this.ws) return;
 
@@ -221,6 +229,9 @@ export class MaestroClient {
 					pending.resolve(msg);
 					return;
 				}
+				if (msgRequestId) {
+					return;
+				}
 
 				// Fall back to matching by response type
 				for (const [requestId, pending] of this.pendingRequests) {
@@ -231,8 +242,9 @@ export class MaestroClient {
 						return;
 					}
 				}
-			} catch {
-				// Ignore non-JSON messages
+			} catch (error) {
+				this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
+				throw error;
 			}
 		});
 	}
@@ -242,7 +254,7 @@ export class MaestroClient {
  * Resolve session ID from CLI options.
  * Uses the provided --session value, or falls back to the first available session.
  */
-export function resolveSessionId(options: { session?: string }): string {
+export function resolveSessionId(options: { session?: string } = {}): string {
 	if (options.session) {
 		return options.session;
 	}
@@ -251,6 +263,7 @@ export function resolveSessionId(options: { session?: string }): string {
 	if (sessions.length === 0) {
 		console.error('Error: No agents found. Create an agent in Maestro first.');
 		process.exit(1);
+		return '';
 	}
 
 	return sessions[0].id;

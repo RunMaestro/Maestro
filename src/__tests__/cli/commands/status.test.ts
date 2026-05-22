@@ -61,7 +61,7 @@ describe('status command', () => {
 		expect(consoleSpy).toHaveBeenCalledWith('Maestro desktop app is not running');
 		expect(isCliServerRunning).not.toHaveBeenCalled();
 		expect(withMaestroClient).not.toHaveBeenCalled();
-		expect(processExitSpy).not.toHaveBeenCalled();
+		expect(processExitSpy).toHaveBeenCalledWith(3);
 	});
 
 	it('prints stale discovery when the PID is not running', async () => {
@@ -73,7 +73,7 @@ describe('status command', () => {
 			'Maestro discovery file is stale (app may have crashed)'
 		);
 		expect(withMaestroClient).not.toHaveBeenCalled();
-		expect(processExitSpy).not.toHaveBeenCalled();
+		expect(processExitSpy).toHaveBeenCalledWith(3);
 	});
 
 	it('pings Maestro and prints the port with session count', async () => {
@@ -91,7 +91,7 @@ describe('status command', () => {
 		await action({ sendCommand } as never);
 		expect(sendCommand).toHaveBeenNthCalledWith(1, { type: 'ping' }, 'pong');
 		expect(sendCommand).toHaveBeenNthCalledWith(2, { type: 'get_sessions' }, 'sessions_list');
-		expect(consoleSpy).toHaveBeenCalledWith('Maestro is running on port 47321 with 2 sessions');
+		expect(consoleSpy).toHaveBeenCalledWith('Maestro is running on port 47321 with 2 agents');
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
@@ -108,7 +108,7 @@ describe('status command', () => {
 
 		await status();
 
-		expect(consoleSpy).toHaveBeenCalledWith('Maestro is running on port 47321 with 0 sessions');
+		expect(consoleSpy).toHaveBeenCalledWith('Maestro is running on port 47321 with 0 agents');
 	});
 
 	it('exits with an error when Maestro cannot be reached', async () => {
@@ -116,9 +116,7 @@ describe('status command', () => {
 
 		await status();
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to reach Maestro desktop app: Connection refused'
-		);
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Connection refused');
+		expect(processExitSpy).toHaveBeenCalledWith(3);
 	});
 });

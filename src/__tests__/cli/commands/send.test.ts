@@ -33,6 +33,7 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	getConfigDirectory: vi.fn(() => '/tmp/maestro-test'),
 }));
 
 // Mock usage-aggregator
@@ -465,7 +466,7 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Warning: Sent message, but could not focus Maestro tab: Maestro desktop app is not running'
+			'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
 		);
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
