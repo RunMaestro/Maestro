@@ -15,6 +15,7 @@ import { send } from './commands/send';
 import { openFile } from './commands/open-file';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
+import { status } from './commands/status';
 import { listSessions } from './commands/list-sessions';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
@@ -141,6 +142,11 @@ program
 	.description('Refresh Auto Run documents in the Maestro desktop app')
 	.option('-s, --session <id>', 'Target session (defaults to active)')
 	.action(refreshAutoRun);
+
+program
+	.command('status')
+	.description('Check whether the Maestro desktop app is running and reachable')
+	.action(status);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');
