@@ -3,12 +3,14 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
+import { withMaestroClient } from '../services/maestro-client';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
+	tab?: boolean;
 }
 
 interface SendResponse {
@@ -31,6 +33,11 @@ interface SendResponse {
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
+}
+
+function emitTabWarning(error: unknown): void {
+	const message = error instanceof Error ? error.message : 'Unknown error';
+	console.error(`Warning: Sent message, but could not focus Maestro tab: ${message}`);
 }
 
 function buildResponse(
@@ -114,5 +121,19 @@ export async function send(
 
 	if (!result.success) {
 		process.exit(1);
+		return;
+	}
+
+	if (options.tab) {
+		try {
+			await withMaestroClient(async (client) => {
+				await client.sendCommand(
+					{ type: 'select_session', sessionId: agentId, focus: true },
+					'select_session_result'
+				);
+			});
+		} catch (error) {
+			emitTabWarning(error);
+		}
 	}
 }
