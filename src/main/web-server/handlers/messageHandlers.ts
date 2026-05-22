@@ -18,6 +18,7 @@
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file preview tab in desktop
  * - refresh_file_tree: Refresh the file tree in desktop
+ * - refresh_auto_run_docs: Refresh Auto Run documents in desktop
  */
 
 import { WebSocket } from 'ws';
@@ -90,6 +91,7 @@ export interface MessageHandlerCallbacks {
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
+	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -205,6 +207,10 @@ export class WebSocketMessageHandler {
 
 			case 'refresh_file_tree':
 				this.handleRefreshFileTree(client, message);
+				break;
+
+			case 'refresh_auto_run_docs':
+				this.handleRefreshAutoRunDocs(client, message);
 				break;
 
 			default:
@@ -703,6 +709,33 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to refresh file tree: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle refresh_auto_run_docs message - refresh Auto Run documents in desktop
+	 */
+	private handleRefreshAutoRunDocs(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received refresh_auto_run_docs message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.refreshAutoRunDocs) {
+			this.sendError(client, 'Auto Run docs refresh not configured');
+			return;
+		}
+
+		this.callbacks
+			.refreshAutoRunDocs(sessionId)
+			.then((success) => {
+				this.send(client, { type: 'refresh_auto_run_docs_result', success, sessionId });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to refresh Auto Run docs: ${error.message}`);
 			});
 	}
 

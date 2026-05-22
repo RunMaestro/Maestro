@@ -71,6 +71,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		toggleBookmark: vi.fn().mockResolvedValue(true),
 		openFileTab: vi.fn().mockResolvedValue(true),
 		refreshFileTree: vi.fn().mockResolvedValue(true),
+		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -665,6 +666,64 @@ describe('WebSocketMessageHandler', () => {
 
 			handler.handleMessage(client, {
 				type: 'refresh_file_tree',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('error');
+				expect(lastResponse.message).toContain('Renderer failed');
+			});
+		});
+	});
+
+	describe('Refresh Auto Run Docs (Web → Desktop)', () => {
+		it('should refresh Auto Run docs on desktop', async () => {
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.refreshAutoRunDocs).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('refresh_auto_run_docs_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should reject refresh Auto Run docs with missing sessionId', () => {
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+			expect(callbacks.refreshAutoRunDocs).not.toHaveBeenCalled();
+		});
+
+		it('should handle missing refreshAutoRunDocs callback', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('not configured');
+		});
+
+		it('should handle refresh Auto Run docs failure', async () => {
+			(callbacks.refreshAutoRunDocs as any).mockRejectedValue(new Error('Renderer failed'));
+
+			handler.handleMessage(client, {
+				type: 'refresh_auto_run_docs',
 				sessionId: 'session-1',
 			});
 

@@ -40,6 +40,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
+			setRefreshAutoRunDocsCallback = vi.fn();
 
 			constructor(port: number, securityToken?: string) {
 				this.port = port;
@@ -363,6 +364,10 @@ describe('web-server/web-server-factory', () => {
 		it('should register refreshFileTreeCallback', () => {
 			expect(server.setRefreshFileTreeCallback).toHaveBeenCalled();
 		});
+
+		it('should register refreshAutoRunDocsCallback', () => {
+			expect(server.setRefreshAutoRunDocsCallback).toHaveBeenCalled();
+		});
 	});
 
 	describe('getSessionsCallback behavior', () => {
@@ -567,6 +572,38 @@ describe('web-server/web-server-factory', () => {
 
 			expect(result).toBe(true);
 			expect(mockWebContents.send).toHaveBeenCalledWith('remote:refreshFileTree', 'session-1');
+		});
+	});
+
+	describe('refreshAutoRunDocsCallback behavior', () => {
+		it('should return false when mainWindow is null', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setRefreshAutoRunDocsCallback = server.setRefreshAutoRunDocsCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setRefreshAutoRunDocsCallback.mock.calls[0][0];
+
+			const result = await callback('session-1');
+
+			expect(result).toBe(false);
+		});
+
+		it('should send refresh Auto Run docs to renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setRefreshAutoRunDocsCallback = server.setRefreshAutoRunDocsCallback as ReturnType<
+				typeof vi.fn
+			>;
+			const callback = setRefreshAutoRunDocsCallback.mock.calls[0][0];
+
+			const result = await callback('session-1');
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith('remote:refreshAutoRunDocs', 'session-1');
 		});
 	});
 
