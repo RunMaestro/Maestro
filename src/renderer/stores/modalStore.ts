@@ -15,7 +15,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, SettingsTab, AgentError } from '../types';
+import type { Session, SettingsTab, AgentError, BatchRunConfig } from '../types';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
@@ -210,6 +210,8 @@ export interface KeyboardMasteryData {
 export interface BatchRunnerModalData {
 	/** Document filenames (without `.md`) to pre-populate the run list with. When omitted, the run list opens empty. */
 	presetDocuments?: string[];
+	/** Optional full config to seed prompt, loop settings, and documents. */
+	initialConfig?: Partial<BatchRunConfig>;
 }
 
 // ============================================================================
@@ -412,6 +414,7 @@ interface ModalStoreActions {
 	 * full-screen — so repeated presses switch sizes instead of doing nothing.
 	 */
 	cyclePromptComposer: () => void;
+	openBatchRunnerWithConfig: (initialConfig: Partial<BatchRunConfig>) => void;
 }
 
 export type ModalStore = ModalStoreState & ModalStoreActions;
@@ -822,6 +825,11 @@ export function getModalActions() {
 			open ? openModal('batchRunner', {}) : closeModal('batchRunner'),
 		openBatchRunnerWithPresets: (presetDocuments: string[]) =>
 			openModal('batchRunner', { presetDocuments }),
+		openBatchRunnerWithConfig: (initialConfig: Partial<BatchRunConfig>) =>
+			openModal('batchRunner', {
+				initialConfig,
+				presetDocuments: initialConfig.documents?.map((doc) => doc.filename),
+			}),
 
 		// Auto Run Setup Modal
 		setAutoRunSetupModalOpen: (open: boolean) =>

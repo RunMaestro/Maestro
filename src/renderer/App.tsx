@@ -177,8 +177,20 @@ import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	ThinkingItem,
+	BatchRunConfig,
+	BatchDocumentEntry,
+} from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
+import { THEMES } from './constants/themes';
+import { usePluginContributions } from './hooks/usePluginContributions';
+import { resolvePluginTheme } from './utils/pluginThemes';
+import { generateId } from './utils/ids';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
@@ -210,6 +222,21 @@ import { useUIStore } from './stores/uiStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
+
+type RemoteConfigureAutoRunConfig = {
+	documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+};
+
+type RemoteConfigureAutoRunResult = {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+};
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -308,6 +335,7 @@ function MaestroConsoleInner() {
 		setMemoryViewerOpen,
 		// Batch Runner Modal
 		setBatchRunnerModalOpen,
+		openBatchRunnerWithConfig,
 		// Auto Run Setup Modal
 		setAutoRunSetupModalOpen,
 		// Marketplace Modal — marketplaceModalOpen now self-sourced in AppStandaloneModals
@@ -2250,14 +2278,138 @@ function MaestroConsoleInner() {
 			handleAutoRunRefresh();
 		};
 
+		const handleRemoteConfigureAutoRun = async (event: Event) => {
+			const { sessionId, config, responseChannel } = (
+				event as CustomEvent<{
+					sessionId: string;
+					config: RemoteConfigureAutoRunConfig;
+					responseChannel: string;
+				}>
+			).detail;
+			const sendResponse = (result: RemoteConfigureAutoRunResult) => {
+				window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, result);
+			};
+			try {
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session) {
+					sendResponse({ success: false, error: 'Session not found' });
+					return;
+				}
+
+				const documents: BatchDocumentEntry[] = config.documents.map((doc, index, allDocs) => {
+					const filename = doc.filename.replace(/\.md$/i, '');
+					return {
+						id: generateId(),
+						filename,
+						resetOnCompletion: doc.resetOnCompletion || false,
+						isDuplicate:
+							allDocs.findIndex((other) => other.filename.replace(/\.md$/i, '') === filename) !==
+							index,
+					};
+				});
+				const batchConfig: BatchRunConfig = {
+					documents,
+					prompt: config.prompt || '',
+					loopEnabled: config.loopEnabled || false,
+					maxLoops:
+						config.loopEnabled || config.maxLoops !== undefined ? (config.maxLoops ?? null) : null,
+				};
+
+				if (config.saveAsPlaybook) {
+					try {
+						const result = await window.maestro.playbooks.create(sessionId, {
+							name: config.saveAsPlaybook,
+							documents: documents.map((doc) => ({
+								filename: doc.filename,
+								resetOnCompletion: doc.resetOnCompletion,
+							})),
+							prompt: batchConfig.prompt,
+							loopEnabled: batchConfig.loopEnabled,
+							maxLoops: batchConfig.maxLoops,
+						});
+						if (!result.success || !result.playbook) {
+							sendResponse({
+								success: false,
+								error: result.error || 'Failed to save playbook',
+							});
+							return;
+						}
+						sendResponse({ success: true, playbookId: result.playbook.id });
+					} catch (error) {
+						sendResponse({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+					return;
+				}
+
+				if (!session.autoRunFolderPath) {
+					sendResponse({ success: false, error: 'Session has no Auto Run folder configured' });
+					return;
+				}
+
+				if (config.launch) {
+					try {
+						await startBatchRunRef.current(sessionId, batchConfig, session.autoRunFolderPath);
+						sendResponse({ success: true });
+					} catch (error) {
+						sendResponse({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+					return;
+				}
+
+				const selectedFile = documents[0]?.filename;
+				let selectedContent = '';
+				if (selectedFile) {
+					const sshRemoteId =
+						session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+					const result = await window.maestro.autorun.readDoc(
+						session.autoRunFolderPath,
+						selectedFile + '.md',
+						sshRemoteId
+					);
+					selectedContent = result.success ? result.content || '' : '';
+				}
+
+				updateSessionWith(sessionId, (s) => ({
+					...s,
+					autoRunSelectedFile: selectedFile,
+					autoRunContent: selectedContent,
+					autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+					batchRunnerPrompt: batchConfig.prompt,
+					batchRunnerPromptModifiedAt: Date.now(),
+				}));
+				setAutoRunDocumentList(documents.map((doc) => doc.filename));
+				setActiveSessionId(sessionId);
+				setRightPanelOpen(true);
+				setActiveRightTab('autorun');
+				openBatchRunnerWithConfig(batchConfig);
+				sendResponse({ success: true });
+			} catch (error) {
+				captureException(error, {
+					extra: { context: 'handleRemoteConfigureAutoRun', sessionId },
+				});
+				sendResponse({
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+
 		window.addEventListener('maestro:openFileTab', handleRemoteOpenFileTab);
 		window.addEventListener('maestro:refreshFileTree', handleRemoteRefreshFileTree);
 		window.addEventListener('maestro:refreshAutoRunDocs', handleRemoteRefreshAutoRunDocs);
+		window.addEventListener('maestro:configureAutoRun', handleRemoteConfigureAutoRun);
 
 		return () => {
 			window.removeEventListener('maestro:openFileTab', handleRemoteOpenFileTab);
 			window.removeEventListener('maestro:refreshFileTree', handleRemoteRefreshFileTree);
 			window.removeEventListener('maestro:refreshAutoRunDocs', handleRemoteRefreshAutoRunDocs);
+			window.removeEventListener('maestro:configureAutoRun', handleRemoteConfigureAutoRun);
 		};
 	}, [
 		activeSessionIdRef,
@@ -2265,8 +2417,12 @@ function MaestroConsoleInner() {
 		handleOpenFileTab,
 		refreshFileTree,
 		setActiveFocus,
+		setActiveRightTab,
+		setRightPanelOpen,
 		setActiveSessionId,
 		sessionsRef,
+		setAutoRunDocumentList,
+		openBatchRunnerWithConfig,
 	]);
 
 	// --- FILE EXPLORER EFFECTS ---
