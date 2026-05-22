@@ -4,12 +4,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ipcMain } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 
 // Mock electron
 vi.mock('electron', () => ({
 	ipcMain: {
 		once: vi.fn(),
+		removeListener: vi.fn(),
 	},
 }));
 
@@ -689,13 +691,19 @@ describe('web-server/web-server-factory', () => {
 				launch: true,
 			};
 
-			const result = await callback('session-1', config);
+			const resultPromise = callback('session-1', config);
+
+			const responseChannel = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls[0][3];
+			const responseHandler = (ipcMain.once as ReturnType<typeof vi.fn>).mock.calls[0][1];
+			responseHandler({} as never, { success: true });
+			const result = await resultPromise;
 
 			expect(result).toEqual({ success: true });
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:configureAutoRun',
 				'session-1',
-				config
+				config,
+				responseChannel
 			);
 		});
 	});

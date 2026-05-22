@@ -43,6 +43,7 @@ interface BatchRunnerModalProps {
 	onGo: (config: BatchRunConfig) => void | Promise<void>;
 	onSave: (prompt: string) => void;
 	initialPrompt?: string;
+	initialConfig?: Partial<BatchRunConfig>;
 	lastModifiedAt?: number;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	// Multi-document support
@@ -88,6 +89,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onGo,
 		onSave,
 		initialPrompt,
+		initialConfig,
 		lastModifiedAt,
 		showConfirmation,
 		folderPath,
@@ -118,6 +120,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 	// Document list state
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
+		if (initialConfig?.documents?.length) {
+			return initialConfig.documents;
+		}
 		// Initialize with current document
 		if (currentDocument) {
 			return [
@@ -133,29 +138,32 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	});
 
 	// Track initial document state for dirty checking
-	const initialDocumentsRef = useRef<string[]>([currentDocument].filter(Boolean));
+	const initialDocumentsRef = useRef<string[]>(
+		initialConfig?.documents?.map((doc) => doc.filename) || [currentDocument].filter(Boolean)
+	);
 
 	// Task counts per document (keyed by filename)
 	const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
 	const [loadingTaskCounts, setLoadingTaskCounts] = useState(true);
 
 	// Loop mode state
-	const [loopEnabled, setLoopEnabled] = useState(false);
-	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
+	const [loopEnabled, setLoopEnabled] = useState(initialConfig?.loopEnabled || false);
+	const [maxLoops, setMaxLoops] = useState<number | null>(initialConfig?.maxLoops ?? null); // null = infinite
 
 	// Track initial loop settings for dirty checking
-	const initialLoopEnabledRef = useRef(false);
-	const initialMaxLoopsRef = useRef<number | null>(null);
+	const initialLoopEnabledRef = useRef(initialConfig?.loopEnabled || false);
+	const initialMaxLoopsRef = useRef<number | null>(initialConfig?.maxLoops ?? null);
 
 	// Prompt state
-	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const resolvedInitialPrompt = initialConfig?.prompt || initialPrompt || DEFAULT_BATCH_PROMPT;
+	const [prompt, setPrompt] = useState(resolvedInitialPrompt);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
-	const [savedPrompt, setSavedPrompt] = useState(initialPrompt || '');
+	const [savedPrompt, setSavedPrompt] = useState(initialConfig?.prompt || initialPrompt || '');
 	const [promptComposerOpen, setPromptComposerOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// Track initial prompt for dirty checking
-	const initialPromptRef = useRef(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const initialPromptRef = useRef(resolvedInitialPrompt);
 
 	// Compute if there are unsaved configuration changes
 	// This checks if documents, loop settings, or prompt have changed from initial values

@@ -25,6 +25,12 @@ type ConfigureAutoRunConfig = {
 	launch?: boolean;
 };
 
+type ConfigureAutoRunResult = {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -334,8 +340,12 @@ interface MaestroAPI {
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
-			callback: (sessionId: string, config: ConfigureAutoRunConfig) => void
+			callback: (sessionId: string, config: ConfigureAutoRunConfig, responseChannel: string) => void
 		) => () => void;
+		sendRemoteConfigureAutoRunResponse: (
+			responseChannel: string,
+			result: ConfigureAutoRunResult
+		) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

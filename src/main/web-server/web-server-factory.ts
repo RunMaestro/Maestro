@@ -577,8 +577,39 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					return { success: false, error: 'Renderer is not available' };
 				}
 
-				mainWindow.webContents.send('remote:configureAutoRun', sessionId, config);
-				return { success: true };
+				return new Promise((resolve) => {
+					const responseChannel = `remote:configureAutoRun:response:${Date.now()}`;
+					let resolved = false;
+
+					const handleResponse = (
+						_event: Electron.IpcMainEvent,
+						result: { success: boolean; playbookId?: string; error?: string }
+					) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve(result);
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					mainWindow.webContents.send(
+						'remote:configureAutoRun',
+						sessionId,
+						config,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`configureAutoRun callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false, error: 'Timed out configuring Auto Run' });
+					}, 5000);
+				});
 			}
 		);
 

@@ -3,6 +3,15 @@ import { renderHook, act } from '@testing-library/react';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
 
+type RemoteConfigureAutoRunConfig = {
+	documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+};
+
 const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
 	id: 'tab-1',
 	agentSessionId: null,
@@ -76,6 +85,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteOpenFileTabHandler: ((sessionId: string, filePath: string) => void) | undefined;
 	let onRemoteRefreshFileTreeHandler: ((sessionId: string) => void) | undefined;
 	let onRemoteRefreshAutoRunDocsHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteConfigureAutoRunHandler:
+		| ((sessionId: string, config: RemoteConfigureAutoRunConfig, responseChannel: string) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -136,7 +148,12 @@ describe('useRemoteIntegration', () => {
 			onRemoteRefreshAutoRunDocsHandler = handler;
 			return () => {};
 		}),
+		onRemoteConfigureAutoRun: vi.fn().mockImplementation((handler) => {
+			onRemoteConfigureAutoRunHandler = handler;
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
+		sendRemoteConfigureAutoRunResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -182,6 +199,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteOpenFileTabHandler = undefined;
 		onRemoteRefreshFileTreeHandler = undefined;
 		onRemoteRefreshAutoRunDocsHandler = undefined;
+		onRemoteConfigureAutoRunHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -520,6 +538,33 @@ describe('useRemoteIntegration', () => {
 				expect.objectContaining({
 					type: 'maestro:refreshAutoRunDocs',
 					detail: { sessionId: 'session-1' },
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('dispatches maestro:configureAutoRun when remote Auto Run config is received', () => {
+			const deps = createDeps();
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			const config = {
+				documents: [{ filename: 'task.md', resetOnCompletion: true }],
+				prompt: 'Run these tasks',
+				loopEnabled: true,
+				maxLoops: 2,
+				launch: true,
+			};
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteConfigureAutoRunHandler?.('session-1', config, 'remote:response:1');
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:configureAutoRun',
+					detail: { sessionId: 'session-1', config, responseChannel: 'remote:response:1' },
 				})
 			);
 

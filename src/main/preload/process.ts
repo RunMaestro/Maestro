@@ -141,6 +141,12 @@ export interface ConfigureAutoRunConfig {
 	launch?: boolean;
 }
 
+export interface ConfigureAutoRunResult {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+}
+
 /**
  * Creates the process API object for preload exposure
  */
@@ -462,12 +468,26 @@ export function createProcessApi() {
 		 * Subscribe to remote Auto Run configuration from web interface
 		 */
 		onRemoteConfigureAutoRun: (
-			callback: (sessionId: string, config: ConfigureAutoRunConfig) => void
+			callback: (sessionId: string, config: ConfigureAutoRunConfig, responseChannel: string) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, config: ConfigureAutoRunConfig) =>
-				callback(sessionId, config);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: ConfigureAutoRunConfig,
+				responseChannel: string
+			) => callback(sessionId, config, responseChannel);
 			ipcRenderer.on('remote:configureAutoRun', handler);
 			return () => ipcRenderer.removeListener('remote:configureAutoRun', handler);
+		},
+
+		/**
+		 * Send response for remote Auto Run configuration.
+		 */
+		sendRemoteConfigureAutoRunResponse: (
+			responseChannel: string,
+			result: ConfigureAutoRunResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**
