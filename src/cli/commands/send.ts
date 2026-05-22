@@ -121,7 +121,6 @@ export async function send(
 
 	if (!result.success) {
 		process.exit(1);
-		return;
 	}
 
 	if (options.tab) {

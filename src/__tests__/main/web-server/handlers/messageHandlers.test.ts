@@ -102,11 +102,12 @@ describe('WebSocketMessageHandler', () => {
 
 	describe('Ping/Pong Health Check', () => {
 		it('should respond to ping with pong', () => {
-			handler.handleMessage(client, { type: 'ping' });
+			handler.handleMessage(client, { type: 'ping', requestId: 'request-1' });
 
 			expect(client.socket.send).toHaveBeenCalledTimes(1);
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('pong');
+			expect(response.requestId).toBe('request-1');
 			expect(response.timestamp).toBeDefined();
 		});
 	});
@@ -753,6 +754,7 @@ describe('WebSocketMessageHandler', () => {
 		it('should configure Auto Run on desktop with valid config', async () => {
 			handler.handleMessage(client, {
 				type: 'configure_auto_run',
+				requestId: 'configure-request-1',
 				sessionId: 'session-1',
 				documents: [{ filename: 'first.md', resetOnCompletion: true }, { filename: 'second.md' }],
 				prompt: 'Run these tasks',
@@ -774,6 +776,7 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('configure_auto_run_result');
+			expect(response.requestId).toBe('configure-request-1');
 			expect(response.success).toBe(true);
 		});
 
@@ -787,7 +790,21 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('configure_auto_run_result');
 			expect(response.success).toBe(false);
-			expect(response.error).toContain('Missing documents');
+			expect(response.error).toContain('Invalid documents payload');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject configure Auto Run with malformed documents', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ resetOnCompletion: true }],
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('configure_auto_run_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid documents payload');
 			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 

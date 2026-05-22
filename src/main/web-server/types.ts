@@ -233,6 +233,7 @@ export interface WebClient {
  */
 export interface WebClientMessage {
 	type: string;
+	requestId?: string;
 	sessionId?: string;
 	tabId?: string;
 	command?: string;

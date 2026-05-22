@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveSessionId, withMaestroClient } from '../services/maestro-client';
+import { getSessionById } from '../services/storage';
 import { formatError } from '../output/formatter';
 
 interface AutoRunOptions {
@@ -18,7 +19,7 @@ interface AutoRunOptions {
 
 interface ConfigureAutoRunResult {
 	type: 'configure_auto_run_result';
-	success?: boolean;
+	success: boolean;
 	playbookId?: string;
 	error?: string;
 }
@@ -60,8 +61,17 @@ export async function autoRun(documentPathArgs: string[], options: AutoRunOption
 		const documentPaths = documentPathArgs.map(resolveMarkdownDocument);
 		const maxLoops = parseMaxLoops(options.maxLoops);
 		const sessionId = resolveSessionId(options);
+		const session = getSessionById(sessionId);
+		if (!session) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+		if (!session.autoRunFolderPath) {
+			throw new Error(`Session has no Auto Run folder configured: ${sessionId}`);
+		}
+
+		const autoRunFolderPath = path.resolve(session.autoRunFolderPath);
 		const documents = documentPaths.map((documentPath) => ({
-			filename: path.basename(documentPath),
+			filename: getAutoRunDocumentFilename(documentPath, autoRunFolderPath),
 			resetOnCompletion: options.resetOnCompletion || false,
 		}));
 
@@ -80,7 +90,7 @@ export async function autoRun(documentPathArgs: string[], options: AutoRunOption
 				'configure_auto_run_result'
 			);
 
-			if (result.success === false) {
+			if (!result.success) {
 				throw new Error(result.error || 'Failed to configure Auto Run');
 			}
 		});
@@ -97,4 +107,16 @@ export async function autoRun(documentPathArgs: string[], options: AutoRunOption
 		console.error(formatError(`Failed to configure Auto Run: ${message}`));
 		process.exit(1);
 	}
+}
+
+function getAutoRunDocumentFilename(documentPath: string, autoRunFolderPath: string): string {
+	const resolvedDocumentPath = path.resolve(documentPath);
+	const documentDir = path.dirname(resolvedDocumentPath);
+	if (documentDir !== autoRunFolderPath) {
+		throw new Error(
+			`Document must be in the session Auto Run folder: ${autoRunFolderPath}. Received: ${resolvedDocumentPath}`
+		);
+	}
+
+	return path.basename(resolvedDocumentPath);
 }

@@ -146,6 +146,80 @@ describe('MaestroClient', () => {
 		await expect(responsePromise).resolves.toMatchObject({ type: 'pong', ok: true });
 	});
 
+	it('sendCommand() matches responses by requestId before response type', async () => {
+		const client = new MaestroClient();
+		const connectPromise = client.connect();
+		const ws = wsMock.instances[0];
+		ws.emit('open');
+		await connectPromise;
+
+		const firstPromise = client.sendCommand<{ value: string }>({ type: 'ping' }, 'pong');
+		const firstPayload = JSON.parse(ws.sent[0]) as { requestId: string };
+		const secondPromise = client.sendCommand<{ value: string }>({ type: 'ping' }, 'pong');
+		const secondPayload = JSON.parse(ws.sent[1]) as { requestId: string };
+
+		ws.emit(
+			'message',
+			Buffer.from(
+				JSON.stringify({ type: 'pong', requestId: secondPayload.requestId, value: 'second' })
+			)
+		);
+
+		await expect(secondPromise).resolves.toMatchObject({ value: 'second' });
+
+		ws.emit(
+			'message',
+			Buffer.from(
+				JSON.stringify({ type: 'pong', requestId: firstPayload.requestId, value: 'first' })
+			)
+		);
+
+		await expect(firstPromise).resolves.toMatchObject({ value: 'first' });
+	});
+
+	it('rejects ambiguous same-type responses that omit requestId', async () => {
+		const client = new MaestroClient();
+		const connectPromise = client.connect();
+		const ws = wsMock.instances[0];
+		ws.emit('open');
+		await connectPromise;
+
+		const firstPromise = client.sendCommand({ type: 'ping' }, 'pong');
+		const secondPromise = client.sendCommand({ type: 'ping' }, 'pong');
+
+		ws.emit('message', Buffer.from(JSON.stringify({ type: 'pong', value: 'ambiguous' })));
+
+		await expect(firstPromise).rejects.toThrow('Protocol error');
+		await expect(secondPromise).rejects.toThrow('Protocol error');
+	});
+
+	it('keeps single-request compatibility for responses that omit requestId', async () => {
+		const client = new MaestroClient();
+		const connectPromise = client.connect();
+		const ws = wsMock.instances[0];
+		ws.emit('open');
+		await connectPromise;
+
+		const responsePromise = client.sendCommand<{ value: string }>({ type: 'ping' }, 'pong');
+
+		ws.emit('message', Buffer.from(JSON.stringify({ type: 'pong', value: 'legacy' })));
+
+		await expect(responsePromise).resolves.toMatchObject({ value: 'legacy' });
+	});
+
+	it('rejects pending requests and surfaces malformed JSON responses', async () => {
+		const client = new MaestroClient();
+		const connectPromise = client.connect();
+		const ws = wsMock.instances[0];
+		ws.emit('open');
+		await connectPromise;
+
+		const responsePromise = client.sendCommand({ type: 'ping' }, 'pong');
+
+		expect(() => ws.emit('message', Buffer.from('{not-json'))).toThrow();
+		await expect(responsePromise).rejects.toThrow('Invalid message from Maestro desktop app');
+	});
+
 	it('sendCommand() rejects on timeout', async () => {
 		vi.useFakeTimers();
 		const client = new MaestroClient();

@@ -17,12 +17,17 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/storage', () => ({
+	getSessionById: vi.fn(),
+}));
+
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((message: string) => `Error: ${message}`),
 }));
 
 import { autoRun } from '../../../cli/commands/auto-run';
 import { resolveSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
+import { getSessionById } from '../../../cli/services/storage';
 
 describe('auto-run command', () => {
 	let consoleSpy: MockInstance;
@@ -37,6 +42,14 @@ describe('auto-run command', () => {
 		vi.mocked(fs.existsSync).mockReturnValue(true);
 		vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as fs.Stats);
 		vi.mocked(resolveSessionId).mockReturnValue('target-session');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'target-session',
+			name: 'Target Session',
+			toolType: 'codex',
+			cwd: path.resolve('.'),
+			projectRoot: path.resolve('.'),
+			autoRunFolderPath: path.resolve('docs'),
+		});
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const client = {
 				sendCommand: vi.fn().mockResolvedValue({
@@ -161,5 +174,26 @@ describe('auto-run command', () => {
 			}),
 			'configure_auto_run_result'
 		);
+	});
+
+	it('exits with an error when a document is outside the Auto Run folder', async () => {
+		await autoRun(['other/task.md'], { session: 'target-session' });
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Document must be in the session Auto Run folder')
+		);
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('treats a missing success field as a failed response', async () => {
+		await autoRun(['docs/task.md'], { session: 'target-session' });
+
+		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'configure_auto_run_result',
+		});
+
+		await expect(action({ sendCommand } as never)).rejects.toThrow('Failed to configure Auto Run');
 	});
 });

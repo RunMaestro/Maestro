@@ -30,11 +30,12 @@ vi.mock('../../../../main/web-server', () => ({
 
 vi.mock('../../../../shared/cli-server-discovery', () => ({
 	deleteCliServerInfo: vi.fn(),
+	readCliServerInfo: vi.fn(),
 	writeCliServerInfo: vi.fn(),
 }));
 
 import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
-import { deleteCliServerInfo, writeCliServerInfo } from '../../../../shared/cli-server-discovery';
+import { readCliServerInfo, writeCliServerInfo } from '../../../../shared/cli-server-discovery';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -77,6 +78,7 @@ describe('web handlers', () => {
 			get: vi.fn(),
 			set: vi.fn(),
 		};
+		vi.mocked(readCliServerInfo).mockReturnValue(null);
 
 		registerWebHandlers({
 			getWebServer: () => webServerRef.current,
@@ -314,6 +316,35 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith({
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: expect.any(Number),
+			});
+			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
+		});
+
+		it('should preserve startedAt when rewriting discovery for an already running server', async () => {
+			const startedAt = 1710000000000;
+			mockWebServer.isActive.mockReturnValue(true);
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt,
+			});
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith({
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt,
+			});
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
@@ -329,13 +360,15 @@ describe('web handlers', () => {
 	});
 
 	describe('live:stopServer', () => {
-		it('should stop web server and clean up', async () => {
+		it('should stop live server and restart CLI IPC server', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
 			const handler = registeredHandlers.get('live:stopServer');
 			const result = await handler!({});
 
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(deleteCliServerInfo).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(mockWebServer.start).toHaveBeenCalled();
+			expect(webServerRef.current).toBe(mockWebServer);
 			expect(result).toEqual({ success: true });
 		});
 
@@ -351,6 +384,7 @@ describe('web handlers', () => {
 
 	describe('live:disableAll', () => {
 		it('should disable all live sessions and stop server', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
 			mockWebServer.getLiveSessions.mockReturnValue([
 				{ sessionId: 'session-1' },
 				{ sessionId: 'session-2' },
@@ -362,8 +396,9 @@ describe('web handlers', () => {
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(deleteCliServerInfo).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(mockWebServer.start).toHaveBeenCalled();
+			expect(webServerRef.current).toBe(mockWebServer);
 			expect(result).toEqual({ success: true, count: 2 });
 		});
 

@@ -27,7 +27,7 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import type { SettingsStoreInterface } from '../../stores/types';
-import { deleteCliServerInfo, writeCliServerInfo } from '../../../shared/cli-server-discovery';
+import { readCliServerInfo, writeCliServerInfo } from '../../../shared/cli-server-discovery';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -54,6 +54,7 @@ export interface WebHandlerDependencies {
  */
 export async function ensureCliServer(deps: WebHandlerDependencies): Promise<void> {
 	let webServer = deps.getWebServer();
+	let startedAt: number | undefined;
 
 	if (!webServer) {
 		logger.info('Creating CLI web server', 'WebServer');
@@ -66,13 +67,23 @@ export async function ensureCliServer(deps: WebHandlerDependencies): Promise<voi
 		// WebServer listens on 0.0.0.0 for Live mode LAN access; CLI discovery remains token-gated.
 		const { port, url } = await webServer.start();
 		logger.info(`CLI web server running at ${url} (port ${port})`, 'WebServer');
+		startedAt = Date.now();
+	} else {
+		const existingInfo = readCliServerInfo();
+		if (
+			existingInfo?.pid === process.pid &&
+			existingInfo.port === webServer.getPort() &&
+			existingInfo.token === webServer.getSecurityToken()
+		) {
+			startedAt = existingInfo.startedAt;
+		}
 	}
 
 	writeCliServerInfo({
 		port: webServer.getPort(),
 		token: webServer.getSecurityToken(),
 		pid: process.pid,
-		startedAt: Date.now(),
+		startedAt: startedAt ?? Date.now(),
 	});
 }
 
@@ -265,9 +276,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		try {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
-			deleteCliServerInfo();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
-			logger.info('Web server stopped and cleaned up', 'WebServer');
+			await ensureCliServer({ getWebServer, setWebServer, createWebServer, settingsStore });
+			logger.info('Live web server stopped; CLI IPC server restarted', 'WebServer');
 			return { success: true };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
@@ -346,8 +357,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		try {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
-			deleteCliServerInfo();
 			setWebServer(null);
+			await ensureCliServer({ getWebServer, setWebServer, createWebServer, settingsStore });
 			return { success: true, count };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');

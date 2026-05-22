@@ -12,6 +12,8 @@ vi.mock('fs', () => ({
 	writeFileSync: vi.fn(),
 	existsSync: vi.fn(),
 	mkdirSync: vi.fn(),
+	statSync: vi.fn(),
+	chmodSync: vi.fn(),
 	renameSync: vi.fn(),
 	unlinkSync: vi.fn(),
 }));
@@ -38,6 +40,8 @@ const mockFs = {
 	writeFileSync: fs.writeFileSync as ReturnType<typeof vi.fn>,
 	existsSync: fs.existsSync as ReturnType<typeof vi.fn>,
 	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
+	statSync: fs.statSync as ReturnType<typeof vi.fn>,
+	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
 	renameSync: fs.renameSync as ReturnType<typeof vi.fn>,
 	unlinkSync: fs.unlinkSync as ReturnType<typeof vi.fn>,
 };
@@ -66,6 +70,8 @@ describe('cli-server-discovery', () => {
 		mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
 		mockFs.writeFileSync.mockReturnValue(undefined);
 		mockFs.mkdirSync.mockReturnValue(undefined);
+		mockFs.statSync.mockReturnValue({ mode: 0o700 } as fs.Stats);
+		mockFs.chmodSync.mockReturnValue(undefined);
 		mockFs.renameSync.mockReturnValue(undefined);
 		mockFs.unlinkSync.mockReturnValue(undefined);
 
@@ -82,13 +88,23 @@ describe('cli-server-discovery', () => {
 
 			writeCliServerInfo(sampleInfo);
 
-			expect(mockFs.mkdirSync).toHaveBeenCalledWith(configDir, { recursive: true });
+			expect(mockFs.mkdirSync).toHaveBeenCalledWith(configDir, { recursive: true, mode: 0o700 });
 			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
 				`${serverFile}.tmp`,
 				JSON.stringify(sampleInfo, null, 2),
-				'utf-8'
+				{ encoding: 'utf-8', mode: 0o600 }
 			);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(`${serverFile}.tmp`, 0o600);
 			expect(mockFs.renameSync).toHaveBeenCalledWith(`${serverFile}.tmp`, serverFile);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(serverFile, 0o600);
+		});
+
+		it('restricts an existing config directory when it is group or world accessible', () => {
+			mockFs.statSync.mockReturnValue({ mode: 0o755 } as fs.Stats);
+
+			writeCliServerInfo(sampleInfo);
+
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(configDir, 0o700);
 		});
 	});
 
@@ -110,6 +126,14 @@ describe('cli-server-discovery', () => {
 
 		it('returns null for invalid discovery data', () => {
 			mockFs.readFileSync.mockReturnValue(JSON.stringify({ port: 54321, token: '' }));
+
+			expect(readCliServerInfo()).toBeNull();
+		});
+
+		it('returns null for non-integer or out-of-range discovery data', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ ...sampleInfo, port: 70000, pid: 0, startedAt: 1.5 })
+			);
 
 			expect(readCliServerInfo()).toBeNull();
 		});

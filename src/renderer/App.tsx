@@ -1837,7 +1837,9 @@ function MaestroConsoleInner() {
 				});
 				setActiveFocus('main');
 			} catch (error) {
-				console.error('[Remote] Failed to open file tab:', error);
+				captureException(error, {
+					extra: { context: 'handleRemoteOpenFileTab', sessionId, filePath },
+				});
 			}
 		};
 
@@ -1871,33 +1873,33 @@ function MaestroConsoleInner() {
 			const sendResponse = (result: RemoteConfigureAutoRunResult) => {
 				window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, result);
 			};
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
-			if (!session) {
-				sendResponse({ success: false, error: 'Session not found' });
-				return;
-			}
+			try {
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session) {
+					sendResponse({ success: false, error: 'Session not found' });
+					return;
+				}
 
-			const documents: BatchDocumentEntry[] = config.documents.map((doc, index, allDocs) => {
-				const filename = doc.filename.replace(/\.md$/i, '');
-				return {
-					id: generateId(),
-					filename,
-					resetOnCompletion: doc.resetOnCompletion || false,
-					isDuplicate:
-						allDocs.findIndex((other) => other.filename.replace(/\.md$/i, '') === filename) !==
-						index,
+				const documents: BatchDocumentEntry[] = config.documents.map((doc, index, allDocs) => {
+					const filename = doc.filename.replace(/\.md$/i, '');
+					return {
+						id: generateId(),
+						filename,
+						resetOnCompletion: doc.resetOnCompletion || false,
+						isDuplicate:
+							allDocs.findIndex((other) => other.filename.replace(/\.md$/i, '') === filename) !==
+							index,
+					};
+				});
+				const batchConfig: BatchRunConfig = {
+					documents,
+					prompt: config.prompt || '',
+					loopEnabled: config.loopEnabled || false,
+					maxLoops:
+						config.loopEnabled || config.maxLoops !== undefined ? (config.maxLoops ?? null) : null,
 				};
-			});
-			const batchConfig: BatchRunConfig = {
-				documents,
-				prompt: config.prompt || '',
-				loopEnabled: config.loopEnabled || false,
-				maxLoops:
-					config.loopEnabled || config.maxLoops !== undefined ? (config.maxLoops ?? null) : null,
-			};
 
-			if (config.saveAsPlaybook) {
-				try {
+				if (config.saveAsPlaybook) {
 					const result = await window.maestro.playbooks.create(sessionId, {
 						name: config.saveAsPlaybook,
 						documents: documents.map((doc) => ({
@@ -1916,67 +1918,63 @@ function MaestroConsoleInner() {
 						return;
 					}
 					sendResponse({ success: true, playbookId: result.playbook.id });
-				} catch (error) {
-					sendResponse({
-						success: false,
-						error: error instanceof Error ? error.message : String(error),
-					});
+					return;
 				}
-				return;
-			}
 
-			if (!session.autoRunFolderPath) {
-				sendResponse({ success: false, error: 'Session has no Auto Run folder configured' });
-				return;
-			}
+				if (!session.autoRunFolderPath) {
+					sendResponse({ success: false, error: 'Session has no Auto Run folder configured' });
+					return;
+				}
 
-			if (config.launch) {
-				try {
+				if (config.launch) {
 					await startBatchRunRef.current(sessionId, batchConfig, session.autoRunFolderPath);
 					sendResponse({ success: true });
-				} catch (error) {
-					sendResponse({
-						success: false,
-						error: error instanceof Error ? error.message : String(error),
-					});
+					return;
 				}
-				return;
-			}
 
-			const selectedFile = documents[0]?.filename;
-			let selectedContent = '';
-			if (selectedFile) {
-				const sshRemoteId =
-					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-				const result = await window.maestro.autorun.readDoc(
-					session.autoRunFolderPath,
-					selectedFile + '.md',
-					sshRemoteId
+				const selectedFile = documents[0]?.filename;
+				let selectedContent = '';
+				if (selectedFile) {
+					const sshRemoteId =
+						session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+					const result = await window.maestro.autorun.readDoc(
+						session.autoRunFolderPath,
+						selectedFile + '.md',
+						sshRemoteId
+					);
+					selectedContent = result.success ? result.content || '' : '';
+				}
+
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? {
+									...s,
+									autoRunSelectedFile: selectedFile,
+									autoRunContent: selectedContent,
+									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+									batchRunnerPrompt: batchConfig.prompt,
+									batchRunnerPromptModifiedAt: Date.now(),
+								}
+							: s
+					)
 				);
-				selectedContent = result.success ? result.content || '' : '';
+				setAutoRunDocumentList(documents.map((doc) => doc.filename));
+				setRemoteBatchRunConfig(batchConfig);
+				setActiveSessionId(sessionId);
+				setRightPanelOpen(true);
+				setActiveRightTab('autorun');
+				setBatchRunnerModalOpen(true);
+				sendResponse({ success: true });
+			} catch (error) {
+				captureException(error, {
+					extra: { context: 'handleRemoteConfigureAutoRun', sessionId },
+				});
+				sendResponse({
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				});
 			}
-
-			setSessions((prev) =>
-				prev.map((s) =>
-					s.id === sessionId
-						? {
-								...s,
-								autoRunSelectedFile: selectedFile,
-								autoRunContent: selectedContent,
-								autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
-								batchRunnerPrompt: batchConfig.prompt,
-								batchRunnerPromptModifiedAt: Date.now(),
-							}
-						: s
-				)
-			);
-			setAutoRunDocumentList(documents.map((doc) => doc.filename));
-			setRemoteBatchRunConfig(batchConfig);
-			setActiveSessionId(sessionId);
-			setRightPanelOpen(true);
-			setActiveRightTab('autorun');
-			setBatchRunnerModalOpen(true);
-			sendResponse({ success: true });
 		};
 
 		window.addEventListener('maestro:openFileTab', handleRemoteOpenFileTab);

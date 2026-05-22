@@ -48,13 +48,17 @@ function isValidCliServerInfo(data: unknown): data is CliServerInfo {
 	const info = data as Partial<CliServerInfo>;
 	return (
 		typeof info.port === 'number' &&
-		Number.isFinite(info.port) &&
+		Number.isInteger(info.port) &&
+		info.port > 0 &&
+		info.port <= 65535 &&
 		typeof info.token === 'string' &&
 		info.token.length > 0 &&
 		typeof info.pid === 'number' &&
-		Number.isFinite(info.pid) &&
+		Number.isInteger(info.pid) &&
+		info.pid > 0 &&
 		typeof info.startedAt === 'number' &&
-		Number.isFinite(info.startedAt)
+		Number.isInteger(info.startedAt) &&
+		info.startedAt >= 0
 	);
 }
 
@@ -67,10 +71,20 @@ export function writeCliServerInfo(info: CliServerInfo): void {
 		const tmpPath = `${filePath}.tmp`;
 		const dir = path.dirname(filePath);
 		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
+			fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+		} else {
+			const stats = fs.statSync(dir);
+			if ((stats.mode & 0o077) !== 0) {
+				fs.chmodSync(dir, 0o700);
+			}
 		}
-		fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), 'utf-8');
+		fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), {
+			encoding: 'utf-8',
+			mode: 0o600,
+		});
+		fs.chmodSync(tmpPath, 0o600);
 		fs.renameSync(tmpPath, filePath);
+		fs.chmodSync(filePath, 0o600);
 	} catch (error) {
 		console.error('[CLI Server Discovery] Failed to write discovery file:', error);
 	}

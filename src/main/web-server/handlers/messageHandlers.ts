@@ -29,11 +29,30 @@ import type { ConfigureAutoRunConfig, ConfigureAutoRunDocument } from '../types'
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
 
+function isValidConfigureAutoRunDocuments(
+	documents: ConfigureAutoRunDocument[] | undefined
+): documents is ConfigureAutoRunDocument[] {
+	return (
+		Array.isArray(documents) &&
+		documents.length > 0 &&
+		documents.every(
+			(document) =>
+				!!document &&
+				typeof document === 'object' &&
+				typeof document.filename === 'string' &&
+				document.filename.trim().length > 0 &&
+				(document.resetOnCompletion === undefined ||
+					typeof document.resetOnCompletion === 'boolean')
+		)
+	);
+}
+
 /**
  * Web client message interface
  */
 export interface WebClientMessage {
 	type: string;
+	requestId?: string;
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
@@ -131,15 +150,23 @@ export class WebSocketMessageHandler {
 	/**
 	 * Helper to send a JSON message to a client with timestamp
 	 */
-	private send(client: WebClient, data: Record<string, unknown>): void {
-		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
+	private send(client: WebClient, data: Record<string, unknown>, message?: WebClientMessage): void {
+		const requestId = typeof message?.requestId === 'string' ? message.requestId : undefined;
+		client.socket.send(
+			JSON.stringify({ ...data, ...(requestId ? { requestId } : {}), timestamp: Date.now() })
+		);
 	}
 
 	/**
 	 * Helper to send an error message to a client
 	 */
-	private sendError(client: WebClient, message: string, extra?: Record<string, unknown>): void {
-		this.send(client, { type: 'error', message, ...extra });
+	private sendError(
+		client: WebClient,
+		errorMessage: string,
+		extra?: Record<string, unknown>,
+		message?: WebClientMessage
+	): void {
+		this.send(client, { type: 'error', message: errorMessage, ...extra }, message);
 	}
 
 	/**
@@ -157,7 +184,7 @@ export class WebSocketMessageHandler {
 
 		switch (message.type) {
 			case 'ping':
-				this.handlePing(client);
+				this.handlePing(client, message);
 				break;
 
 			case 'subscribe':
@@ -177,7 +204,7 @@ export class WebSocketMessageHandler {
 				break;
 
 			case 'get_sessions':
-				this.handleGetSessions(client);
+				this.handleGetSessions(client, message);
 				break;
 
 			case 'select_tab':
@@ -232,8 +259,8 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle ping message - respond with pong
 	 */
-	private handlePing(client: WebClient): void {
-		this.send(client, { type: 'pong' });
+	private handlePing(client: WebClient, message: WebClientMessage): void {
+		this.send(client, { type: 'pong' }, message);
 	}
 
 	/**
@@ -380,13 +407,13 @@ export class WebSocketMessageHandler {
 		);
 
 		if (!sessionId) {
-			this.sendError(client, 'Missing sessionId');
+			this.sendError(client, 'Missing sessionId', undefined, message);
 			return;
 		}
 
 		if (!this.callbacks.selectSession) {
 			logger.warn(`[Web] selectSessionCallback is not set!`, LOG_CONTEXT);
-			this.sendError(client, 'Session selection not configured');
+			this.sendError(client, 'Session selection not configured', undefined, message);
 			return;
 		}
 
@@ -405,17 +432,17 @@ export class WebSocketMessageHandler {
 				} else {
 					logger.warn(`Failed to select session ${sessionId} in desktop`, LOG_CONTEXT);
 				}
-				this.send(client, { type: 'select_session_result', success, sessionId });
+				this.send(client, { type: 'select_session_result', success, sessionId }, message);
 			})
 			.catch((error) => {
-				this.sendError(client, `Failed to select session: ${error.message}`);
+				this.sendError(client, `Failed to select session: ${error.message}`, undefined, message);
 			});
 	}
 
 	/**
 	 * Handle get_sessions message - request updated sessions list
 	 */
-	private handleGetSessions(client: WebClient): void {
+	private handleGetSessions(client: WebClient, message: WebClientMessage): void {
 		if (
 			this.callbacks.getSessions &&
 			this.callbacks.getLiveSessionInfo &&
@@ -432,7 +459,7 @@ export class WebSocketMessageHandler {
 					isLive: this.callbacks.isSessionLive!(s.id),
 				};
 			});
-			this.send(client, { type: 'sessions_list', sessions: sessionsWithLiveInfo });
+			this.send(client, { type: 'sessions_list', sessions: sessionsWithLiveInfo }, message);
 		}
 	}
 
@@ -678,22 +705,22 @@ export class WebSocketMessageHandler {
 		);
 
 		if (!sessionId || !filePath) {
-			this.sendError(client, 'Missing sessionId or filePath');
+			this.sendError(client, 'Missing sessionId or filePath', undefined, message);
 			return;
 		}
 
 		if (!this.callbacks.openFileTab) {
-			this.sendError(client, 'File tab opening not configured');
+			this.sendError(client, 'File tab opening not configured', undefined, message);
 			return;
 		}
 
 		this.callbacks
 			.openFileTab(sessionId, filePath)
 			.then((success) => {
-				this.send(client, { type: 'open_file_tab_result', success, sessionId, filePath });
+				this.send(client, { type: 'open_file_tab_result', success, sessionId, filePath }, message);
 			})
 			.catch((error) => {
-				this.sendError(client, `Failed to open file tab: ${error.message}`);
+				this.sendError(client, `Failed to open file tab: ${error.message}`, undefined, message);
 			});
 	}
 
@@ -705,22 +732,22 @@ export class WebSocketMessageHandler {
 		logger.info(`[Web] Received refresh_file_tree message: session=${sessionId}`, LOG_CONTEXT);
 
 		if (!sessionId) {
-			this.sendError(client, 'Missing sessionId');
+			this.sendError(client, 'Missing sessionId', undefined, message);
 			return;
 		}
 
 		if (!this.callbacks.refreshFileTree) {
-			this.sendError(client, 'File tree refresh not configured');
+			this.sendError(client, 'File tree refresh not configured', undefined, message);
 			return;
 		}
 
 		this.callbacks
 			.refreshFileTree(sessionId)
 			.then((success) => {
-				this.send(client, { type: 'refresh_file_tree_result', success, sessionId });
+				this.send(client, { type: 'refresh_file_tree_result', success, sessionId }, message);
 			})
 			.catch((error) => {
-				this.sendError(client, `Failed to refresh file tree: ${error.message}`);
+				this.sendError(client, `Failed to refresh file tree: ${error.message}`, undefined, message);
 			});
 	}
 
@@ -732,22 +759,27 @@ export class WebSocketMessageHandler {
 		logger.info(`[Web] Received refresh_auto_run_docs message: session=${sessionId}`, LOG_CONTEXT);
 
 		if (!sessionId) {
-			this.sendError(client, 'Missing sessionId');
+			this.sendError(client, 'Missing sessionId', undefined, message);
 			return;
 		}
 
 		if (!this.callbacks.refreshAutoRunDocs) {
-			this.sendError(client, 'Auto Run docs refresh not configured');
+			this.sendError(client, 'Auto Run docs refresh not configured', undefined, message);
 			return;
 		}
 
 		this.callbacks
 			.refreshAutoRunDocs(sessionId)
 			.then((success) => {
-				this.send(client, { type: 'refresh_auto_run_docs_result', success, sessionId });
+				this.send(client, { type: 'refresh_auto_run_docs_result', success, sessionId }, message);
 			})
 			.catch((error) => {
-				this.sendError(client, `Failed to refresh Auto Run docs: ${error.message}`);
+				this.sendError(
+					client,
+					`Failed to refresh Auto Run docs: ${error.message}`,
+					undefined,
+					message
+				);
 			});
 	}
 
@@ -760,29 +792,41 @@ export class WebSocketMessageHandler {
 		logger.info(`[Web] Received configure_auto_run message: session=${sessionId}`, LOG_CONTEXT);
 
 		if (!sessionId) {
-			this.send(client, {
-				type: 'configure_auto_run_result',
-				success: false,
-				error: 'Missing sessionId',
-			});
+			this.send(
+				client,
+				{
+					type: 'configure_auto_run_result',
+					success: false,
+					error: 'Missing sessionId',
+				},
+				message
+			);
 			return;
 		}
 
-		if (!Array.isArray(documents) || documents.length === 0) {
-			this.send(client, {
-				type: 'configure_auto_run_result',
-				success: false,
-				error: 'Missing documents',
-			});
+		if (!isValidConfigureAutoRunDocuments(documents)) {
+			this.send(
+				client,
+				{
+					type: 'configure_auto_run_result',
+					success: false,
+					error: 'Invalid documents payload',
+				},
+				message
+			);
 			return;
 		}
 
 		if (!this.callbacks.configureAutoRun) {
-			this.send(client, {
-				type: 'configure_auto_run_result',
-				success: false,
-				error: 'Auto Run configuration not configured',
-			});
+			this.send(
+				client,
+				{
+					type: 'configure_auto_run_result',
+					success: false,
+					error: 'Auto Run configuration not configured',
+				},
+				message
+			);
 			return;
 		}
 
@@ -798,14 +842,18 @@ export class WebSocketMessageHandler {
 		this.callbacks
 			.configureAutoRun(sessionId, config)
 			.then((result) => {
-				this.send(client, { type: 'configure_auto_run_result', ...result });
+				this.send(client, { type: 'configure_auto_run_result', ...result }, message);
 			})
 			.catch((error) => {
-				this.send(client, {
-					type: 'configure_auto_run_result',
-					success: false,
-					error: `Failed to configure Auto Run: ${error.message}`,
-				});
+				this.send(
+					client,
+					{
+						type: 'configure_auto_run_result',
+						success: false,
+						error: `Failed to configure Auto Run: ${error.message}`,
+					},
+					message
+				);
 			});
 	}
 

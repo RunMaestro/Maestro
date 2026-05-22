@@ -133,8 +133,9 @@ export class MaestroClient {
 		let message: MaestroMessage;
 		try {
 			message = JSON.parse(data.toString()) as MaestroMessage;
-		} catch {
-			return;
+		} catch (error) {
+			this.rejectAllPending(new Error('Invalid message from Maestro desktop app'));
+			throw error;
 		}
 
 		if (message.type === 'error') {
@@ -142,9 +143,38 @@ export class MaestroClient {
 			return;
 		}
 
-		for (const [requestId, pending] of this.pendingRequests) {
-			if (message.type !== pending.responseType) continue;
-			if (message.requestId && message.requestId !== requestId) continue;
+		if (message.requestId) {
+			const pending = this.pendingRequests.get(message.requestId);
+			if (!pending || message.type !== pending.responseType) return;
+
+			clearTimeout(pending.timeout);
+			this.pendingRequests.delete(message.requestId);
+
+			if (message.success === false) {
+				pending.reject(new Error(this.getErrorMessage(message)));
+			} else {
+				pending.resolve(message);
+			}
+			return;
+		}
+
+		const matchingRequests = [...this.pendingRequests.entries()].filter(
+			([, pending]) => message.type === pending.responseType
+		);
+
+		if (matchingRequests.length > 1) {
+			const error = new Error(`Protocol error: response ${message.type} is missing requestId`);
+			for (const [requestId, pending] of matchingRequests) {
+				clearTimeout(pending.timeout);
+				this.pendingRequests.delete(requestId);
+				pending.reject(error);
+			}
+			return;
+		}
+
+		const [match] = matchingRequests;
+		if (match) {
+			const [requestId, pending] = match;
 
 			clearTimeout(pending.timeout);
 			this.pendingRequests.delete(requestId);
