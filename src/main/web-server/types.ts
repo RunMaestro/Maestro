@@ -222,6 +222,35 @@ export interface CliActivity {
 	startedAt: number;
 }
 
+/**
+ * Auto Run document configuration received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunDocument {
+	filename: string;
+	resetOnCompletion?: boolean;
+}
+
+/**
+ * Auto Run configuration payload received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunConfig {
+	documents: ConfigureAutoRunDocument[];
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+}
+
+/**
+ * Response returned after forwarding an Auto Run configuration request.
+ */
+export interface ConfigureAutoRunResult {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+}
+
 // =============================================================================
 // WebSocket Client Types
 // =============================================================================
@@ -363,6 +392,10 @@ export type OpenTerminalTabCallback = (
 	config: OpenTerminalTabConfig
 ) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+export type ConfigureAutoRunCallback = (
+	sessionId: string,
+	config: ConfigureAutoRunConfig
+) => Promise<ConfigureAutoRunResult>;
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop
