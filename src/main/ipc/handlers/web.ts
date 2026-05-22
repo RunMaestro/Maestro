@@ -27,6 +27,7 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import type { SettingsStoreInterface } from '../../stores/types';
+import { writeCliServerInfo } from '../../../shared/cli-server-discovery';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -46,6 +47,33 @@ export interface WebHandlerDependencies {
 	setWebServer: (server: WebServer | null) => void;
 	createWebServer: () => WebServer;
 	settingsStore: SettingsStoreInterface;
+}
+
+/**
+ * Ensure the always-on CLI IPC web server is running and discoverable.
+ */
+export async function ensureCliServer(deps: WebHandlerDependencies): Promise<void> {
+	let webServer = deps.getWebServer();
+
+	if (!webServer) {
+		logger.info('Creating CLI web server', 'WebServer');
+		webServer = deps.createWebServer();
+		deps.setWebServer(webServer);
+	}
+
+	if (!webServer.isActive()) {
+		logger.info('Starting CLI web server', 'WebServer');
+		// WebServer listens on 0.0.0.0 for Live mode LAN access; CLI discovery remains token-gated.
+		const { port, url } = await webServer.start();
+		logger.info(`CLI web server running at ${url} (port ${port})`, 'WebServer');
+	}
+
+	writeCliServerInfo({
+		port: webServer.getPort(),
+		token: webServer.getSecurityToken(),
+		pid: process.pid,
+		startedAt: Date.now(),
+	});
 }
 
 /**
@@ -219,25 +247,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	// Start web server (creates if needed, starts if not running)
 	ipcMain.handle('live:startServer', async () => {
 		try {
-			let webServer = getWebServer();
-
-			// Create web server if it doesn't exist
-			if (!webServer) {
-				logger.info('Creating web server', 'WebServer');
-				webServer = createWebServer();
-				setWebServer(webServer);
-			}
-
-			// Start if not already running
-			if (!webServer.isActive()) {
-				logger.info('Starting web server', 'WebServer');
-				const { port, url } = await webServer.start();
-				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
-				return { success: true, url };
-			}
-
-			// Already running
-			return { success: true, url: webServer.getSecureUrl() };
+			await ensureCliServer({ getWebServer, setWebServer, createWebServer, settingsStore });
+			return { success: true, url: getWebServer()?.getSecureUrl() };
 		} catch (error: any) {
 			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
 			return { success: false, error: error.message };

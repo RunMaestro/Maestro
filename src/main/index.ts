@@ -47,6 +47,7 @@ import {
 	registerFilesystemHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
+	ensureCliServer,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -397,6 +398,24 @@ app.whenReady().then(async () => {
 	logger.debug('Setting up IPC handlers', 'Startup');
 	setupIpcHandlers();
 
+	// Auto-start the shared web server so CLI IPC can discover and connect immediately.
+	try {
+		await ensureCliServer({
+			getWebServer: () => webServer,
+			setWebServer: (server) => {
+				webServer = server;
+			},
+			createWebServer,
+			settingsStore: store,
+		});
+	} catch (error) {
+		logger.error(`Failed to initialize CLI web server: ${error}`, 'Startup');
+		logger.warn(
+			'Continuing without CLI IPC server - CLI live commands will be unavailable',
+			'Startup'
+		);
+	}
+
 	// Set up process event listeners
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
@@ -432,9 +451,6 @@ app.whenReady().then(async () => {
 
 	// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 	settingsWatcher.start();
-
-	// Note: Web server is not auto-started - it starts when user enables web interface
-	// via live:startServer IPC call from the renderer
 
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) {

@@ -28,7 +28,12 @@ vi.mock('../../../../main/web-server', () => ({
 	WebServer: vi.fn(),
 }));
 
+vi.mock('../../../../shared/cli-server-discovery', () => ({
+	writeCliServerInfo: vi.fn(),
+}));
+
 import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
+import { writeCliServerInfo } from '../../../../shared/cli-server-discovery';
 
 describe('web handlers', () => {
 	let mockWebServer: any;
@@ -55,8 +60,13 @@ describe('web handlers', () => {
 			broadcastTabsChange: vi.fn(),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
+			getPort: vi.fn().mockReturnValue(8080),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
-			start: vi.fn().mockResolvedValue({ port: 8080, url: 'http://localhost:8080' }),
+			start: vi.fn().mockResolvedValue({
+				port: 8080,
+				token: 'mock-security-token',
+				url: 'http://localhost:8080',
+			}),
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
 
@@ -276,6 +286,12 @@ describe('web handlers', () => {
 			expect(mockCreateWebServer).toHaveBeenCalled();
 			expect(webServerRef.current).toBe(mockWebServer); // Server was set
 			expect(mockWebServer.start).toHaveBeenCalled();
+			expect(writeCliServerInfo).toHaveBeenCalledWith({
+				port: 8080,
+				token: 'mock-security-token',
+				pid: process.pid,
+				startedAt: expect.any(Number),
+			});
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
