@@ -3,8 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { withMaestroClient } from '../services/maestro-client';
-import { getSessionById, readSessions, readSettings } from '../services/storage';
+import { resolveSessionId, withMaestroClient } from '../services/maestro-client';
 import { formatError } from '../output/formatter';
 
 interface OpenFileOptions {
@@ -19,27 +18,6 @@ interface OpenFileResult {
 	error?: string;
 }
 
-function resolveTargetSessionId(options: OpenFileOptions): string {
-	if (options.session) {
-		return options.session;
-	}
-
-	const settings = readSettings();
-	if (typeof settings.activeSessionId === 'string' && settings.activeSessionId) {
-		const activeSession = getSessionById(settings.activeSessionId);
-		if (activeSession) {
-			return activeSession.id;
-		}
-	}
-
-	const firstSession = readSessions()[0];
-	if (firstSession) {
-		return firstSession.id;
-	}
-
-	throw new Error('No Maestro sessions found. Pass --session <id> to target a specific session.');
-}
-
 export async function openFile(filePathArg: string, options: OpenFileOptions): Promise<void> {
 	try {
 		const filePath = path.resolve(filePathArg);
@@ -47,7 +25,7 @@ export async function openFile(filePathArg: string, options: OpenFileOptions): P
 			throw new Error(`File not found: ${filePath}`);
 		}
 
-		const sessionId = resolveTargetSessionId(options);
+		const sessionId = resolveSessionId(options);
 
 		await withMaestroClient(async (client) => {
 			const result = await client.sendCommand<OpenFileResult>(

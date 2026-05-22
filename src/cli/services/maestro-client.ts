@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
+import { getSessionById, readSessions, readSettings } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_MS = 10000;
@@ -19,6 +20,10 @@ interface PendingRequest<T> {
 	resolve: (value: T) => void;
 	reject: (reason?: unknown) => void;
 	timeout: NodeJS.Timeout;
+}
+
+export interface SessionResolutionOptions {
+	session?: string;
 }
 
 export class MaestroClient {
@@ -193,4 +198,25 @@ export async function withMaestroClient<T>(
 	} finally {
 		client.disconnect();
 	}
+}
+
+export function resolveSessionId(options: SessionResolutionOptions = {}): string {
+	if (options.session) {
+		return options.session;
+	}
+
+	const settings = readSettings();
+	if (typeof settings.activeSessionId === 'string' && settings.activeSessionId) {
+		const activeSession = getSessionById(settings.activeSessionId);
+		if (activeSession) {
+			return activeSession.id;
+		}
+	}
+
+	const firstSession = readSessions()[0];
+	if (firstSession) {
+		return firstSession.id;
+	}
+
+	throw new Error('No Maestro sessions found. Pass --session <id> to target a specific session.');
 }

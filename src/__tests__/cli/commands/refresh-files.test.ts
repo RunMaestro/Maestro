@@ -1,15 +1,9 @@
 /**
- * @file open-file.test.ts
- * @description Tests for the open-file CLI command
+ * @file refresh-files.test.ts
+ * @description Tests for the refresh-files CLI command
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-
-vi.mock('fs', () => ({
-	existsSync: vi.fn(),
-}));
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	resolveSessionId: vi.fn(),
@@ -20,10 +14,10 @@ vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((message: string) => `Error: ${message}`),
 }));
 
-import { openFile } from '../../../cli/commands/open-file';
+import { refreshFiles } from '../../../cli/commands/refresh-files';
 import { resolveSessionId, withMaestroClient } from '../../../cli/services/maestro-client';
 
-describe('open-file command', () => {
+describe('refresh-files command', () => {
 	let consoleSpy: MockInstance;
 	let consoleErrorSpy: MockInstance;
 	let processExitSpy: MockInstance;
@@ -33,12 +27,11 @@ describe('open-file command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-		vi.mocked(fs.existsSync).mockReturnValue(true);
 		vi.mocked(resolveSessionId).mockReturnValue('target-session');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const client = {
 				sendCommand: vi.fn().mockResolvedValue({
-					type: 'open_file_tab_result',
+					type: 'refresh_file_tree_result',
 					success: true,
 				}),
 			};
@@ -46,57 +39,69 @@ describe('open-file command', () => {
 		});
 	});
 
-	it('opens an existing file with an explicit session', async () => {
-		const filePath = path.resolve('README.md');
-
-		await openFile('README.md', { session: 'target-session' });
+	it('refreshes the file tree with an explicit session', async () => {
+		await refreshFiles({ session: 'target-session' });
 
 		expect(resolveSessionId).toHaveBeenCalledWith({ session: 'target-session' });
 		expect(withMaestroClient).toHaveBeenCalledTimes(1);
 		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
-		const sendCommand = vi.fn().mockResolvedValue({ type: 'open_file_tab_result', success: true });
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'refresh_file_tree_result',
+			success: true,
+		});
 		await action({ sendCommand } as never);
 		expect(sendCommand).toHaveBeenCalledWith(
-			{ type: 'open_file_tab', sessionId: 'target-session', filePath },
-			'open_file_tab_result'
+			{ type: 'refresh_file_tree', sessionId: 'target-session' },
+			'refresh_file_tree_result'
 		);
-		expect(consoleSpy).toHaveBeenCalledWith('Opened README.md in Maestro');
+		expect(consoleSpy).toHaveBeenCalledWith('File tree refreshed');
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it('opens an existing file with the resolved default session', async () => {
+	it('refreshes the file tree with the resolved default session', async () => {
 		vi.mocked(resolveSessionId).mockReturnValue('resolved-session');
 
-		await openFile('/tmp/example.txt', {});
+		await refreshFiles({});
 
 		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
-		const sendCommand = vi.fn().mockResolvedValue({ type: 'open_file_tab_result', success: true });
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'refresh_file_tree_result',
+			success: true,
+		});
 		await action({ sendCommand } as never);
 		expect(sendCommand).toHaveBeenCalledWith(
-			{ type: 'open_file_tab', sessionId: 'resolved-session', filePath: '/tmp/example.txt' },
-			'open_file_tab_result'
+			{ type: 'refresh_file_tree', sessionId: 'resolved-session' },
+			'refresh_file_tree_result'
 		);
-	});
-
-	it('exits with an error for a missing file', async () => {
-		vi.mocked(fs.existsSync).mockReturnValue(false);
-
-		await openFile('/tmp/missing.txt', { session: 'target-session' });
-
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to open file: File not found: /tmp/missing.txt'
-		);
-		expect(withMaestroClient).not.toHaveBeenCalled();
-		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
 	it('exits with an error when Maestro is not reachable', async () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
-		await openFile('/tmp/example.txt', { session: 'target-session' });
+		await refreshFiles({ session: 'target-session' });
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Failed to open file: Maestro desktop app is not running'
+			'Error: Failed to refresh file tree: Maestro desktop app is not running'
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('exits with an error when Maestro rejects the refresh', async () => {
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const client = {
+				sendCommand: vi.fn().mockResolvedValue({
+					type: 'refresh_file_tree_result',
+					success: false,
+					error: 'Session not found',
+				}),
+			};
+			return action(client as never);
+		});
+
+		await refreshFiles({ session: 'target-session' });
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			'Error: Failed to refresh file tree: Session not found'
 		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
