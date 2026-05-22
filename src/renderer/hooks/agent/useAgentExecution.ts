@@ -250,6 +250,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let responseText = '';
 					let taskUsageStats: UsageStats | undefined;
 					let lastUsageEvent: UsageStats | undefined; // Last (non-accumulated) event for context estimation
+					let didError = false;
 					const queryStartTime = Date.now(); // Track start time for stats
 					const isBatchProcess = options?.isAutoRun ?? false;
 					let lastOutputAt = Date.now();
@@ -300,6 +301,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								taskUsageStats = accumulateUsageStats(taskUsageStats, usageStats);
 								// Keep the last event for context estimation (accumulated totals can exceed context window)
 								lastUsageEvent = usageStats;
+							}
+						})
+					);
+
+					// Track errors for this agent so onExit can resolve with correct success flag.
+					// The agent-error event may arrive before or after exit due to IPC ordering.
+					cleanupFns.push(
+						window.maestro.process.onAgentError((sid: string) => {
+							if (sid === targetSessionId) {
+								didError = true;
 							}
 						})
 					);
@@ -497,7 +508,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										) {
 											// Queue drained (or only held items left) or session idle - safe to continue batch
 											resolveOnce({
-												success: didExitCleanly,
+												success: didExitCleanly && !didError,
 												response: responseText,
 												agentSessionId,
 												usageStats: taskUsageStats,
@@ -515,7 +526,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								} else {
 									// No queued items or worktree mode - resolve immediately
 									resolveOnce({
-										success: didExitCleanly,
+										success: didExitCleanly && !didError,
 										response: responseText,
 										agentSessionId,
 										usageStats: taskUsageStats,

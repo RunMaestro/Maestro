@@ -200,6 +200,11 @@ export function clearModeratorResponseTimeout(groupChatId: string): void {
 	}
 }
 
+/** How long to wait for an !autorun participant (2 hours).
+ *  Auto Run batches process multiple tasks sequentially, each spawning an agent,
+ *  so they routinely exceed the 10-minute participant timeout. */
+const AUTORUN_RESPONSE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
 function normalizeAutoRunTargetFilename(targetFilename: string): string {
 	return targetFilename
 		.trim()
@@ -392,27 +397,29 @@ async function resolveParticipantAutoRunRefs(
 		return [];
 	}
 
-	let latestRef: GroupChatAutoRunRef | null = null;
+	const refs: GroupChatAutoRunRef[] = [];
+	const seen = new Set<string>();
 	for (const hintedPath of hintedPaths) {
 		const resolvedPath = resolveAutoRunTargetFromFiles(allFiles, hintedPath, {
 			cwd: session.cwd,
 			autoRunFolderPath: session.autoRunFolderPath,
 		});
-		if (!resolvedPath) continue;
-		latestRef = {
+		if (!resolvedPath || seen.has(resolvedPath)) continue;
+		seen.add(resolvedPath);
+		refs.push({
 			participantName,
 			relativePath: resolvedPath,
 			triggerCommand: `!autorun @${normalizeMentionName(participantName)}:${resolvedPath}`,
-		};
+		});
 	}
 
-	return latestRef ? [latestRef] : [];
+	return refs;
 }
 
 function stripStructuredAutoRunLines(message: string): string {
 	const stripped = message
 		.split('\n')
-		.filter((line) => !line.trim().match(/^AUTO_RUN_(PATH|TRIGGER):/i))
+		.filter((line) => !/^AUTO_RUN_(PATH|TRIGGER):/i.test(line.trim()))
 		.join('\n')
 		.replace(/\n{3,}/g, '\n\n');
 
@@ -446,8 +453,10 @@ function setParticipantResponseTimeout(
 	groupChatId: string,
 	participantName: string,
 	processManager: IProcessManager | undefined,
-	agentDetector: AgentDetector | undefined
+	agentDetector: AgentDetector | undefined,
+	isAutoRun: boolean = false
 ): void {
+	const timeoutMs = isAutoRun ? AUTORUN_RESPONSE_TIMEOUT_MS : PARTICIPANT_RESPONSE_TIMEOUT_MS;
 	const key = getParticipantTimeoutKey(groupChatId, participantName);
 	// Clear any existing timeout for this participant
 	const existing = participantTimeouts.get(key);
@@ -458,13 +467,14 @@ function setParticipantResponseTimeout(
 		const pending = pendingParticipantResponses.get(groupChatId);
 		if (!pending?.has(participantName)) return; // Already responded
 
+		const timeoutMinutes = timeoutMs / 60000;
 		console.warn(
-			`[GroupChat:Debug] Participant ${participantName} timed out after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000}s — force-completing`
+			`[GroupChat:Debug] Participant ${participantName} timed out after ${timeoutMs / 1000}s — force-completing`
 		);
 		groupChatEmitters.emitMessage?.(groupChatId, {
 			timestamp: new Date().toISOString(),
 			from: 'system',
-			content: `⚠️ @${participantName} did not respond within ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes and has been marked as timed out.`,
+			content: `⚠️ @${participantName} did not respond within ${timeoutMinutes} minutes and has been marked as timed out.`,
 		});
 
 		// Log a timeout response so the moderator knows what happened
@@ -476,7 +486,7 @@ function setParticipantResponseTimeout(
 				await appendToLog(
 					chat.logPath,
 					participantName,
-					`[Timed out — no response after ${PARTICIPANT_RESPONSE_TIMEOUT_MS / 60000} minutes]`
+					`[Timed out — no response after ${timeoutMinutes} minutes]`
 				);
 			}
 		} catch (err) {
@@ -522,7 +532,7 @@ function setParticipantResponseTimeout(
 				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 			});
 		}
-	}, PARTICIPANT_RESPONSE_TIMEOUT_MS);
+	}, timeoutMs);
 
 	participantTimeouts.set(key, handle);
 }
@@ -1392,7 +1402,8 @@ export async function routeModeratorResponse(
 				groupChatId,
 				participant.name,
 				processManager ?? undefined,
-				agentDetector ?? undefined
+				agentDetector ?? undefined,
+				true // autorun — use extended timeout since batch processing takes much longer
 			);
 			// Track as autorun so timeout path only emits batch-complete for autorun participants
 			if (!autoRunParticipantTracker.has(groupChatId)) {
