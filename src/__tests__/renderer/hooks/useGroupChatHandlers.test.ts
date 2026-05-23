@@ -1,7 +1,7 @@
 /**
  * Tests for useGroupChatHandlers hook (extracted from App.tsx Phase 2B)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupChatHandlers } from '../../../renderer/hooks/groupChat/useGroupChatHandlers';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -71,6 +71,10 @@ beforeEach(() => {
 		(window.maestro as any).groupChat = mockGroupChat;
 	}
 	Object.assign((window.maestro as any).groupChat, mockGroupChat);
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 // ===========================================================================
@@ -644,6 +648,7 @@ describe('useGroupChatHandlers', () => {
 	// -----------------------------------------------------------------------
 	describe('handleGroupChatDraftChange', () => {
 		it('updates draft message for the active group chat', () => {
+			vi.useFakeTimers();
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
 				groupChats: [{ id: 'gc-1', name: 'Chat', draftMessage: '' } as any],
@@ -651,8 +656,10 @@ describe('useGroupChatHandlers', () => {
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			act(() => result.current.handleGroupChatDraftChange('new draft'));
+			act(() => vi.advanceTimersByTime(300));
 
 			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('new draft');
+			vi.useRealTimers();
 		});
 
 		it('does nothing when no active group chat', () => {
