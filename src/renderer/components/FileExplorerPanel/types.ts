@@ -64,6 +64,10 @@ export interface DeleteModalState {
 	itemCount?: { fileCount: number; folderCount: number };
 }
 
+export interface MultiDeleteModalState {
+	nodes: { node: FileNode; path: string }[];
+}
+
 export interface NewFileModalState {
 	parentFolderPath: string;
 	parentFolderAbsolutePath: string;

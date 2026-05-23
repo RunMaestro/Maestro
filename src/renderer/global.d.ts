@@ -1808,6 +1808,7 @@ interface MaestroAPI {
 				loopEnabled: boolean;
 				maxLoops?: number | null;
 				prompt: string;
+				taskSelectionMode?: 'task' | 'document';
 				worktreeSettings?: {
 					branchNameTemplate: string;
 					createPROnCompletion: boolean;
@@ -1824,6 +1825,7 @@ interface MaestroAPI {
 				loopEnabled: boolean;
 				maxLoops?: number | null;
 				prompt: string;
+				taskSelectionMode?: 'task' | 'document';
 				updatedAt: number;
 				worktreeSettings?: {
 					branchNameTemplate: string;

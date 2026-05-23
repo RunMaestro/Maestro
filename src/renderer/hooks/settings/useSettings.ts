@@ -261,6 +261,8 @@ export interface UseSettingsReturn {
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (value: boolean) => void;
+	showBrowserTabDomain: boolean;
+	setShowBrowserTabDomain: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;

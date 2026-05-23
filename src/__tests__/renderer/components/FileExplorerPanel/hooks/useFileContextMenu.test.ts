@@ -33,6 +33,16 @@ vi.mock('../../../../../renderer/components/FileExplorerPanel/utils/pathHelpers'
 	collectPreviewableFiles: vi.fn(() => [
 		{ node: { name: 'a.md', type: 'file' }, path: 'docs/a.md' },
 	]),
+	findNodeAtPath: vi.fn((tree: FileNode[] | undefined, relativePath: string) => {
+		const parts = relativePath.split('/').filter(Boolean);
+		let children = tree;
+		let node: FileNode | undefined;
+		for (const part of parts) {
+			node = children?.find((child) => child.name === part);
+			children = node?.children;
+		}
+		return node ?? null;
+	}),
 }));
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
@@ -42,7 +52,16 @@ const folderNode: FileNode = {
 	children: [{ name: 'a.md', type: 'file' }],
 };
 
-const session = { id: 'sess-1', fullPath: '/project' } as any;
+const session = {
+	id: 'sess-1',
+	fullPath: '/project',
+	fileTree: [
+		fileNode,
+		{ name: 'README.md', type: 'file' },
+		{ name: 'diagram.pdf', type: 'file' },
+		folderNode,
+	],
+} as any;
 const theme = {} as any;
 
 const defaultArgs = {
@@ -56,10 +75,15 @@ const defaultArgs = {
 	openDeleteModal: vi.fn().mockResolvedValue(undefined),
 	openNewFileModal: vi.fn(),
 	setSelectedFileIndex: vi.fn(),
+	selectedPathsRef: { current: new Set<string>() },
+	setSelectedPaths: vi.fn(),
+	refreshFileTree: vi.fn().mockResolvedValue(undefined),
+	sshRemoteId: undefined,
 };
 
 const mockMaestro = {
 	shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
+	fs: { delete: vi.fn().mockResolvedValue({ success: true }) },
 };
 (window as any).maestro = mockMaestro;
 
@@ -103,6 +127,27 @@ describe('useFileContextMenu', () => {
 			result.current.openContextMenu(e, fileNode, 'App.tsx', 7);
 		});
 		expect(setSelectedFileIndex).toHaveBeenCalledWith(7);
+	});
+
+	it('openContextMenu clears multi-selection when right-clicking outside it', () => {
+		const setSelectedPaths = vi.fn();
+		const selectedPathsRef = { current: new Set(['README.md', 'docs/a.md']) };
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, selectedPathsRef, setSelectedPaths })
+		);
+		const e = {
+			clientX: 50,
+			clientY: 60,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'App.tsx', 7);
+		});
+
+		expect(setSelectedPaths).toHaveBeenCalledWith(expect.any(Set));
+		expect((setSelectedPaths.mock.calls[0][0] as Set<string>).size).toBe(0);
 	});
 
 	it('closeContextMenu sets contextMenu to null', () => {
@@ -320,5 +365,73 @@ describe('useFileContextMenu', () => {
 			'confirm',
 			expect.objectContaining({ message: expect.stringContaining('30') })
 		);
+	});
+
+	it('handlePreviewMulti previews selected previewable files', async () => {
+		const handleFileClick = vi.fn().mockResolvedValue(undefined);
+		const selectedPathsRef = { current: new Set(['README.md', 'diagram.pdf']) };
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, selectedPathsRef, handleFileClick })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'README.md', 0);
+		});
+		await act(async () => {
+			await result.current.handlePreviewMulti();
+		});
+
+		expect(handleFileClick).toHaveBeenCalledWith(
+			expect.objectContaining({ name: 'README.md' }),
+			'README.md',
+			session
+		);
+		expect(handleFileClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('handleOpenDeleteMulti opens the multi-delete modal', () => {
+		const selectedPathsRef = { current: new Set(['README.md', 'docs/a.md']) };
+		const { result } = renderHook(() => useFileContextMenu({ ...defaultArgs, selectedPathsRef }));
+
+		act(() => {
+			result.current.handleOpenDeleteMulti();
+		});
+
+		expect(result.current.multiDeleteModal?.nodes.map((node) => node.path)).toEqual([
+			'README.md',
+			'docs/a.md',
+		]);
+	});
+
+	it('handleDeleteMulti deletes selected nodes and refreshes once', async () => {
+		const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+		const setSelectedPaths = vi.fn();
+		const selectedPathsRef = { current: new Set(['README.md', 'docs/a.md']) };
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, selectedPathsRef, setSelectedPaths, refreshFileTree })
+		);
+
+		act(() => {
+			result.current.handleOpenDeleteMulti();
+		});
+		await act(async () => {
+			await result.current.handleDeleteMulti();
+		});
+
+		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/README.md', {
+			sshRemoteId: undefined,
+		});
+		expect(mockMaestro.fs.delete).toHaveBeenCalledWith('/project/docs/a.md', {
+			sshRemoteId: undefined,
+		});
+		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
+		expect(setSelectedPaths).toHaveBeenCalledWith(expect.any(Set));
+		expect(result.current.multiDeleteModal).toBeNull();
 	});
 });

@@ -28,6 +28,8 @@ import {
 } from '../utils/shortcutFormatter';
 import { normalizeMentionName } from '../utils/participantColors';
 import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
+import { useSettingsStore } from '../stores/settingsStore';
+import { isMacOSPlatform } from '../utils/platformUtils';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -127,6 +129,13 @@ export function PromptComposerModal({
 	sessions,
 	groups,
 }: PromptComposerModalProps) {
+	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
+	// In fullscreen mode the modal covers the app's custom 40px draggable title
+	// bar. We need to (a) shift the header below macOS traffic lights and (b)
+	// opt the modal out of -webkit-app-region:drag so clicks reach buttons
+	// instead of being swallowed as window-drag gestures.
+	const needsTitleBarInset = !useNativeTitleBar;
+	const isMac = isMacOSPlatform();
 	const [value, setValue] = useState('');
 	const [isFullscreen, setIsFullscreen] = useState(readStoredFullscreen);
 	const [showMentions, setShowMentions] = useState(false);
@@ -509,14 +518,21 @@ export function PromptComposerModal({
 					isFullscreen ? 'w-screen h-screen' : 'w-[90vw] h-[80vh] max-w-5xl rounded-xl border'
 				}`}
 				onClick={(e) => e.stopPropagation()}
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					borderColor: theme.colors.border,
-				}}
+				style={
+					{
+						backgroundColor: theme.colors.bgMain,
+						borderColor: theme.colors.border,
+						// Opt out of the app's draggable title-bar region in fullscreen so
+						// clicks on header buttons aren't swallowed by window-drag.
+						...(isFullscreen && needsTitleBarInset ? { WebkitAppRegion: 'no-drag' as const } : {}),
+					} as React.CSSProperties
+				}
 			>
 				{/* Header */}
 				<div
-					className="flex items-center justify-between px-4 py-3 border-b"
+					className={`flex items-center justify-between py-3 border-b ${
+						isFullscreen && needsTitleBarInset ? (isMac ? 'pl-24 pr-4 pt-5' : 'px-4 pt-5') : 'px-4'
+					}`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
 					<div className="flex items-center gap-2">

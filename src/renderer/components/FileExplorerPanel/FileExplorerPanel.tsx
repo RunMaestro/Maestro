@@ -32,6 +32,7 @@ import { AutoRefreshOverlay } from './components/AutoRefreshOverlay';
 import { NewFileModal } from './components/NewFileModal';
 import { RenameFileModal } from './components/RenameFileModal';
 import { DeleteFileModal } from './components/DeleteFileModal';
+import { MultiDeleteModal } from './components/MultiDeleteModal';
 import { MoveConflictModal } from './components/MoveConflictModal';
 import { FileTreeRow } from './components/FileTreeRow';
 import { FileTreeContextMenu } from './components/FileTreeContextMenu';
@@ -268,6 +269,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	const {
 		contextMenu,
+		multiDeleteModal,
+		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
 		openContextMenu,
@@ -281,6 +284,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleFocusInGraph,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
+		handlePreviewMulti,
+		handleOpenInDefaultAppMulti,
+		handleOpenDeleteMulti,
+		handleDeleteMulti,
+		closeMultiDeleteModal,
 	} = useFileContextMenu({
 		session,
 		theme,
@@ -292,6 +300,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		openDeleteModal,
 		openNewFileModal,
 		setSelectedFileIndex,
+		selectedPathsRef,
+		setSelectedPaths,
+		refreshFileTree,
+		sshRemoteId,
 	});
 
 	// ── Internal drag bubble suppression ──────────────────────────────────────
@@ -604,12 +616,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							</div>
 						)}
 					{flattenedTree.length > 0 && (
-						<div
-							ref={parentRef}
-							data-file-list-scroll
-							className="flex-1 overflow-auto"
-							style={{ height: 'calc(100vh - 200px)' }}
-						>
+						<div ref={parentRef} data-file-list-scroll className="flex-1 min-h-0 overflow-auto">
 							<div
 								style={{
 									height: `${virtualizer.getTotalSize()}px`,
@@ -727,6 +734,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
+					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
+					selectedCount={selectedPaths.size}
 					onCopyPath={handleCopyPath}
 					onOpenInDefaultApp={handleOpenInDefaultApp}
 					onOpenInMaestroBrowser={handleOpenInMaestroBrowser}
@@ -734,6 +743,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFile={handleOpenNewFile}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
+					onPreviewMulti={handlePreviewMulti}
+					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}
+					onOpenDeleteMulti={handleOpenDeleteMulti}
 					onFocusInGraph={handleFocusInGraph}
 					onOpenRename={handleOpenRename}
 					onOpenDelete={handleOpenDelete}
@@ -762,6 +774,17 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					isDeleting={isDeleting}
 					onClose={closeDeleteModal}
 					onDelete={handleDelete}
+				/>
+			)}
+
+			{/* Multi-delete Confirmation Modal */}
+			{multiDeleteModal && (
+				<MultiDeleteModal
+					theme={theme}
+					modal={multiDeleteModal}
+					isDeleting={isMultiDeleting}
+					onClose={closeMultiDeleteModal}
+					onDelete={handleDeleteMulti}
 				/>
 			)}
 

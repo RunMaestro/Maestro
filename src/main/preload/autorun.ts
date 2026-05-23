@@ -35,6 +35,7 @@ export interface Playbook {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+	taskSelectionMode?: 'task' | 'document';
 	worktreeSettings?: WorktreeSettings;
 }
 

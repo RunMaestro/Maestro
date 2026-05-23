@@ -28,6 +28,29 @@ Use markdown checkboxes in your documents:
 
 **Tip**: Press `Cmd+L` (Mac) or `Ctrl+L` (Windows/Linux) to quickly insert a new checkbox at your cursor position.
 
+### Task Granularity: Two Approaches
+
+There are two viable ways to structure work across Auto Run documents. Pick the one that fits your project — they can also coexist.
+
+**1. Many tasks per document (classic approach)**
+
+One document holds a long list of checkboxes; the runner walks through them serially, each in a fresh session.
+
+- Good when tasks are small, independent, and share a common framing that's cheap to restate in the document body.
+- Each task gets a clean context, so the agent doesn't drift across them.
+- Tradeoff: the agent has to re-derive shared context for every task from whatever lives in the document.
+
+**2. One task (or a few) per document (recommended for richer work)**
+
+Each document is a focused brief — heavy on context, light on checkboxes. Often just a single `- [ ]` "execute the plan" task at the bottom.
+
+- Good when each unit of work needs substantial setup, references, constraints, or prior decisions to do well.
+- Modern agents have large context windows, so loading a richer document per task is cheap and usually produces better results than splintering it into many small checkboxes that each lose the shared framing.
+- Compose multi-step workflows by chaining several of these focused documents inside a Playbook instead of stuffing them into one file.
+- Tradeoff: more files to manage; the dropdown list grows.
+
+**Rule of thumb:** if you find yourself repeating the same context paragraph above several checkboxes in one document, that's a signal to split into multiple focused documents and let the Playbook handle ordering.
+
 ## Running Single Documents
 
 1. Select a document from the dropdown

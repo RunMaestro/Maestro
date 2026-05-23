@@ -94,6 +94,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setShowFilePreviewsInUnreadFilter,
 		useCmd0AsLastTab,
 		setUseCmd0AsLastTab,
+		showBrowserTabDomain,
+		setShowBrowserTabDomain,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -883,7 +885,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Starred Tabs in Unread Filter */}
 			<div data-setting-id="display-tab-filtering">
-				<SettingsSectionHeading icon={ListFilter}>Tab Filtering</SettingsSectionHeading>
+				<SettingsSectionHeading icon={ListFilter}>Tab Options</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{
@@ -985,6 +987,41 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									useCmd0AsLastTab ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show Domain Pill on Browser Tabs */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show domain on browser tabs
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								Display a small domain pill (e.g. www.google.com) next to the page title on browser
+								tabs. Disable to hide it.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowBrowserTabDomain(!showBrowserTabDomain)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showBrowserTabDomain
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showBrowserTabDomain}
+							aria-label="Show domain on browser tabs"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showBrowserTabDomain ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Play, Square, HelpCircle, LayoutGrid, Wand2, Brain } from 'lucide-react';
+import { Play, Square, HelpCircle, LayoutGrid, Wand2 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
@@ -72,48 +72,33 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					{isStopping ? 'Stopping' : 'Stop'}
 				</button>
 			) : (
-				<div className="relative flex-1">
-					<button
-						onClick={async () => {
-							// Save before opening batch runner if dirty
-							if (isDirty) {
-								try {
-									await onSave();
-								} catch {
-									return; // Don't open runner if save failed
-								}
+				<button
+					onClick={async () => {
+						// Save before opening batch runner if dirty
+						if (isDirty) {
+							try {
+								await onSave();
+							} catch {
+								return; // Don't open runner if save failed
 							}
-							onOpenBatchRunner?.();
-						}}
-						className={`${btnClass} w-full`}
-						style={{
-							color: theme.colors.accent,
-							border: `1px solid ${theme.colors.accent}40`,
-							backgroundColor: `${theme.colors.accent}15`,
-						}}
-						title={
-							isAgentBusy
-								? 'Agent is thinking — you can configure auto-run, but launching is paused until it finishes'
-								: 'Run auto-run on tasks'
 						}
-					>
-						{!compact && <Play className="w-3.5 h-3.5" />}
-						Run
-					</button>
-					{isAgentBusy && (
-						<div
-							className="pointer-events-none absolute -top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap shadow-sm"
-							style={{
-								backgroundColor: theme.colors.warning,
-								color: theme.colors.bgMain,
-								border: `1px solid ${theme.colors.warning}`,
-							}}
-						>
-							<Brain className="w-2.5 h-2.5 animate-pulse" />
-							<span>Agent thinking</span>
-						</div>
-					)}
-				</div>
+						onOpenBatchRunner?.();
+					}}
+					className={btnClass}
+					style={{
+						color: theme.colors.accent,
+						border: `1px solid ${theme.colors.accent}40`,
+						backgroundColor: `${theme.colors.accent}15`,
+					}}
+					title={
+						isAgentBusy
+							? 'Agent is thinking — you can configure auto-run, but launching is paused until it finishes'
+							: 'Run auto-run on tasks'
+					}
+				>
+					{!compact && <Play className="w-3.5 h-3.5" />}
+					Run
+				</button>
 			)}
 			{/* PlayBooks button */}
 			{onOpenMarketplace && (

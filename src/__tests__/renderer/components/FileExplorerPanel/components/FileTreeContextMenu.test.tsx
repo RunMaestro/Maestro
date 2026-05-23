@@ -53,6 +53,9 @@ const defaultProps = {
 	onOpenNewFile: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onPreviewMulti: vi.fn(),
+	onOpenInDefaultAppMulti: vi.fn(),
+	onOpenDeleteMulti: vi.fn(),
 	onFocusInGraph: vi.fn(),
 	onOpenRename: vi.fn(),
 	onOpenDelete: vi.fn(),
@@ -157,6 +160,37 @@ describe('FileTreeContextMenu', () => {
 		);
 		fireEvent.click(screen.getByText('Preview'));
 		expect(onPreviewFile).toHaveBeenCalledTimes(1);
+	});
+
+	it('renders batch actions for a multi-selection context', () => {
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				contextMenu={makeContextMenu(fileNode)}
+				isMultiSelectionContext
+				selectedCount={3}
+			/>
+		);
+		expect(screen.getByText('Preview 3 items')).toBeTruthy();
+		expect(screen.getByText('Open 3 in Default App')).toBeTruthy();
+		expect(screen.getByText('Delete 3 items')).toBeTruthy();
+		expect(screen.queryByText('Rename')).toBeNull();
+		expect(screen.queryByText('Copy Path')).toBeNull();
+	});
+
+	it('calls onOpenDeleteMulti from the batch menu', () => {
+		const onOpenDeleteMulti = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				contextMenu={makeContextMenu(fileNode)}
+				isMultiSelectionContext
+				selectedCount={2}
+				onOpenDeleteMulti={onOpenDeleteMulti}
+			/>
+		);
+		fireEvent.click(screen.getByText('Delete 2 items'));
+		expect(onOpenDeleteMulti).toHaveBeenCalledTimes(1);
 	});
 
 	it('hides Reveal and Open in Default App when sshRemoteId is set', () => {

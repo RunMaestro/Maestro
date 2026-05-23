@@ -270,11 +270,8 @@ export const AutoRunDocumentSelector = forwardRef<
 		};
 	};
 
-	// Get the selected document's task stats for the button
-	const selectedTaskStats = selectedDocument ? getTaskStats(selectedDocument) : null;
-
-	// Pill badge showing "{pct}% ({total})" — rendered next to file entries and
-	// inside the trigger button. Green when 100% complete, dim accent otherwise.
+	// Pill badge showing "{pct}% ({total})" — rendered next to file entries in
+	// the dropdown list. Green when 100% complete, dim accent otherwise.
 	const renderTaskBadge = (stats: { pct: number; total: number }, extraClass = '') => (
 		<span
 			className={`shrink-0 text-xs px-1.5 py-0.5 rounded ${extraClass}`.trim()}
@@ -459,11 +456,8 @@ export const AutoRunDocumentSelector = forwardRef<
 							border: `1px solid ${theme.colors.border}`,
 						}}
 					>
-						<span className="truncate min-w-0 flex-1 flex items-center gap-2">
-							{selectedTaskStats && renderTaskBadge(selectedTaskStats)}
-							<span className="truncate">
-								{selectedDocument ? `${selectedDocument}.md` : 'Select a document...'}
-							</span>
+						<span className="truncate min-w-0 flex-1">
+							{selectedDocument ? `${selectedDocument}.md` : 'Select a document...'}
 						</span>
 						<ChevronDown
 							className={`w-4 h-4 ml-2 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}

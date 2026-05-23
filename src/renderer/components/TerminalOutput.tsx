@@ -156,7 +156,6 @@ function SessionRecoveryCardConnector(props: {
 		lastUserPrompt: string;
 		groomContext: boolean;
 	}) => void;
-	onDismiss: () => void;
 }) {
 	const tab = useSessionStore((s) => {
 		const session = s.sessions.find((sess) => sess.id === props.sessionId);
@@ -172,7 +171,6 @@ function SessionRecoveryCardConnector(props: {
 			isRecovering={props.isRecovering}
 			recoveryError={props.recoveryError}
 			onRecover={props.onRecover}
-			onDismiss={props.onDismiss}
 		/>
 	);
 }
@@ -314,10 +312,6 @@ const LogItemComponent = memo(
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
-		// Per-entry dismiss for the inline session-not-found recovery card.
-		// Persists for the lifetime of this LogItem mount — once the user
-		// dismisses, the card stays hidden until the page is reloaded.
-		const [recoveryDismissed, setRecoveryDismissed] = useState(false);
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -956,7 +950,7 @@ const LogItemComponent = memo(
 					    under the system message that announced the dead session. The
 					    card reads the tab from the store so we don't have to pass the
 					    full Session through LogItem (would defeat memoization). */}
-					{log.recoveryAction && !recoveryDismissed && (
+					{log.recoveryAction && (
 						<SessionRecoveryCardConnector
 							theme={theme}
 							sessionId={sessionId}
@@ -964,7 +958,6 @@ const LogItemComponent = memo(
 							isRecovering={!!isRecoveringSession}
 							recoveryError={sessionRecoveryError ?? null}
 							onRecover={(opts) => onSessionRecover?.(opts)}
-							onDismiss={() => setRecoveryDismissed(true)}
 						/>
 					)}
 					{/* Mode pill — shows which CLI captured this Claude turn (TUI = maestro-p,

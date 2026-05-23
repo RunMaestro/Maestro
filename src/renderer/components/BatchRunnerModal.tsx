@@ -13,9 +13,16 @@ import {
 	Download,
 	Upload,
 	LayoutGrid,
+	Brain,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
-import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
+import type {
+	Theme,
+	BatchDocumentEntry,
+	BatchRunConfig,
+	TaskSelectionMode,
+	WorktreeRunTarget,
+} from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
@@ -23,6 +30,7 @@ import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
+import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
@@ -208,6 +216,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const initialLoopEnabledRef = useRef(false);
 	const initialMaxLoopsRef = useRef<number | null>(null);
 
+	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
+	// agent invocation per unchecked task). 'document' makes the agent walk
+	// every task in a single invocation, sharing context across them.
+	const [taskSelectionMode, setTaskSelectionMode] = useState<TaskSelectionMode>('task');
+	const initialTaskSelectionModeRef = useRef<TaskSelectionMode>('task');
+
 	// Prompt state
 	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
@@ -235,8 +249,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		// Check if prompt has changed
 		const promptChanged = prompt !== initialPromptRef.current;
 
-		return documentsChanged || loopChanged || promptChanged;
-	}, [documents, loopEnabled, maxLoops, prompt]);
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
 
 	// Handler for closing with unsaved changes check
 	const handleCloseWithConfirmation = useCallback(() => {
@@ -259,11 +276,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			loopEnabled: boolean;
 			maxLoops: number | null;
 			prompt: string;
+			taskSelectionMode: TaskSelectionMode;
 		}) => {
 			setDocuments(data.documents);
 			setLoopEnabled(data.loopEnabled);
 			setMaxLoops(data.maxLoops);
 			setPrompt(data.prompt);
+			setTaskSelectionMode(data.taskSelectionMode);
 		},
 		[]
 	);
@@ -300,6 +319,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			loopEnabled,
 			maxLoops,
 			prompt,
+			taskSelectionMode,
 		},
 		onApplyPlaybook: handleApplyPlaybook,
 	});
@@ -417,6 +437,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			taskSelectionMode,
 			...(worktreeTarget && { worktreeTarget }),
 		};
 
@@ -457,7 +478,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			tabIndex={-1}
 		>
 			<div
-				className="modal-w-lg max-h-[85vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="modal-w-lg max-h-[92vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				{/* Header */}
@@ -469,6 +490,22 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						Auto Run Configuration
 					</h2>
 					<div className="flex items-center gap-4">
+						{/* Agent thinking pill — shown only while the session agent is busy.
+						    Lives in the header (rather than over the Go button) so it stays
+						    visible without forcing the modal footer to grow. */}
+						{isAgentBusy && (
+							<div
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.bgMain,
+									border: `1px solid ${theme.colors.warning}`,
+								}}
+							>
+								<Brain className="w-2.5 h-2.5 animate-pulse" />
+								<span>Agent thinking</span>
+							</div>
+						)}
 						{/* Total Task Count Badge */}
 						<div
 							className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
@@ -725,6 +762,30 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									Last modified {formatLastModified(lastModifiedAt)}.
 								</span>
 							)}
+						</div>
+
+						{/* Fresh-context-per selector — drives {{TASK_SELECTION_BLOCK}} */}
+						<div className="mb-2">
+							<div
+								className="text-[10px] font-bold uppercase mb-1.5"
+								style={{ color: theme.colors.textDim }}
+							>
+								Fresh context per:
+							</div>
+							<ToggleButtonGroup<TaskSelectionMode>
+								options={[
+									{ value: 'task', label: 'Task' },
+									{ value: 'document', label: 'Document' },
+								]}
+								value={taskSelectionMode}
+								onChange={setTaskSelectionMode}
+								theme={theme}
+							/>
+							<p className="text-[10px] mt-1.5" style={{ color: theme.colors.textDim }}>
+								{taskSelectionMode === 'task'
+									? 'A new agent is spawned for each unchecked task — clean context every time.'
+									: 'A single agent walks every unchecked task in the document, sharing context across them.'}
+							</p>
 						</div>
 
 						{/* Template Variables Documentation */}

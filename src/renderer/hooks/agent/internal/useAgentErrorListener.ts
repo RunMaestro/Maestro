@@ -188,15 +188,18 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					// need parity here. system-source entries (session_not_found
 					// recovery) stay untagged — they aren't real Claude turns.
 					const isInteractive = s.claudeInteractive?.mode === 'interactive';
+					const canOfferRecovery = isSessionNotFound && !!lastUserPrompt && !!targetTab;
 					const errorLogEntry: LogEntry = {
 						id: generateId(),
 						timestamp: agentError.timestamp,
 						source: isSessionNotFound ? 'system' : 'error',
-						text: agentError.message,
+						text: canOfferRecovery
+							? 'Session not found, however we can recover it raw or compressed.'
+							: agentError.message,
 						agentError: isSessionNotFound ? undefined : agentError,
 						...(isInteractive && !isSessionNotFound ? { renderStyle: 'text-stream' as const } : {}),
-						...(isSessionNotFound && lastUserPrompt && targetTab
-							? { recoveryAction: { lastUserPrompt, tabId: targetTab.id } }
+						...(canOfferRecovery
+							? { recoveryAction: { lastUserPrompt: lastUserPrompt!, tabId: targetTab!.id } }
 							: {}),
 					};
 					const updatedAiTabs = targetTab

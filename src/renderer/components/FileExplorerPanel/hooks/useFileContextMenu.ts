@@ -7,9 +7,11 @@ import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { useModalStore } from '../../../stores/modalStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
 import { captureException } from '../../../utils/sentry';
-import type { ContextMenuState } from '../types';
+import { shouldOpenExternally } from '../../../utils/fileExplorer';
+import type { ContextMenuState, MultiDeleteModalState } from '../types';
 import { PREVIEW_ALL_CONFIRM_THRESHOLD } from '../types';
-import { collectPreviewableFiles } from '../utils/pathHelpers';
+import { collectPreviewableFiles, findNodeAtPath } from '../utils/pathHelpers';
+import type { FileTreeChanges } from '../../../utils/fileExplorer';
 
 interface UseFileContextMenuArgs {
 	session: Session;
@@ -22,10 +24,19 @@ interface UseFileContextMenuArgs {
 	openDeleteModal: (node: FileNode, path: string) => Promise<void>;
 	openNewFileModal: (parentFolderPath: string, parentFolderAbsolutePath: string) => void;
 	setSelectedFileIndex: (n: number) => void;
+	selectedPathsRef: React.MutableRefObject<Set<string>>;
+	setSelectedPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
+	refreshFileTree: (
+		sessionId: string,
+		options?: { maxEntriesOverride?: number }
+	) => Promise<FileTreeChanges | undefined>;
+	sshRemoteId: string | undefined;
 }
 
 interface UseFileContextMenuResult {
 	contextMenu: ContextMenuState | null;
+	multiDeleteModal: MultiDeleteModalState | null;
+	isMultiDeleting: boolean;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; ready?: boolean };
 	openContextMenu: (e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => void;
@@ -40,6 +51,11 @@ interface UseFileContextMenuResult {
 	handleFocusInGraph: () => void;
 	handlePreviewFile: () => Promise<void>;
 	handlePreviewAllInFolder: () => void;
+	handlePreviewMulti: () => Promise<void>;
+	handleOpenInDefaultAppMulti: () => void;
+	handleOpenDeleteMulti: () => void;
+	handleDeleteMulti: () => Promise<void>;
+	closeMultiDeleteModal: () => void;
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -61,8 +77,14 @@ export function useFileContextMenu({
 	openDeleteModal,
 	openNewFileModal,
 	setSelectedFileIndex,
+	selectedPathsRef,
+	setSelectedPaths,
+	refreshFileTree,
+	sshRemoteId,
 }: UseFileContextMenuArgs): UseFileContextMenuResult {
 	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+	const [multiDeleteModal, setMultiDeleteModal] = useState<MultiDeleteModalState | null>(null);
+	const [isMultiDeleting, setIsMultiDeleting] = useState(false);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
 	const contextMenuPos = useContextMenuPosition(
 		contextMenuRef,
@@ -94,9 +116,12 @@ export function useFileContextMenu({
 			e.preventDefault();
 			e.stopPropagation();
 			setSelectedFileIndex(globalIndex);
+			if (selectedPathsRef.current.size > 0 && !selectedPathsRef.current.has(path)) {
+				setSelectedPaths(new Set());
+			}
 			setContextMenu({ x: e.clientX, y: e.clientY, node, path });
 		},
-		[setSelectedFileIndex]
+		[setSelectedFileIndex, selectedPathsRef, setSelectedPaths]
 	);
 
 	const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -188,6 +213,165 @@ export function useFileContextMenu({
 		}
 	}, [contextMenu, handleFileClick, session, onShowFlash]);
 
+	const resolveSelectedNodes = useCallback((): { node: FileNode; path: string }[] => {
+		const result: { node: FileNode; path: string }[] = [];
+		for (const path of selectedPathsRef.current) {
+			const node = findNodeAtPath(session.fileTree, path);
+			if (node) result.push({ node, path });
+		}
+		return result;
+	}, [selectedPathsRef, session.fileTree]);
+
+	const handlePreviewMulti = useCallback(async () => {
+		const selectedNodes = resolveSelectedNodes();
+		setContextMenu(null);
+
+		const previewable = selectedNodes.filter(
+			({ node }) => node.type === 'file' && !shouldOpenExternally(node.name)
+		);
+		if (previewable.length === 0) {
+			onShowFlash?.('No previewable files in selection');
+			return;
+		}
+
+		const openAll = async () => {
+			try {
+				for (const file of previewable) {
+					await handleFileClick(file.node, file.path, session);
+				}
+				onShowFlash?.(`Opened ${previewable.length} file${previewable.length !== 1 ? 's' : ''}`);
+			} catch (error) {
+				if (isMissingFileError(error)) {
+					onShowFlash?.('A selected file was no longer available');
+					return;
+				}
+				captureException(error, {
+					extra: {
+						action: 'preview-multi',
+						paths: previewable.map((file) => file.path),
+						sessionId: session.id,
+					},
+				});
+				throw error;
+			}
+		};
+
+		if (previewable.length > PREVIEW_ALL_CONFIRM_THRESHOLD) {
+			useModalStore.getState().openModal('confirm', {
+				message: `Preview all ${previewable.length} selected files? This opens a tab for each file.`,
+				onConfirm: () => void openAll(),
+			});
+			return;
+		}
+		await openAll();
+	}, [resolveSelectedNodes, handleFileClick, session, onShowFlash]);
+
+	const handleOpenInDefaultAppMulti = useCallback(() => {
+		const selectedNodes = resolveSelectedNodes();
+		setContextMenu(null);
+
+		const files = selectedNodes.filter(({ node }) => node.type === 'file');
+		if (files.length === 0) {
+			onShowFlash?.('No files in selection');
+			return;
+		}
+
+		const openAll = () => {
+			for (const file of files) {
+				const absolutePath = `${session.fullPath}/${file.path}`;
+				void window.maestro?.shell?.openPath(absolutePath);
+			}
+			onShowFlash?.(`Opened ${files.length} file${files.length !== 1 ? 's' : ''}`);
+		};
+
+		if (files.length > PREVIEW_ALL_CONFIRM_THRESHOLD) {
+			useModalStore.getState().openModal('confirm', {
+				message: `Open all ${files.length} selected files in their default apps?`,
+				onConfirm: () => openAll(),
+			});
+			return;
+		}
+		openAll();
+	}, [resolveSelectedNodes, session.fullPath, onShowFlash]);
+
+	const handleOpenDeleteMulti = useCallback(() => {
+		const nodes = resolveSelectedNodes();
+		setContextMenu(null);
+		if (nodes.length === 0) return;
+		setMultiDeleteModal({ nodes });
+	}, [resolveSelectedNodes]);
+
+	const closeMultiDeleteModal = useCallback(() => {
+		if (isMultiDeleting) return;
+		setMultiDeleteModal(null);
+	}, [isMultiDeleting]);
+
+	const handleDeleteMulti = useCallback(async () => {
+		if (!multiDeleteModal) return;
+
+		setIsMultiDeleting(true);
+		let succeeded = 0;
+		let failed = 0;
+		let lastError: unknown = null;
+
+		try {
+			for (const item of multiDeleteModal.nodes) {
+				const absolutePath = `${session.fullPath}/${item.path}`;
+				try {
+					await window.maestro.fs.delete(absolutePath, { sshRemoteId });
+					succeeded++;
+				} catch (error) {
+					failed++;
+					lastError = error;
+					captureException(error, {
+						extra: {
+							action: 'delete-multi',
+							path: item.path,
+							absolutePath,
+							nodeName: item.node.name,
+							nodeType: item.node.type,
+							sessionId: session.id,
+							sshRemoteId,
+						},
+					});
+				}
+			}
+
+			await refreshFileTree(session.id);
+			if (succeeded > 0 && failed === 0) {
+				onShowFlash?.(`Deleted ${succeeded} item${succeeded !== 1 ? 's' : ''}`);
+			} else if (succeeded > 0 && failed > 0) {
+				onShowFlash?.(`Deleted ${succeeded}, ${failed} failed`);
+			} else if (failed > 0) {
+				const msg = lastError instanceof Error ? lastError.message : 'Unknown error';
+				onShowFlash?.(`Delete failed: ${msg}`);
+			}
+		} catch (error) {
+			captureException(error, {
+				extra: {
+					action: 'delete-multi-refresh',
+					sessionId: session.id,
+				},
+			});
+			onShowFlash?.(
+				`Delete refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+			);
+			throw error;
+		} finally {
+			setSelectedPaths(new Set());
+			setMultiDeleteModal(null);
+			setIsMultiDeleting(false);
+		}
+	}, [
+		multiDeleteModal,
+		session.fullPath,
+		session.id,
+		sshRemoteId,
+		refreshFileTree,
+		setSelectedPaths,
+		onShowFlash,
+	]);
+
 	const handleCopyPath = useCallback(() => {
 		if (contextMenu) {
 			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
@@ -252,6 +436,8 @@ export function useFileContextMenu({
 
 	return {
 		contextMenu,
+		multiDeleteModal,
+		isMultiDeleting,
 		contextMenuRef,
 		contextMenuPos,
 		openContextMenu,
@@ -266,5 +452,10 @@ export function useFileContextMenu({
 		handleFocusInGraph,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
+		handlePreviewMulti,
+		handleOpenInDefaultAppMulti,
+		handleOpenDeleteMulti,
+		handleDeleteMulti,
+		closeMultiDeleteModal,
 	};
 }

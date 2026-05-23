@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Clipboard } from 'lucide-react';
 import type { Theme } from '../../types';
+import { captureException } from '../../utils/sentry';
 import {
 	ensureLanguage,
 	getHighlighter,
@@ -48,13 +49,18 @@ export const CodeFence = memo(function CodeFence({
 	const [html, setHtml] = useState<string | null>(null);
 	const userOverrodeRef = useRef(false);
 
-	// Resolve the fence tag to a canonical Shiki id (handles aliases).
+	// Resolve the fence tag to a canonical Shiki id (handles aliases). Once
+	// the user picks a language via the dropdown (`userOverrodeRef`), this
+	// effect stays out of the way for the lifetime of the component instance —
+	// including re-checking the ref after every `await`, since a streaming
+	// `code` update could land mid-detection and try to overwrite the choice.
 	useEffect(() => {
 		if (userOverrodeRef.current) return;
 		let cancelled = false;
+		const stale = () => cancelled || userOverrodeRef.current;
 		void (async () => {
 			const resolved = await resolveLanguage(language);
-			if (cancelled) return;
+			if (stale()) return;
 			if (resolved) {
 				setResolvedLang(resolved);
 				return;
@@ -62,12 +68,13 @@ export const CodeFence = memo(function CodeFence({
 			// No explicit language (or unknown one) — try auto-detection.
 			if (!isExplicitLang(language)) {
 				const detected = await detectLanguage(code);
-				if (cancelled) return;
+				if (stale()) return;
 				if (detected) {
 					setResolvedLang(detected.language);
 					return;
 				}
 			}
+			if (stale()) return;
 			setResolvedLang(FALLBACK_LANG);
 		})();
 		return () => {
@@ -93,8 +100,14 @@ export const CodeFence = memo(function CodeFence({
 				const themeName = themeNameForMode(theme.mode);
 				const rendered = highlighter.codeToHtml(code, { lang, theme: themeName });
 				if (!cancelled) setHtml(rendered);
-			} catch {
+			} catch (err) {
+				// Shiki failed (WASM load, missing grammar, malformed theme, …).
+				// Reset to the plain fallback so the user still sees the code, and
+				// report so we hear about real regressions in production.
 				if (!cancelled) setHtml(null);
+				captureException(err, {
+					extra: { component: 'CodeFence', lang: resolvedLang, themeMode: theme.mode },
+				});
 			}
 		})();
 		return () => {

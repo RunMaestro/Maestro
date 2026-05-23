@@ -803,20 +803,20 @@ describe('AutoRun', () => {
 			});
 		});
 
-		it('shows "Agent thinking" badge when agent is busy but keeps Run clickable', () => {
+		it('shows "Agent is thinking" tooltip on Run when agent is busy but keeps Run clickable', () => {
 			const props = createDefaultProps({ sessionState: 'busy' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByText('Run').closest('button')).not.toBeDisabled();
-			expect(screen.getByText('Agent thinking')).toBeDefined();
+			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
 		});
 
-		it('shows "Agent thinking" badge when agent is connecting but keeps Run clickable', () => {
+		it('shows "Agent is thinking" tooltip on Run when agent is connecting but keeps Run clickable', () => {
 			const props = createDefaultProps({ sessionState: 'connecting' as SessionState });
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByText('Run').closest('button')).not.toBeDisabled();
-			expect(screen.getByText('Agent thinking')).toBeDefined();
+			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
 		});
 
 		it('calls onStopBatchRun when clicking Stop', async () => {

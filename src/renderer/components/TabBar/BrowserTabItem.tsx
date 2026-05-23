@@ -113,6 +113,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	} = useTabHoverOverlay({ registerRef });
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const showBrowserTabDomain = useSettingsStore((s) => s.showBrowserTabDomain);
 
 	const ShortcutHint = ({ keys }: { keys: string[] }) => (
 		<span
@@ -336,7 +337,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 				{label}
 			</span>
 
-			{host && host !== label && (
+			{showBrowserTabDomain && host && host !== label && (
 				<span
 					className="px-1 rounded text-[9px] font-semibold leading-none shrink-0"
 					style={{

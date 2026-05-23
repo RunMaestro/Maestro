@@ -68,14 +68,16 @@ describe('AutoRunToolbar', () => {
 			expect(onOpenBatchRunner).toHaveBeenCalledTimes(1);
 		});
 
-		it('shows an "Agent thinking" badge over the Run button when isAgentBusy', () => {
+		it('shows the "Agent is thinking" tooltip on the Run button when isAgentBusy', () => {
 			render(<AutoRunToolbar {...createDefaultProps({ isAgentBusy: true })} />);
-			expect(screen.getByText('Agent thinking')).toBeDefined();
-			// Tooltip explains that configuration is allowed but launch is paused.
+			// The "Agent thinking" badge itself lives on the Go button inside
+			// BatchRunnerModal — here we just verify the toolbar surfaces the
+			// busy state via its tooltip.
 			expect(screen.getByTitle(/Agent is thinking/)).toBeDefined();
+			expect(screen.queryByText('Agent thinking')).toBeNull();
 		});
 
-		it('does not show the "Agent thinking" badge when agent is not busy', () => {
+		it('uses the default Run tooltip when agent is not busy', () => {
 			render(<AutoRunToolbar {...createDefaultProps({ isAgentBusy: false })} />);
 			expect(screen.queryByText('Agent thinking')).toBeNull();
 			expect(screen.getByTitle('Run auto-run on tasks')).toBeDefined();

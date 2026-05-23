@@ -30,7 +30,6 @@ export interface SessionRecoveryCardProps {
 		lastUserPrompt: string;
 		groomContext: boolean;
 	}) => void;
-	onDismiss: () => void;
 }
 
 export function SessionRecoveryCard({
@@ -41,7 +40,6 @@ export function SessionRecoveryCard({
 	isRecovering,
 	recoveryError,
 	onRecover,
-	onDismiss,
 }: SessionRecoveryCardProps) {
 	const [groomContext, setGroomContext] = useState(true);
 
@@ -110,18 +108,6 @@ export function SessionRecoveryCard({
 			<div className="flex justify-end gap-2">
 				<button
 					type="button"
-					onClick={onDismiss}
-					disabled={isRecovering}
-					className="px-3 py-1.5 rounded text-xs border hover:bg-white/5 transition-colors disabled:opacity-50"
-					style={{
-						borderColor: theme.colors.border,
-						color: theme.colors.textMain,
-					}}
-				>
-					Cancel
-				</button>
-				<button
-					type="button"
 					onClick={handleSend}
 					disabled={isRecovering}
 					aria-busy={isRecovering}
@@ -139,7 +125,7 @@ export function SessionRecoveryCard({
 					) : (
 						<>
 							<ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-							Send to Session
+							Recover Session
 						</>
 					)}
 				</button>

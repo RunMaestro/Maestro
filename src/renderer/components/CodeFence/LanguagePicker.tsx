@@ -2,12 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import type { Theme } from '../../types';
-
-interface LanguageEntry {
-	id: string;
-	name: string;
-	aliases: string[];
-}
+import {
+	type BundledLanguageEntry as LanguageEntry,
+	getBundledLanguageEntries,
+} from '../../utils/shiki/highlighterManager';
 
 let cachedEntries: LanguageEntry[] | null = null;
 let cachedEntriesPromise: Promise<LanguageEntry[]> | null = null;
@@ -16,23 +14,15 @@ async function loadLanguageEntries(): Promise<LanguageEntry[]> {
 	if (cachedEntries) return cachedEntries;
 	if (cachedEntriesPromise) return cachedEntriesPromise;
 	cachedEntriesPromise = (async () => {
-		// `bundledLanguagesInfo` is the same export the highlighter manager uses
-		// for alias resolution. Reaching into Shiki directly here keeps the
-		// manager's surface focused on highlighting (not picker metadata).
-		const shiki = await import('shiki');
-		const entries: LanguageEntry[] = shiki.bundledLanguagesInfo.map((info) => ({
-			id: info.id,
-			name: info.name ?? info.id,
-			aliases: info.aliases ?? [],
-		}));
+		const entries = await getBundledLanguageEntries();
 		// Always offer the plaintext escape hatch even though Shiki treats it
-		// specially (it ships a "plaintext" grammar but it isn't in bundledLanguagesInfo).
-		if (!entries.some((e) => e.id === 'text')) {
-			entries.unshift({ id: 'text', name: 'Plain Text', aliases: ['plain', 'plaintext'] });
-		}
-		entries.sort((a, b) => a.name.localeCompare(b.name));
-		cachedEntries = entries;
-		return entries;
+		// specially (it ships a "plaintext" grammar but it isn't in
+		// `bundledLanguagesInfo`).
+		const withText = entries.some((e) => e.id === 'text')
+			? entries
+			: [{ id: 'text', name: 'Plain Text', aliases: ['plain', 'plaintext'] }, ...entries];
+		cachedEntries = withText;
+		return withText;
 	})();
 	return cachedEntriesPromise;
 }
