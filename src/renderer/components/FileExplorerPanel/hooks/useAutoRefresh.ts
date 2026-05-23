@@ -107,7 +107,6 @@ export function useAutoRefresh({
 							operation: 'fileExplorer.autoRefresh',
 						},
 					});
-					throw error;
 				} finally {
 					autoRefreshSpinTimeoutRef.current = setTimeout(() => {
 						setIsRefreshing(false);
