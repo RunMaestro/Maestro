@@ -15,6 +15,7 @@ import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import { logger } from '../../utils/logger';
+import { gitService } from '../../services/git';
 
 export function NewInstanceModal({
 	isOpen,
@@ -311,28 +312,27 @@ export function NewInstanceModal({
 	// already a git repo so we can offer to `git init` it if not.
 	useEffect(() => {
 		const trimmed = workingDir.trim();
+		// Reset stale state from a previous directory before the async check
+		// resolves — otherwise the previous "not-repo" panel keeps rendering
+		// (with a clickable Init button) against the new, unvalidated path
+		// during the 500ms debounce window.
+		setGitRepoStatus('unknown');
+		setInitRepoError(null);
 		if (!trimmed) {
-			setGitRepoStatus('unknown');
-			setInitRepoError(null);
 			return;
 		}
 
 		// For SSH, wait until the remote path validates as a directory.
 		if (isSshEnabled && !remotePathValidation.valid) {
-			setGitRepoStatus('unknown');
 			return;
 		}
 
 		let cancelled = false;
 		const timeoutId = setTimeout(async () => {
-			try {
-				const expanded = expandTilde(trimmed);
-				const isRepo = await window.maestro.git.isRepo(expanded, effectiveSshRemoteId);
-				if (!cancelled) {
-					setGitRepoStatus(isRepo ? 'is-repo' : 'not-repo');
-				}
-			} catch {
-				if (!cancelled) setGitRepoStatus('unknown');
+			const expanded = expandTilde(trimmed);
+			const isRepo = await gitService.isRepo(expanded, effectiveSshRemoteId);
+			if (!cancelled) {
+				setGitRepoStatus(isRepo ? 'is-repo' : 'not-repo');
 			}
 		}, 500);
 
@@ -349,15 +349,12 @@ export function NewInstanceModal({
 		setInitRepoError(null);
 		try {
 			const expanded = expandTilde(trimmed);
-			const result = await window.maestro.git.init(expanded, effectiveSshRemoteId);
+			const result = await gitService.init(expanded, effectiveSshRemoteId);
 			if (!result.success) {
 				setInitRepoError(result.error || 'Failed to initialize git repository');
 				return;
 			}
 			setGitRepoStatus('is-repo');
-		} catch (error) {
-			logger.error('git init failed:', undefined, error);
-			setInitRepoError('Failed to initialize git repository');
 		} finally {
 			setIsInitializingRepo(false);
 		}

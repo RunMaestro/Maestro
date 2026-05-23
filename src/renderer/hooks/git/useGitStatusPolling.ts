@@ -3,6 +3,7 @@ import type { Session } from '../../types';
 import { gitService } from '../../services/git';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { subscribeToActivity } from '../../utils/activityBus';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Extended git status data for a session.
@@ -173,42 +174,50 @@ function gitStatusMapsEqual(
  * `isGitRepo` flag and warm the branches/tags cache so worktree creation
  * and other git-gated features become available without an app restart.
  *
- * Errors per-session are swallowed: a failing `isRepo` for one session
- * must not block the others.
+ * Per-session failures (via `allSettled`) are isolated so one bad session
+ * doesn't block the rest, and unexpected exceptions are reported to Sentry
+ * — `gitService` already swallows IPC errors and returns defaults, so
+ * anything that reaches us here is a real bug worth seeing.
  */
 async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
-	await Promise.all(
+	const results = await Promise.allSettled(
 		sessions.map(async (session) => {
-			try {
-				const cwd =
-					session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
-				const sshRemoteId =
-					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+			const cwd = session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
-				const isRepo = await gitService.isRepo(cwd, sshRemoteId);
-				if (!isRepo) return;
+			const isRepo = await gitService.isRepo(cwd, sshRemoteId);
+			if (!isRepo) return;
 
-				const [gitBranches, gitTags] = await Promise.all([
-					gitService.getBranches(cwd, sshRemoteId),
-					gitService.getTags(cwd, sshRemoteId),
-				]);
+			const [gitBranches, gitTags] = await Promise.all([
+				gitService.getBranches(cwd, sshRemoteId),
+				gitService.getTags(cwd, sshRemoteId),
+			]);
 
-				updateSessionWith(session.id, (s) =>
-					s.isGitRepo
-						? s
-						: {
-								...s,
-								isGitRepo: true,
-								gitBranches,
-								gitTags,
-								gitRefsCacheTime: Date.now(),
-							}
-				);
-			} catch {
-				// Ignore — next poll will retry
-			}
+			updateSessionWith(session.id, (s) =>
+				s.isGitRepo
+					? s
+					: {
+							...s,
+							isGitRepo: true,
+							gitBranches,
+							gitTags,
+							gitRefsCacheTime: Date.now(),
+						}
+			);
 		})
 	);
+
+	results.forEach((result, idx) => {
+		if (result.status === 'rejected') {
+			captureException(result.reason, {
+				extra: {
+					context: 'detectGitRepoTransitions',
+					sessionId: sessions[idx]?.id,
+				},
+			});
+		}
+	});
 }
 
 /**

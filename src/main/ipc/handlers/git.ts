@@ -163,6 +163,14 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 			handlerOpts('init'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// Fail fast if an SSH remote was requested but can't be resolved —
+				// otherwise we'd silently `git init` the wrong (local) directory.
+				if (sshRemoteId && !sshRemote) {
+					return {
+						success: false,
+						error: `SSH remote not found: ${sshRemoteId}`,
+					};
+				}
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				const result = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
 				if (result.exitCode !== 0) {

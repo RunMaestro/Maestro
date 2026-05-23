@@ -165,7 +165,7 @@ describe('Git IPC handlers', () => {
 	});
 
 	describe('registration', () => {
-		it('should register all 27 git handlers', () => {
+		it('should register all git handlers', () => {
 			const expectedChannels = [
 				'git:status',
 				'git:diff',
@@ -196,7 +196,7 @@ describe('Git IPC handlers', () => {
 				'git:createGist',
 			];
 
-			expect(handlers.size).toBe(27);
+			expect(handlers.size).toBe(expectedChannels.length);
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
