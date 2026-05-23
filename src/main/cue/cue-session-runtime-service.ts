@@ -14,6 +14,7 @@ import type { CueSessionRegistry } from './cue-session-registry';
 import { createTriggerSource } from './triggers/cue-trigger-source-registry';
 import { passesFilter } from './triggers/cue-trigger-filter';
 import type { CueTriggerSource } from './triggers/cue-trigger-source';
+import { removeSubscriptionFromYaml } from './cue-self-destruct';
 
 /**
  * Why a session is being initialized. Used to gate `app.startup` triggers,
@@ -239,10 +240,33 @@ export function createCueSessionRuntimeService(
 					state.lastTriggered = event.timestamp;
 					deps.dispatchSubscription(session.id, sub, event, session.name);
 				},
-				// Stub: Phase 02 wires the YAML rewrite. The trigger source only
-				// asks; the runtime decides how to physically remove the sub.
+				// The trigger source asks for the sub to be consumed (missed-grace,
+				// or — in theory — any other reason it decides not to fire). The
+				// runtime is the sole writer of cue.yaml on this path; the engine's
+				// YAML watcher reloads the config naturally after the rewrite, so
+				// there's no need to refresh the session manually.
 				requestSelfDestruct: (subscriptionName, reason) => {
-					console.log(`[CUE] requestSelfDestruct ${subscriptionName} (${reason})`);
+					void removeSubscriptionFromYaml(session.projectRoot, subscriptionName)
+						.then((result) => {
+							if (result.removed) {
+								deps.onLog(
+									'cue',
+									`[CUE] self-destruct removed "${subscriptionName}" from cue.yaml (${reason})`
+								);
+							} else {
+								deps.onLog(
+									'warn',
+									`[CUE] self-destruct could not remove "${subscriptionName}" (${reason}): ${result.reason ?? 'unknown'}`
+								);
+							}
+						})
+						.catch((err) => {
+							const message = err instanceof Error ? err.message : String(err);
+							deps.onLog(
+								'warn',
+								`[CUE] self-destruct threw for "${subscriptionName}" (${reason}): ${message}`
+							);
+						});
 				},
 			});
 

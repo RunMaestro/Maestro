@@ -63,6 +63,7 @@ import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue
 import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
+import { removeSubscriptionFromYaml } from './cue-self-destruct';
 import * as yaml from 'js-yaml';
 import { cueDebugLog } from '../../shared/cueDebug';
 import { captureException } from '../utils/sentry';
@@ -217,6 +218,12 @@ export class CueEngine {
 			onLog: meteredOnLog,
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				// `time.once` subscriptions are one-shot: rewrite cue.yaml to drop
+				// the sub on terminal status. `stopped` (manual abort) routes
+				// through `onRunStopped` instead and never self-destructs — the
+				// user explicitly cancelled and may want to reschedule. The YAML
+				// watcher reloads the config naturally after the rewrite.
+				this.maybeSelfDestructOnce(sessionId, result, subscriptionName);
 				// Telemetry: emit `run_completed` once per natural completion.
 				// task_kind is derived here rather than inside the run manager
 				// so the engine remains the sole authority on telemetry shape.
@@ -1163,6 +1170,69 @@ export class CueEngine {
 
 	private pushActivityLog(result: CueRunResult): void {
 		this.activityLog.push(result);
+	}
+
+	/**
+	 * If `result` finalized a `time.once` subscription, rewrite cue.yaml to drop
+	 * it so the one-shot task does not fire again on a future engine cycle.
+	 *
+	 *  - `completed`  → always self-destruct.
+	 *  - `failed` / `timeout` → self-destruct unless the sub set
+	 *                  `self_destruct_on_failure: false` (default true).
+	 *  - `stopped`    → never; the manual-stop callback never reaches here.
+	 *
+	 * No-op for non-`time.once` runs and when the sub is already absent from
+	 * the in-memory config (e.g. removed by a hot-reload between fire and
+	 * finalize). The YAML watcher reloads the config naturally after a
+	 * successful rewrite — callers must not refresh the session manually.
+	 */
+	private maybeSelfDestructOnce(
+		sessionId: string,
+		result: CueRunResult,
+		subscriptionName: string
+	): void {
+		if (result.event.type !== 'time.once') return;
+
+		const state = this.registry.get(sessionId);
+		const sub = state?.config.subscriptions.find((s) => s.name === subscriptionName);
+		if (!sub) return;
+
+		let reason: 'completed' | 'failed';
+		if (result.status === 'completed') {
+			reason = 'completed';
+		} else if (
+			(result.status === 'failed' || result.status === 'timeout') &&
+			sub.self_destruct_on_failure !== false
+		) {
+			reason = 'failed';
+		} else {
+			return;
+		}
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		if (!session) return;
+
+		void removeSubscriptionFromYaml(session.projectRoot, subscriptionName)
+			.then((res) => {
+				if (res.removed) {
+					this.meteredOnLog(
+						'cue',
+						`[CUE] self-destruct removed "${subscriptionName}" from cue.yaml (${reason})`
+					);
+				} else {
+					this.meteredOnLog(
+						'warn',
+						`[CUE] self-destruct could not remove "${subscriptionName}" (${reason}): ${res.reason ?? 'unknown'}`
+					);
+				}
+			})
+			.catch((err) => {
+				const message = err instanceof Error ? err.message : String(err);
+				this.meteredOnLog(
+					'warn',
+					`[CUE] self-destruct threw for "${subscriptionName}" (${reason}): ${message}`
+				);
+			});
 	}
 
 	/**
