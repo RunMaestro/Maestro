@@ -30,14 +30,28 @@ export function isUnifiedTabActive(
 
 /**
  * Compute shortcut hint for a tab at a given position.
- * Returns 1-9 for first 9 tabs, 0 for last tab (Cmd+0), null for others.
+ *
+ * When useCmd0AsLastTab is true (Maestro default): returns 1-9 for the first 9 tabs,
+ * 0 for the last tab (Cmd+0), null for others.
+ *
+ * When useCmd0AsLastTab is false (browser-style): returns 1-8 for the first 8 tabs,
+ * 9 for the last tab (Cmd+9), null for others.
  *
  * Callers pass the tab's index within the currently displayed list (filtered or not) so
  * hints stay aligned with Cmd+N behaviour — the jump shortcuts index into the same
  * filtered list when the unread filter is active.
  */
-export function getShortcutHint(displayedIndex: number, isLastTab: boolean): number | null {
-	if (isLastTab) return 0;
-	if (displayedIndex < 9) return displayedIndex + 1;
+export function getShortcutHint(
+	displayedIndex: number,
+	isLastTab: boolean,
+	useCmd0AsLastTab = true
+): number | null {
+	if (useCmd0AsLastTab) {
+		if (isLastTab) return 0;
+		if (displayedIndex < 9) return displayedIndex + 1;
+		return null;
+	}
+	if (isLastTab) return 9;
+	if (displayedIndex < 8) return displayedIndex + 1;
 	return null;
 }

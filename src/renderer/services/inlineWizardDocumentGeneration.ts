@@ -340,6 +340,129 @@ export function countTasks(content: string): number {
 }
 
 /**
+ * Options for {@link createPlaybookDocumentEmitter}.
+ */
+export interface PlaybookDocumentEmitterOptions {
+	/** Folder on disk where Phase-XX.md files land. */
+	subfolderPath: string;
+	/** SSH remote ID when running against a remote workspace; undefined for local. */
+	sshRemoteId?: string;
+	/** Called once per newly-detected, successfully-read document. */
+	onEmit: (doc: InlineGeneratedDocument) => void;
+	/** Retry tuning for {@link PlaybookDocumentEmitter.tryEmitFile}. Mostly for tests. */
+	readRetries?: { maxAttempts: number; delayMs: number };
+}
+
+/**
+ * Coordinates reading newly-detected playbook docs off disk and notifying the
+ * wizard UI exactly once per file. Owns the dedup set so the chokidar
+ * watcher AND a periodic disk poll can both feed it without producing
+ * duplicates — the watcher catches changes fast when fsevents cooperates,
+ * the poll backstops the cold-start window where add events go missing.
+ */
+export interface PlaybookDocumentEmitter {
+	/**
+	 * Try to read a single named file and emit it if new. Returns true when a
+	 * doc was emitted (i.e. read succeeded with non-empty content AND the file
+	 * had not been emitted before), false otherwise.
+	 */
+	tryEmitFile: (
+		filename: string,
+		opts?: { maxAttempts?: number; delayMs?: number }
+	) => Promise<boolean>;
+	/**
+	 * List the folder and emit every .md file we haven't surfaced yet.
+	 * Returns the number of new docs emitted.
+	 */
+	pollAndEmit: () => Promise<number>;
+	/** Snapshot of all docs emitted so far, in insertion order. */
+	getEmittedDocuments: () => InlineGeneratedDocument[];
+	/** True iff we've emitted at least one document. */
+	hasEmitted: () => boolean;
+}
+
+/**
+ * Construct a {@link PlaybookDocumentEmitter}. Exposed as a factory (not a
+ * class) so consumers can mock the IO surface in tests via the global
+ * `window.maestro` bridge without needing to subclass anything.
+ */
+export function createPlaybookDocumentEmitter(
+	options: PlaybookDocumentEmitterOptions
+): PlaybookDocumentEmitter {
+	const { subfolderPath, sshRemoteId, onEmit } = options;
+	const defaultRetries = options.readRetries ?? { maxAttempts: 5, delayMs: 300 };
+	const emitted = new Map<string, InlineGeneratedDocument>();
+
+	const tryEmitFile = async (
+		filename: string,
+		opts: { maxAttempts?: number; delayMs?: number } = {}
+	): Promise<boolean> => {
+		const filenameWithExt = filename.endsWith('.md') ? filename : `${filename}.md`;
+		if (emitted.has(filenameWithExt)) return false;
+
+		const fullPath = `${subfolderPath}/${filenameWithExt}`;
+		const maxAttempts = opts.maxAttempts ?? defaultRetries.maxAttempts;
+		const delayMs = opts.delayMs ?? defaultRetries.delayMs;
+
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
+				if (content && typeof content === 'string' && content.length > 0) {
+					// Re-check in case a parallel read raced ahead while we were awaiting.
+					if (emitted.has(filenameWithExt)) return false;
+					const doc: InlineGeneratedDocument = {
+						filename: filenameWithExt,
+						content,
+						taskCount: countTasks(content),
+						savedPath: fullPath,
+					};
+					emitted.set(filenameWithExt, doc);
+					onEmit(doc);
+					return true;
+				}
+			} catch (err) {
+				logger.info(
+					`[PlaybookEmitter] read attempt ${attempt}/${maxAttempts} failed for ${filenameWithExt}:`,
+					undefined,
+					err
+				);
+			}
+			if (attempt < maxAttempts) {
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			}
+		}
+		return false;
+	};
+
+	const pollAndEmit = async (): Promise<number> => {
+		let newCount = 0;
+		try {
+			const listResult = await window.maestro.autorun.listDocs(subfolderPath, sshRemoteId);
+			if (!listResult.success || !Array.isArray(listResult.files)) return 0;
+			for (const baseName of listResult.files) {
+				const filename = baseName.endsWith('.md') ? baseName : `${baseName}.md`;
+				if (emitted.has(filename)) continue;
+				// Short retry budget during polling — if the file isn't readable
+				// within ~300ms we'll just catch it on the next poll tick.
+				if (await tryEmitFile(filename, { maxAttempts: 2, delayMs: 150 })) {
+					newCount++;
+				}
+			}
+		} catch (err) {
+			logger.info('[PlaybookEmitter] pollAndEmit listDocs failed:', undefined, err);
+		}
+		return newCount;
+	};
+
+	return {
+		tryEmitFile,
+		pollAndEmit,
+		getEmittedDocuments: () => Array.from(emitted.values()),
+		hasEmitted: () => emitted.size > 0,
+	};
+}
+
+/**
  * Format existing documents for inclusion in the iterate prompt.
  *
  * @param docs - Array of existing documents with content
@@ -818,8 +941,16 @@ export async function generateInlineDocuments(
 		const sessionId = `inline-wizard-gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
 
-		// Track documents created via file watcher (for real-time streaming)
-		const documentsFromWatcher: InlineGeneratedDocument[] = [];
+		// Detect new playbook docs as they hit disk and dedupe across two
+		// sources: the chokidar-backed file watcher (fast when it fires) and a
+		// periodic disk poll (backstop for fsevents cold-start drops and slow
+		// reads). Both paths feed the same emitter so each doc surfaces to the
+		// UI exactly once via onDocumentComplete.
+		const documentEmitter = createPlaybookDocumentEmitter({
+			subfolderPath,
+			sshRemoteId,
+			onEmit: (doc) => callbacks?.onDocumentComplete?.(doc),
+		});
 
 		const result = await new Promise<{ success: boolean; rawOutput: string; error?: string }>(
 			(resolve) => {
@@ -827,6 +958,7 @@ export async function generateInlineDocuments(
 				let dataListenerCleanup: (() => void) | undefined;
 				let exitListenerCleanup: (() => void) | undefined;
 				let fileWatcherCleanup: (() => void) | undefined;
+				let pollIntervalId: ReturnType<typeof setInterval> | undefined;
 
 				/**
 				 * Reset the inactivity timeout - called on any activity
@@ -883,6 +1015,10 @@ export async function generateInlineDocuments(
 						fileWatcherCleanup();
 						fileWatcherCleanup = undefined;
 					}
+					if (pollIntervalId !== undefined) {
+						clearInterval(pollIntervalId);
+						pollIntervalId = undefined;
+					}
 					// Stop watching the subfolder
 					window.maestro.autorun
 						.unwatchFolder(subfolderPath)
@@ -891,8 +1027,9 @@ export async function generateInlineDocuments(
 						);
 				}
 
-				// Set up file watcher for real-time document streaming
-				// The agent writes files directly, and we detect them here
+				// Set up file watcher for real-time document streaming.
+				// The agent writes files directly; chokidar events route through the
+				// shared emitter so the renderer sees each doc exactly once.
 				window.maestro.autorun
 					.watchFolder(subfolderPath, sshRemoteId)
 					.then((watchResult) => {
@@ -903,86 +1040,22 @@ export async function generateInlineDocuments(
 								subfolderPath
 							);
 
-							// Set up file change listener
 							fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
-								if (data.folderPath === subfolderPath) {
-									logger.info('[InlineWizardDocGen] File activity:', undefined, [
-										data.filename,
-										data.eventType,
-									]);
+								if (data.folderPath !== subfolderPath) return;
+								logger.info('[InlineWizardDocGen] File activity:', undefined, [
+									data.filename,
+									data.eventType,
+								]);
+								resetTimeout();
 
-									// Reset timeout on file activity
-									resetTimeout();
-
-									// If a file was created/changed, read it and notify
-									if (
-										data.filename &&
-										(data.eventType === 'rename' || data.eventType === 'change')
-									) {
-										// Re-add the .md extension since main process may strip it
-										const filenameWithExt = data.filename.endsWith('.md')
-											? data.filename
-											: `${data.filename}.md`;
-										const fullPath = `${subfolderPath}/${filenameWithExt}`;
-
-										// Use retry logic since file might still be being written
-										const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
-											for (let attempt = 1; attempt <= retries; attempt++) {
-												try {
-													const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
-													if (content && typeof content === 'string' && content.length > 0) {
-														logger.info('[InlineWizardDocGen] File read successful:', undefined, [
-															filenameWithExt,
-															'size:',
-															content.length,
-														]);
-
-														// Check if we've already processed this document
-														const alreadyProcessed = documentsFromWatcher.some(
-															(d) => d.filename === filenameWithExt
-														);
-														if (alreadyProcessed) {
-															logger.info(
-																'[InlineWizardDocGen] Document already processed:',
-																undefined,
-																filenameWithExt
-															);
-															return;
-														}
-
-														const doc: InlineGeneratedDocument = {
-															filename: filenameWithExt,
-															content,
-															taskCount: countTasks(content),
-															savedPath: fullPath,
-														};
-
-														documentsFromWatcher.push(doc);
-														callbacks?.onDocumentComplete?.(doc);
-														return;
-													}
-												} catch (err) {
-													logger.info(
-														`[InlineWizardDocGen] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
-														undefined,
-														err
-													);
-												}
-												if (attempt < retries) {
-													await new Promise((r) => setTimeout(r, delayMs));
-												}
-											}
-
-											// Even if we couldn't read content, note that file exists
-											logger.info(
-												'[InlineWizardDocGen] Could not read file content:',
-												undefined,
-												filenameWithExt
-											);
-										};
-
-										readWithRetry();
-									}
+								if (data.filename && (data.eventType === 'rename' || data.eventType === 'change')) {
+									documentEmitter.tryEmitFile(data.filename).catch((err) => {
+										logger.warn(
+											'[InlineWizardDocGen] Emitter error for watcher event:',
+											undefined,
+											err
+										);
+									});
 								}
 							});
 						} else {
@@ -996,6 +1069,17 @@ export async function generateInlineDocuments(
 					.catch((err) => {
 						logger.warn('[InlineWizardDocGen] Error setting up folder watcher:', undefined, err);
 					});
+
+				// Periodic backstop: poll the folder every 2s during generation.
+				// Catches files the chokidar add event missed (macOS fsevents
+				// cold-start lag on freshly-created dirs is the common culprit)
+				// so the wizard surfaces in-progress docs as fast as disk does.
+				const POLL_INTERVAL_MS = 2000;
+				pollIntervalId = setInterval(() => {
+					documentEmitter.pollAndEmit().catch((err) => {
+						logger.warn('[InlineWizardDocGen] Periodic poll failed:', undefined, err);
+					});
+				}, POLL_INTERVAL_MS);
 
 				// Set up data listener
 				dataListenerCleanup = window.maestro.process.onData(
@@ -1099,17 +1183,26 @@ export async function generateInlineDocuments(
 
 		const rawOutput = result.rawOutput;
 
-		// If documents were streamed in via file watcher, use those
-		// (they were already created directly by the agent)
-		if (documentsFromWatcher.length > 0) {
+		// Final sweep: catch any files written between the last poll tick and
+		// agent exit so the watcher/poll race doesn't leave a doc behind.
+		try {
+			await documentEmitter.pollAndEmit();
+		} catch (err) {
+			logger.warn('[InlineWizardDocGen] Final pollAndEmit failed:', undefined, err);
+		}
+
+		// If documents were streamed in via watcher or poll, use those
+		// (they were already created directly by the agent on disk).
+		const emittedDocuments = documentEmitter.getEmittedDocuments();
+		if (emittedDocuments.length > 0) {
 			logger.info(
-				'[InlineWizardDocGen] Using documents from file watcher:',
+				'[InlineWizardDocGen] Using documents from emitter:',
 				undefined,
-				documentsFromWatcher.length
+				emittedDocuments.length
 			);
 
 			// Sort by phase number for consistent ordering
-			const sortedDocs = [...documentsFromWatcher].sort((a, b) => {
+			const sortedDocs = [...emittedDocuments].sort((a, b) => {
 				const phaseA = a.filename.match(/Phase-(\d+)/i)?.[1] || '0';
 				const phaseB = b.filename.match(/Phase-(\d+)/i)?.[1] || '0';
 				return parseInt(phaseA, 10) - parseInt(phaseB, 10);

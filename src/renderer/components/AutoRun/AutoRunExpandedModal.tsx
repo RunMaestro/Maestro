@@ -16,6 +16,7 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
@@ -188,6 +189,53 @@ export function AutoRunExpandedModal({
 		return () => clearTimeout(timer);
 	}, []);
 
+	// Re-claim focus whenever this modal becomes the topmost layer again — e.g.
+	// after the user opens PlayBook Exchange (or the doc selector) and dismisses
+	// it. Without this, focus falls back to the body and Cmd+E starts targeting
+	// the right-panel AutoRun behind us instead of the expanded view.
+	const layerStack = useLayerStack();
+	const layers = layerStack.getLayers();
+	const topLayer = layers[layers.length - 1];
+	const isTopLayer = topLayer?.priority === MODAL_PRIORITIES.AUTORUN_EXPANDED;
+	useEffect(() => {
+		if (!isTopLayer) return;
+		// Wait a tick so the closing modal has finished tearing down its focus trap.
+		const timer = setTimeout(() => {
+			const active = document.activeElement as HTMLElement | null;
+			// Only steal focus when it's idling on the body (or detached) — don't
+			// yank it out of an input the user has deliberately focused.
+			if (!active || active === document.body) {
+				autoRunRef.current?.focus();
+			}
+		}, 0);
+		return () => clearTimeout(timer);
+	}, [isTopLayer]);
+
+	// Modal-scoped shortcuts: cmd+s saves (when dirty); cmd+o opens the
+	// document selector dropdown. Registered in the capture phase so we run
+	// before the global keyboard handler in useMainKeyboardHandler (which
+	// would otherwise treat cmd+o as `agentSwitcher`).
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const metaPressed = e.metaKey || e.ctrlKey;
+			if (!metaPressed || e.altKey) return;
+			const key = e.key.toLowerCase();
+			if (key === 's' && !e.shiftKey) {
+				if (!isLocked && autoRunRef.current?.isDirty()) {
+					e.preventDefault();
+					e.stopPropagation();
+					void handleSave();
+				}
+			} else if (key === 'o' && !e.shiftKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				autoRunRef.current?.openDocumentSelector();
+			}
+		};
+		window.addEventListener('keydown', handleKeyDown, { capture: true });
+		return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+	}, [handleSave, isLocked]);
+
 	// Use the AutoRun's switchMode for scroll sync, falling back to local mode change
 	const setMode = useCallback(
 		(newMode: 'edit' | 'preview') => {
@@ -276,8 +324,8 @@ export function AutoRunExpandedModal({
             </button>
             */}
 						<input ref={fileInputRef} type="file" accept="image/*" className="hidden" />
-						{/* Save/Revert buttons - shown when dirty */}
-						{isDirty && localMode === 'edit' && !isLocked && (
+						{/* Save/Revert buttons - shown whenever the doc is dirty, in either mode */}
+						{isDirty && !isLocked && (
 							<>
 								<div className="w-px h-4 mx-1" style={{ backgroundColor: theme.colors.border }} />
 								<button
@@ -358,7 +406,8 @@ export function AutoRunExpandedModal({
 								Run
 							</button>
 						)}
-						{/* PlayBooks button */}
+						{/* Playbook Exchange button — full name fits in the expanded header
+						    (the right-panel AutoRun shortens it to "PlayBooks"). */}
 						{onOpenMarketplace && (
 							<button
 								onClick={onOpenMarketplace}
@@ -368,10 +417,10 @@ export function AutoRunExpandedModal({
 									border: `1px solid ${theme.colors.accent}40`,
 									backgroundColor: `${theme.colors.accent}15`,
 								}}
-								title="Browse PlayBooks - discover and share community playbooks"
+								title="Browse Playbook Exchange - discover and share community playbooks"
 							>
 								<LayoutGrid className="w-3.5 h-3.5" />
-								PlayBooks
+								Playbook Exchange
 							</button>
 						)}
 					</div>

@@ -213,7 +213,7 @@ export function ActivityLog({
 
 			{/* Body */}
 			<div
-				className="flex-1 overflow-y-auto rounded-md"
+				className="flex-1 overflow-y-auto overflow-x-hidden rounded-md"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
 				{log.length === 0 ? (
@@ -309,10 +309,15 @@ export function ActivityLog({
 													</span>
 												)}
 											</td>
-											<td className="py-1.5 pr-2 truncate" style={{ color: theme.colors.textDim }}>
-												triggered ({eventType}){filePayload}
-												{taskPayload}
-												{githubPayload}
+											<td
+												className="py-1.5 pr-2"
+												style={{ color: theme.colors.textDim, maxWidth: 0, width: '100%' }}
+											>
+												<div className="truncate">
+													triggered ({eventType}){filePayload}
+													{taskPayload}
+													{githubPayload}
+												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">
 												<span className="inline-flex items-center gap-1.5 justify-end">

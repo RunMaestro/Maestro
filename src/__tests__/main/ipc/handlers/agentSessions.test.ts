@@ -25,6 +25,14 @@ vi.mock('../../../../main/agents', () => ({
 	getAllSessionStorages: vi.fn(),
 }));
 
+// Mock the stores module. The agentSessions handler now resolves SSH remotes
+// through the canonical store getter; in the absence of a configured remote
+// we want a clean undefined return (matching the prior "no settings store"
+// behavior the tests below assert against), not an "uninitialized" throw.
+vi.mock('../../../../main/stores', () => ({
+	getSshRemoteById: vi.fn().mockReturnValue(undefined),
+}));
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {

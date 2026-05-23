@@ -366,6 +366,12 @@ CONTENT:
 			const mockOutput = '';
 			setupSpawnMock(mockOutput);
 
+			// Force the new emitter's pre-read path to come up empty so we fall
+			// through to the legacy readDoc-based disk fallback. (vi.clearAllMocks
+			// only resets call history, not implementations, so the previous test's
+			// successful readFile mock would otherwise leak in here.)
+			mockMaestro.fs.readFile.mockResolvedValue('');
+
 			// Setup listDocs to return files
 			mockMaestro.autorun.listDocs.mockResolvedValue({
 				success: true,

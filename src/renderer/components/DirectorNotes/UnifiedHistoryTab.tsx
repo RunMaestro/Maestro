@@ -24,13 +24,15 @@ import {
 import type { GraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
-import { useListNavigation, useSettings, useThrottledCallback } from '../../hooks';
+import { useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
+import { lookbackHoursToDays } from './lookback';
 import { logger } from '../../utils/logger';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -59,27 +61,16 @@ interface UnifiedHistoryTabProps {
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
-}
-
-/** Convert lookbackHours to lookbackDays for the IPC call. null => 0 (all time). */
-function lookbackHoursToDays(hours: number | null): number {
-	if (hours === null) return 0;
-	return Math.ceil(hours / 24);
-}
-
-/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. 0 => null (All time). */
-function daysToLookbackHours(days: number): number | null {
-	if (days <= 0) return null; // 0 encodes "All time"
-	const targetHours = days * 24;
-	for (const option of LOOKBACK_OPTIONS) {
-		if (option.hours !== null && option.hours >= targetHours) return option.hours;
-	}
-	return null; // all options too small — fall back to "All time"
+	/** Lookback window in hours, lifted to the parent so the modal title can reflect it. null = All time. */
+	lookbackHours: number | null;
+	onLookbackChange: (hours: number | null) => void;
 }
 
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
-	function UnifiedHistoryTab({ theme, onResumeSession, fileTree, onFileClick }, ref) {
-		const { directorNotesSettings } = useSettings();
+	function UnifiedHistoryTab(
+		{ theme, onResumeSession, fileTree, onFileClick, lookbackHours, onLookbackChange },
+		ref
+	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
 			? ['USER', 'AUTO', 'CUE']
@@ -89,9 +80,6 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			() => new Set(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
-		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
-			daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
-		);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
 		const [searchQuery, setSearchQuery] = useState('');
@@ -326,10 +314,13 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// when its `loadPage` identity changes (loadPage is memoized on
 		// `lookbackHours`). We just clear stats so the bar reflects the new
 		// scope until the next response lands.
-		const handleLookbackChange = useCallback((hours: number | null) => {
-			setLookbackHours(hours);
-			setHistoryStats(null);
-		}, []);
+		const handleLookbackChange = useCallback(
+			(hours: number | null) => {
+				onLookbackChange(hours);
+				setHistoryStats(null);
+			},
+			[onLookbackChange]
+		);
 
 		// Filter entries client-side
 		const filteredEntries = useMemo(() => {
@@ -536,6 +527,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.shiftKey) {
 					e.preventDefault();
 					e.stopPropagation();
+					trackShortcutUsage('searchDirectorNotes');
 					if (searchExpanded) {
 						searchInputRef.current?.focus();
 						searchInputRef.current?.select();

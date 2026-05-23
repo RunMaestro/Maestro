@@ -20,6 +20,8 @@ import type { Session, LogEntry, UsageStats } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useActiveSession } from './useActiveSession';
 import { useUIStore } from '../../stores/uiStore';
+import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
+import type { ParsedDeepLink } from '../../../shared/types';
 
 /** Helper: update a single session by ID using an updater function */
 function updateSession(sessionId: string, updater: (s: Session) => Session): void {
@@ -159,9 +161,9 @@ export function useSessionSwitchCallbacks(
 	);
 
 	// Deep link navigation handler - processes maestro:// URLs from OS notifications,
-	// external apps, and CLI commands
+	// external apps, CLI commands, AND in-renderer markdown link clicks.
 	useEffect(() => {
-		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+		const handleDeepLink = (deepLink: ParsedDeepLink) => {
 			if (deepLink.action === 'focus') {
 				// Window already brought to foreground by main process
 				return;
@@ -184,9 +186,34 @@ export function useSessionSwitchCallbacks(
 				setGroups((prev) =>
 					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
 				);
+				return;
 			}
-		});
-		return unsubscribe;
+			if (deepLink.action === 'file' && deepLink.sessionId && deepLink.filePath) {
+				// Open the file inside the target session's file-preview tab.
+				// Re-uses the same CustomEvent pipeline the CLI / remote layer
+				// drives so the open path stays unified. The line number is
+				// surfaced via `detail.line` for callers that want to scroll on
+				// mount; older listeners that ignore it still open the file.
+				const sessions = useSessionStore.getState().sessions;
+				const targetExists = sessions.some((s) => s.id === deepLink.sessionId);
+				if (!targetExists) return;
+				window.dispatchEvent(
+					new CustomEvent('maestro:openFileTab', {
+						detail: {
+							sessionId: deepLink.sessionId,
+							filePath: deepLink.filePath,
+							line: deepLink.line,
+						},
+					})
+				);
+			}
+		};
+		const unsubscribeIpc = window.maestro.app.onDeepLink(handleDeepLink);
+		const unsubscribeInApp = subscribeToInAppDeepLinks(handleDeepLink);
+		return () => {
+			unsubscribeIpc();
+			unsubscribeInApp();
+		};
 	}, [handleToastSessionClick, setGroups]);
 
 	// Open a closed named session from the agent session browser

@@ -1,17 +1,18 @@
 /**
  * Integration test for the Giant tier preview shell.
  *
- * The pure modules (languageLoader, themeAdapter, extensions, searchBridge)
- * are unit-tested in sibling files. This test focuses on:
- *   - that CM6 mounts in the host DOM with the document the caller provided
- *   - that the imperative handle's openSearch / closeSearch route to the
- *     real searchBridge (which we mock for verification)
- *   - that destroy/cleanup happens on unmount
- *   - that re-rendering with new content rebuilds the view
+ * Focus areas:
+ *   - CM6 mounts in the host DOM with the document the caller provided
+ *   - findInContent enumerates real matches via the headless search engine
+ *   - scrollToMatch dispatches a CM6 selection + scrollIntoView transaction
+ *   - destroy/cleanup on unmount; re-render with new content rebuilds the view
+ *
+ * Pure modules (languageLoader, themeAdapter, extensions, searchEngine) are
+ * exhaustively unit-tested in sibling files.
  */
 
 import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import { render } from '@testing-library/react';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
@@ -38,15 +39,6 @@ ioGlobal.IntersectionObserver = StubIntersectionObserver as unknown as typeof In
 afterAll(() => {
 	ioGlobal.IntersectionObserver = originalIntersectionObserver;
 });
-
-// Mock the searchBridge so we can assert open/close routing without poking
-// at CM6's real search panel (which would need a real layout).
-const openSearchSpy = vi.fn();
-const closeSearchSpy = vi.fn();
-vi.mock('../../../../../renderer/components/FilePreview/giantPreview/searchBridge', () => ({
-	openSearch: (...args: unknown[]) => openSearchSpy(...args),
-	closeSearch: (...args: unknown[]) => closeSearchSpy(...args),
-}));
 
 // Mock the lazy language loader: skip the dynamic imports so the test
 // stays deterministic. We only need to verify the component doesn't crash
@@ -77,11 +69,6 @@ function renderGiant(opts: { content: string; language?: string }) {
 }
 
 describe('GiantPreview', () => {
-	beforeEach(() => {
-		openSearchSpy.mockReset();
-		closeSearchSpy.mockReset();
-	});
-
 	describe('mount + content', () => {
 		it('renders a host element with the giant-preview-root testid', () => {
 			const { container } = renderGiant({ content: 'hello\nworld' });
@@ -109,32 +96,53 @@ describe('GiantPreview', () => {
 	});
 
 	describe('imperative handle', () => {
-		it('openSearch routes to the searchBridge', () => {
-			const { ref } = renderGiant({ content: 'x' });
-			ref.current!.openSearch();
-			expect(openSearchSpy).toHaveBeenCalled();
+		it('findInContent enumerates every match in the loaded doc', () => {
+			const { ref } = renderGiant({ content: 'alpha beta alpha beta alpha' });
+			const hits = ref.current!.findInContent('alpha');
+			expect(hits.length).toBe(3);
+			expect(hits.map((h) => h.sourceOffset)).toEqual([0, 11, 22]);
+			expect(hits.every((h) => h.length === 5)).toBe(true);
 		});
 
-		it('openSearch forwards an initial query', () => {
-			const { ref } = renderGiant({ content: 'x' });
-			ref.current!.openSearch('needle');
-			expect(openSearchSpy).toHaveBeenCalledWith(expect.anything(), 'needle');
+		it('findInContent returns [] for an empty query', () => {
+			const { ref } = renderGiant({ content: 'anything' });
+			expect(ref.current!.findInContent('')).toEqual([]);
 		});
 
-		it('closeSearch routes to the searchBridge', () => {
-			const { ref } = renderGiant({ content: 'x' });
-			ref.current!.closeSearch();
-			expect(closeSearchSpy).toHaveBeenCalled();
+		it('findInContent returns [] when the query is not present', () => {
+			const { ref } = renderGiant({ content: 'hello world' });
+			expect(ref.current!.findInContent('nope')).toEqual([]);
 		});
 
-		it('findInContent always returns an empty array (CM6 owns search)', () => {
-			const { ref } = renderGiant({ content: 'hello hello hello' });
-			expect(ref.current!.findInContent('hello')).toEqual([]);
+		it('scrollToMatch dispatches a CM6 selection at the matched range', () => {
+			const { container, ref } = renderGiant({ content: 'find the needle in haystack' });
+			// "needle" starts at offset 9 in the doc, length 6.
+			expect(() =>
+				ref.current!.scrollToMatch({
+					sourceOffset: 9,
+					length: 6,
+					blockIndex: 0,
+					offsetWithinBlock: 9,
+				})
+			).not.toThrow();
+			// CM6 paints selection on the .cm-content surface; we can't reliably
+			// inspect the selected range in jsdom (no layout), but we can verify
+			// the editor element still exists and didn't crash.
+			expect(container.querySelector('.cm-editor')).not.toBeNull();
 		});
 
-		it('scrollToMatch is a no-op (CM6 owns scrolling)', () => {
-			const { ref } = renderGiant({ content: 'x' });
-			expect(() => ref.current!.scrollToMatch({ blockIndex: 5 })).not.toThrow();
+		it('scrollToMatch clamps offsets that fall past the doc end', () => {
+			const { ref } = renderGiant({ content: 'short' });
+			// Pass a huge sourceOffset — must not throw or dispatch an invalid
+			// selection; impl clamps to docLength before calling EditorSelection.
+			expect(() =>
+				ref.current!.scrollToMatch({
+					sourceOffset: 9999,
+					length: 10,
+					blockIndex: 0,
+					offsetWithinBlock: 9999,
+				})
+			).not.toThrow();
 		});
 	});
 

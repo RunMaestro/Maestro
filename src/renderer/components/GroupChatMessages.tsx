@@ -14,7 +14,7 @@ import {
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
-import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2, ArrowUp } from 'lucide-react';
+import { Eye, FileText, Copy, ChevronDown, ChevronUp, Share2 } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { stripMarkdown } from '../utils/textProcessing';
@@ -24,11 +24,8 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
 import { useMessageGistStore } from '../stores/messageGistStore';
-import {
-	jumpToMessageEdge,
-	scrollMessageToTop,
-	isTextInputTarget,
-} from '../utils/messageScrollNavigation';
+import { jumpToMessageEdge, isTextInputTarget } from '../utils/messageScrollNavigation';
+import { JumpToMessageTopButton } from './JumpToMessageTopButton';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -362,6 +359,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														content={displayContent}
 														theme={theme}
 														onCopy={copyToClipboard}
+														chatLineBreaks
 													/>
 												) : (
 													<div className="whitespace-pre-wrap">
@@ -403,6 +401,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														content={msg.content}
 														theme={theme}
 														onCopy={copyToClipboard}
+														chatLineBreaks
 													/>
 												) : (
 													<div className="whitespace-pre-wrap">
@@ -430,6 +429,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 												content={msg.content}
 												theme={theme}
 												onCopy={copyToClipboard}
+												chatLineBreaks
 											/>
 										</div>
 									) : (
@@ -440,25 +440,11 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 									)}
 
 									{/* Jump to top of this message - bottom left corner */}
-									<button
-										onClick={(e) => {
-											const messageEl = e.currentTarget.closest<HTMLElement>(
-												'[data-message-timestamp]'
-											);
-											if (messageEl && containerRef.current) {
-												scrollMessageToTop(containerRef.current, messageEl);
-											}
-										}}
-										className="absolute bottom-2 left-2 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-										style={{
-											color: theme.colors.textDim,
-											transition: 'opacity 0.15s ease-in-out',
-										}}
-										title={`Jump to top of this message (${formatShortcutKeys(['Shift', 'ArrowUp'])} for previous)`}
-										aria-label="Jump to top of this message"
-									>
-										<ArrowUp className="w-3.5 h-3.5" />
-									</button>
+									<JumpToMessageTopButton
+										scrollContainerRef={containerRef}
+										messageAncestorSelector="[data-message-timestamp]"
+										theme={theme}
+									/>
 									{/* Action buttons - bottom right corner (non-user messages only) */}
 									{!isUser && (
 										<div

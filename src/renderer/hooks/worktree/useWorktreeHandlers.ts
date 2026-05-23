@@ -47,7 +47,7 @@ export interface WorktreeHandlersReturn {
 	handleDisableWorktreeConfig: () => void;
 	handleCreateWorktreeFromConfig: (branchName: string, basePath: string) => Promise<void>;
 	handleCloseCreateWorktreeModal: () => void;
-	handleCreateWorktree: (branchName: string) => Promise<void>;
+	handleCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 	handleCloseDeleteWorktreeModal: () => void;
 	handleConfirmDeleteWorktree: () => void;
 	handleConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
@@ -450,7 +450,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		getModalActions().setCreateWorktreeSession(null);
 	}, []);
 
-	const handleCreateWorktree = useCallback(async (branchName: string) => {
+	const handleCreateWorktree = useCallback(async (branchName: string, baseBranch?: string) => {
 		const createWtSession = useModalStore.getState().getData('createWorktree')?.session ?? null;
 		if (!createWtSession) return;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
@@ -476,12 +476,15 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath), 10000);
 
 		try {
-			// Create the worktree via git (pass SSH remote ID for remote sessions)
+			// Create the worktree via git (pass SSH remote ID for remote sessions).
+			// baseBranch is honored only when the named branch doesn't already exist
+			// — see git.ts handler for the full semantics.
 			const result = await window.maestro.git.worktreeSetup(
 				createWtSession.cwd,
 				worktreePath,
 				branchName,
-				sshRemoteId
+				sshRemoteId,
+				baseBranch
 			);
 
 			if (!result.success) {

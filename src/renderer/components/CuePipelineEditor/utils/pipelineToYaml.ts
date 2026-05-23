@@ -161,6 +161,18 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 		case 'github.issue':
 			if (triggerData.config.repo) sub.repo = triggerData.config.repo;
 			if (triggerData.config.poll_minutes) sub.poll_minutes = triggerData.config.poll_minutes;
+			if (triggerData.config.retrigger_on_comments === true) {
+				sub.retrigger_on_comments = true;
+				// Only emit the cap when it differs from the default (10) so YAML
+				// stays minimal. `0` (unlimited) is a valid explicit value and
+				// must round-trip — the !== 10 check covers both cases.
+				if (
+					triggerData.config.max_notifications !== undefined &&
+					triggerData.config.max_notifications !== 10
+				) {
+					sub.max_notifications = triggerData.config.max_notifications;
+				}
+			}
 			break;
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
@@ -726,6 +738,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.watch != null) record.watch = sub.watch;
 			if (sub.repo != null) record.repo = sub.repo;
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
+			if (sub.retrigger_on_comments === true) record.retrigger_on_comments = true;
+			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;

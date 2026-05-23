@@ -41,6 +41,21 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
 
+### File Explorer Keyboard Shortcuts
+
+With the Files tab focused, navigate the file list without touching the mouse:
+
+| Shortcut                    | Action                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `Up` / `Down`               | Move the focused file up or down by one                                            |
+| `Option+Up` / `Option+Down` | Jump ten files at a time (page up / page down)                                     |
+| `Shift+Up` / `Shift+Down`   | **Peek scroll** — slide the file list up or down without changing the focused file |
+| `Cmd+Up` / `Cmd+Down`       | Jump to the top or bottom of the list (`Ctrl+Up` / `Ctrl+Down` on Windows/Linux)   |
+| `Left` / `Right`            | Collapse / expand the focused folder (`Left` on a file jumps to its parent folder) |
+| `Enter`                     | Open the focused file (or toggle the folder if a folder is focused)                |
+
+Use `Shift+Up` / `Shift+Down` when you want to glance further down the tree without losing your place — the focused file stays put while the viewport slides.
+
 ### Breadcrumb Navigation
 
 When you open a file, a **breadcrumb trail** appears showing your navigation history. Click any breadcrumb to jump back to a previously viewed file. This makes it easy to compare files or return to where you were.

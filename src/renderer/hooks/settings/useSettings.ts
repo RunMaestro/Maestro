@@ -36,7 +36,13 @@ import {
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
 import type { SettingsStore } from '../../stores/settingsStore';
-import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
+import type {
+	DocumentGraphLayoutType,
+	FilePreviewToolbarButton,
+	FilePreviewToolbarVisibility,
+} from '../../stores/settingsStore';
+import { notifyToast } from '../../stores/notificationStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 
 export interface UseSettingsReturn {
@@ -46,6 +52,10 @@ export interface UseSettingsReturn {
 	// Conductor Profile (About Me)
 	conductorProfile: string;
 	setConductorProfile: (value: string) => void;
+
+	// Global show-Maestro hotkey (system-wide). Empty array = unset.
+	globalShowHotkey: string[];
+	setGlobalShowHotkey: (value: string[]) => void;
 
 	// LLM settings
 	llmProvider: LLMProvider;
@@ -249,6 +259,8 @@ export interface UseSettingsReturn {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	useCmd0AsLastTab: boolean;
+	setUseCmd0AsLastTab: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
@@ -303,6 +315,8 @@ export interface UseSettingsReturn {
 	setUseSystemBrowser: (value: boolean) => void;
 	browserHomeUrl: string;
 	setBrowserHomeUrl: (value: string) => void;
+	htmlDoubleClickOpensInBrowser: boolean;
+	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
@@ -376,6 +390,26 @@ export interface UseSettingsReturn {
 	showWorktreeBranchName: boolean;
 	setShowWorktreeBranchName: (value: boolean) => void;
 
+	// Left side panel
+	showLeftPanelGroupMemberCount: boolean;
+	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	showLeftPanelLocationPills: boolean;
+	setShowLeftPanelLocationPills: (value: boolean) => void;
+	showLeftPanelGitIndicator: boolean;
+	setShowLeftPanelGitIndicator: (value: boolean) => void;
+	showLeftPanelCueIndicator: boolean;
+	setShowLeftPanelCueIndicator: (value: boolean) => void;
+	showLeftPanelStartupCommandIndicator: boolean;
+	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
+
+	// File Edit & Preview
+	fileEditWordWrap: boolean;
+	setFileEditWordWrap: (value: boolean) => void;
+	fileEditShowLineNumbers: boolean;
+	setFileEditShowLineNumbers: (value: boolean) => void;
+	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
+	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
+
 	// Group Chat settings
 	moderatorStandingInstructions: string;
 	setModeratorStandingInstructions: (value: string) => void;
@@ -447,13 +481,33 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Apply font size to HTML root element so rem-based Tailwind classes scale
+	// Apply font size to HTML root element so rem-based Tailwind classes scale.
+	// Also expose --font-scale so fixed-width modals can scale proportionally
+	// (see .modal-w-* utility classes in index.css). 14px is the design baseline.
 	// Only apply after settings are loaded to prevent layout shift from default->saved font size
 	useEffect(() => {
 		if (store.settingsLoaded) {
 			document.documentElement.style.fontSize = `${store.fontSize}px`;
+			document.documentElement.style.setProperty('--font-scale', String(store.fontSize / 14));
 		}
 	}, [store.fontSize, store.settingsLoaded]);
+
+	// Surface global-hotkey registration failures (e.g. combo already owned by
+	// another app). Mounted here so the toast fires even when Settings is closed.
+	useEffect(() => {
+		if (!window.maestro?.app?.onGlobalHotkeyRegistrationFailed) return;
+		const cleanup = window.maestro.app.onGlobalHotkeyRegistrationFailed((keys) => {
+			const combo = keys.length > 0 ? formatShortcutKeys(keys) : '(none)';
+			logger.warn(`[Settings] Global hotkey registration failed: ${combo}`);
+			notifyToast({
+				color: 'orange',
+				title: 'Global hotkey unavailable',
+				message: `${combo} is already in use by another app. Pick a different combo in Settings → General.`,
+				dismissible: true,
+			});
+		});
+		return cleanup;
+	}, []);
 
 	return {
 		...store,

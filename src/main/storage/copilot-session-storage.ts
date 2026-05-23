@@ -12,6 +12,8 @@ import {
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
+	PaginatedSessionsResult,
+	SessionListOptions,
 	SessionMessagesResult,
 	SessionReadOptions,
 	SessionMessage,
@@ -428,6 +430,173 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		return sessions
 			.filter((session): session is AgentSessionInfo => session !== null)
 			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+	}
+
+	/**
+	 * Cursor-paginated listing optimized for hosts with thousands of sessions.
+	 *
+	 * Copilot stores every session under a single global
+	 * `~/.copilot/session-state/<sessionId>/` directory regardless of project,
+	 * so the base-class "load everything, then slice" pattern reads
+	 * `workspace.yaml` AND `events.jsonl` for every session on the host before
+	 * returning a single page. Over SSH that's hundreds-to-thousands of
+	 * round-trips.
+	 *
+	 * This override:
+	 *   1. Bulk-stats every `events.jsonl` in one round-trip (sizes + mtimes).
+	 *   2. Sorts session ids by mtime descending — no file content read.
+	 *   3. Scans forward from the cursor in concurrency-bounded batches, doing
+	 *      the full `loadSessionInfo` only until the page is filled. Sessions
+	 *      that don't match the project bail out cheaply after the
+	 *      `workspace.yaml` read (no `events.jsonl` read or directory size).
+	 *
+	 * `nextCursor` is the id of the last *matched* session — the next call
+	 * resumes immediately after it. Non-matching sessions read past that
+	 * boundary in the final batch get re-scanned on the next page; that's
+	 * wasted work but keeps the cursor monotonic and correct.
+	 *
+	 * `totalCount` is the *unfiltered* candidate count. We don't know the
+	 * per-project total without a full scan, and the renderer treats this as
+	 * an upper bound for "X of Y" hints.
+	 */
+	async listSessionsPaginated(
+		projectPath: string,
+		options?: SessionListOptions,
+		sshConfig?: SshRemoteConfig
+	): Promise<PaginatedSessionsResult> {
+		const { cursor, limit = 100 } = options || {};
+
+		const candidates = await this.collectCandidates(sshConfig);
+		if (candidates.length === 0) {
+			return { sessions: [], hasMore: false, totalCount: 0, nextCursor: null };
+		}
+
+		let scanIndex = 0;
+		if (cursor) {
+			const idx = candidates.findIndex((c) => c.sessionId === cursor);
+			scanIndex = idx >= 0 ? idx + 1 : 0;
+		}
+
+		const totalCount = candidates.length;
+		const matched: AgentSessionInfo[] = [];
+		let lastMatchedIndex = scanIndex - 1;
+		// Amortize SSH round-trip cost: scan more than `limit` per batch so
+		// non-matching sessions don't serialize the fan-out. 4× concurrency is
+		// a balance — bigger batches waste fewer batches when sparse matches,
+		// but waste more reads when the page fills before the batch ends.
+		const batchSize = REMOTE_SESSION_READ_CONCURRENCY * 4;
+
+		while (scanIndex < candidates.length && matched.length < limit) {
+			const batchEnd = Math.min(scanIndex + batchSize, candidates.length);
+			const batch = candidates.slice(scanIndex, batchEnd);
+
+			const batchResults = await mapWithConcurrency(batch, REMOTE_SESSION_READ_CONCURRENCY, (c) =>
+				this.loadSessionInfo(projectPath, c.sessionId, sshConfig, c.size)
+			);
+
+			for (let i = 0; i < batchResults.length; i++) {
+				const info = batchResults[i];
+				if (info) {
+					matched.push(info);
+					lastMatchedIndex = scanIndex + i;
+					if (matched.length >= limit) break;
+				}
+			}
+
+			if (matched.length >= limit) break;
+			scanIndex = batchEnd;
+		}
+
+		const hasMore = lastMatchedIndex + 1 < candidates.length;
+		const nextCursor =
+			hasMore && lastMatchedIndex >= 0 ? candidates[lastMatchedIndex].sessionId : null;
+
+		logger.info(
+			`Paginated Copilot sessions${sshConfig ? ' (remote via SSH)' : ''}: returned ${matched.length} of ${totalCount} candidates (cursor: ${cursor || 'null'}, nextCursor: ${nextCursor || 'null'}, hasMore: ${hasMore})`,
+			LOG_CONTEXT
+		);
+
+		return {
+			sessions: matched,
+			hasMore,
+			totalCount,
+			nextCursor,
+		};
+	}
+
+	/**
+	 * Build the sorted candidate list used by paginated listing. Joins the
+	 * session-id directory listing with the bulk events.jsonl stat so we
+	 * keep sessions whose events.jsonl is missing (they get mtime=0 and
+	 * `loadSessionInfo` will classify them) — matches the existing
+	 * "best-effort metadata, not gating" contract from listSessionsRemote.
+	 */
+	private async collectCandidates(
+		sshConfig?: SshRemoteConfig
+	): Promise<Array<{ sessionId: string; mtime: number; size: number }>> {
+		const sessionIds = await this.listSessionIds(sshConfig);
+		if (sessionIds.length === 0) return [];
+
+		const stats = sshConfig
+			? await this.bulkStatEventsRemote(sshConfig)
+			: await this.bulkStatEventsLocal();
+
+		const candidates: Array<{ sessionId: string; mtime: number; size: number }> = [];
+		for (const sessionId of sessionIds) {
+			const stat = stats.get(sessionId);
+			if (stat && stat.size > MAX_REMOTE_EVENTS_FILE_SIZE) {
+				logger.info(
+					`Skipping oversized Copilot session ${sessionId} (${stat.size} bytes > ${MAX_REMOTE_EVENTS_FILE_SIZE})`,
+					LOG_CONTEXT
+				);
+				continue;
+			}
+			candidates.push({
+				sessionId,
+				mtime: stat?.mtime ?? 0,
+				size: stat?.size ?? 0,
+			});
+		}
+
+		candidates.sort((a, b) => b.mtime - a.mtime);
+		return candidates;
+	}
+
+	/**
+	 * Local counterpart of {@link bulkStatEventsRemote}: stat every
+	 * `events.jsonl` under the session-state directory in parallel. Sessions
+	 * with missing events files are simply absent from the map (caller treats
+	 * that as "no stats").
+	 */
+	private async bulkStatEventsLocal(): Promise<Map<string, { size: number; mtime: number }>> {
+		const stats = new Map<string, { size: number; mtime: number }>();
+		const dir = getLocalCopilotSessionStateDir();
+		let dirNames: string[];
+		try {
+			const entries = await fs.readdir(dir, { withFileTypes: true });
+			dirNames = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
+				captureException(error, { operation: 'copilotStorage:bulkStatEventsLocal' });
+			}
+			return stats;
+		}
+
+		await Promise.all(
+			dirNames.map(async (name) => {
+				const eventsPath = path.join(dir, name, 'events.jsonl');
+				try {
+					const stat = await fs.stat(eventsPath);
+					stats.set(name, { size: stat.size, mtime: stat.mtimeMs });
+				} catch {
+					// No events.jsonl yet — leave the session out of stats; the
+					// caller still keeps it as a candidate with mtime=0.
+				}
+			})
+		);
+
+		return stats;
 	}
 
 	/**

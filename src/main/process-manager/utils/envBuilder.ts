@@ -211,6 +211,41 @@ const STRIPPED_ENV_VARS = [
  * @see STRIPPED_ENV_VARS - List of variables that are always removed
  * @see buildPtyTerminalEnv() - Similar function for PTY terminal environments
  */
+/**
+ * Collect the environment variables that Maestro is explicitly setting on a
+ * spawned process, in the same precedence order as the build* helpers below
+ * (global → session-level, with session overriding global). The MAESTRO_SESSION_RESUMED
+ * marker is included when applicable. Inherited system env vars are deliberately
+ * excluded — this is the set the user can act on (Settings → Shell Configuration
+ * and per-agent / per-session overrides), surfaced in the Process Details modal.
+ *
+ * Applies `~/` path expansion the same way the build helpers do.
+ */
+export function collectMaestroEnvVars(
+	globalShellEnvVars?: Record<string, string>,
+	customEnvVars?: Record<string, string>,
+	isResuming?: boolean
+): Record<string, string> {
+	const home = os.homedir();
+	const expand = (value: string): string =>
+		value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	const result: Record<string, string> = {};
+	if (globalShellEnvVars) {
+		for (const [key, value] of Object.entries(globalShellEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (customEnvVars) {
+		for (const [key, value] of Object.entries(customEnvVars)) {
+			result[key] = expand(value);
+		}
+	}
+	if (isResuming) {
+		result.MAESTRO_SESSION_RESUMED = '1';
+	}
+	return result;
+}
+
 export function buildChildProcessEnv(
 	customEnvVars?: Record<string, string>,
 	isResuming?: boolean,

@@ -364,7 +364,7 @@ export function FileSearchModal({
 				aria-modal="true"
 				aria-label="Fuzzy File Search"
 				tabIndex={-1}
-				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
+				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Search Header */}

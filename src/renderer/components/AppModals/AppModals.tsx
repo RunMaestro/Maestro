@@ -107,10 +107,13 @@ export interface AppModalsProps {
 			workingDirOverride?: string;
 		},
 		customEffort?: string,
-		groupId?: string
+		groupId?: string,
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
+	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -127,7 +130,9 @@ export interface AppModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		enableMaestroP?: boolean,
+		maestroPPath?: string
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -202,6 +207,7 @@ export interface AppModalsProps {
 	onQuickActionsRenameTab: () => void;
 	onQuickActionsToggleReadOnlyMode: () => void;
 	onQuickActionsToggleTabShowThinking: () => void;
+	onQuickActionsToggleTabEnterToSend: () => void;
 	onQuickActionsOpenTabSwitcher: () => void;
 	// Bulk tab close operations (for QuickActionsModal)
 	onCloseAllTabs?: () => void;
@@ -244,6 +250,7 @@ export interface AppModalsProps {
 	autoRunSelectedDocument: string | null;
 	autoRunCompletedTaskCount: number;
 	onAutoRunResetTasks: () => void;
+	onToggleAutoRunExpanded?: () => void;
 	onClearActiveTerminal?: () => void;
 	// Tab-level actions
 	onCloseCurrentTab?: () => void;
@@ -332,10 +339,16 @@ export interface AppModalsProps {
 	promptSupportsThinking: boolean;
 	promptEnterToSend: boolean;
 	onPromptToggleEnterToSend: () => void;
+	onOpenQueueBrowser: () => void;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	// New tab creation (for QuickActionsModal)
+	onQuickActionsNewTab?: () => void;
+	onQuickActionsNewFileTab?: () => void;
+	onQuickActionsNewBrowserTab?: () => void;
+	onQuickActionsNewTerminalTab?: () => void;
 
 	// --- AppGroupChatModals props ---
 	onCloseNewGroupChatModal: () => void;
@@ -549,6 +562,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCreateSession,
 		existingSessions,
 		duplicatingSessionId,
+		newInstancePresetGroupId,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -621,6 +635,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onQuickActionsRenameTab,
 		onQuickActionsToggleReadOnlyMode,
 		onQuickActionsToggleTabShowThinking,
+		onQuickActionsToggleTabEnterToSend,
 		onQuickActionsOpenTabSwitcher,
 		// Bulk tab close operations
 		onCloseAllTabs,
@@ -656,6 +671,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		autoRunSelectedDocument,
 		autoRunCompletedTaskCount,
 		onAutoRunResetTasks,
+		onToggleAutoRunExpanded,
 		onClearActiveTerminal,
 		// Tab-level actions
 		onCloseCurrentTab,
@@ -730,10 +746,15 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		promptSupportsThinking,
 		promptEnterToSend,
 		onPromptToggleEnterToSend,
+		onOpenQueueBrowser,
 		onCloseQueueBrowser,
 		onRemoveQueueItem,
 		onSwitchQueueSession,
 		onReorderQueueItems,
+		onQuickActionsNewTab,
+		onQuickActionsNewFileTab,
+		onQuickActionsNewBrowserTab,
+		onQuickActionsNewTerminalTab,
 		// Group Chat modals
 		onCloseNewGroupChatModal,
 		onCreateGroupChat,
@@ -846,6 +867,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCreateSession={onCreateSession}
 				existingSessions={existingSessions}
 				sourceSession={sourceSession}
+				newInstancePresetGroupId={newInstancePresetGroupId}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
@@ -956,6 +978,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onRenameTab={onQuickActionsRenameTab}
 				onToggleReadOnlyMode={onQuickActionsToggleReadOnlyMode}
 				onToggleTabShowThinking={onQuickActionsToggleTabShowThinking}
+				onToggleTabEnterToSend={onQuickActionsToggleTabEnterToSend}
 				onOpenTabSwitcher={onQuickActionsOpenTabSwitcher}
 				onCloseAllTabs={onCloseAllTabs}
 				onCloseOtherTabs={onCloseOtherTabs}
@@ -992,6 +1015,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				autoRunSelectedDocument={autoRunSelectedDocument}
 				autoRunCompletedTaskCount={autoRunCompletedTaskCount}
 				onAutoRunResetTasks={onAutoRunResetTasks}
+				onToggleAutoRunExpanded={onToggleAutoRunExpanded}
 				onClearActiveTerminal={onClearActiveTerminal}
 				onCloseCurrentTab={onCloseCurrentTab}
 				onMoveTabToFirst={onMoveTabToFirst}
@@ -1068,7 +1092,12 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				promptEnterToSend={promptEnterToSend}
 				onPromptToggleEnterToSend={onPromptToggleEnterToSend}
 				queueBrowserOpen={queueBrowserOpen}
+				onOpenQueueBrowser={onOpenQueueBrowser}
 				onCloseQueueBrowser={onCloseQueueBrowser}
+				onQuickActionsNewTab={onQuickActionsNewTab}
+				onQuickActionsNewFileTab={onQuickActionsNewFileTab}
+				onQuickActionsNewBrowserTab={onQuickActionsNewBrowserTab}
+				onQuickActionsNewTerminalTab={onQuickActionsNewTerminalTab}
 				onRemoveQueueItem={onRemoveQueueItem}
 				onSwitchQueueSession={onSwitchQueueSession}
 				onReorderQueueItems={onReorderQueueItems}

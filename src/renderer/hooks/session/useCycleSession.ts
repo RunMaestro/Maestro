@@ -85,13 +85,15 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 			const visualOrder: VisualOrderItem[] = [];
 
-			// Helper to get worktree children for a session
+			// Helper to get worktree children for a session.
+			// Sort by `name` to match the agent name shown in the Left Bar (SessionItem
+			// renders `session.name` as the primary label; `worktreeBranch` is only a subtitle).
+			// Sorting by branch name would make Cmd+Shift+[/] cycling bounce around relative
+			// to the visible alphabetical order.
 			const getWorktreeChildren = (parentId: string) =>
 				sessions
 					.filter((s) => s.parentSessionId === parentId)
-					.sort((a, b) =>
-						compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name)
-					);
+					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 
 			// Helper to add session with its worktree children to visual order
 			const addSessionWithWorktrees = (session: Session) => {
@@ -111,7 +113,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 						...children.map((s) => ({
 							type: 'session' as const,
 							id: s.id,
-							name: s.worktreeBranch || s.name,
+							name: s.name,
 						}))
 					);
 				}

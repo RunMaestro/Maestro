@@ -91,6 +91,12 @@ export interface WizardResponse {
 	ready: boolean;
 	/** The agent's message to display to the user */
 	message: string;
+	/**
+	 * Short human-readable name for the playbook (e.g. "HTML Chat Interface"),
+	 * extracted from the agent's JSON. Optional — older prompts may omit it,
+	 * and the wizard falls back to the session name when absent.
+	 */
+	projectName?: string;
 }
 
 /**
@@ -385,6 +391,7 @@ export function parseWizardResponse(response: string): WizardResponse | null {
 			confidence: result.structured.confidence,
 			ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
 			message: result.structured.message,
+			projectName: result.structured.projectName,
 		};
 	}
 
@@ -394,6 +401,7 @@ export function parseWizardResponse(response: string): WizardResponse | null {
 			confidence: result.structured.confidence,
 			ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
 			message: result.structured.message,
+			projectName: result.structured.projectName,
 		};
 	}
 

@@ -1,6 +1,7 @@
 import type { ClickModifiers, LinkAction, LinkDescriptor } from './types';
 
 const MAESTRO_FILE_PROTOCOL = 'maestro-file://';
+const MAESTRO_DEEP_LINK_PROTOCOL = 'maestro://';
 
 /** External protocols we hand off to the parent's external-link handler.
  * Case-insensitive so `HTTPS://` and other uppercase variants still match. */
@@ -35,6 +36,10 @@ export function resolveLinkAction(link: LinkDescriptor, modifiers: ClickModifier
 			path: href.slice(MAESTRO_FILE_PROTOCOL.length),
 			openInNewTab,
 		};
+	}
+
+	if (href.startsWith(MAESTRO_DEEP_LINK_PROTOCOL)) {
+		return { kind: 'maestro-deep-link', href };
 	}
 
 	if (href.startsWith('#')) {

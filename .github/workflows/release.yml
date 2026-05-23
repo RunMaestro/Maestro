@@ -292,6 +292,35 @@ jobs:
         env:
           DEBUG: electron-builder
 
+      # Verify native modules are correctly included in unpacked resources (Windows x64)
+      - name: Verify native modules in package (Windows)
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $unpackedDir = "release/win-unpacked/resources/app.asar.unpacked"
+          $nativeModules = @(
+            "node_modules/node-pty/build/Release/pty.node",
+            "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          )
+
+          foreach ($relativePath in $nativeModules) {
+            $nativePath = Join-Path $unpackedDir $relativePath
+            Write-Host "Checking for $relativePath in unpacked resources..."
+            if (Test-Path $nativePath) {
+              Get-Item $nativePath | Format-List FullName,Length
+            } else {
+              Write-Error "ERROR: $relativePath not found in unpacked resources"
+              Write-Host "Available native modules:"
+              if (Test-Path $unpackedDir) {
+                Get-ChildItem -Path $unpackedDir -Filter *.node -Recurse -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty FullName
+              } else {
+                Write-Host "Directory not found: $unpackedDir"
+              }
+              exit 1
+            }
+          }
+
       # Linux/macOS: Rebuild native modules for the target arch, verify, then package.
       # npmRebuild: false in package.json prevents electron-builder from re-running npm rebuild,
       # so we ensure correct binaries are in place first via the shared script.

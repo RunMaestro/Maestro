@@ -1,6 +1,7 @@
 import React, { memo, useMemo, useState, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkBreaks from 'remark-breaks';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from '../utils/syntaxTheme';
@@ -25,6 +26,8 @@ import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
 import { SyntaxHighlightBoundary } from './SyntaxHighlightBoundary';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { openUrl } from '../utils/openUrl';
+import { openMaestroLink } from '../utils/openMaestroLink';
+import { urlTransformAllowingMaestro } from '../utils/markdownUrlTransform';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -313,6 +316,16 @@ interface MarkdownRendererProps {
 	bionifyIntensity?: number;
 	/** Algorithm string controlling Bionify highlight lengths */
 	bionifyAlgorithm?: string;
+	/**
+	 * Treat single newlines as hard line breaks (chat-style rendering).
+	 *
+	 * Default CommonMark collapses single `\n` between non-blank lines into a
+	 * space. That's correct for document/file preview, but wrong for chat
+	 * surfaces where users expect line structure to be preserved (#622). When
+	 * enabled, this routes content through `remark-breaks` so single newlines
+	 * render as `<br>`.
+	 */
+	chatLineBreaks?: boolean;
 }
 
 /**
@@ -342,6 +355,7 @@ export const MarkdownRenderer = memo(
 		enableBionifyReadingMode = false,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		chatLineBreaks = false,
 	}: MarkdownRendererProps) => {
 		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -367,6 +381,11 @@ export const MarkdownRenderer = memo(
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 			];
+			// Chat surfaces need single-newline-as-<br> semantics (#622); file/doc
+			// preview keeps default CommonMark behavior so paragraph reflow works.
+			if (chatLineBreaks) {
+				plugins.push(remarkBreaks);
+			}
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
@@ -377,7 +396,7 @@ export const MarkdownRenderer = memo(
 				]);
 			}
 			return plugins;
-		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir]);
+		}, [fileTree, fileTreeIndices, cwd, projectRoot, homeDir, chatLineBreaks]);
 
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
@@ -412,6 +431,7 @@ export const MarkdownRenderer = memo(
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}
 					rehypePlugins={allowRawHtml ? [rehypeRaw] : undefined}
+					urlTransform={urlTransformAllowingMaestro}
 					components={{
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute
@@ -433,8 +453,11 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openUrl; file:// URLs via openPath
-											if (/^file:\/\//.test(href)) {
+											// Open http/https URLs via openUrl; file:// URLs via openPath;
+											// maestro:// URLs route through the in-app deep link handler.
+											if (href.startsWith('maestro://')) {
+												openMaestroLink(href);
+											} else if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
 												openUrl(href, { ctrlKey: e.ctrlKey });

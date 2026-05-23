@@ -7,7 +7,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { useTabHandlers } from '../../../renderer/hooks/tabs/useTabHandlers';
+import {
+	useTabHandlers,
+	useTerminalTabHandlers,
+} from '../../../renderer/hooks/tabs/useTabHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -23,6 +26,14 @@ import { setLiveDraft, clearLiveDraft, getLiveDraft } from '../../../renderer/ut
 // window.maestro is mocked globally in src/__tests__/setup.ts
 // We just override specific return values needed by our tests in beforeEach.
 // ============================================================================
+
+// Mock InlineWizardContext so useTabHandlers can call useInlineWizardContext()
+// outside of an InlineWizardProvider. Only `endWizard` is consumed by the hook.
+vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
+	useInlineWizardContext: () => ({
+		endWizard: vi.fn(async () => null),
+	}),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -917,6 +928,44 @@ describe('useTabHandlers', () => {
 			});
 		});
 
+		it('handleOpenBrowserTabAt opens a browser tab at a specific URL', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			setupSessionWithTabs([aiTab], [], 'ai-1', null);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleOpenBrowserTabAt('file:///tmp/dashboard.html', {
+					title: 'dashboard.html',
+				});
+			});
+
+			const session = getSession();
+			expect(session.browserTabs).toHaveLength(1);
+			expect(session.browserTabs[0]).toMatchObject({
+				url: 'file:///tmp/dashboard.html',
+				title: 'dashboard.html',
+				isLoading: true,
+				favicon: null,
+				partition: 'persist:maestro-browser-session-test-session',
+			});
+			expect(session.activeBrowserTabId).toBe(session.browserTabs[0].id);
+			expect(session.activeFileTabId).toBeNull();
+			expect(session.inputMode).toBe('ai');
+		});
+
+		it('handleOpenBrowserTabAt no-ops on empty URL', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			setupSessionWithTabs([aiTab], [], 'ai-1', null);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleOpenBrowserTabAt('');
+			});
+
+			const session = getSession();
+			expect(session.browserTabs ?? []).toHaveLength(0);
+		});
+
 		it('handleSelectBrowserTab activates an existing browser tab and repairs unified order', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
@@ -1199,6 +1248,51 @@ describe('useTabHandlers', () => {
 				result.current.handleToggleTabShowThinking();
 			});
 			expect(getSession().aiTabs[0].showThinking).toBe('off');
+		});
+
+		it('handleToggleTabEnterToSend flips the effective value into a per-tab override', () => {
+			// Global default is true (enterToSendAI)
+			useSettingsStore.setState({ enterToSendAI: true } as any);
+			const tab = createMockAITab({ id: 'tab-1' });
+			const { result } = renderWithSession([tab]);
+
+			// undefined override + global true => first toggle stores false
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(false);
+
+			// flipping again stores true
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(true);
+		});
+
+		it('handleToggleTabEnterToSend respects current global default on first toggle', () => {
+			// Global default is false now
+			useSettingsStore.setState({ enterToSendAI: false } as any);
+			const tab = createMockAITab({ id: 'tab-1' });
+			const { result } = renderWithSession([tab]);
+
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			// Effective was false (global), so toggling stores true
+			expect(getSession().aiTabs[0].enterToSend).toBe(true);
+		});
+
+		it('handleToggleTabEnterToSend leaves other tabs untouched', () => {
+			useSettingsStore.setState({ enterToSendAI: true } as any);
+			const tabA = createMockAITab({ id: 'tab-a' });
+			const tabB = createMockAITab({ id: 'tab-b' });
+			const { result } = renderWithSession([tabA, tabB], [], 'tab-a');
+
+			act(() => {
+				result.current.handleToggleTabEnterToSend();
+			});
+			expect(getSession().aiTabs[0].enterToSend).toBe(false);
+			expect(getSession().aiTabs[1].enterToSend).toBeUndefined();
 		});
 
 		it('handleUpdateTabByClaudeSessionId updates tab by agent session id', () => {
@@ -2452,5 +2546,97 @@ describe('useTabHandlers', () => {
 			expect(session.filePreviewTabs[0].path).toBe('/test/new.ts');
 			expect(session.filePreviewTabs[0].content).toBe('new content');
 		});
+	});
+});
+
+describe('useTerminalTabHandlers - handleCloseTerminalTab', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '', groups: [] });
+		useModalStore.setState({ modals: new Map() });
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	function setupTerminalSession() {
+		const session = createMockSession({
+			id: 'test-session',
+			terminalTabs: [{ id: 'term-1', name: 'Terminal 1', shellType: 'zsh', pid: 1, cwd: '/' }],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [{ type: 'terminal' as const, id: 'term-1' }],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: 'test-session' });
+	}
+
+	it('closes the terminal tab immediately when the PTY is idle', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockResolvedValue(false);
+		const killSpy = vi.fn().mockResolvedValue(undefined);
+		(window as any).maestro.process.kill = killSpy;
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+		});
+
+		expect((window as any).maestro.process.isTerminalBusy).toHaveBeenCalledWith(
+			'test-session-terminal-term-1'
+		);
+		const session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
+		expect(killSpy).toHaveBeenCalledWith('test-session-terminal-term-1');
+	});
+
+	it('opens a destructive confirm modal and only closes on confirm when the PTY is busy', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockResolvedValue(true);
+		const openModal = vi.spyOn(useModalStore.getState(), 'openModal');
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+		});
+
+		expect(openModal).toHaveBeenCalledWith(
+			'confirm',
+			expect.objectContaining({ destructive: true })
+		);
+		// Tab still present until the user confirms.
+		let session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(1);
+
+		// Invoke onConfirm to perform the close.
+		const [, modalData] = openModal.mock.calls[0];
+		act(() => {
+			(modalData as { onConfirm: () => void }).onConfirm();
+		});
+		session = useSessionStore.getState().sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
+		openModal.mockRestore();
+	});
+
+	it('closes the tab if the busy IPC throws (defensive fallback)', async () => {
+		setupTerminalSession();
+		(window as any).maestro.process.isTerminalBusy = vi.fn().mockRejectedValue(new Error('boom'));
+
+		const { result } = renderHook(() => useTerminalTabHandlers());
+		await act(async () => {
+			result.current.handleCloseTerminalTab('term-1');
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		const session = useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === 'test-session') as Session;
+		expect(session.terminalTabs).toHaveLength(0);
 	});
 });

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { CollapsedSessionPill } from '../../../../renderer/components/SessionList/CollapsedSessionPill';
+import {
+	CollapsedSessionPill,
+	CollapsedSessionPillRows,
+} from '../../../../renderer/components/SessionList/CollapsedSessionPill';
 import type { Session, Theme } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -199,5 +202,96 @@ describe('CollapsedSessionPill', () => {
 		});
 		const { container: c2 } = render(<CollapsedSessionPill {...props2} />);
 		expect((c2.firstElementChild as HTMLElement).style.gap).toBe('1px');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// CollapsedSessionPillRows
+// ---------------------------------------------------------------------------
+
+function createRowsProps(
+	sessions: Session[],
+	overrides: Partial<Parameters<typeof CollapsedSessionPillRows>[0]> = {}
+) {
+	return {
+		sessions,
+		keyPrefix: 'rows-test',
+		onContainerClick: vi.fn(),
+		theme: mockTheme as Theme,
+		activeBatchSessionIds: [] as string[],
+		leftSidebarWidth: 300,
+		contextWarningYellowThreshold: 70,
+		contextWarningRedThreshold: 90,
+		getFileCount: vi.fn(() => 0),
+		getWorktreeChildren: vi.fn(() => [] as Session[]),
+		setActiveSessionId: vi.fn(),
+		...overrides,
+	};
+}
+
+describe('CollapsedSessionPillRows', () => {
+	beforeEach(() => {
+		idCounter = 0;
+	});
+
+	it('renders a single row when session count is at or below the per-row cap', () => {
+		const sessions = Array.from({ length: 25 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(1);
+
+		const row = wrapper.firstElementChild as HTMLElement;
+		expect(row.children.length).toBe(25);
+		// No spacers should exist when there is only a single row
+		const spacers = row.querySelectorAll(':scope > div.flex-1:not(.rounded-full)');
+		expect(spacers.length).toBe(0);
+	});
+
+	it('wraps to a new row when exceeding the per-row cap', () => {
+		const sessions = Array.from({ length: 27 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(2);
+
+		const firstRow = wrapper.children[0] as HTMLElement;
+		const secondRow = wrapper.children[1] as HTMLElement;
+		// First row is full (25 pills, no spacers)
+		expect(firstRow.children.length).toBe(25);
+		// Second row has 2 pills + 23 spacers so widths stay aligned with row above
+		expect(secondRow.children.length).toBe(25);
+	});
+
+	it('produces three rows for 51 sessions (25 + 25 + 1 + 24 spacers)', () => {
+		const sessions = Array.from({ length: 51 }, () => makeSession());
+		const props = createRowsProps(sessions);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(3);
+		expect((wrapper.children[0] as HTMLElement).children.length).toBe(25);
+		expect((wrapper.children[1] as HTMLElement).children.length).toBe(25);
+		// Last row padded to 25 (1 pill + 24 spacers)
+		expect((wrapper.children[2] as HTMLElement).children.length).toBe(25);
+	});
+
+	it('fires onContainerClick when the wrapper is clicked', () => {
+		const sessions = [makeSession(), makeSession()];
+		const onContainerClick = vi.fn();
+		const props = createRowsProps(sessions, { onContainerClick });
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+
+		fireEvent.click(container.firstElementChild!);
+		expect(onContainerClick).toHaveBeenCalledTimes(1);
+	});
+
+	it('renders nothing inside the wrapper when sessions is empty', () => {
+		const props = createRowsProps([]);
+		const { container } = render(<CollapsedSessionPillRows {...props} />);
+		const wrapper = container.firstElementChild as HTMLElement;
+		expect(wrapper.children.length).toBe(0);
 	});
 });

@@ -550,19 +550,21 @@ export class StdoutHandler {
 			}
 		}
 
-		// Copilot CLI subagent delegation: an `assistant.message` with content but
-		// no explicit phase is structurally identified as a final answer by the
-		// parser, but in practice it may be an intermediate narration emitted
-		// before the agent delegates to a subagent (e.g. "I'll delegate this to
-		// the coding agent...") or before another agentic loop. Treating that as
-		// the turn's result prematurely flushes and suppresses the real final
-		// answer that follows. Capture the latest content-bearing no-phase
-		// message as streamedText and defer flushing to session.shutdown — the
-		// only signal that fires exactly once per batch run. assistant.turn_end
-		// fires after every LLM turn (including narration turns), so it can't
-		// be trusted as a session-end marker. Legacy `phase: 'final_answer'`
-		// messages are an explicit signal and still flush immediately via the
-		// path below.
+		// Copilot CLI: capture content-bearing no-phase `assistant.message`
+		// events as `streamedText` but never flush in-flight. Copilot's stdout
+		// signaling is unreliable for "session done":
+		//   - assistant.turn_end fires after every LLM turn, including
+		//     narration turns ("I'll delegate this to..."), so it can't
+		//     mark session end.
+		//   - session.shutdown is NOT written to stdout in batch mode —
+		//     it only goes to `~/.copilot/session-state/<id>/events.jsonl`,
+		//     and Copilot may keep writing to that file (via subagent
+		//     processes) AFTER our parent process exits.
+		// The authoritative completion signal lives on disk, so we defer
+		// the final flush to ExitHandler — which awaits the disk-side
+		// shutdown marker before emitting the `exit` event. Legacy
+		// `phase: 'final_answer'` messages still flush immediately via
+		// the path below.
 		if (
 			managedProcess.toolType === 'copilot-cli' &&
 			outputParser.isResultMessage(event) &&
@@ -571,27 +573,6 @@ export class StdoutHandler {
 			const raw = event.raw as { type?: string; data?: { phase?: string } } | undefined;
 			if (raw?.type === 'assistant.message' && raw.data?.phase === undefined) {
 				managedProcess.streamedText = event.text;
-			}
-		}
-
-		// Flush captured Copilot result on session.shutdown. This is the only
-		// event that fires exactly once per batch run, so it's the trustworthy
-		// session-end marker. The parser maps session.shutdown to either a
-		// `usage` event (when modelMetrics are present) or a `system` event;
-		// match by raw.type to cover both cases.
-		if (managedProcess.toolType === 'copilot-cli' && !managedProcess.resultEmitted) {
-			const raw = event.raw as { type?: string } | undefined;
-			if (raw?.type === 'session.shutdown' && managedProcess.streamedText) {
-				managedProcess.resultEmitted = true;
-				logger.debug(
-					'[ProcessManager] Emitting final Copilot result at session.shutdown',
-					'ProcessManager',
-					{
-						sessionId,
-						resultLength: managedProcess.streamedText.length,
-					}
-				);
-				this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
 			}
 		}
 
@@ -727,7 +708,17 @@ export class StdoutHandler {
 		managedProcess: ManagedProcess,
 		eventSessionId: string | null | undefined
 	): void {
-		if (!eventSessionId || managedProcess.sessionIdEmitted) {
+		if (!eventSessionId) {
+			return;
+		}
+
+		// Always record the agent-reported session id on the managed process
+		// even after we've emitted the event once. ExitHandler reads this for
+		// Copilot's post-exit events.jsonl wait, and we want to be robust to
+		// the event arriving more than once across a session's lifetime.
+		managedProcess.agentSessionId = eventSessionId;
+
+		if (managedProcess.sessionIdEmitted) {
 			return;
 		}
 

@@ -399,18 +399,19 @@ describe('StdoutHandler', () => {
 			expect(proc.jsonBuffer).toBe('');
 		});
 
-		it('should defer Copilot subagent narration across turns and flush the final answer at session.shutdown', () => {
-			// Regression: when Copilot CLI delegates to a subagent or runs an
-			// agentic loop, it emits an `assistant.message` with narration content
-			// (e.g. "I'll run this end-to-end...") and no explicit phase, then
-			// emits `assistant.turn_end`, then keeps working across additional
-			// turns. The structural final-answer heuristic in the parser flags
-			// the narration as a result; flushing on `assistant.turn_end` would
-			// emit the narration as the final answer and lock out the real one.
-			// StdoutHandler must capture the latest content-bearing no-phase
-			// message as streamedText across multiple turns and only flush on
-			// `session.shutdown` — the one signal that fires exactly once per
-			// batch run.
+		it('should capture Copilot content-bearing assistant.messages as streamedText without ever flushing in-flight', () => {
+			// Regression: Copilot CLI in batch mode emits `assistant.message`
+			// events with non-empty content and no `phase` field for BOTH
+			// intermediate narration ("I'll delegate this to...") and the
+			// real final answer. Stdout signals are not trustworthy for
+			// "session done":
+			//   - assistant.turn_end fires after every LLM turn,
+			//   - session.shutdown is never emitted to stdout in batch mode.
+			// StdoutHandler must therefore capture the latest such message
+			// as streamedText and NEVER flush during the run. The
+			// authoritative end-of-session signal lives in the on-disk
+			// events.jsonl; ExitHandler is responsible for awaiting it and
+			// flushing.
 			const parser = new CopilotOutputParser();
 			const { handler, bufferManager, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
@@ -432,17 +433,16 @@ describe('StdoutHandler', () => {
 				})
 			);
 
-			// Should NOT have flushed yet — turn is still in progress.
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.streamedText).toBe("I'll delegate this to the coding agent.");
 			expect(proc.resultEmitted).toBe(false);
 
-			// Turn ends after narration. This must NOT flush — more turns follow.
+			// turn_end is NOT a session-end marker for Copilot batch.
 			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_end' }));
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.resultEmitted).toBe(false);
 
-			// Subagent does its work in a subsequent turn — emits the real answer.
+			// Subsequent turn carries the actual final answer.
 			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_start' }));
 			handler.handleData(
 				sessionId,
@@ -456,18 +456,34 @@ describe('StdoutHandler', () => {
 			);
 			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_end' }));
 
-			// Still deferred — latest content-bearing message wins.
+			// Latest content-bearing message wins; still no in-flight flush.
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.streamedText).toBe('Subagent finished. Here is the final answer.');
+			expect(proc.resultEmitted).toBe(false);
+		});
 
-			// session.shutdown — flush the captured final answer.
-			handler.handleData(sessionId, JSON.stringify({ type: 'session.shutdown' }));
+		it('should record Copilot agentSessionId on the managed process for ExitHandler to consume', () => {
+			// ExitHandler reads `agentSessionId` to locate Copilot's on-disk
+			// events.jsonl for its post-exit shutdown wait. The session id
+			// only ever appears in `session.start`, so we have to stash it
+			// onto the managed process the first time we see it.
+			const parser = new CopilotOutputParser();
+			const { handler, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot-cli',
+				outputParser: parser,
+			});
 
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+			handler.handleData(
 				sessionId,
-				'Subagent finished. Here is the final answer.'
+				JSON.stringify({
+					type: 'session.start',
+					data: { sessionId: 'cp-session-abc' },
+				})
 			);
-			expect(proc.resultEmitted).toBe(true);
+
+			expect(proc.agentSessionId).toBe('cp-session-abc');
+			expect(proc.sessionIdEmitted).toBe(true);
 		});
 
 		it('should still emit Copilot session IDs from result events with non-zero exit codes', () => {

@@ -192,7 +192,52 @@ describe('TextPreviewFast', () => {
 		it('scrollToMatch calls the virtualizer for an in-range index', () => {
 			const content = Array.from({ length: 200 }, (_, i) => `l${i}`).join('\n');
 			const { ref } = renderPreview({ content });
-			expect(() => ref.current!.scrollToMatch({ blockIndex: 1 })).not.toThrow();
+			expect(() =>
+				ref.current!.scrollToMatch({
+					blockIndex: 1,
+					sourceOffset: 0,
+					length: 1,
+					offsetWithinBlock: 0,
+				})
+			).not.toThrow();
+		});
+	});
+
+	describe('scrollToMatch precision (B3)', () => {
+		function flushRaf(): Promise<void> {
+			return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+		}
+
+		it('nudges the matched word inside the page into view after virtualizer scroll', async () => {
+			// Two pages: first page "alpha…", second page "needle in haystack".
+			// Default page size is 80 lines, so we generate 81 lines to force 2 pages.
+			const lines = [
+				...Array.from({ length: 80 }, (_, i) => `alpha line ${i}`),
+				'needle in haystack',
+			];
+			const content = lines.join('\n');
+			const { ref } = renderPreview({ content });
+
+			const scrollIntoViewSpy = vi.fn();
+			Element.prototype.scrollIntoView = scrollIntoViewSpy;
+
+			// Page 1 sourceStart is end-of-page-0. The hit for "needle" lives
+			// at offset 0 within page 1 (the page begins with that line).
+			ref.current!.scrollToMatch({
+				sourceOffset: 0,
+				length: 6,
+				blockIndex: 1,
+				offsetWithinBlock: 0,
+			});
+
+			await flushRaf();
+			await flushRaf();
+
+			// Precision scroll should fire — either the page's parent element or
+			// a child text-node parent gets scrollIntoView.
+			expect(scrollIntoViewSpy).toHaveBeenCalled();
+			const last = scrollIntoViewSpy.mock.calls.at(-1);
+			expect(last?.[0]).toEqual({ block: 'nearest', behavior: 'auto' });
 		});
 	});
 });

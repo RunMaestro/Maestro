@@ -72,14 +72,18 @@ export async function spawnWorktreeAgentAndDispatch(
 		// skips this path and doesn't create a duplicate session.
 		markWorktreePathAsRecentlyCreated(worktreePath);
 
-		// Step 2: Create worktree on disk
+		// Step 2: Create worktree on disk. Pass baseBranch so the new branch is
+		// rooted at the user-selected base (e.g. "rc") instead of the main repo's
+		// current HEAD — historically this was dropped and the UI's "Base Branch"
+		// dropdown only affected PR target.
 		let result;
 		try {
 			result = await window.maestro.git.worktreeSetup(
 				parentSession.cwd,
 				worktreePath,
 				branchName,
-				sshRemoteId
+				sshRemoteId,
+				target.baseBranch || undefined
 			);
 		} catch (error) {
 			clearRecentlyCreatedWorktreePath(worktreePath);

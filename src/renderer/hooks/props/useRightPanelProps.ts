@@ -106,6 +106,9 @@ export interface UseRightPanelPropsDeps {
 
 	// Document Graph handlers
 	handleFocusFileInGraph: (relativePath: string) => void;
+
+	// Browser tab handler — used by file-tree "Open in Maestro Browser"
+	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 }
 
 /**
@@ -176,6 +179,9 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 
 			// Document Graph
 			onFocusFileInGraph: deps.handleFocusFileInGraph,
+
+			// Browser tab
+			onOpenBrowserTabAt: deps.handleOpenBrowserTabAt,
 		}),
 		[
 			deps.theme,
@@ -212,6 +218,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			deps.handleLaunchWizardTab,
 			deps.handleMainPanelFileClick,
 			deps.handleFocusFileInGraph,
+			deps.handleOpenBrowserTabAt,
 			// Refs (stable)
 			deps.fileTreeContainerRef,
 			deps.fileTreeFilterInputRef,

@@ -56,6 +56,10 @@ const nodeTypes = {
 	'pipeline-group': PipelineGroupNode,
 };
 
+// Stable module-scope reference so passing it to ReactFlow doesn't break
+// memoization on every PipelineCanvas re-render.
+const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true } as const;
+
 /**
  * Custom drag-preview component for the connection line.
  *
@@ -178,6 +182,9 @@ export interface PipelineCanvasProps {
 	/** Canvas interaction mode: hand pans on left-drag, pointer box-selects. */
 	interactionMode: CanvasInteractionMode;
 	setInteractionMode: React.Dispatch<React.SetStateAction<CanvasInteractionMode>>;
+	/** True when the canvas is locked for editing (drag/select/connect disabled). */
+	isLocked: boolean;
+	setIsLocked: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const PipelineCanvas = React.memo(function PipelineCanvas({
@@ -235,7 +242,14 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	isLoading = false,
 	interactionMode,
 	setInteractionMode,
+	isLocked,
+	setIsLocked,
 }: PipelineCanvasProps) {
+	// `isLocked` is lifted to the parent (CuePipelineEditor) so the L keyboard
+	// shortcut can toggle it. We still need to own the bridge to ReactFlow's
+	// internal lock toggle: we pass interactivity as controlled props, which
+	// would otherwise override the store toggle that `<Controls />` flips.
+	// `onInteractiveChange` keeps our state in sync with the button click.
 	// Stabilize ReactFlow child props on `theme`. PipelineCanvas re-renders on
 	// every node drag / pan / zoom (it owns `nodes` and `edges`), so inline
 	// objects/functions here would bust the memoization on MiniMap, Controls,
@@ -362,18 +376,24 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				// drag-preview line also requires nodesConnectable=true to
 				// render, so gating this on mode broke the preview in hand
 				// mode.
-				nodesDraggable={!isReadOnly && interactionMode === 'pointer'}
-				nodesConnectable={!isReadOnly}
-				elementsSelectable={!isReadOnly}
+				nodesDraggable={!isReadOnly && !isLocked && interactionMode === 'pointer'}
+				nodesConnectable={!isReadOnly && !isLocked}
+				elementsSelectable={!isReadOnly && !isLocked}
 				// Hand mode: left-drag pans (ReactFlow default). Pointer mode:
 				// left-drag box-selects, middle/right-drag still pans as an
-				// escape hatch.
-				panOnDrag={interactionMode === 'hand' ? true : [1, 2]}
-				selectionOnDrag={interactionMode === 'pointer' && !isReadOnly}
+				// escape hatch. When locked, force pan-only regardless of the
+				// H/P toggle so box-select can't sneak through.
+				panOnDrag={isLocked || interactionMode === 'hand' ? true : [1, 2]}
+				selectionOnDrag={interactionMode === 'pointer' && !isReadOnly && !isLocked}
+				// Hide the "React Flow" attribution badge in the bottom-right.
+				proOptions={REACT_FLOW_PRO_OPTIONS}
 				style={reactFlowStyle}
 			>
 				<Background color={theme.colors.border} gap={20} />
-				<Controls style={controlsStyle} />
+				<Controls
+					style={controlsStyle}
+					onInteractiveChange={(interactive) => setIsLocked(!interactive)}
+				/>
 				<MiniMap
 					pannable
 					zoomable

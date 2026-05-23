@@ -62,6 +62,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Conductor Profile
 		conductorProfile: '',
 		setConductorProfile: mockSetConductorProfile,
+		// Global show-Maestro hotkey
+		globalShowHotkey: [],
+		setGlobalShowHotkey: vi.fn(),
 		// Shell settings
 		defaultShell: 'zsh',
 		setDefaultShell: mockSetDefaultShell,

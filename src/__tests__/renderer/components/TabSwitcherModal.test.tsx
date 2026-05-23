@@ -1893,7 +1893,7 @@ describe('TabSwitcherModal', () => {
 				/>
 			);
 
-			const modalContent = container.querySelector('.w-\\[600px\\]');
+			const modalContent = container.querySelector('.modal-w-md');
 			expect(modalContent).toHaveStyle({
 				backgroundColor: theme.colors.bgActivity,
 				borderColor: theme.colors.border,
@@ -1921,7 +1921,7 @@ describe('TabSwitcherModal', () => {
 				/>
 			);
 
-			const modalContent = container.querySelector('.w-\\[600px\\]');
+			const modalContent = container.querySelector('.modal-w-md');
 			expect(modalContent).toHaveStyle({ backgroundColor: lightTheme.colors.bgActivity });
 		});
 	});

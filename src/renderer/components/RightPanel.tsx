@@ -15,6 +15,7 @@ import {
 	AlertTriangle,
 	Play,
 	XCircle,
+	Square,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
@@ -118,6 +119,9 @@ interface RightPanelProps {
 
 	// Document Graph handlers
 	onFocusFileInGraph?: (relativePath: string) => void;
+
+	// Browser tab handler — used by file-tree "Open in Maestro Browser"
+	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
 export const RightPanel = memo(
@@ -201,6 +205,7 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onFocusFileInGraph,
+			onOpenBrowserTabAt,
 		} = props;
 
 		// === Values derived from session ===
@@ -535,6 +540,7 @@ export const RightPanel = memo(
 							fileExplorerIconTheme={fileExplorerIconTheme}
 							setShowHiddenFiles={setShowHiddenFiles}
 							onFocusFileInGraph={onFocusFileInGraph}
+							onOpenBrowserTabAt={onOpenBrowserTabAt}
 						/>
 					</div>
 
@@ -802,7 +808,7 @@ export const RightPanel = memo(
 								)}
 							</div>
 						</div>
-						<div className="mt-2 flex items-center gap-2">
+						<div className="mt-2 flex items-center justify-between gap-2">
 							<label className="flex items-center gap-1.5 cursor-pointer">
 								<input
 									type="checkbox"
@@ -815,6 +821,21 @@ export const RightPanel = memo(
 									Follow active task
 								</span>
 							</label>
+							{!errorPaused && !currentSessionBatchState.isStopping && onStopBatchRun && (
+								<button
+									onClick={() => onStopBatchRun(session.id)}
+									className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+									style={{
+										backgroundColor: theme.colors.error,
+										color: 'white',
+										border: `1px solid ${theme.colors.error}`,
+									}}
+									title="Stop auto-run after the current task finishes"
+								>
+									<Square className="w-3 h-3" />
+									Stop
+								</button>
+							)}
 						</div>
 					</div>
 				)}

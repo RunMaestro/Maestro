@@ -171,12 +171,14 @@ subscriptions:
 		name: 'PR Review',
 		description: 'Auto-review new GitHub pull requests',
 		explanation:
-			'Polls GitHub for new pull requests at a configurable interval. Filters let you skip drafts, bot PRs, or target specific labels. The repo is auto-detected from your git remote, or you can set it explicitly.',
+			'Polls GitHub for new pull requests at a configurable interval. Filters let you skip drafts, bot PRs, or target specific labels. The repo is auto-detected from your git remote, or you can set it explicitly. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
 		yaml: `subscriptions:
   - name: "Review New PRs"
     event: github.pull_request
     # repo: "owner/repo"  # optional — auto-detected from git remote
     poll_minutes: 5
+    # retrigger_on_comments: true   # re-fire on new activity (comments, edits, reviews)
+    # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
     prompt: prompts/pr-review.md
     filter:
       author: "!dependabot[bot]"
@@ -189,12 +191,14 @@ subscriptions:
 		name: 'Issue Triage',
 		description: 'Auto-triage new GitHub issues',
 		explanation:
-			'Polls GitHub for new issues and runs a triage prompt against each one. Useful for auto-labeling, prioritizing, assigning, or responding to incoming issues. Add filters to narrow by label, author, or other fields.',
+			'Polls GitHub for new issues and runs a triage prompt against each one. Useful for auto-labeling, prioritizing, assigning, or responding to incoming issues. Add filters to narrow by label, author, or other fields. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
 		yaml: `subscriptions:
   - name: "Triage New Issues"
     event: github.issue
     # repo: "owner/repo"  # optional — auto-detected from git remote
     poll_minutes: 10
+    # retrigger_on_comments: true   # re-fire on new activity (comments, edits, labels)
+    # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
     prompt: prompts/issue-triage.md
     enabled: true
 `,

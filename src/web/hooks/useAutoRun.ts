@@ -65,6 +65,12 @@ export interface LaunchWorktreeConfig {
 	enabled: boolean;
 	path: string;
 	branchName: string;
+	/**
+	 * Ref the new branch should be based on when it does not yet exist
+	 * (e.g. "rc", "main"). Forwarded to `git worktree add -b <new> <path> <base>`.
+	 * Defaults to the main repo's current HEAD if empty.
+	 */
+	baseBranch?: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
 }

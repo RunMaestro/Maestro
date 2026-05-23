@@ -24,6 +24,7 @@ import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
+import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
 import { useAgentDataListener } from './internal/useAgentDataListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
@@ -90,6 +91,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	});
 	useAgentThinkingListener();
 	useAgentSshRemoteListener();
+	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();
 
 	// Coordinator-level cleanup: clear the shared ref Map on unmount so any

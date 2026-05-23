@@ -1,4 +1,5 @@
 import type { Theme } from '../../../constants/themes';
+import type { SearchHit } from '../search/types';
 
 /**
  * One paginated chunk of text content emitted by the Fast tier text preview.
@@ -32,13 +33,9 @@ export interface TextPreviewFastHandle {
 	/** Total page count for the currently-loaded document. */
 	getPageCount(): number;
 	/** Find every match of `query` in the source, tagged with the page index it lives in. */
-	findInContent(query: string): Array<{
-		sourceOffset: number;
-		length: number;
-		blockIndex: number;
-	}>;
-	/** Scroll the virtualizer to the page containing the given match. */
-	scrollToMatch(match: { blockIndex: number }): void;
+	findInContent(query: string): SearchHit[];
+	/** Scroll the virtualizer to the matched page AND the matched text within it. */
+	scrollToMatch(hit: SearchHit): void;
 }
 
 /**

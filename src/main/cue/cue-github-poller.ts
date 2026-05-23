@@ -13,10 +13,54 @@ import {
 	markGitHubItemSeen,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
+	getGitHubItemState,
+	recordGitHubRetrigger,
 } from './cue-db';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+
+/**
+ * Default per-item re-trigger cap when `retrigger_on_comments` is enabled but
+ * `max_notifications` is omitted. Counts re-fires only — the initial discovery
+ * fire is always allowed. Set so a busy PR can't flood Cue indefinitely while
+ * leaving plenty of room for legitimate back-and-forth between agents.
+ */
+export const DEFAULT_MAX_NOTIFICATIONS = 10;
+
+/**
+ * Sentinel value for `max_notifications` meaning "no cap". Chosen over `null`
+ * so the field stays a single numeric type for schema validation. The poller
+ * treats `0` and any negative value as unlimited.
+ */
+const UNLIMITED_NOTIFICATIONS = 0;
+
+/** Raw shape of a comment returned by `gh pr view --json comments`. */
+interface RawGitHubComment {
+	author?: { login?: string };
+	body?: string;
+	createdAt?: string;
+	url?: string;
+}
+
+/** Normalized comment shape attached to re-trigger event payloads. */
+export interface GitHubComment {
+	author: string;
+	body: string;
+	createdAt: string;
+	url: string;
+}
+
+/**
+ * Render a comment list into the `{{CUE_NEW_COMMENTS}}` template variable.
+ * Returns an empty string when there are no new comments so the prompt
+ * substitution leaves a clean gap rather than emitting "no comments" filler.
+ * Exported for the template context builder.
+ */
+export function formatNewCommentsForTemplate(comments: GitHubComment[]): string {
+	if (comments.length === 0) return '';
+	return comments.map((c) => `[@${c.author} at ${c.createdAt}]\n${c.body}`).join('\n\n---\n\n');
+}
 
 /** Max backoff for GitHub rate-limit recovery. One hour is the standard
  * window for primary rate limits on personal tokens; secondary limits expire
@@ -47,6 +91,35 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 		haystack.includes('secondary rate limit') ||
 		haystack.includes('rate limit has been reached') ||
 		/\bhttp\s+(403|429)\b/.test(haystack)
+	);
+}
+
+/**
+ * Detect connectivity failures from the GitHub CLI. These are operational
+ * conditions (offline/VPN/DNS/GitHub unreachable), not app crashes.
+ */
+export function isGitHubConnectivityError(err: unknown): boolean {
+	const msg = (
+		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+			? err.message
+			: String(err ?? '')
+	).toLowerCase();
+	const stderr =
+		err &&
+		typeof err === 'object' &&
+		'stderr' in err &&
+		typeof (err as { stderr: unknown }).stderr === 'string'
+			? (err as { stderr: string }).stderr.toLowerCase()
+			: '';
+	const haystack = `${msg}\n${stderr}`;
+	return (
+		haystack.includes('error connecting to api.github.com') ||
+		haystack.includes('check your internet connection') ||
+		haystack.includes('enotfound api.github.com') ||
+		haystack.includes('econnreset') ||
+		haystack.includes('etimedout') ||
+		haystack.includes('network is unreachable') ||
+		haystack.includes('could not resolve host: api.github.com')
 	);
 }
 
@@ -81,6 +154,21 @@ export interface CueGitHubPollerConfig {
 	/** GitHub state filter: "open" (default), "closed", "merged" (PRs only), or "all" */
 	ghState?: string;
 	/**
+	 * When true, the poller re-fires this subscription on any post-discovery
+	 * activity (comments, edits, reviews, label changes) detected via the
+	 * item's `updatedAt` field. The re-fire payload includes the comments
+	 * posted since the last fire so the agent receives the new context.
+	 * Default false (legacy single-fire-per-item behavior).
+	 */
+	retriggerOnComments?: boolean;
+	/**
+	 * Per-item cap on re-trigger fires. Counts re-fires only — the initial
+	 * discovery fire is always allowed regardless of this value. Omitted /
+	 * undefined falls back to {@link DEFAULT_MAX_NOTIFICATIONS}. `0` (or any
+	 * non-positive value) means unlimited.
+	 */
+	maxNotifications?: number;
+	/**
 	 * Invoked once during setup with a handle whose `pollNow()` triggers an
 	 * immediate poll (in addition to the normal poll schedule). The caller
 	 * stores the handle so it can fire on system wake / user request without
@@ -111,9 +199,16 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		triggerName,
 		subscriptionId,
 		ghState,
+		retriggerOnComments,
+		maxNotifications,
 	} = config;
 	const stateFilter = ghState ?? 'open';
 	const isActive = config.isActive ?? (() => true);
+	const retrigger = retriggerOnComments === true;
+	// Treat undefined as "use default 10". 0/negative = unlimited (sentinel
+	// already chosen at schema level so `0` round-trips through YAML).
+	const rawMax = maxNotifications ?? DEFAULT_MAX_NOTIFICATIONS;
+	const cap = rawMax <= UNLIMITED_NOTIFICATIONS ? Infinity : rawMax;
 
 	let stopped = false;
 	let initialTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -175,6 +270,59 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * Fetch issue-style top-level comments for a single PR or issue, filtered
+	 * to those created strictly after `sinceIso`. Returns at most 50 comments
+	 * (the most recent if the API caps us). Inline review comments / thread
+	 * replies on PRs are intentionally skipped for v1 — they require a
+	 * different API surface and the top-level stream is enough to drive
+	 * back-and-forth between agents.
+	 *
+	 * Errors are surfaced as `null` so callers can decide whether to suppress
+	 * a re-fire. Rate limit errors bubble up so the outer doPoll can apply
+	 * exponential backoff.
+	 */
+	async function fetchNewComments(
+		itemType: 'pr' | 'issue',
+		repo: string,
+		itemNumber: number,
+		sinceIso: string | null
+	): Promise<GitHubComment[] | null> {
+		try {
+			const { stdout } = await execFileAsync(
+				ghCommand!,
+				[itemType, 'view', String(itemNumber), '--repo', repo, '--json', 'comments'],
+				{ cwd: projectRoot, timeout: 30000 }
+			);
+			const parsed = JSON.parse(stdout) as { comments?: RawGitHubComment[] };
+			const rawComments = parsed.comments ?? [];
+			const sinceMs = sinceIso ? Date.parse(sinceIso) : 0;
+			const filtered = rawComments
+				.filter((c) => {
+					if (!c.createdAt) return false;
+					if (!sinceMs) return true;
+					const created = Date.parse(c.createdAt);
+					return Number.isFinite(created) && created > sinceMs;
+				})
+				.slice(-50)
+				.map<GitHubComment>((c) => ({
+					author: c.author?.login ?? 'unknown',
+					body: (c.body ?? '').slice(0, 5000),
+					createdAt: c.createdAt ?? '',
+					url: c.url ?? '',
+				}));
+			return filtered;
+		} catch (err) {
+			if (isGitHubRateLimitError(err)) throw err;
+			const message = err instanceof Error ? err.message : String(err);
+			onLog(
+				'warn',
+				`[CUE] "${triggerName}" failed to fetch comments for ${itemType}#${itemNumber}: ${message}`
+			);
+			return null;
+		}
+	}
+
 	async function pollPRs(repo: string): Promise<void> {
 		// For "merged" state, query closed PRs and filter by merge status client-side
 		const ghStateArg = stateFilter === 'merged' ? 'closed' : stateFilter;
@@ -213,13 +361,49 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		for (const item of items) {
 			if (stopped) return;
 			const itemKey = `pr:${repo}:${item.number}`;
+			const updatedAt: string = item.updatedAt ?? '';
 
 			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey);
+				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
 				continue;
 			}
 
-			if (isGitHubItemSeen(subscriptionId, itemKey)) continue;
+			if (isGitHubItemSeen(subscriptionId, itemKey)) {
+				if (!retrigger) continue;
+				const state = getGitHubItemState(subscriptionId, itemKey);
+				if (!state) continue;
+				// No new activity since last seen → nothing to do.
+				if (!updatedAt || state.lastRevision === updatedAt) continue;
+				// Cap reached: freeze state so raising the cap later resumes
+				// from the right point. Don't update last_revision.
+				if (state.fireCount >= cap) continue;
+
+				const newComments = await fetchNewComments('pr', repo, item.number, state.lastRevision);
+				if (stopped) return;
+				const event = createCueEvent('github.pull_request', triggerName, {
+					type: 'pull_request',
+					number: item.number,
+					title: item.title,
+					author: item.author?.login ?? 'unknown',
+					url: item.url,
+					body: (item.body ?? '').slice(0, 5000),
+					state: item.mergedAt ? 'merged' : (item.state?.toLowerCase() ?? 'open'),
+					draft: item.isDraft ?? false,
+					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
+					head_branch: item.headRefName ?? '',
+					base_branch: item.baseRefName ?? '',
+					repo,
+					created_at: item.createdAt ?? '',
+					updated_at: updatedAt,
+					merged_at: item.mergedAt ?? '',
+					is_retrigger: true,
+					retrigger_count: state.fireCount + 1,
+					new_comments: newComments ?? [],
+				});
+				onEvent(event);
+				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
+				continue;
+			}
 
 			const event = createCueEvent('github.pull_request', triggerName, {
 				type: 'pull_request',
@@ -235,12 +419,15 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				base_branch: item.baseRefName ?? '',
 				repo,
 				created_at: item.createdAt ?? '',
-				updated_at: item.updatedAt ?? '',
+				updated_at: updatedAt,
 				merged_at: item.mergedAt ?? '',
+				is_retrigger: false,
+				retrigger_count: 0,
+				new_comments: [],
 			});
 
 			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey);
+			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
 		}
 
 		if (isFirstRun) {
@@ -278,13 +465,43 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		for (const item of items) {
 			if (stopped) return;
 			const itemKey = `issue:${repo}:${item.number}`;
+			const updatedAt: string = item.updatedAt ?? '';
 
 			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey);
+				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
 				continue;
 			}
 
-			if (isGitHubItemSeen(subscriptionId, itemKey)) continue;
+			if (isGitHubItemSeen(subscriptionId, itemKey)) {
+				if (!retrigger) continue;
+				const state = getGitHubItemState(subscriptionId, itemKey);
+				if (!state) continue;
+				if (!updatedAt || state.lastRevision === updatedAt) continue;
+				if (state.fireCount >= cap) continue;
+
+				const newComments = await fetchNewComments('issue', repo, item.number, state.lastRevision);
+				if (stopped) return;
+				const event = createCueEvent('github.issue', triggerName, {
+					type: 'issue',
+					number: item.number,
+					title: item.title,
+					author: item.author?.login ?? 'unknown',
+					url: item.url,
+					body: (item.body ?? '').slice(0, 5000),
+					state: item.state?.toLowerCase() ?? 'open',
+					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
+					assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
+					repo,
+					created_at: item.createdAt ?? '',
+					updated_at: updatedAt,
+					is_retrigger: true,
+					retrigger_count: state.fireCount + 1,
+					new_comments: newComments ?? [],
+				});
+				onEvent(event);
+				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
+				continue;
+			}
 
 			const event = createCueEvent('github.issue', triggerName, {
 				type: 'issue',
@@ -298,11 +515,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
 				repo,
 				created_at: item.createdAt ?? '',
-				updated_at: item.updatedAt ?? '',
+				updated_at: updatedAt,
+				is_retrigger: false,
+				retrigger_count: 0,
+				new_comments: [],
 			});
 
 			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey);
+			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
 		}
 
 		if (isFirstRun) {
@@ -351,6 +571,11 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 					'warn',
 					`[CUE] "${triggerName}" rate-limited by GitHub — backing off to ${backoffMin}m`,
 					payload
+				);
+			} else if (isGitHubConnectivityError(err)) {
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" because GitHub is unreachable: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the

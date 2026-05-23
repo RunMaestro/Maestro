@@ -182,12 +182,20 @@ if (typeof window !== 'undefined') {
 		},
 	});
 
-	// Mock IntersectionObserver
-	global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-		observe: vi.fn(),
-		unobserve: vi.fn(),
-		disconnect: vi.fn(),
-	}));
+	// Mock IntersectionObserver as a proper class so `new IntersectionObserver(...)`
+	// works for components that construct one (e.g. JumpToMessageTopButton).
+	// vi.fn().mockImplementation(arrow) is not callable as a constructor here.
+	class MockIntersectionObserver {
+		constructor(_cb: IntersectionObserverCallback, _opts?: IntersectionObserverInit) {}
+		observe = vi.fn();
+		unobserve = vi.fn();
+		disconnect = vi.fn();
+		takeRecords = vi.fn(() => []);
+		root = null;
+		rootMargin = '';
+		thresholds: ReadonlyArray<number> = [];
+	}
+	global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
 
 	// Mock Element.prototype.scrollTo - needed for components that use scrollTo
 	Element.prototype.scrollTo = vi.fn();
@@ -224,6 +232,7 @@ const mockMaestro = {
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
 		getActiveProcesses: vi.fn().mockResolvedValue([]),
+		isTerminalBusy: vi.fn().mockResolvedValue(false),
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 	},
@@ -322,6 +331,9 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
+		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
+		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
 	fonts: {
 		detect: vi.fn().mockResolvedValue([]),
@@ -505,6 +517,10 @@ const mockMaestro = {
 		recordSessionCreated: vi.fn().mockResolvedValue('lifecycle-id'),
 		recordSessionClosed: vi.fn().mockResolvedValue(true),
 		getSessionLifecycle: vi.fn().mockResolvedValue([]),
+		// Shortcut usage tracking (Usage Dashboard daily bar chart)
+		recordShortcutUsage: vi.fn().mockResolvedValue(null),
+		getShortcutUsageByDay: vi.fn().mockResolvedValue([]),
+		getShortcutUsageTotal: vi.fn().mockResolvedValue(0),
 	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),

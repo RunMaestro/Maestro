@@ -1524,6 +1524,7 @@ describe('WebSocketMessageHandler', () => {
 						enabled: true,
 						path: '/tmp/worktree',
 						branchName: 'feature/auto-run',
+						baseBranch: '',
 						createPROnCompletion: true,
 						prTargetBranch: 'main',
 					},

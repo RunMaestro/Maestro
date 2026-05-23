@@ -17,6 +17,51 @@ interface CollapsedSessionPillProps {
 	setActiveSessionId: (id: string) => void;
 }
 
+const MAX_PILLS_PER_ROW = 25;
+
+type CollapsedSessionPillRowsProps = Omit<CollapsedSessionPillProps, 'session'> & {
+	sessions: Session[];
+	onContainerClick: () => void;
+};
+
+export function CollapsedSessionPillRows({
+	sessions,
+	keyPrefix,
+	onContainerClick,
+	...pillProps
+}: CollapsedSessionPillRowsProps) {
+	const rows: Session[][] = [];
+	for (let i = 0; i < sessions.length; i += MAX_PILLS_PER_ROW) {
+		rows.push(sessions.slice(i, i + MAX_PILLS_PER_ROW));
+	}
+	return (
+		<div
+			className="ml-8 mr-3 mt-1 mb-2 flex flex-col gap-1 cursor-pointer"
+			onClick={onContainerClick}
+		>
+			{rows.map((row, rowIdx) => {
+				const padding = rows.length > 1 ? MAX_PILLS_PER_ROW - row.length : 0;
+				return (
+					<div key={`${keyPrefix}-row-${rowIdx}`} className="flex gap-1 h-1.5">
+						{row.map((s) => (
+							<CollapsedSessionPill
+								key={`${keyPrefix}-${s.id}`}
+								session={s}
+								keyPrefix={keyPrefix}
+								{...pillProps}
+							/>
+						))}
+						{padding > 0 &&
+							Array.from({ length: padding }).map((_, i) => (
+								<div key={`${keyPrefix}-row-${rowIdx}-spacer-${i}`} className="flex-1" />
+							))}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
 export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 	session,
 	keyPrefix,

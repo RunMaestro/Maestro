@@ -11,6 +11,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { paginate, DEFAULT_LINES_PER_PAGE } from './pagination';
 import { createTextCodeHighlighter } from './codeHighlighter';
 import { findTextHits } from './searchHits';
+import { buildRangeAtOffset, scrollRangeIntoView } from '../search/scrollToOffset';
 import {
 	TEXT_PAGE_CLASS,
 	TEXT_PAGE_GUTTER_CLASS,
@@ -119,10 +120,27 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 			() => ({
 				getPageCount: () => pagesRef.current.length,
 				findInContent: (query: string) => findTextHits(contentRef.current, query, pagesRef.current),
-				scrollToMatch: (match) => {
-					const idx = match.blockIndex;
+				scrollToMatch: (hit) => {
+					// Defensive: same-render race between the count effect's
+					// setCurrentMatchIndex(0) and the navigate effect's dispatch
+					// can pass undefined when a new query shrinks the hits array.
+					if (!hit) return;
+					const idx = hit.blockIndex;
 					if (idx < 0 || idx >= pagesRef.current.length) return;
 					virtualizer.scrollToIndex(idx, { align: 'center' });
+					// Post-scroll precision: walk text nodes inside the matched
+					// page's content element (skipping the line-number gutter) so
+					// the matched word — not just the page top — comes into view.
+					requestAnimationFrame(() => {
+						const root = scrollRef.current;
+						if (!root) return;
+						const targetPage = root.querySelector<HTMLElement>(`[data-virtual-page="${idx}"]`);
+						if (!targetPage) return;
+						const contentEl = targetPage.querySelector<HTMLElement>(`.${TEXT_PAGE_CONTENT_CLASS}`);
+						if (!contentEl) return;
+						const range = buildRangeAtOffset(contentEl, hit.offsetWithinBlock, hit.length);
+						scrollRangeIntoView(range);
+					});
 				},
 			}),
 			[virtualizer]

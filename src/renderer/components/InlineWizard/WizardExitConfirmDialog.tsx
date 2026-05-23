@@ -68,7 +68,7 @@ export function WizardExitConfirmDialog({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="w-[400px] border rounded-xl shadow-2xl overflow-hidden"
+				className="modal-w-xs border rounded-xl shadow-2xl overflow-hidden"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,

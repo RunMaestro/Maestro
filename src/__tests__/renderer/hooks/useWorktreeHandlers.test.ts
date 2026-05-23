@@ -869,6 +869,7 @@ describe('handleCreateWorktree', () => {
 			'/projects/myapp',
 			'/projects/worktrees/new-branch',
 			'new-branch',
+			undefined,
 			undefined
 		);
 
@@ -910,6 +911,51 @@ describe('handleCreateWorktree', () => {
 			'/projects/myapp',
 			'/projects/worktrees/new-branch',
 			'new-branch',
+			undefined,
+			undefined
+		);
+	});
+
+	it('forwards baseBranch as the 5th arg to worktreeSetup (regression: dropped baseBranch wasted Auto Runs)', async () => {
+		// Regression for the bug where the user selected a base branch in the
+		// UI but the new worktree silently came off the main repo's HEAD
+		// instead. The fix: baseBranch must be forwarded all the way to the
+		// IPC layer; the IPC handler then becomes the single point that
+		// decides whether to honor it (depending on whether the named branch
+		// already exists). Don't drop it on the floor in the renderer.
+		getModalActions().setCreateWorktreeSession(mockParentSession);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktree('feature-from-rc', 'rc');
+		});
+
+		expect(mockGit.worktreeSetup).toHaveBeenCalledWith(
+			'/projects/myapp',
+			'/projects/worktrees/feature-from-rc',
+			'feature-from-rc',
+			undefined,
+			'rc'
+		);
+	});
+
+	it('forwards undefined baseBranch when caller omits it (legacy callers must not break)', async () => {
+		// Pre-feature callers that only pass branchName should still work and
+		// the IPC handler will fall back to the main repo's current HEAD.
+		getModalActions().setCreateWorktreeSession(mockParentSession);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktree('feature-x');
+		});
+
+		expect(mockGit.worktreeSetup).toHaveBeenCalledWith(
+			'/projects/myapp',
+			'/projects/worktrees/feature-x',
+			'feature-x',
+			undefined,
 			undefined
 		);
 	});
