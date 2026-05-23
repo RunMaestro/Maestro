@@ -10,17 +10,41 @@
 import { captureException } from '../sentry';
 import { resolveLanguage } from './highlighterManager';
 
-type HljsModule = typeof import('highlight.js');
-type Hljs = HljsModule['default'];
+interface HighlightJsApi {
+	highlightAuto: (
+		code: string,
+		languageSubset?: string[]
+	) => {
+		language?: string;
+		relevance: number;
+	};
+}
 
-let hljsPromise: Promise<Hljs> | null = null;
+type HighlightJsImport = typeof import('highlight.js') & {
+	default?: unknown;
+};
 
-function loadHljs(): Promise<Hljs> {
+let hljsPromise: Promise<HighlightJsApi> | null = null;
+
+function hasHighlightAuto(value: unknown): value is HighlightJsApi {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'highlightAuto' in value &&
+		typeof (value as { highlightAuto?: unknown }).highlightAuto === 'function'
+	);
+}
+
+function normalizeHljs(module: HighlightJsImport): HighlightJsApi {
+	const defaultExport = (module as { default?: unknown }).default;
+	if (hasHighlightAuto(module)) return module;
+	if (hasHighlightAuto(defaultExport)) return defaultExport;
+	throw new Error('highlight.js did not expose highlightAuto');
+}
+
+function loadHljs(): Promise<HighlightJsApi> {
 	if (hljsPromise) return hljsPromise;
-	hljsPromise = (async () => {
-		const mod = await import('highlight.js');
-		return mod.default;
-	})();
+	hljsPromise = import('highlight.js').then(normalizeHljs);
 	return hljsPromise;
 }
 
