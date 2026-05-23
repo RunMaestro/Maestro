@@ -68,6 +68,7 @@ describe('useAgentExecution', () => {
 		onData: vi.fn(),
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
+		onAgentError: vi.fn(),
 		onExit: vi.fn(),
 	};
 
@@ -97,6 +98,9 @@ describe('useAgentExecution', () => {
 		);
 		mockProcess.onUsage.mockImplementation((handler: (sid: string, usage: UsageStats) => void) => {
 			onUsageHandler = handler;
+			return () => {};
+		});
+		mockProcess.onAgentError.mockImplementation(() => {
 			return () => {};
 		});
 		mockProcess.onExit.mockImplementation((handler: (sid: string) => void) => {
