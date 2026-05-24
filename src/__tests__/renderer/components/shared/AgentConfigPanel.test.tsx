@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
 import type { Theme, AgentConfig } from '../../../../renderer/types';
 
@@ -76,6 +76,41 @@ function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 		...overrides,
 	};
 }
+
+const modelCapableAgent = createMockAgent({
+	capabilities: { supportsModelSelection: true } as NonNullable<AgentConfig['capabilities']>,
+	configOptions: [
+		{
+			key: 'model',
+			type: 'text',
+			label: 'Model',
+			description: 'Model to use for requests',
+			default: 'claude-3-sonnet',
+		},
+		{
+			key: 'contextWindow',
+			type: 'number',
+			label: 'Context Window',
+			description: 'Maximum context size',
+			default: 200000,
+		},
+		{
+			key: 'streaming',
+			type: 'checkbox',
+			label: 'Streaming',
+			description: 'Enable streaming responses',
+			default: false,
+		},
+		{
+			key: 'approval',
+			type: 'select',
+			label: 'Approval Mode',
+			description: 'Controls command approval behavior',
+			default: 'suggest',
+			options: ['suggest', 'auto'],
+		},
+	],
+});
 
 function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPanel>[0]> = {}) {
 	return {
@@ -189,6 +224,72 @@ describe('AgentConfigPanel', () => {
 			);
 			expect(customKeyInput).toBeDefined();
 		});
+
+		it('toggles the built-in environment variable help text', async () => {
+			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true })} />);
+
+			const helpButton = screen.getByTitle('What is this?');
+
+			fireEvent.click(helpButton);
+			expect(screen.getByText(/skip initialization on resumed sessions/i)).toBeInTheDocument();
+
+			fireEvent.click(helpButton);
+			expect(
+				screen.queryByText(/skip initialization on resumed sessions/i)
+			).not.toBeInTheDocument();
+
+			fireEvent.click(helpButton);
+			expect(screen.getByText(/skip initialization on resumed sessions/i)).toBeInTheDocument();
+
+			fireEvent.blur(helpButton);
+			await waitFor(() =>
+				expect(
+					screen.queryByText(/skip initialization on resumed sessions/i)
+				).not.toBeInTheDocument()
+			);
+		});
+
+		it('defers environment variable key changes until blur and updates values immediately', () => {
+			const props = createDefaultProps({ customEnvVars: { OLD_KEY: 'old-value' } });
+
+			render(<AgentConfigPanel {...props} />);
+
+			const keyInput = screen.getByDisplayValue('OLD_KEY');
+			const valueInput = screen.getByDisplayValue('old-value');
+
+			fireEvent.change(keyInput, { target: { value: 'NEW_KEY' } });
+			expect(props.onEnvVarKeyChange).not.toHaveBeenCalled();
+
+			fireEvent.change(valueInput, { target: { value: 'new-value' } });
+			expect(props.onEnvVarValueChange).toHaveBeenCalledWith('OLD_KEY', 'new-value');
+
+			fireEvent.blur(keyInput);
+			expect(props.onEnvVarKeyChange).toHaveBeenCalledWith('OLD_KEY', 'NEW_KEY', 'old-value');
+			expect(props.onEnvVarsBlur).toHaveBeenCalled();
+		});
+
+		it('blurs unchanged environment variable keys without renaming them', () => {
+			const props = createDefaultProps({ customEnvVars: { KEEP_KEY: 'keep-value' } });
+
+			render(<AgentConfigPanel {...props} />);
+
+			fireEvent.blur(screen.getByDisplayValue('KEEP_KEY'));
+
+			expect(props.onEnvVarKeyChange).not.toHaveBeenCalled();
+			expect(props.onEnvVarsBlur).toHaveBeenCalledTimes(1);
+		});
+
+		it('handles add and remove environment variable actions', () => {
+			const props = createDefaultProps({ customEnvVars: { REMOVE_ME: '1' } });
+
+			render(<AgentConfigPanel {...props} />);
+
+			fireEvent.click(screen.getByTitle('Remove variable'));
+			expect(props.onEnvVarRemove).toHaveBeenCalledWith('REMOVE_ME');
+
+			fireEvent.click(screen.getByText('Add Variable'));
+			expect(props.onEnvVarAdd).toHaveBeenCalled();
+		});
 	});
 
 	describe('Agent configuration sections', () => {
@@ -241,6 +342,547 @@ describe('AgentConfigPanel', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
+		});
+
+		it('wires path, custom argument, clear, reset, and detect actions', () => {
+			const props = createDefaultProps({
+				customPath: '/custom/claude',
+				customArgs: '--dangerously-skip-permissions',
+				onRefreshAgent: vi.fn(),
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			fireEvent.change(screen.getByDisplayValue('/custom/claude'), {
+				target: { value: '/new/claude' },
+			});
+			expect(props.onCustomPathChange).toHaveBeenCalledWith('/new/claude');
+
+			fireEvent.blur(screen.getByDisplayValue('/custom/claude'));
+			expect(props.onCustomPathBlur).toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Reset'));
+			expect(props.onCustomPathClear).toHaveBeenCalled();
+
+			fireEvent.change(screen.getByDisplayValue('--dangerously-skip-permissions'), {
+				target: { value: '--verbose' },
+			});
+			expect(props.onCustomArgsChange).toHaveBeenCalledWith('--verbose');
+
+			fireEvent.blur(screen.getByDisplayValue('--dangerously-skip-permissions'));
+			expect(props.onCustomArgsBlur).toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Clear'));
+			expect(props.onCustomArgsClear).toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Detect'));
+			expect(props.onRefreshAgent).toHaveBeenCalled();
+		});
+
+		it('shows a read-only remote command field when SSH is enabled without a custom path', () => {
+			const props = createDefaultProps({
+				isSshEnabled: true,
+				agent: createMockAgent({ path: '/usr/local/bin/claude', binaryName: 'claude' }),
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			expect(screen.getByText('Remote Command')).toBeInTheDocument();
+			expect(screen.queryByText('Detect')).not.toBeInTheDocument();
+
+			const commandInput = screen.getByDisplayValue('claude');
+			expect(commandInput).toHaveAttribute('readOnly');
+			expect(commandInput).toHaveStyle({ opacity: '0.7' });
+		});
+
+		it('uses compact spacing and remote reset copy when SSH has a custom command', () => {
+			const { container } = render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						compact: true,
+						customPath: 'claude-dev',
+						isSshEnabled: true,
+					})}
+				/>
+			);
+
+			expect(container.firstElementChild).toHaveClass('space-y-2');
+			expect(container.querySelector('.p-2.rounded.border')).toBeTruthy();
+			expect(screen.getByTitle('Reset to remote binary name')).toBeInTheDocument();
+		});
+
+		it('shows refreshing path detection state and falls back to an empty path value', () => {
+			const props = createDefaultProps({
+				agent: createMockAgent({ path: '' }),
+				onRefreshAgent: vi.fn(),
+				refreshingAgent: true,
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			expect(screen.getByTestId('refresh-icon')).toHaveClass('animate-spin');
+			expect(screen.getByPlaceholderText('/path/to/claude')).toHaveValue('');
+		});
+
+		it('persists number, checkbox, and select config options', () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: {
+					contextWindow: 150000,
+					streaming: false,
+					approval: 'suggest',
+				},
+			});
+
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+
+			const contextWindowInput = screen.getByDisplayValue('150000');
+			fireEvent.change(contextWindowInput, { target: { value: '175000' } });
+			expect(props.onConfigChange).toHaveBeenCalledWith('contextWindow', 175000);
+
+			rerender(
+				<AgentConfigPanel
+					{...props}
+					agentConfig={{ ...props.agentConfig, contextWindow: 175000 }}
+				/>
+			);
+			fireEvent.blur(screen.getByDisplayValue('175000'));
+			expect(props.onConfigBlur).toHaveBeenCalledWith('contextWindow', 175000);
+
+			fireEvent.click(screen.getByRole('checkbox'));
+			expect(props.onConfigChange).toHaveBeenCalledWith('streaming', true);
+			expect(props.onConfigBlur).toHaveBeenCalledWith('streaming', true);
+
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'auto' } });
+			expect(props.onConfigChange).toHaveBeenCalledWith('approval', 'auto');
+			expect(props.onConfigBlur).toHaveBeenCalledWith('approval', 'auto');
+		});
+
+		it('normalizes empty and invalid number config values to zero', () => {
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					configOptions: [
+						{
+							key: 'retries',
+							type: 'number',
+							label: 'Retries',
+							description: 'Retry count',
+						},
+					],
+				}),
+				agentConfig: { retries: 5 },
+			});
+
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+
+			const retriesInput = screen.getByDisplayValue('5');
+			expect(retriesInput).toHaveAttribute('placeholder', '0');
+
+			fireEvent.change(retriesInput, { target: { value: '' } });
+			expect(props.onConfigChange).toHaveBeenCalledWith('retries', 0);
+
+			rerender(<AgentConfigPanel {...props} agentConfig={{ retries: '' }} />);
+			const emptyRetriesInput = screen.getByRole('spinbutton');
+			fireEvent.blur(emptyRetriesInput);
+			expect(props.onConfigBlur).toHaveBeenCalledWith('retries', 0);
+
+			Object.defineProperty(emptyRetriesInput, 'value', {
+				configurable: true,
+				get: () => 'not-a-number',
+			});
+			fireEvent.change(emptyRetriesInput);
+			expect(props.onConfigChange).toHaveBeenCalledTimes(2);
+			expect(props.onConfigChange).toHaveBeenLastCalledWith('retries', 0);
+
+			fireEvent.blur(emptyRetriesInput);
+			expect(props.onConfigBlur).toHaveBeenCalledTimes(2);
+			expect(props.onConfigBlur).toHaveBeenLastCalledWith('retries', 0);
+		});
+
+		it('renders select config options without a configured value or default', () => {
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					configOptions: [
+						{
+							key: 'approval',
+							type: 'select',
+							label: 'Approval Mode',
+							description: 'Controls command approval behavior',
+							options: ['manual', 'auto'],
+						},
+					],
+				}),
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const approvalSelect = screen.getByRole('combobox');
+			expect(approvalSelect).toHaveValue('manual');
+
+			fireEvent.change(approvalSelect, { target: { value: 'manual' } });
+			expect(props.onConfigChange).toHaveBeenCalledWith('approval', 'manual');
+			expect(props.onConfigBlur).toHaveBeenCalledWith('approval', 'manual');
+		});
+
+		it('allows config option changes when blur persistence is unavailable', () => {
+			const onConfigChange = vi.fn();
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: {
+					contextWindow: 150000,
+					streaming: false,
+					approval: 'suggest',
+				},
+				onConfigBlur: undefined,
+				onConfigChange,
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			fireEvent.click(screen.getByRole('checkbox'));
+			expect(onConfigChange).toHaveBeenCalledWith('streaming', true);
+
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'auto' } });
+			expect(onConfigChange).toHaveBeenCalledWith('approval', 'auto');
+		});
+
+		it('logs asynchronous config persistence failures without throwing', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const rejection = new Error('disk unavailable');
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					configOptions: [
+						{
+							key: 'streaming',
+							type: 'checkbox',
+							label: 'Streaming',
+							description: 'Enable streaming responses',
+							default: false,
+						},
+					],
+				}),
+				onConfigBlur: vi.fn(() => Promise.reject(rejection)),
+			});
+
+			try {
+				render(<AgentConfigPanel {...props} />);
+
+				fireEvent.click(screen.getByRole('checkbox'));
+
+				await waitFor(() => {
+					expect(consoleError).toHaveBeenCalledWith(
+						'Failed to persist config field "streaming":',
+						rejection
+					);
+				});
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
+		it('supports model dropdown filtering, selection, and refresh', () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+				onRefreshModels: vi.fn(),
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			expect(screen.getByText('2 models available')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Refresh available models'));
+			expect(props.onRefreshModels).toHaveBeenCalled();
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			fireEvent.focus(modelInput);
+
+			fireEvent.change(modelInput, { target: { value: 'opus' } });
+			expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
+			expect(screen.queryByText('claude-3-sonnet')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('claude-3-opus'));
+			expect(props.onConfigChange).toHaveBeenCalledWith('model', 'claude-3-opus');
+			expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-opus');
+		});
+
+		it('opens the model dropdown from the chevron button without bubbling', () => {
+			const onOuterClick = vi.fn();
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(
+				<div onClick={onOuterClick}>
+					<AgentConfigPanel {...props} />
+				</div>
+			);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			const dropdownButton = screen.getByTestId('chevron-down-icon').closest('button')!;
+
+			fireEvent.click(dropdownButton);
+
+			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
+			expect(document.activeElement).toBe(modelInput);
+			expect(onOuterClick).not.toHaveBeenCalled();
+		});
+
+		it('resets model filter text on outside click without committing it', async () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			fireEvent.focus(modelInput);
+			fireEvent.change(modelInput, { target: { value: 'opus' } });
+			expect(await screen.findByText('claude-3-opus')).toBeInTheDocument();
+
+			fireEvent.mouseDown(document.body);
+
+			await waitFor(() => {
+				expect(screen.queryByText('claude-3-opus')).not.toBeInTheDocument();
+				expect(modelInput).toHaveValue('claude-3-sonnet');
+			});
+			expect(props.onConfigChange).not.toHaveBeenCalled();
+		});
+
+		it('keeps the model dropdown open on inside clicks and closes it outside when not filtering', async () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			const dropdownButton = screen.getByTestId('chevron-down-icon').closest('button')!;
+			fireEvent.click(dropdownButton);
+			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
+
+			fireEvent.mouseDown(modelInput);
+			expect(screen.getByRole('button', { name: 'claude-3-sonnet' })).toBeInTheDocument();
+
+			fireEvent.mouseDown(document.body);
+
+			await waitFor(() => {
+				expect(screen.queryByRole('button', { name: 'claude-3-sonnet' })).not.toBeInTheDocument();
+			});
+			expect(modelInput).toHaveValue('claude-3-sonnet');
+			expect(props.onConfigChange).not.toHaveBeenCalled();
+		});
+
+		it('does not let the delayed blur overwrite a selected model', async () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			fireEvent.focus(modelInput);
+			fireEvent.change(modelInput, { target: { value: 'opus' } });
+			fireEvent.click(await screen.findByText('claude-3-opus'));
+			fireEvent.blur(modelInput);
+
+			await new Promise((resolve) => setTimeout(resolve, 200));
+
+			expect(props.onConfigChange).toHaveBeenCalledWith('model', 'claude-3-opus');
+			expect(props.onConfigBlur).toHaveBeenCalledTimes(1);
+			expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-opus');
+		});
+
+		it('commits a typed custom model on blur when no dropdown item is selected', async () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			fireEvent.focus(modelInput);
+			fireEvent.change(modelInput, { target: { value: 'local-model' } });
+			fireEvent.blur(modelInput);
+
+			await waitFor(() => {
+				expect(props.onConfigChange).toHaveBeenCalledWith('model', 'local-model');
+				expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'local-model');
+			});
+		});
+
+		it('restores the committed model when filtering is abandoned on blur', async () => {
+			const props = createDefaultProps({
+				agent: modelCapableAgent,
+				agentConfig: { model: 'claude-3-sonnet' },
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(<AgentConfigPanel {...props} />);
+
+			const modelInput = screen.getByDisplayValue('claude-3-sonnet');
+			fireEvent.focus(modelInput);
+			fireEvent.change(modelInput, { target: { value: '' } });
+			fireEvent.blur(modelInput);
+
+			await waitFor(() => {
+				expect(props.onConfigChange).not.toHaveBeenCalled();
+				expect(props.onConfigBlur).toHaveBeenCalledWith('model', 'claude-3-sonnet');
+			});
+		});
+
+		it('shows model loading and singular available-model copy', () => {
+			const { rerender } = render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelCapableAgent,
+						availableModels: [],
+						loadingModels: true,
+						onRefreshModels: vi.fn(),
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Loading available models...')).toBeInTheDocument();
+			expect(screen.getByTestId('refresh-icon')).toHaveClass('animate-spin');
+
+			rerender(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: modelCapableAgent,
+						availableModels: ['claude-3-sonnet'],
+						loadingModels: false,
+					})}
+				/>
+			);
+
+			expect(screen.getByText('1 model available')).toBeInTheDocument();
+		});
+
+		it('commits non-model text config values on blur after the parent rerenders', async () => {
+			const textAgent = createMockAgent({
+				configOptions: [
+					{
+						key: 'systemPrompt',
+						type: 'text',
+						label: 'System Prompt',
+						description: 'Prompt prefix',
+						default: 'default prompt',
+					},
+				],
+			});
+			const props = createDefaultProps({
+				agent: textAgent,
+				agentConfig: { systemPrompt: 'initial prompt' },
+			});
+
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+
+			fireEvent.focus(screen.getByDisplayValue('initial prompt'));
+			fireEvent.change(screen.getByDisplayValue('initial prompt'), {
+				target: { value: 'updated prompt' },
+			});
+			expect(props.onConfigChange).toHaveBeenCalledWith('systemPrompt', 'updated prompt');
+
+			rerender(<AgentConfigPanel {...props} agentConfig={{ systemPrompt: 'updated prompt' }} />);
+			fireEvent.blur(screen.getByDisplayValue('updated prompt'));
+
+			await waitFor(() => {
+				expect(props.onConfigBlur).toHaveBeenCalledWith('systemPrompt', 'updated prompt');
+			});
+		});
+
+		it('handles text config options without a default placeholder', () => {
+			const textAgent = createMockAgent({
+				configOptions: [
+					{
+						key: 'systemPrompt',
+						type: 'text',
+						label: 'System Prompt',
+						description: 'Prompt prefix',
+					},
+				],
+			});
+			const props = createDefaultProps({ agent: textAgent, agentConfig: { systemPrompt: '' } });
+
+			render(<AgentConfigPanel {...props} />);
+
+			const textInput = screen
+				.getAllByRole('textbox')
+				.find((input) => input.getAttribute('placeholder') === '');
+			expect(textInput).toBeDefined();
+
+			fireEvent.focus(textInput!);
+			fireEvent.change(textInput!, { target: { value: 'new prompt' } });
+
+			expect(props.onConfigChange).toHaveBeenCalledWith('systemPrompt', 'new prompt');
+		});
+
+		it('cleans up stale environment variable display state after keys are removed', () => {
+			const props = createDefaultProps({ customEnvVars: { REMOVE_ME: '1' } });
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+
+			expect(screen.getByDisplayValue('REMOVE_ME')).toBeInTheDocument();
+
+			rerender(<AgentConfigPanel {...props} customEnvVars={{ KEEP_ME: '2' }} />);
+
+			expect(screen.queryByDisplayValue('REMOVE_ME')).not.toBeInTheDocument();
+			expect(screen.getByDisplayValue('KEEP_ME')).toBeInTheDocument();
+		});
+
+		it('keeps pending environment variable key edits when the backing key remains present', () => {
+			const props = createDefaultProps({ customEnvVars: { KEEP_ME: '1' } });
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+
+			fireEvent.change(screen.getByDisplayValue('KEEP_ME'), { target: { value: 'EDITED_KEY' } });
+
+			rerender(<AgentConfigPanel {...props} customEnvVars={{ KEEP_ME: '2' }} />);
+
+			expect(screen.getByDisplayValue('EDITED_KEY')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('2')).toBeInTheDocument();
+		});
+
+		it('stops field clicks from bubbling to parent overlays', () => {
+			const onOuterClick = vi.fn();
+			const props = createDefaultProps({
+				customPath: '/custom/claude',
+				customArgs: '--verbose',
+				customEnvVars: { API_KEY: 'secret' },
+				agent: modelCapableAgent,
+				agentConfig: {
+					model: 'claude-3-sonnet',
+					contextWindow: 150000,
+					streaming: false,
+					approval: 'suggest',
+				},
+				availableModels: ['claude-3-sonnet', 'claude-3-opus'],
+			});
+
+			render(
+				<div onClick={onOuterClick}>
+					<AgentConfigPanel {...props} />
+				</div>
+			);
+
+			fireEvent.click(screen.getByDisplayValue('/custom/claude'));
+			fireEvent.click(screen.getByDisplayValue('--verbose'));
+			fireEvent.click(screen.getByDisplayValue('API_KEY'));
+			fireEvent.click(screen.getByDisplayValue('secret'));
+			fireEvent.click(screen.getByDisplayValue('claude-3-sonnet'));
+			fireEvent.click(screen.getByDisplayValue('150000'));
+			fireEvent.click(screen.getByRole('combobox'));
+
+			expect(onOuterClick).not.toHaveBeenCalled();
 		});
 	});
 });

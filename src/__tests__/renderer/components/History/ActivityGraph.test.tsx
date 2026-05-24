@@ -260,6 +260,27 @@ describe('ActivityGraph', () => {
 		expect(userCount).toBeInTheDocument();
 	});
 
+	it('ignores out-of-window entries and malformed runtime entry types', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 48 * 60 * 60 * 1000 }),
+			createMockEntry({
+				type: 'SYSTEM' as HistoryEntryType,
+				timestamp: NOW - 30 * 60 * 1000,
+			}),
+		];
+
+		render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(/24 hours: 0 auto, 0 user/)).toBeInTheDocument();
+	});
+
 	it('renders axis labels for 24-hour lookback', () => {
 		render(
 			<ActivityGraph entries={[]} theme={mockTheme} lookbackHours={24} onLookbackChange={vi.fn()} />
@@ -306,6 +327,186 @@ describe('ActivityGraph', () => {
 		expect(screen.getByText('Now')).toBeInTheDocument();
 	});
 
+	it('handles empty and zero-width all-time windows', () => {
+		const { container, rerender } = render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				lookbackHours={null}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end')).toHaveLength(
+			24
+		);
+		expect(screen.getByTitle(/All time: 0 auto, 0 user/)).toBeInTheDocument();
+
+		rerender(
+			<ActivityGraph
+				entries={[createMockEntry({ timestamp: NOW })]}
+				theme={mockTheme}
+				referenceTime={NOW}
+				lookbackHours={null}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(/All time: 1 auto, 0 user/)).toBeInTheDocument();
+	});
+
+	it('renders start and end axis labels for long fixed lookback windows', () => {
+		const startLabel = new Date(NOW - 720 * 60 * 60 * 1000).toLocaleDateString([], {
+			month: 'short',
+			day: 'numeric',
+		});
+
+		render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				lookbackHours={720}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText(startLabel)).toBeInTheDocument();
+		expect(screen.getByText('Now')).toBeInTheDocument();
+	});
+
+	it('shows date ranges in tooltips for long fixed lookback windows', () => {
+		const startLabel = new Date(NOW - 720 * 60 * 60 * 1000).toLocaleDateString([], {
+			month: 'short',
+			day: 'numeric',
+		});
+		const endLabel = new Date(NOW - 696 * 60 * 60 * 1000).toLocaleDateString([], {
+			month: 'short',
+			day: 'numeric',
+		});
+
+		const { container } = render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				lookbackHours={720}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		fireEvent.mouseEnter(bars[0]);
+
+		expect(screen.getByText(`${startLabel} - ${endLabel}`)).toBeInTheDocument();
+	});
+
+	it('shows a single date in tooltips when a long-window bucket stays within one day', () => {
+		const expectedLabel = new Date(NOW).toLocaleDateString([], {
+			month: 'short',
+			day: 'numeric',
+		});
+
+		const { container } = render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				lookbackHours={168}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		fireEvent.mouseEnter(bars[bars.length - 1]);
+
+		expect(screen.getByText(expectedLabel)).toBeInTheDocument();
+	});
+
+	it('formats noon and PM times in short-window tooltips', () => {
+		const localNoon = new Date(2025, 5, 15, 12, 0, 0).getTime();
+
+		const { container } = render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				referenceTime={localNoon}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		fireEvent.mouseEnter(bars[bars.length - 1]);
+
+		expect(screen.getByText('11AM - 12PM')).toBeInTheDocument();
+	});
+
+	it('shows historical reference time in centered tooltips', () => {
+		const { container } = render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				referenceTime={NOW - 2 * 60 * 60 * 1000}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
+		fireEvent.mouseEnter(bars[Math.floor(bars.length / 2)]);
+
+		expect(screen.getByText('2h ago')).toBeInTheDocument();
+		expect(container.querySelector('.absolute.top-full')).toHaveStyle({
+			transform: 'translateX(-50%)',
+		});
+	});
+
+	it('includes minute-level historical reference time in the title', () => {
+		render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				referenceTime={NOW - 30 * 60 * 1000}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(/Viewing: 30m ago/)).toBeInTheDocument();
+	});
+
+	it('includes hour-level historical reference time in the title', () => {
+		render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				referenceTime={NOW - 2 * 60 * 60 * 1000}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(/Viewing: 2h ago/)).toBeInTheDocument();
+	});
+
+	it('includes date historical reference time in the title', () => {
+		const referenceTime = NOW - 48 * 60 * 60 * 1000;
+		const referenceLabel = new Date(referenceTime).toLocaleDateString([], {
+			month: 'short',
+			day: 'numeric',
+		});
+
+		render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				referenceTime={referenceTime}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(new RegExp(`Viewing: ${referenceLabel}`))).toBeInTheDocument();
+	});
+
 	it('displays title attribute with summary info', () => {
 		const entries = [
 			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
@@ -324,5 +525,18 @@ describe('ActivityGraph', () => {
 		// Title should summarize: "1 week: 1 auto, 1 user (right-click to change)"
 		const graphContainer = screen.getByTitle(/1 auto, 1 user/);
 		expect(graphContainer).toBeInTheDocument();
+	});
+
+	it('falls back to the default lookback option for unknown lookback values', () => {
+		render(
+			<ActivityGraph
+				entries={[]}
+				theme={mockTheme}
+				lookbackHours={999}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle(/24 hours: 0 auto, 0 user/)).toBeInTheDocument();
 	});
 });

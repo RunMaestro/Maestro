@@ -155,6 +155,21 @@ const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
 	...overrides,
 });
 
+const smoothScrollDynamicSizeWarning =
+	'The `smooth` scroll behavior is not fully supported with dynamic size.';
+
+const expectSmoothScrollDynamicSizeWarning = (trigger: () => void) => {
+	const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+	try {
+		trigger();
+		expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+		expect(consoleWarnSpy).toHaveBeenCalledWith(smoothScrollDynamicSizeWarning);
+	} finally {
+		consoleWarnSpy.mockRestore();
+	}
+};
+
 describe('HistoryPanel', () => {
 	let mockHistoryGetAll: ReturnType<typeof vi.fn>;
 	let mockHistoryDelete: ReturnType<typeof vi.fn>;
@@ -620,6 +635,28 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		it('should open search with Ctrl+F and leave it open on a repeated shortcut', async () => {
+			const entry = createMockEntry({ summary: 'Ctrl search entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Ctrl search entry')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'f', ctrlKey: true });
+
+			const searchInput = await screen.findByPlaceholderText('Filter history...');
+			fireEvent.change(searchInput, { target: { value: 'Ctrl' } });
+			fireEvent.keyDown(listContainer!, { key: 'f', ctrlKey: true });
+
+			expect(screen.getByPlaceholderText('Filter history...')).toHaveValue('Ctrl');
+		});
+
 		it('should filter entries by graph lookback period', async () => {
 			const now = Date.now();
 			const recentEntry = createMockEntry({
@@ -663,6 +700,73 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Recent task')).toBeInTheDocument();
 				expect(screen.queryByText('Old task')).not.toBeInTheDocument();
+			});
+		});
+
+		it('should restore saved graph lookback and allow returning to all time', async () => {
+			const maestro = window.maestro as unknown as {
+				settings: {
+					get: ReturnType<typeof vi.fn>;
+					set: ReturnType<typeof vi.fn>;
+				};
+			};
+			maestro.settings.get.mockResolvedValue(24);
+			const oldEntry = createMockEntry({
+				id: 'outside-lookback',
+				summary: 'Older saved-lookback task',
+				timestamp: Date.now() - 48 * 60 * 60 * 1000,
+			});
+			mockHistoryGetAll.mockResolvedValue([oldEntry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText(/No entries in the last/)).toBeInTheDocument();
+				expect(screen.getByText('24h')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /Show all time \(1 entries\)/i }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Older saved-lookback task')).toBeInTheDocument();
+			});
+			expect(maestro.settings.set).toHaveBeenCalledWith('historyGraphLookback:session-1', null);
+		});
+
+		it('should describe empty week and month lookback windows', async () => {
+			const maestro = window.maestro as unknown as {
+				settings: {
+					get: ReturnType<typeof vi.fn>;
+				};
+			};
+			const oldEntry = createMockEntry({
+				id: 'outside-long-lookback',
+				summary: 'Older long-lookback task',
+				timestamp: Date.now() - 400 * 24 * 60 * 60 * 1000,
+			});
+			mockHistoryGetAll.mockResolvedValue([oldEntry]);
+
+			maestro.settings.get.mockResolvedValue(168);
+			const { rerender } = render(
+				<HistoryPanel session={createMockSession({ id: 'week-lookback' })} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText(/No entries in the last/)).toBeInTheDocument();
+				expect(screen.getByText('7d')).toBeInTheDocument();
+			});
+
+			maestro.settings.get.mockResolvedValue(720);
+			rerender(
+				<HistoryPanel session={createMockSession({ id: 'month-lookback' })} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(
+					screen.getAllByText((_, element) =>
+						Boolean(element?.textContent?.includes('No entries in the last 1mo.'))
+					).length
+				).toBeGreaterThan(0);
 			});
 		});
 
@@ -729,6 +833,28 @@ describe('HistoryPanel', () => {
 				expect(screen.queryByPlaceholderText('Filter history...')).not.toBeInTheDocument();
 				expect(screen.getByText('Test entry')).toBeInTheDocument();
 			});
+		});
+
+		it('should ignore unrelated keys in the search field', async () => {
+			const entry = createMockEntry({ summary: 'Search key entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Search key entry')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText('Filter history...');
+			fireEvent.change(searchInput, { target: { value: 'Search' } });
+			fireEvent.keyDown(searchInput, { key: 'Tab' });
+
+			expect(screen.getByPlaceholderText('Filter history...')).toHaveValue('Search');
 		});
 	});
 
@@ -871,6 +997,31 @@ describe('HistoryPanel', () => {
 				expect(card).toHaveStyle({ outlineOffset: '1px' });
 			});
 		});
+
+		it('should leave selection empty when ArrowDown is pressed from search with no matches', async () => {
+			const entry = createMockEntry({ summary: 'Visible before search' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Visible before search')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+
+			const searchInput = await screen.findByPlaceholderText('Filter history...');
+			fireEvent.change(searchInput, { target: { value: 'no matches' } });
+			fireEvent.keyDown(searchInput, { key: 'ArrowDown' });
+
+			await waitFor(() => {
+				expect(screen.getByText(/No entries match "no matches"/)).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
 	});
 
 	// ===== DETAIL MODAL =====
@@ -974,6 +1125,27 @@ describe('HistoryPanel', () => {
 				);
 			});
 		});
+
+		it('should keep a history entry when deletion reports failure', async () => {
+			const entry = createMockEntry({ id: 'delete-false-entry', summary: 'Keep entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+			mockHistoryDelete.mockResolvedValue(false);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Keep entry')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Keep entry'));
+			await screen.findByTestId('modal-delete');
+			fireEvent.click(screen.getByTestId('modal-delete'));
+
+			await waitFor(() => {
+				expect(mockHistoryDelete).toHaveBeenCalledWith('delete-false-entry', 'session-1');
+			});
+			expect(screen.getAllByText('Keep entry').length).toBeGreaterThan(0);
+		});
 	});
 
 	// ===== REF API =====
@@ -1000,6 +1172,55 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		it('should not select an item when focus is called with an empty history list', async () => {
+			const ref = React.createRef<HistoryPanelHandle>();
+			mockHistoryGetAll.mockResolvedValue([]);
+
+			render(<HistoryPanel ref={ref} session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText(/No history yet/)).toBeInTheDocument();
+			});
+
+			act(() => {
+				ref.current?.focus();
+			});
+
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
+
+		it('should preserve the current selection when focus is called after keyboard navigation', async () => {
+			const ref = React.createRef<HistoryPanelHandle>();
+			const entries = [
+				createMockEntry({ id: 'first-ref-entry', summary: 'First ref entry' }),
+				createMockEntry({ id: 'second-ref-entry', summary: 'Second ref entry' }),
+			];
+			mockHistoryGetAll.mockResolvedValue(entries);
+
+			const { container } = render(
+				<HistoryPanel ref={ref} session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('First ref entry')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+
+			act(() => {
+				ref.current?.focus();
+			});
+
+			await waitFor(() => {
+				const secondCard = screen
+					.getByText('Second ref entry')
+					.closest('div[class*="cursor-pointer"]');
+				expect(secondCard).toHaveStyle({ outlineOffset: '1px' });
+			});
+		});
+
 		it('should expose refreshHistory method', async () => {
 			const ref = React.createRef<HistoryPanelHandle>();
 			mockHistoryGetAll.mockResolvedValue([]);
@@ -1023,6 +1244,38 @@ describe('HistoryPanel', () => {
 				expect(mockHistoryGetAll).toHaveBeenCalledTimes(2);
 				expect(screen.getByText('New entry after refresh')).toBeInTheDocument();
 			});
+		});
+
+		it('should skip refresh scroll restoration if the panel unmounts before animation frame', async () => {
+			const rafCallbacks: FrameRequestCallback[] = [];
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
+				(callback: FrameRequestCallback) => {
+					rafCallbacks.push(callback);
+					return rafCallbacks.length;
+				}
+			);
+			const ref = React.createRef<HistoryPanelHandle>();
+			const entry = createMockEntry({ summary: 'Refresh unmount entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { unmount } = render(
+				<HistoryPanel ref={ref} session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Refresh unmount entry')).toBeInTheDocument();
+			});
+
+			act(() => {
+				ref.current?.refreshHistory();
+			});
+
+			await waitFor(() => {
+				expect(rafCallbacks.length).toBeGreaterThan(0);
+			});
+			unmount();
+
+			expect(() => rafCallbacks.forEach((callback) => callback(0))).not.toThrow();
 		});
 	});
 
@@ -1168,6 +1421,20 @@ describe('HistoryPanel', () => {
 				expect(screen.getByText('No summary available')).toBeInTheDocument();
 			});
 		});
+
+		it('should render entries with an empty id using the virtual row fallback key', async () => {
+			const entry = createMockEntry({
+				id: '',
+				summary: 'Empty id entry',
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Empty id entry')).toBeInTheDocument();
+			});
+		});
 	});
 
 	// ===== VIRTUALIZATION =====
@@ -1266,6 +1533,240 @@ describe('HistoryPanel', () => {
 
 				fireEvent.mouseLeave(bars[bars.length - 1]);
 			}
+		});
+
+		it('should select a history entry when clicking its activity graph bucket', async () => {
+			const entry = createMockEntry({
+				id: 'graph-click-entry',
+				summary: 'Graph click entry',
+				timestamp: Date.now() - 1000,
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Graph click entry')).toBeInTheDocument();
+			});
+
+			const bars = Array.from(
+				container.querySelectorAll<HTMLElement>('[class*="rounded-t-sm"][style*="cursor: pointer"]')
+			);
+			expectSmoothScrollDynamicSizeWarning(() => {
+				fireEvent.click(bars[bars.length - 1]);
+			});
+
+			await waitFor(() => {
+				const card = screen.getByText('Graph click entry').closest('div[class*="cursor-pointer"]');
+				expect(card).toHaveStyle({ outline: `2px solid ${mockTheme.colors.accent}` });
+			});
+		});
+
+		it('should select another entry in the bucket when the newest bucket entry is filtered out', async () => {
+			const timestamp = Date.now() - 1000;
+			const autoEntry = createMockEntry({
+				id: 'filtered-auto-entry',
+				type: 'AUTO',
+				summary: 'Filtered auto bucket entry',
+				timestamp,
+			});
+			const userEntry = createMockEntry({
+				id: 'visible-user-entry',
+				type: 'USER',
+				summary: 'Visible user bucket entry',
+				timestamp,
+			});
+			mockHistoryGetAll.mockResolvedValue([autoEntry, userEntry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Filtered auto bucket entry')).toBeInTheDocument();
+				expect(screen.getByText('Visible user bucket entry')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /AUTO/i }));
+
+			await waitFor(() => {
+				expect(screen.queryByText('Filtered auto bucket entry')).not.toBeInTheDocument();
+				expect(screen.getByText('Visible user bucket entry')).toBeInTheDocument();
+			});
+
+			const bars = Array.from(
+				container.querySelectorAll<HTMLElement>('[class*="rounded-t-sm"][style*="cursor: pointer"]')
+			);
+			expectSmoothScrollDynamicSizeWarning(() => {
+				fireEvent.click(bars[bars.length - 1]);
+			});
+
+			await waitFor(() => {
+				const card = screen
+					.getByText('Visible user bucket entry')
+					.closest('div[class*="cursor-pointer"]');
+				expect(card).toHaveStyle({ outline: `2px solid ${mockTheme.colors.accent}` });
+			});
+		});
+
+		it('should ignore graph bucket clicks when every entry in the bucket is filtered out', async () => {
+			const autoEntry = createMockEntry({
+				id: 'only-filtered-auto-entry',
+				type: 'AUTO',
+				summary: 'Only filtered bucket entry',
+				timestamp: Date.now() - 1000,
+			});
+			mockHistoryGetAll.mockResolvedValue([autoEntry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Only filtered bucket entry')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /AUTO/i }));
+
+			await waitFor(() => {
+				expect(screen.queryByText('Only filtered bucket entry')).not.toBeInTheDocument();
+			});
+
+			const bars = Array.from(
+				container.querySelectorAll<HTMLElement>('[class*="rounded-t-sm"][style*="cursor: pointer"]')
+			);
+			fireEvent.click(bars[bars.length - 1]);
+
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+			expect(screen.queryByText('Only filtered bucket entry')).not.toBeInTheDocument();
+		});
+
+		it('should update graph reference time while scrolling the history list', async () => {
+			const entry = createMockEntry({
+				summary: 'Historical scroll entry',
+				timestamp: Date.now() - 2 * 60 * 60 * 1000,
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Historical scroll entry')).toBeInTheDocument();
+			});
+
+			const list = container.querySelector<HTMLElement>(
+				'[tabindex="0"][class*="overflow-y-auto"]'
+			)!;
+			Object.defineProperty(list, 'scrollTop', { value: 80, writable: true });
+			fireEvent.scroll(list);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(8);
+			});
+
+			await waitFor(() => {
+				expect(container.querySelector('[title*="Viewing:"]')).toBeInTheDocument();
+			});
+
+			list.scrollTop = 0;
+			fireEvent.scroll(list);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(8);
+			});
+
+			await waitFor(() => {
+				expect(container.querySelector('[title*="Viewing:"]')).not.toBeInTheDocument();
+			});
+		});
+
+		it('should restore cached scroll position when the same session is remounted', async () => {
+			const rafSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback: FrameRequestCallback) => {
+					callback(0);
+					return 1;
+				});
+			const session = createMockSession({ id: 'restore-scroll-session' });
+			const entry = createMockEntry({ summary: 'Restore scroll entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container, unmount } = render(<HistoryPanel session={session} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Restore scroll entry')).toBeInTheDocument();
+			});
+
+			const firstList = container.querySelector<HTMLElement>(
+				'[tabindex="0"][class*="overflow-y-auto"]'
+			)!;
+			Object.defineProperty(firstList, 'scrollTop', { value: 96, writable: true });
+			fireEvent.scroll(firstList);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(8);
+			});
+
+			unmount();
+
+			const { container: remountedContainer } = render(
+				<HistoryPanel session={session} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Restore scroll entry')).toBeInTheDocument();
+			});
+
+			const remountedList = remountedContainer.querySelector<HTMLElement>(
+				'[tabindex="0"][class*="overflow-y-auto"]'
+			)!;
+			expect(remountedList.scrollTop).toBe(96);
+			expect(rafSpy).toHaveBeenCalled();
+		});
+
+		it('should skip cached scroll restoration if the remounted panel unmounts before animation frame', async () => {
+			const rafCallbacks: FrameRequestCallback[] = [];
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
+				(callback: FrameRequestCallback) => {
+					rafCallbacks.push(callback);
+					return rafCallbacks.length;
+				}
+			);
+			const session = createMockSession({ id: 'restore-scroll-unmount-session' });
+			const entry = createMockEntry({ summary: 'Unmount before restore entry' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			const { container, unmount } = render(<HistoryPanel session={session} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Unmount before restore entry')).toBeInTheDocument();
+			});
+
+			const firstList = container.querySelector<HTMLElement>(
+				'[tabindex="0"][class*="overflow-y-auto"]'
+			)!;
+			Object.defineProperty(firstList, 'scrollTop', { value: 72, writable: true });
+			fireEvent.scroll(firstList);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(8);
+			});
+
+			unmount();
+			const { unmount: unmountRemounted } = render(
+				<HistoryPanel session={session} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(rafCallbacks.length).toBeGreaterThan(0);
+			});
+			unmountRemounted();
+
+			expect(() => rafCallbacks.forEach((callback) => callback(0))).not.toThrow();
 		});
 	});
 
@@ -1526,7 +2027,11 @@ describe('HistoryPanel', () => {
 				id: 'update-test-entry',
 				summary: 'Original summary',
 			});
-			mockHistoryGetAll.mockResolvedValue([entry]);
+			const untouchedEntry = createMockEntry({
+				id: 'untouched-update-entry',
+				summary: 'Untouched summary',
+			});
+			mockHistoryGetAll.mockResolvedValue([entry, untouchedEntry]);
 			mockHistoryUpdate.mockResolvedValue(true);
 
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
@@ -1552,6 +2057,7 @@ describe('HistoryPanel', () => {
 					{ summary: 'Updated summary' },
 					'session-1'
 				);
+				expect(screen.getByText('Untouched summary')).toBeInTheDocument();
 			});
 		});
 
@@ -1587,6 +2093,54 @@ describe('HistoryPanel', () => {
 			expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
 		});
 
+		it('should not reopen the detail modal when an async update resolves after close', async () => {
+			let resolveUpdate: ((value: boolean) => void) | undefined;
+			const entry = createMockEntry({
+				id: 'delayed-update-entry',
+				summary: 'Delayed original summary',
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+			mockHistoryUpdate.mockImplementation(
+				() =>
+					new Promise<boolean>((resolve) => {
+						resolveUpdate = resolve;
+					})
+			);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Delayed original summary')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Delayed original summary'));
+			await screen.findByTestId('history-detail-modal');
+			fireEvent.click(screen.getByTestId('modal-update'));
+
+			await waitFor(() => {
+				expect(mockHistoryUpdate).toHaveBeenCalledWith(
+					'delayed-update-entry',
+					{ summary: 'Updated summary' },
+					'session-1'
+				);
+			});
+
+			fireEvent.click(screen.getByTestId('modal-close'));
+			await waitFor(() => {
+				expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+			});
+
+			await act(async () => {
+				resolveUpdate?.(true);
+				await Promise.resolve();
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Updated summary')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+		});
+
 		it('should navigate to next entry when onNavigate is called', async () => {
 			const entries = [
 				createMockEntry({ id: 'entry-1', summary: 'First entry' }),
@@ -1610,7 +2164,9 @@ describe('HistoryPanel', () => {
 			});
 
 			// Click navigate next button
-			fireEvent.click(screen.getByTestId('modal-navigate-next'));
+			expectSmoothScrollDynamicSizeWarning(() => {
+				fireEvent.click(screen.getByTestId('modal-navigate-next'));
+			});
 
 			await waitFor(() => {
 				// Should now show second entry
@@ -1646,7 +2202,9 @@ describe('HistoryPanel', () => {
 
 			// Click "Navigate Far" to go to entry at index 60
 			// With virtualization, all entries are accessible without pagination
-			fireEvent.click(screen.getByTestId('modal-navigate-far'));
+			expectSmoothScrollDynamicSizeWarning(() => {
+				fireEvent.click(screen.getByTestId('modal-navigate-far'));
+			});
 
 			await waitFor(() => {
 				// Should have navigated to entry 60

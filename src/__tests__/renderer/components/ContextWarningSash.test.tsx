@@ -312,6 +312,46 @@ describe('ContextWarningSash', () => {
 			expect(screen.getByRole('alert')).toBeInTheDocument();
 			expect(screen.getByText(/consider compacting to continue/)).toBeInTheDocument();
 		});
+
+		it('should reappear when crossing to red threshold before usage increases by 10%', () => {
+			const { container, rerender } = render(
+				<ContextWarningSash
+					theme={theme}
+					contextUsage={75}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Dismiss'));
+
+			rerender(
+				<ContextWarningSash
+					theme={theme}
+					contextUsage={75}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+			expect(container.firstChild).toBeNull();
+
+			rerender(
+				<ContextWarningSash
+					theme={theme}
+					contextUsage={80}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+			expect(screen.getByRole('alert')).toBeInTheDocument();
+			expect(screen.getByText(/consider compacting to continue/)).toBeInTheDocument();
+		});
 	});
 
 	describe('tab-based dismissal', () => {
@@ -438,6 +478,33 @@ describe('ContextWarningSash', () => {
 			const button = screen.getByText('Compact & Continue');
 			fireEvent.keyDown(button, { key: 'Enter' });
 			expect(mockOnSummarizeClick).toHaveBeenCalledTimes(1);
+		});
+
+		it('should support keyboard dismissal', () => {
+			const { container, rerender } = render(
+				<ContextWarningSash
+					theme={theme}
+					contextUsage={70}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+
+			fireEvent.keyDown(screen.getByTitle('Dismiss'), { key: 'Enter' });
+
+			rerender(
+				<ContextWarningSash
+					theme={theme}
+					contextUsage={70}
+					yellowThreshold={60}
+					redThreshold={80}
+					enabled={true}
+					onSummarizeClick={mockOnSummarizeClick}
+				/>
+			);
+			expect(container.firstChild).toBeNull();
 		});
 	});
 

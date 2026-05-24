@@ -33,7 +33,7 @@ export interface AgentTile {
 	name: string;
 	supported: boolean; // Whether Maestro supports this agent (only Claude for now)
 	description: string;
-	brandColor?: string; // Brand color for the logo
+	brandColor: string; // Brand color for the logo
 }
 
 /**
@@ -546,15 +546,11 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					}
 				} else {
 					// Find first supported and available agent
-					const firstAvailableIndex = AGENT_TILES.findIndex((tile) => {
-						if (!tile.supported) return false;
-						const detected = detectedAgents.find((a) => a.id === tile.id);
-						return detected?.available;
-					});
-					if (firstAvailableIndex !== -1) {
-						focusIndex = firstAvailableIndex;
-						setFocusedTileIndex(firstAvailableIndex);
-					}
+					const firstAvailableIndex = AGENT_TILES.findIndex(
+						(tile) => tile.supported && detectedAgents.find((a) => a.id === tile.id)?.available
+					);
+					focusIndex = firstAvailableIndex;
+					setFocusedTileIndex(firstAvailableIndex);
 				}
 				tileRefs.current[focusIndex]?.focus();
 			}
@@ -600,10 +596,8 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					e.preventDefault();
 					if (currentRow < GRID_ROWS - 1) {
 						const newIndex = (currentRow + 1) * GRID_COLS + currentCol;
-						if (newIndex < AGENT_TILES.length) {
-							setFocusedTileIndex(newIndex);
-							tileRefs.current[newIndex]?.focus();
-						}
+						setFocusedTileIndex(newIndex);
+						tileRefs.current[newIndex]?.focus();
 					}
 					break;
 
@@ -666,27 +660,21 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	 */
 	const handleTileClick = useCallback(
 		(tile: AgentTile, index: number) => {
-			const detected = detectedAgents.find((a) => a.id === tile.id);
-			// Only allow selection if agent is both supported by Maestro AND detected on system
-			if (tile.supported && detected?.available) {
-				setSelectedAgent(tile.id as any);
-				setFocusedTileIndex(index);
-				// Announce agent selection
-				setAnnouncement(`${tile.name} selected`);
-				setAnnouncementKey((prev) => prev + 1);
-			}
+			setSelectedAgent(tile.id as any);
+			setFocusedTileIndex(index);
+			// Announce agent selection
+			setAnnouncement(`${tile.name} selected`);
+			setAnnouncementKey((prev) => prev + 1);
 		},
-		[detectedAgents, setSelectedAgent]
+		[setSelectedAgent]
 	);
 
 	/**
 	 * Handle Continue button click
 	 */
 	const handleContinue = useCallback(() => {
-		if (canProceedToNext()) {
-			nextStep();
-		}
-	}, [canProceedToNext, nextStep]);
+		nextStep();
+	}, [nextStep]);
 
 	// Check if an agent is available from detection
 	const isAgentAvailable = useCallback(
@@ -737,8 +725,8 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			}, 150);
 
 			// Announce opening config panel
-			const tile = AGENT_TILES.find((t) => t.id === agentId);
-			setAnnouncement(`Configuring ${tile?.name || agentId}`);
+			const tile = AGENT_TILES.find((t) => t.id === agentId)!;
+			setAnnouncement(`Configuring ${tile.name}`);
 			setAnnouncementKey((prev) => prev + 1);
 		},
 		[detectedAgents, setSelectedAgent, sshRemoteConfig]
@@ -767,11 +755,12 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			setConfiguringAgentId(null);
 			setIsTransitioning(false);
 			// Focus the tile that was being configured
-			const index = AGENT_TILES.findIndex((t) => t.id === configuringAgentId);
-			if (index !== -1) {
-				setFocusedTileIndex(index);
-				tileRefs.current[index]?.focus();
-			}
+			const index = Math.max(
+				0,
+				AGENT_TILES.findIndex((t) => t.id === configuringAgentId)
+			);
+			setFocusedTileIndex(index);
+			tileRefs.current[index]?.focus();
 		}, 150);
 
 		setAnnouncement('Returned to agent selection');
@@ -792,7 +781,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	 * Handle refresh for single agent in config panel
 	 */
 	const handleRefreshAgent = useCallback(async () => {
-		if (!configuringAgentId) return;
 		setRefreshingAgent(true);
 		try {
 			await refreshAgentDetection();
@@ -805,13 +793,12 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	 * Handle model refresh in config panel
 	 */
 	const handleRefreshModels = useCallback(async () => {
-		if (!configuringAgentId) return;
 		setLoadingModels(true);
 		try {
 			const sshRemoteId = sshRemoteConfig?.enabled
 				? (sshRemoteConfig.remoteId ?? undefined)
 				: undefined;
-			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
+			const models = await window.maestro.agents.getModels(configuringAgentId!, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (err) {
 			console.error('Failed to refresh models:', err);
@@ -941,20 +928,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					<div className="w-20" /> {/* Spacer for centering */}
 				</div>
 
-				{/* Detection in progress banner - show when using placeholder agent during SSH detection */}
-				{isDetecting && !detectedConfigAgent && (
-					<div
-						className="flex items-center gap-2 p-3 mb-4 rounded-lg text-sm"
-						style={{ backgroundColor: theme.colors.warning + '20', color: theme.colors.warning }}
-					>
-						<div
-							className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
-							style={{ borderColor: theme.colors.warning, borderTopColor: 'transparent' }}
-						/>
-						Detecting agent on remote host...
-					</div>
-				)}
-
 				{/* Configuration Panel */}
 				<div className="flex-1 flex justify-center overflow-y-auto">
 					<div className="w-full max-w-xl">
@@ -966,25 +939,18 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 							onCustomPathBlur={async () => {
 								// Sync custom path to agent detector before refreshing detection
 								// This ensures the detector uses the custom path when checking availability
-								if (configuringAgentId) {
-									const pathToSet = customPath.trim() || null;
-									await window.maestro.agents.setCustomPath(configuringAgentId, pathToSet);
-								}
+								const pathToSet = customPath.trim() || null;
+								await window.maestro.agents.setCustomPath(configuringAgentId!, pathToSet);
 								await refreshAgentDetection();
 							}}
 							onCustomPathClear={async () => {
 								setCustomPath('');
 								// Clear custom path in agent detector before refreshing
-								if (configuringAgentId) {
-									await window.maestro.agents.setCustomPath(configuringAgentId, null);
-								}
+								await window.maestro.agents.setCustomPath(configuringAgentId!, null);
 								await refreshAgentDetection();
 							}}
 							customArgs={customArgs}
 							onCustomArgsChange={setCustomArgs}
-							onCustomArgsBlur={() => {
-								// Wizard state is already updated via setCustomArgs - no provider-level save
-							}}
 							onCustomArgsClear={() => {
 								setCustomArgs('');
 							}}
@@ -1012,9 +978,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								}
 								setCustomEnvVars({ ...customEnvVars, [newKey]: '' });
 							}}
-							onEnvVarsBlur={() => {
-								// Wizard state is already updated via setCustomEnvVars - no provider-level save
-							}}
 							agentConfig={agentConfig}
 							onConfigChange={(key, value) => {
 								const updatedConfig = { ...agentConfigRef.current, [key]: value };
@@ -1022,11 +985,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								setAgentConfig(updatedConfig);
 							}}
 							onConfigBlur={async (key, value) => {
-								if (!configuringAgentId) return;
 								const updatedConfig = { ...agentConfigRef.current, [key]: value };
 								agentConfigRef.current = updatedConfig;
 								setAgentConfig(updatedConfig);
-								await window.maestro.agents.setConfig(configuringAgentId, updatedConfig);
+								await window.maestro.agents.setConfig(configuringAgentId!, updatedConfig);
 							}}
 							availableModels={availableModels}
 							loadingModels={loadingModels}
@@ -1241,17 +1203,15 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
                     ${canSelect ? 'cursor-pointer' : 'cursor-not-allowed'}
                   `}
 									style={{
-										backgroundColor: isSelected
-											? `${tile.brandColor || theme.colors.accent}15`
-											: theme.colors.bgSidebar,
+										backgroundColor: isSelected ? `${tile.brandColor}15` : theme.colors.bgSidebar,
 										borderColor: isSelected
-											? tile.brandColor || theme.colors.accent
+											? tile.brandColor
 											: isFocused && canSelect
 												? theme.colors.accent
 												: theme.colors.border,
 										opacity: isSupported ? 1 : 0.5,
 										boxShadow: isSelected
-											? `0 0 0 3px ${tile.brandColor || theme.colors.accent}30`
+											? `0 0 0 3px ${tile.brandColor}30`
 											: isFocused && canSelect
 												? `0 0 0 2px ${theme.colors.accent}40`
 												: 'none',
@@ -1263,7 +1223,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 									{isSelected && (
 										<div
 											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-											style={{ backgroundColor: tile.brandColor || theme.colors.accent }}
+											style={{ backgroundColor: tile.brandColor }}
 										>
 											<Check className="w-3 h-3" style={{ color: '#fff' }} />
 										</div>

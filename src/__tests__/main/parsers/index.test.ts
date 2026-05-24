@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	initializeOutputParsers,
 	ensureParsersInitialized,
@@ -10,10 +10,16 @@ import {
 	OpenCodeOutputParser,
 	CodexOutputParser,
 } from '../../../main/parsers';
+import { logger } from '../../../main/utils/logger';
 
 describe('parsers/index', () => {
 	beforeEach(() => {
 		clearParserRegistry();
+		vi.spyOn(logger, 'info').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
 	describe('initializeOutputParsers', () => {
@@ -54,6 +60,15 @@ describe('parsers/index', () => {
 
 			const parsers = getAllOutputParsers();
 			expect(parsers.length).toBe(4); // Claude, OpenCode, Codex, Factory Droid
+		});
+
+		it('should log the registered parser ids', () => {
+			initializeOutputParsers();
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'Initialized output parsers: claude-code, opencode, codex, factory-droid',
+				'[OutputParsers]'
+			);
 		});
 
 		it('should clear existing parsers before registering', () => {

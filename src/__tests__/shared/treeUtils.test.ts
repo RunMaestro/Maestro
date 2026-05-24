@@ -187,6 +187,20 @@ describe('treeUtils', () => {
 			const result = walkTree(sampleTree, {});
 			expect(result).toEqual([]);
 		});
+
+		it('ignores nodes with unknown runtime types', () => {
+			const malformedTree = [
+				{ name: 'valid.txt', type: 'file' },
+				{ name: 'ignored', type: 'symlink' },
+			] as unknown as TreeNode[];
+
+			const result = walkTree(malformedTree, {
+				onFile: (_, path) => path,
+				onFolder: (_, path) => path,
+			});
+
+			expect(result).toEqual(['valid.txt']);
+		});
 	});
 
 	describe('walkTreePartitioned', () => {

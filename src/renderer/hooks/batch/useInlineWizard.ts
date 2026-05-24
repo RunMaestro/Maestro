@@ -797,9 +797,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				// This happens when user types directly instead of using the mode selection modal
 				const currentState = tabStatesRef.current.get(tabId);
 				// Use stored autoRunFolderPath from state (configured by user or default)
-				const effectiveAutoRunFolderPath =
-					currentState?.autoRunFolderPath ||
-					(currentState?.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+				const effectiveAutoRunFolderPath = currentState?.autoRunFolderPath;
 
 				if (
 					currentState?.mode === 'ask' &&
@@ -848,8 +846,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			try {
 				// Get current conversation history for this tab
-				const currentState = tabStatesRef.current.get(tabId);
-				const currentHistory = currentState?.conversationHistory || [];
+				const currentHistory = tabStatesRef.current.get(tabId)!.conversationHistory;
 
 				// Call the AI service
 				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
@@ -991,9 +988,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			) {
 				// Create conversation session if we have the required info
 				// Use the stored autoRunFolderPath from state (configured by user or default)
-				const effectiveAutoRunFolderPath =
-					currentState.autoRunFolderPath ||
-					(currentState.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+				const effectiveAutoRunFolderPath = currentState.autoRunFolderPath;
 
 				if (
 					currentState.agentType &&
@@ -1141,7 +1136,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			// Remove the last user message from history (it failed, so we'll re-add it)
 			// Find the last user message in history
-			const historyWithoutLastUser = [...(currentState.conversationHistory || [])];
+			const historyWithoutLastUser = [...currentState.conversationHistory];
 			for (let i = historyWithoutLastUser.length - 1; i >= 0; i--) {
 				if (historyWithoutLastUser[i].role === 'user') {
 					historyWithoutLastUser.splice(i, 1);
@@ -1233,9 +1228,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			}
 
 			// Get the effective Auto Run folder path (stored in state from startWizard)
-			const effectiveAutoRunFolderPath =
-				currentState?.autoRunFolderPath ||
-				(currentState?.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+			const effectiveAutoRunFolderPath = currentState?.autoRunFolderPath;
 
 			// Validate we have the required state
 			if (!currentState?.agentType || !effectiveAutoRunFolderPath) {

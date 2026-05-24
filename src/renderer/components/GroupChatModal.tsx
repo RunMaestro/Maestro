@@ -141,14 +141,14 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	}, [ac.customPath, ac.customArgs, ac.customEnvVars, ac.agentConfig.model, ac.sshRemoteConfig]);
 
 	const handleSubmit = useCallback(() => {
-		if (!name.trim() || !ac.selectedAgent) return;
-
+		const trimmedName = name.trim();
+		const selectedAgent = ac.selectedAgent!;
 		const moderatorConfig = buildModeratorConfig();
 
 		if (mode === 'create') {
-			props.onCreate(name.trim(), ac.selectedAgent, moderatorConfig);
-		} else if (groupChat) {
-			props.onSave(groupChat.id, name.trim(), ac.selectedAgent, moderatorConfig);
+			props.onCreate(trimmedName, selectedAgent, moderatorConfig);
+		} else {
+			props.onSave(groupChat!.id, trimmedName, selectedAgent, moderatorConfig);
 		}
 
 		setName('');
@@ -397,15 +397,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								agent={selectedAgentConfig}
 								customPath={ac.customPath}
 								onCustomPathChange={ac.setCustomPath}
-								onCustomPathBlur={() => {
-									/* Local state only */
-								}}
 								onCustomPathClear={() => ac.setCustomPath('')}
 								customArgs={ac.customArgs}
 								onCustomArgsChange={ac.setCustomArgs}
-								onCustomArgsBlur={() => {
-									/* Local state only */
-								}}
 								onCustomArgsClear={() => ac.setCustomArgs('')}
 								customEnvVars={ac.customEnvVars}
 								onEnvVarKeyChange={(oldKey, newKey, value) => {
@@ -431,9 +425,6 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									}
 									ac.setCustomEnvVars({ ...ac.customEnvVars, [newKey]: '' });
 								}}
-								onEnvVarsBlur={() => {
-									/* Local state only */
-								}}
 								agentConfig={ac.agentConfig}
 								onConfigChange={(key, value) => {
 									const newConfig = { ...ac.agentConfig, [key]: value };
@@ -444,11 +435,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									}
 								}}
 								onConfigBlur={async () => {
-									if (ac.selectedAgent) {
-										await ac.saveAgentConfig(ac.selectedAgent);
-										if (mode === 'edit') {
-											setConfigWasModified(true);
-										}
+									const selectedAgent = ac.selectedAgent!;
+									await ac.saveAgentConfig(selectedAgent);
+									if (mode === 'edit') {
+										setConfigWasModified(true);
 									}
 								}}
 								availableModels={ac.availableModels}

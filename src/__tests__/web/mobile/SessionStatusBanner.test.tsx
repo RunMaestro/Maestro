@@ -746,6 +746,18 @@ describe('SessionStatusBanner', () => {
 
 			expect(screen.getByText('500')).toBeInTheDocument();
 		});
+
+		it('handles undefined outputTokens with fallback to 0', () => {
+			const usageStats = createUsageStats({
+				inputTokens: 500,
+				outputTokens: undefined,
+			});
+			const session = createSession({ usageStats });
+
+			render(<SessionStatusBanner session={session} />);
+
+			expect(screen.getByText('500')).toBeInTheDocument();
+		});
 	});
 
 	describe('ThinkingIndicator component', () => {
@@ -1027,6 +1039,12 @@ describe('SessionStatusBanner', () => {
 				expect(screen.getByText('Failed')).toBeInTheDocument();
 				expect(triggerHaptic).toHaveBeenCalledWith(HAPTIC_PATTERNS.error);
 				expect(webLogger.error).toHaveBeenCalled();
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(screen.getByText('Copy')).toBeInTheDocument();
 			});
 
 			it('uses fallback copy method when clipboard API unavailable', async () => {

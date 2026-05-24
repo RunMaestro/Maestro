@@ -71,8 +71,6 @@ export function AgentSessionsModal({
 
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
-	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const sessionsContainerRef = useRef<HTMLDivElement>(null);
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -89,12 +87,7 @@ export function AgentSessionsModal({
 			focusTrap: 'strict',
 			ariaLabel: 'Agent Sessions',
 			onEscape: () => {
-				if (viewingSession) {
-					setViewingSession(null);
-					setMessages([]);
-				} else {
-					onCloseRef.current();
-				}
+				onCloseRef.current();
 			},
 		});
 
@@ -231,18 +224,19 @@ export function AgentSessionsModal({
 	}, [activeSession?.projectRoot, activeSession?.toolType, hasMoreSessions, isLoadingMoreSessions]);
 
 	// Handle scroll for sessions list pagination - load more at 70% scroll
-	const handleSessionsScroll = useCallback(() => {
-		const container = sessionsContainerRef.current;
-		if (!container) return;
+	const handleSessionsScroll = useCallback(
+		(event: React.UIEvent<HTMLDivElement>) => {
+			const container = event.currentTarget;
+			const { scrollTop, scrollHeight, clientHeight } = container;
+			const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
+			const atSeventyPercent = scrollPercentage >= 0.7;
 
-		const { scrollTop, scrollHeight, clientHeight } = container;
-		const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
-		const atSeventyPercent = scrollPercentage >= 0.7;
-
-		if (atSeventyPercent && hasMoreSessions && !isLoadingMoreSessions) {
-			loadMoreSessions();
-		}
-	}, [hasMoreSessions, isLoadingMoreSessions, loadMoreSessions]);
+			if (atSeventyPercent && hasMoreSessions && !isLoadingMoreSessions) {
+				loadMoreSessions();
+			}
+		},
+		[hasMoreSessions, isLoadingMoreSessions, loadMoreSessions]
+	);
 
 	// Toggle star status for a session
 	const toggleStar = useCallback(
@@ -336,29 +330,26 @@ export function AgentSessionsModal({
 
 	// Handle loading more messages (scroll to top)
 	const handleLoadMore = useCallback(() => {
-		if (viewingSession && hasMoreMessages && !messagesLoading) {
-			loadMessages(viewingSession, messagesOffset);
-		}
-	}, [viewingSession, hasMoreMessages, messagesLoading, messagesOffset, loadMessages]);
+		loadMessages(viewingSession!, messagesOffset);
+	}, [viewingSession, messagesOffset, loadMessages]);
 
 	// Handle scroll for lazy loading
-	const handleMessagesScroll = useCallback(() => {
-		const container = messagesContainerRef.current;
-		if (!container) return;
+	const handleMessagesScroll = useCallback(
+		(event: React.UIEvent<HTMLDivElement>) => {
+			const container = event.currentTarget;
+			// Load more when scrolled near top
+			if (container.scrollTop < 100 && hasMoreMessages && !messagesLoading) {
+				const prevScrollHeight = container.scrollHeight;
+				handleLoadMore();
 
-		// Load more when scrolled near top
-		if (container.scrollTop < 100 && hasMoreMessages && !messagesLoading) {
-			const prevScrollHeight = container.scrollHeight;
-			handleLoadMore();
-
-			// Maintain scroll position after loading
-			requestAnimationFrame(() => {
-				if (container) {
+				// Maintain scroll position after loading
+				requestAnimationFrame(() => {
 					container.scrollTop = container.scrollHeight - prevScrollHeight;
-				}
-			});
-		}
-	}, [hasMoreMessages, messagesLoading, handleLoadMore]);
+				});
+			}
+		},
+		[hasMoreMessages, messagesLoading, handleLoadMore]
+	);
 
 	// Filter sessions by search and sort starred to top
 	const filteredSessions = sessions
@@ -380,10 +371,8 @@ export function AgentSessionsModal({
 	// Handle selection by index - opens session view
 	const handleSelectByIndex = useCallback(
 		(index: number) => {
-			const selected = filteredSessions[index];
-			if (selected) {
-				handleViewSession(selected);
-			}
+			const selected = filteredSessions[index]!;
+			handleViewSession(selected);
 		},
 		[filteredSessions, handleViewSession]
 	);
@@ -419,12 +408,13 @@ export function AgentSessionsModal({
 	);
 
 	// Handle resume session
-	const handleResume = useCallback(() => {
-		if (viewingSession) {
-			onResumeSession(viewingSession.sessionId);
+	const handleResume = useCallback(
+		(session: AgentSession) => {
+			onResumeSession(session.sessionId);
 			onClose();
-		}
-	}, [viewingSession, onResumeSession, onClose]);
+		},
+		[onResumeSession, onClose]
+	);
 
 	// formatSize and formatRelativeTime imported from ../utils/formatters
 
@@ -467,7 +457,7 @@ export function AgentSessionsModal({
 								</div>
 							</div>
 							<button
-								onClick={handleResume}
+								onClick={() => handleResume(viewingSession)}
 								className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
 								style={{
 									backgroundColor: theme.colors.accent,
@@ -503,7 +493,6 @@ export function AgentSessionsModal({
 				{/* Content */}
 				{viewingSession ? (
 					<div
-						ref={messagesContainerRef}
 						className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin"
 						onScroll={handleMessagesScroll}
 					>
@@ -587,7 +576,6 @@ export function AgentSessionsModal({
 					</div>
 				) : (
 					<div
-						ref={sessionsContainerRef}
 						className="overflow-y-auto py-2 flex-1 scrollbar-thin"
 						onScroll={handleSessionsScroll}
 					>

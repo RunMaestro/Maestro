@@ -1124,6 +1124,34 @@ describe('useTemplateAutocomplete', () => {
 			// Left should be limited to prevent overflow (clientWidth - 250)
 			expect(position.left).toBeLessThanOrEqual(mockTextarea.clientWidth - 250 + 50); // +50 for tolerance
 		});
+
+		it('uses fallback line height when computed lineHeight is empty', () => {
+			vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+				fontFamily: 'monospace',
+				fontSize: '14px',
+				lineHeight: '',
+				padding: '8px',
+				border: '1px solid black',
+			} as CSSStyleDeclaration);
+
+			const { result } = renderHook(() =>
+				useTemplateAutocomplete({
+					textareaRef,
+					value: '',
+					onChange: onChangeMock,
+				})
+			);
+
+			mockTextarea.value = '{{';
+			mockTextarea.selectionStart = 2;
+			act(() => {
+				result.current.handleChange({
+					target: mockTextarea,
+				} as React.ChangeEvent<HTMLTextAreaElement>);
+			});
+
+			expect(result.current.autocompleteState.position.top).toBe(24);
+		});
 	});
 
 	describe('scroll into view effect', () => {
@@ -1417,6 +1445,45 @@ describe('useTemplateAutocomplete', () => {
 			expect(setSelectionRangeMock).toHaveBeenCalledWith(8, 8); // Length of "{{DATE}}"
 
 			vi.useRealTimers();
+		});
+
+		it('skips cursor restoration if textarea ref is cleared before animation frame', async () => {
+			vi.useFakeTimers();
+
+			try {
+				const { result } = renderHook(() =>
+					useTemplateAutocomplete({
+						textareaRef,
+						value: '',
+						onChange: onChangeMock,
+					})
+				);
+
+				const focusMock = vi.fn();
+				mockTextarea.focus = focusMock;
+
+				mockTextarea.value = '{{';
+				mockTextarea.selectionStart = 2;
+				act(() => {
+					result.current.handleChange({
+						target: mockTextarea,
+					} as React.ChangeEvent<HTMLTextAreaElement>);
+				});
+
+				act(() => {
+					result.current.selectVariable('{{DATE}}');
+				});
+
+				(textareaRef as { current: HTMLTextAreaElement | null }).current = null;
+
+				await act(async () => {
+					vi.runAllTimers();
+				});
+
+				expect(focusMock).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 

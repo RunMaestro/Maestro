@@ -320,6 +320,22 @@ describe('shellDetector', () => {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
 			});
 
+			it('should return powershell.exe for powershell on Windows', () => {
+				expect(getShellCommand('powershell')).toBe('powershell.exe');
+			});
+
+			it('should return pwsh.exe for pwsh on Windows', () => {
+				expect(getShellCommand('pwsh')).toBe('pwsh.exe');
+			});
+
+			it('should return cmd.exe for cmd on Windows', () => {
+				expect(getShellCommand('cmd')).toBe('cmd.exe');
+			});
+
+			it('should return wsl.exe for wsl on Windows', () => {
+				expect(getShellCommand('wsl')).toBe('wsl.exe');
+			});
+
 			it('should return bash.exe for sh on Windows', () => {
 				expect(getShellCommand('sh')).toBe('bash.exe');
 			});

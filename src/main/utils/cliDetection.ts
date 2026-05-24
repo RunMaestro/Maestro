@@ -35,7 +35,7 @@ export async function isCloudflaredInstalled(): Promise<boolean> {
 		cloudflaredInstalledCache = true;
 		// Handle Windows CRLF line endings properly
 		const lines = result.stdout.trim().split(/\r?\n/);
-		cloudflaredPathCache = lines[0]?.trim() || null;
+		cloudflaredPathCache = lines[0].trim();
 	} else {
 		cloudflaredInstalledCache = false;
 	}
@@ -72,7 +72,7 @@ export async function isGhInstalled(): Promise<boolean> {
 		// On Windows, 'where' can return multiple paths - take the first one
 		// Handle Windows CRLF line endings properly
 		const lines = result.stdout.trim().split(/\r?\n/);
-		ghPathCache = lines[0]?.trim() || null;
+		ghPathCache = lines[0].trim();
 	} else {
 		ghInstalledCache = false;
 	}
@@ -169,7 +169,7 @@ export async function detectSshPath(): Promise<string | null> {
 		// Handle Windows CRLF line endings properly
 		// On Windows, 'where' returns paths with \r\n, so we need to split on \r?\n
 		const lines = result.stdout.trim().split(/\r?\n/);
-		sshPathCache = lines[0]?.trim() || null;
+		sshPathCache = lines[0].trim();
 	} else if (isWindows()) {
 		// Fallback for Windows: Check the built-in OpenSSH location directly
 		// This is the standard location for Windows 10/11 OpenSSH

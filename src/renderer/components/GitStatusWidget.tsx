@@ -36,6 +36,13 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 	const [tooltipOpen, setTooltipOpen] = useState(false);
 	const tooltipTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	const clearTooltipCloseTimeout = () => {
+		if (tooltipTimeout.current) {
+			clearTimeout(tooltipTimeout.current);
+			tooltipTimeout.current = null;
+		}
+	};
+
 	// Get git status from focused contexts
 	const { getFileCount } = useGitFileStatus();
 	const { getFileDetails } = useGitDetail();
@@ -69,10 +76,7 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 			className="relative shrink-0"
 			onMouseEnter={() => {
 				// Clear any pending close timeout
-				if (tooltipTimeout.current) {
-					clearTimeout(tooltipTimeout.current);
-					tooltipTimeout.current = null;
-				}
+				clearTooltipCloseTimeout();
 				setTooltipOpen(true);
 			}}
 			onMouseLeave={() => {
@@ -129,10 +133,7 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 						className="absolute left-0 right-0 h-3 pointer-events-auto"
 						style={{ top: '100%' }}
 						onMouseEnter={() => {
-							if (tooltipTimeout.current) {
-								clearTimeout(tooltipTimeout.current);
-								tooltipTimeout.current = null;
-							}
+							clearTooltipCloseTimeout();
 							setTooltipOpen(true);
 						}}
 					/>
@@ -143,10 +144,7 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 							border: `1px solid ${theme.colors.border}`,
 						}}
 						onMouseEnter={() => {
-							if (tooltipTimeout.current) {
-								clearTimeout(tooltipTimeout.current);
-								tooltipTimeout.current = null;
-							}
+							clearTooltipCloseTimeout();
 							setTooltipOpen(true);
 						}}
 						onMouseLeave={() => {

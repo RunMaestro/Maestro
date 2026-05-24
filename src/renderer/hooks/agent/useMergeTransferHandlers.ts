@@ -418,7 +418,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Calculate estimated tokens for the toast
 			const estimatedTokens = sourceTab.logs
 				.filter((log) => log.text && log.source !== 'system')
-				.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
+				.reduce((sum, log) => sum + Math.round(log.text.length / 4), 0);
 			const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
 
 			// Show success toast

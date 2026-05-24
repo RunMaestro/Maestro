@@ -245,9 +245,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 
 	// Helper to convert absolute path to relative path
 	const toRelativePath = (absPath: string): string | null => {
-		if (!projectRoot) return null;
 		// Normalize projectRoot to not have trailing slash
-		const root = projectRoot.endsWith('/') ? projectRoot.slice(0, -1) : projectRoot;
+		const rootPath = projectRoot as string;
+		const root = rootPath.endsWith('/') ? rootPath.slice(0, -1) : rootPath;
 		if (absPath.startsWith(root + '/')) {
 			return absPath.slice(root.length + 1);
 		}
@@ -525,7 +525,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					const relativePath = toRelativePath(code);
 					if (relativePath) {
 						// Extract just the filename for display
-						const filename = code.split('/').pop() || code;
+						const filename = code.split('/').pop()!;
 						const link: Link = {
 							type: 'link',
 							url: `maestro-file://${relativePath}`,
@@ -549,7 +549,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					code
 				);
 			if ((hasSlash || hasValidExt) && allPaths.has(code)) {
-				const filename = code.split('/').pop() || code;
+				const filename = code.split('/').pop()!;
 				const link: Link = {
 					type: 'link',
 					url: `maestro-file://${code}`,

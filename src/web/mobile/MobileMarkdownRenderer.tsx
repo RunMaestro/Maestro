@@ -161,7 +161,7 @@ const CodeBlockWithCopy = memo(
 					</button>
 				</div>
 				<SyntaxHighlighter
-					language={language || 'text'}
+					language={language}
 					style={syntaxStyle}
 					customStyle={{
 						margin: 0,
@@ -247,28 +247,23 @@ export const MobileMarkdownRenderer = memo(
 						pre: ({ children }: any) => {
 							const codeElement = React.Children.toArray(children).find(
 								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-							) as React.ReactElement<any> | undefined;
+							) as React.ReactElement<any>;
+							const { className, children: codeChildren } = codeElement.props;
+							const match = (className || '').match(/language-(\w+)/);
+							const language = match ? match[1] : 'text';
+							const codeContent = String(codeChildren).replace(/\n$/, '');
 
-							if (codeElement?.props) {
-								const { className, children: codeChildren } = codeElement.props;
-								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
-								const codeContent = String(codeChildren).replace(/\n$/, '');
-
-								return (
-									<CodeBlockWithCopy
-										language={language}
-										codeContent={codeContent}
-										syntaxStyle={syntaxStyle}
-										bgColor={colors.bgActivity}
-										borderColor={colors.border}
-										textDimColor={colors.textDim}
-										successColor={colors.success}
-									/>
-								);
-							}
-
-							return <pre>{children}</pre>;
+							return (
+								<CodeBlockWithCopy
+									language={language}
+									codeContent={codeContent}
+									syntaxStyle={syntaxStyle}
+									bgColor={colors.bgActivity}
+									borderColor={colors.border}
+									textDimColor={colors.textDim}
+									successColor={colors.success}
+								/>
+							);
 						},
 
 						// Inline code only — block code is handled by pre above
@@ -466,23 +461,18 @@ export const MobileMarkdownRenderer = memo(
 						),
 
 						// Task list items (GFM) - handled by li with checkbox
-						input: ({ type, checked, ...props }: any) => {
-							if (type === 'checkbox') {
-								return (
-									<input
-										type="checkbox"
-										checked={checked}
-										disabled
-										style={{
-											marginRight: '8px',
-											accentColor: colors.accent,
-										}}
-										{...props}
-									/>
-								);
-							}
-							return <input type={type} {...props} />;
-						},
+						input: ({ checked, ...props }: any) => (
+							<input
+								type="checkbox"
+								checked={checked}
+								disabled
+								style={{
+									marginRight: '8px',
+									accentColor: colors.accent,
+								}}
+								{...props}
+							/>
+						),
 
 						// Images
 						img: ({ src, alt }) => (

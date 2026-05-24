@@ -157,7 +157,7 @@ export function getCachedAnsiHtml(text: string, themeId: string, converter: Conv
 	// LRU eviction: remove oldest entries if cache is full
 	if (ansiCache.size >= ANSI_CACHE_MAX_SIZE) {
 		const firstKey = ansiCache.keys().next().value;
-		if (firstKey) ansiCache.delete(firstKey);
+		ansiCache.delete(firstKey!);
 	}
 
 	ansiCache.set(cacheKey, html);

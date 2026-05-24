@@ -10,6 +10,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import fs from 'fs';
+
+const fsMocks = vi.hoisted(() => ({
+	existsSync: vi.fn(() => false),
+}));
 
 // Mock execFileNoThrow before importing the module
 vi.mock('../../../main/utils/execFile', () => ({
@@ -22,10 +27,32 @@ vi.mock('os', () => ({
 	homedir: () => '/home/testuser',
 }));
 
+vi.mock('fs', async () => {
+	const actual = await vi.importActual<typeof import('fs')>('fs');
+	return {
+		...actual,
+		default: {
+			...actual,
+			existsSync: fsMocks.existsSync,
+		},
+		existsSync: fsMocks.existsSync,
+	};
+});
+
 import {
 	isCloudflaredInstalled,
 	getCloudflaredPath,
 	clearCloudflaredCache,
+	isGhInstalled,
+	getGhPath,
+	resolveGhPath,
+	clearGhCache,
+	getCachedGhStatus,
+	setCachedGhStatus,
+	detectSshPath,
+	resolveSshPath,
+	getSshPath,
+	clearSshCache,
 } from '../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 
@@ -33,23 +60,45 @@ const mockedExecFileNoThrow = vi.mocked(execFileNoThrow);
 
 describe('cliDetection.ts', () => {
 	const originalPlatform = process.platform;
+	const originalSystemRoot = process.env.SystemRoot;
+
+	function setPlatform(platform: string): void {
+		Object.defineProperty(process, 'platform', {
+			value: platform,
+			configurable: true,
+		});
+	}
+
+	function restoreSystemRoot(): void {
+		if (originalSystemRoot === undefined) {
+			delete process.env.SystemRoot;
+		} else {
+			process.env.SystemRoot = originalSystemRoot;
+		}
+	}
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		fsMocks.existsSync.mockReset().mockReturnValue(false);
 		// Always clear cache before each test to ensure fresh state
 		clearCloudflaredCache();
+		clearGhCache();
+		clearSshCache();
+		setPlatform(originalPlatform);
+		restoreSystemRoot();
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
 		// Restore platform
-		Object.defineProperty(process, 'platform', { value: originalPlatform });
+		setPlatform(originalPlatform);
+		restoreSystemRoot();
 	});
 
 	describe('isCloudflaredInstalled', () => {
 		describe('on Unix-like systems', () => {
 			beforeEach(() => {
-				Object.defineProperty(process, 'platform', { value: 'darwin' });
+				setPlatform('darwin');
 			});
 
 			it('should return true when cloudflared is found', async () => {
@@ -151,7 +200,7 @@ describe('cliDetection.ts', () => {
 
 		describe('on Windows', () => {
 			beforeEach(() => {
-				Object.defineProperty(process, 'platform', { value: 'win32' });
+				setPlatform('win32');
 			});
 
 			it('should use where command instead of which', async () => {
@@ -439,7 +488,7 @@ describe('cliDetection.ts', () => {
 		});
 
 		it('should handle Windows-style path', async () => {
-			Object.defineProperty(process, 'platform', { value: 'win32' });
+			setPlatform('win32');
 
 			mockedExecFileNoThrow.mockResolvedValue({
 				stdout: 'C:\\Program Files\\Cloudflared\\cloudflared.exe\r\n',
@@ -455,7 +504,7 @@ describe('cliDetection.ts', () => {
 		});
 
 		it('should handle CRLF line endings from Windows where command', async () => {
-			Object.defineProperty(process, 'platform', { value: 'win32' });
+			setPlatform('win32');
 
 			// Windows 'where' command returns paths with CRLF line endings
 			mockedExecFileNoThrow.mockResolvedValue({
@@ -490,7 +539,7 @@ describe('cliDetection.ts', () => {
 		});
 
 		it('should handle path with only CRLF (no additional lines)', async () => {
-			Object.defineProperty(process, 'platform', { value: 'win32' });
+			setPlatform('win32');
 
 			mockedExecFileNoThrow.mockResolvedValue({
 				stdout: 'C:\\Single\\Path\\binary.exe\r\n',
@@ -514,6 +563,243 @@ describe('cliDetection.ts', () => {
 			await isCloudflaredInstalled();
 
 			expect(getCloudflaredPath()).toBe('/home/user@domain/bin/cloudflared');
+		});
+	});
+
+	describe('GitHub CLI detection', () => {
+		it('should detect gh and cache the resolved path', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/opt/homebrew/bin/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await isGhInstalled();
+
+			expect(result).toBe(true);
+			expect(getGhPath()).toBe('/opt/homebrew/bin/gh');
+			expect(mockedExecFileNoThrow).toHaveBeenCalledWith(
+				process.platform === 'win32' ? 'where' : 'which',
+				['gh'],
+				undefined,
+				expect.any(Object)
+			);
+
+			await isGhInstalled();
+			expect(mockedExecFileNoThrow).toHaveBeenCalledTimes(1);
+		});
+
+		it('should return false and keep gh path null when gh is missing', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+
+			const result = await isGhInstalled();
+
+			expect(result).toBe(false);
+			expect(getGhPath()).toBeNull();
+			expect(getCachedGhStatus()).toEqual({ installed: false, authenticated: false });
+		});
+
+		it('should handle empty gh stdout even with successful exit', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '  \n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await isGhInstalled();
+
+			expect(result).toBe(false);
+			expect(getGhPath()).toBeNull();
+		});
+
+		it('should use the first gh path from Windows where output', async () => {
+			setPlatform('win32');
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: 'C:\\Tools\\gh.exe\r\nC:\\Other\\gh.exe\r\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await isGhInstalled();
+
+			expect(getGhPath()).toBe('C:\\Tools\\gh.exe');
+			expect(mockedExecFileNoThrow).toHaveBeenCalledWith(
+				'where',
+				['gh'],
+				undefined,
+				expect.any(Object)
+			);
+		});
+
+		it('should resolve custom gh path without detection', async () => {
+			await expect(resolveGhPath('/custom/bin/gh')).resolves.toBe('/custom/bin/gh');
+
+			expect(mockedExecFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should resolve detected gh path or fall back to gh', async () => {
+			mockedExecFileNoThrow.mockResolvedValueOnce({
+				stdout: '/usr/local/bin/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+			await expect(resolveGhPath()).resolves.toBe('/usr/local/bin/gh');
+
+			clearGhCache();
+			mockedExecFileNoThrow.mockResolvedValueOnce({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+			await expect(resolveGhPath()).resolves.toBe('gh');
+		});
+
+		it('should cache gh authenticated status until the TTL expires', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(1000);
+			setCachedGhStatus(true, true);
+
+			vi.mocked(Date.now).mockReturnValue(1000 + 59_000);
+			expect(getCachedGhStatus()).toEqual({ installed: true, authenticated: true });
+
+			vi.mocked(Date.now).mockReturnValue(1000 + 61_000);
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('should return null gh status before install detection has run', () => {
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('should return null gh status when installed but authentication has not been checked', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/usr/bin/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await isGhInstalled();
+
+			expect(getCachedGhStatus()).toBeNull();
+		});
+
+		it('should clear gh install, path, and auth caches', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/usr/bin/gh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+			await isGhInstalled();
+			setCachedGhStatus(true, true);
+
+			clearGhCache();
+
+			expect(getGhPath()).toBeNull();
+			expect(getCachedGhStatus()).toBeNull();
+		});
+	});
+
+	describe('SSH path detection', () => {
+		it('should detect ssh through platform which command and cache the path', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '/usr/bin/ssh\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await expect(detectSshPath()).resolves.toBe('/usr/bin/ssh');
+			expect(getSshPath()).toBe('/usr/bin/ssh');
+			expect(mockedExecFileNoThrow).toHaveBeenCalledWith(
+				process.platform === 'win32' ? 'where' : 'which',
+				['ssh'],
+				undefined,
+				expect.any(Object)
+			);
+
+			await detectSshPath();
+			expect(mockedExecFileNoThrow).toHaveBeenCalledTimes(1);
+		});
+
+		it('should return null when ssh detection fails on non-Windows platforms', async () => {
+			setPlatform('darwin');
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+
+			await expect(detectSshPath()).resolves.toBeNull();
+			expect(getSshPath()).toBeNull();
+		});
+
+		it('should use Windows built-in OpenSSH fallback when where fails', async () => {
+			setPlatform('win32');
+			process.env.SystemRoot = 'C:\\Windows';
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+			fsMocks.existsSync.mockReturnValue(true);
+
+			await expect(detectSshPath()).resolves.toBe(
+				path.join('C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+			);
+			expect(fs.existsSync).toHaveBeenCalledWith(
+				path.join('C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+			);
+		});
+
+		it('should use default Windows root for built-in OpenSSH fallback', async () => {
+			setPlatform('win32');
+			delete process.env.SystemRoot;
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+			fsMocks.existsSync.mockReturnValue(true);
+
+			await expect(detectSshPath()).resolves.toBe(
+				path.join('C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+			);
+		});
+
+		it('should leave ssh path null when Windows fallback check fails', async () => {
+			setPlatform('win32');
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+			fsMocks.existsSync.mockImplementation(() => {
+				throw new Error('permission denied');
+			});
+
+			await expect(detectSshPath()).resolves.toBeNull();
+			expect(getSshPath()).toBeNull();
+		});
+
+		it('should resolve ssh path with fallback command name when detection fails', async () => {
+			mockedExecFileNoThrow.mockResolvedValue({
+				stdout: '',
+				stderr: 'not found',
+				exitCode: 1,
+			});
+
+			await expect(resolveSshPath()).resolves.toBe('ssh');
+		});
+
+		it('should clear ssh cache and allow re-detection', async () => {
+			mockedExecFileNoThrow
+				.mockResolvedValueOnce({ stdout: '/first/ssh\n', stderr: '', exitCode: 0 })
+				.mockResolvedValueOnce({ stdout: '/second/ssh\n', stderr: '', exitCode: 0 });
+
+			await expect(resolveSshPath()).resolves.toBe('/first/ssh');
+			clearSshCache();
+			await expect(resolveSshPath()).resolves.toBe('/second/ssh');
 		});
 	});
 });

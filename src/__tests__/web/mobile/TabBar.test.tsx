@@ -100,6 +100,7 @@ describe('TabBar', () => {
 
 	afterEach(() => {
 		cleanup();
+		vi.useRealTimers();
 	});
 
 	describe('Render conditions', () => {
@@ -485,6 +486,32 @@ describe('TabBar', () => {
 
 			expect(mockOnCloseTab).toHaveBeenCalledTimes(1);
 			expect(mockOnCloseTab).toHaveBeenCalledWith('tab-1');
+		});
+
+		it('applies close button hover styling', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Active' }),
+				createTab({ id: 'tab-2', name: 'Inactive' }),
+			];
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			const tabWrapper = screen.getByText('Active').closest('button')!.parentElement!;
+			const closeButton = within(tabWrapper).getByLabelText('Close tab');
+
+			fireEvent.mouseEnter(closeButton);
+			expect(closeButton).toHaveStyle({
+				color: mockColors.textMain,
+				backgroundColor: 'rgba(255, 255, 255, 0.15)',
+			});
+
+			fireEvent.mouseLeave(closeButton);
 		});
 
 		it('stops propagation when close button clicked (does not select tab)', () => {
@@ -1171,6 +1198,66 @@ describe('TabBar', () => {
 			expect(within(dialog).getByText('First')).toBeInTheDocument();
 		});
 
+		it('uses agent session octet for unnamed tab popover header', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: '',
+					agentSessionId: 'abc12345-6789-0def-ghij-klmnopqrstuv',
+				}),
+				createTab({ id: 'tab-2', name: 'Second' }),
+			];
+			renderWithActions(tabs);
+			const tabButton = screen.getByText('ABC12345').closest('button')!;
+			fireEvent.contextMenu(tabButton);
+
+			const dialog = screen.getByRole('dialog');
+			expect(within(dialog).getByText('ABC12345')).toBeInTheDocument();
+			fireEvent.click(within(dialog).getByText('Rename'));
+			expect(screen.getByPlaceholderText('Tab name')).toHaveValue('');
+		});
+
+		it('uses New for unnamed tab popover header without an agent session id', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: '', agentSessionId: '' }),
+				createTab({ id: 'tab-2', name: 'Second' }),
+			];
+			renderWithActions(tabs);
+			const tabButton = screen.getByText('New').closest('button')!;
+			fireEvent.contextMenu(tabButton);
+
+			expect(within(screen.getByRole('dialog')).getByText('New')).toBeInTheDocument();
+		});
+
+		it('clamps popover position inside a narrow viewport', () => {
+			const originalInnerWidth = window.innerWidth;
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 240 });
+			try {
+				renderWithActions(twoTabs);
+				const tabButton = screen.getByText('First').closest('button')!;
+				vi.spyOn(tabButton, 'getBoundingClientRect').mockReturnValue({
+					left: 220,
+					right: 300,
+					top: 10,
+					bottom: 34,
+					width: 80,
+					height: 24,
+					x: 220,
+					y: 10,
+					toJSON: () => ({}),
+				} as DOMRect);
+
+				fireEvent.contextMenu(tabButton);
+
+				expect(screen.getByRole('dialog')).toHaveStyle({ left: '8px' });
+			} finally {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					value: originalInnerWidth,
+				});
+			}
+		});
+
 		it('shows Star action for unstarred tab', () => {
 			renderWithActions(twoTabs);
 			openPopoverViaContextMenu('First');
@@ -1222,6 +1309,51 @@ describe('TabBar', () => {
 			fireEvent.click(screen.getByText('Save'));
 
 			expect(mockOnRenameTab).toHaveBeenCalledWith('tab-1', 'Renamed Tab');
+		});
+
+		it('closes rename view without saving when rename support is removed', () => {
+			const view = renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+
+			view.rerender(
+				<TabBar
+					tabs={twoTabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					onStarTab={mockOnStarTab}
+					onReorderTab={mockOnReorderTab}
+				/>
+			);
+			fireEvent.change(screen.getByPlaceholderText('Tab name'), {
+				target: { value: 'No Callback' },
+			});
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(mockOnRenameTab).not.toHaveBeenCalled();
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('saves rename with Enter and cancels rename mode with Escape', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+
+			const input = screen.getByPlaceholderText('Tab name');
+			fireEvent.change(input, { target: { value: 'Keyboard Rename' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockOnRenameTab).toHaveBeenCalledWith('tab-1', 'Keyboard Rename');
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+			fireEvent.keyDown(screen.getByPlaceholderText('Tab name'), { key: 'Escape' });
+
+			expect(screen.queryByPlaceholderText('Tab name')).not.toBeInTheDocument();
+			expect(screen.getByText('Star')).toBeInTheDocument();
 		});
 
 		it('returns to action list when Cancel is clicked in rename view', () => {
@@ -1282,6 +1414,44 @@ describe('TabBar', () => {
 			// Click the backdrop (the div with aria-hidden="true")
 			const backdrop = document.querySelector('[aria-hidden="true"]') as HTMLElement;
 			fireEvent.click(backdrop);
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('closes popover on outside document click after listener registration', () => {
+			vi.useFakeTimers();
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+			act(() => {
+				vi.advanceTimersByTime(100);
+			});
+			fireEvent.mouseDown(document.body);
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('keeps popover open when document click is inside the dialog', () => {
+			vi.useFakeTimers();
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			const dialog = screen.getByRole('dialog');
+
+			act(() => {
+				vi.advanceTimersByTime(100);
+			});
+			fireEvent.mouseDown(dialog);
+
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+		});
+
+		it('closes the action list with Escape', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+			fireEvent.keyDown(document, { key: 'Escape' });
 
 			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 		});

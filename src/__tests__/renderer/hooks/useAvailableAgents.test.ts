@@ -226,6 +226,19 @@ describe('useAvailableAgents', () => {
 		expect(result.current.agents).toEqual([]);
 	});
 
+	it('uses a generic error message for non-Error detection failures', async () => {
+		vi.mocked(window.maestro.agents.detect).mockRejectedValueOnce('boom');
+
+		const { result } = renderHook(() => useAvailableAgents(null, []));
+
+		await waitFor(() => {
+			expect(result.current.loading).toBe(false);
+		});
+
+		expect(result.current.error).toBe('Failed to detect agents');
+		expect(result.current.agents).toEqual([]);
+	});
+
 	it('updates when currentAgentId changes', async () => {
 		const { result, rerender } = renderHook(
 			({ currentAgentId }) => useAvailableAgents(currentAgentId, []),

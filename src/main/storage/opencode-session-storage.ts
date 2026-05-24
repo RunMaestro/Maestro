@@ -770,8 +770,20 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Extract text content from message parts
 	 */
 	private extractTextFromParts(parts: OpenCodePart[]): string {
-		const textParts = parts.filter((p) => p.type === 'text' && p.text).map((p) => p.text || '');
+		const textParts: string[] = [];
+		for (const part of parts) {
+			if (part.type === 'text' && part.text) {
+				textParts.push(part.text);
+			}
+		}
 		return textParts.join(' ').trim();
+	}
+
+	private getPartsForMessage(
+		parts: Map<string, OpenCodePart[]>,
+		messageId: string
+	): OpenCodePart[] {
+		return parts.get(messageId) ?? [];
 	}
 
 	// ─── SQLite-based methods (OpenCode v1.2+) ──────────────────────────────
@@ -979,24 +991,28 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				}
 
 				if (!foundPreview && data.role === 'assistant') {
-					const parts = partsByMessageId.get(msg.id) || [];
-					for (const part of parts) {
-						const partData = safeJsonParse<SqlitePartData>(part.data);
-						if (partData?.type === 'text' && partData.text?.trim()) {
-							firstMessage = partData.text;
-							foundPreview = true;
-							break;
+					const parts = partsByMessageId.get(msg.id);
+					if (parts) {
+						for (const part of parts) {
+							const partData = safeJsonParse<SqlitePartData>(part.data);
+							if (partData?.type === 'text' && partData.text?.trim()) {
+								firstMessage = partData.text;
+								foundPreview = true;
+								break;
+							}
 						}
 					}
 				}
 
 				if (!candidateUserPreview && data.role === 'user') {
-					const parts = partsByMessageId.get(msg.id) || [];
-					for (const part of parts) {
-						const partData = safeJsonParse<SqlitePartData>(part.data);
-						if (partData?.type === 'text' && partData.text?.trim()) {
-							candidateUserPreview = partData.text;
-							break;
+					const parts = partsByMessageId.get(msg.id);
+					if (parts) {
+						for (const part of parts) {
+							const partData = safeJsonParse<SqlitePartData>(part.data);
+							if (partData?.type === 'text' && partData.text?.trim()) {
+								candidateUserPreview = partData.text;
+								break;
+							}
 						}
 					}
 				}
@@ -1059,12 +1075,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load messages for a session from SQLite.
 	 * Returns null if the database doesn't exist or lacks the expected schema.
-	 * Accepts an optional db handle to avoid re-opening the database.
 	 */
-	private loadSessionMessagesSqlite(
-		sessionId: string,
-		existingDb?: Database.Database
-	): {
+	private loadSessionMessagesSqlite(sessionId: string): {
 		messages: OpenCodeMessage[];
 		parts: Map<string, OpenCodePart[]>;
 		totalInputTokens: number;
@@ -1073,8 +1085,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCacheWriteTokens: number;
 		totalCost: number;
 	} | null {
-		const ownsDb = !existingDb;
-		const db = existingDb ?? openOpenCodeDb();
+		const db = openOpenCodeDb();
 		if (!db) return null;
 
 		try {
@@ -1182,7 +1193,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			captureException(error instanceof Error ? error : new Error(String(error)));
 			throw error;
 		} finally {
-			if (ownsDb) db.close();
+			db.close();
 		}
 	}
 
@@ -1292,7 +1303,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			let firstUserMessage = '';
 
 			for (const msg of messages) {
-				const msgParts = parts.get(msg.id) || [];
+				const msgParts = this.getPartsForMessage(parts, msg.id);
 				const textContent = this.extractTextFromParts(msgParts);
 
 				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
@@ -1424,7 +1435,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			let firstUserMessage = '';
 
 			for (const msg of messages) {
-				const msgParts = parts.get(msg.id) || [];
+				const msgParts = this.getPartsForMessage(parts, msg.id);
 				const textContent = this.extractTextFromParts(msgParts);
 
 				if (!firstUserMessage && msg.role === 'user' && textContent.trim()) {
@@ -1508,7 +1519,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		for (const msg of messages) {
 			if (msg.role !== 'user' && msg.role !== 'assistant') continue;
 
-			const msgParts = parts.get(msg.id) || [];
+			const msgParts = this.getPartsForMessage(parts, msg.id);
 			const textContent = this.extractTextFromParts(msgParts);
 
 			// Extract tool use if present
@@ -1546,7 +1557,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			.filter((msg) => msg.role === 'user' || msg.role === 'assistant')
 			.map((msg) => ({
 				role: msg.role as 'user' | 'assistant',
-				textContent: this.extractTextFromParts(parts.get(msg.id) || []),
+				textContent: this.extractTextFromParts(this.getPartsForMessage(parts, msg.id)),
 			}))
 			.filter((msg) => msg.textContent.length > 0);
 	}
@@ -1618,7 +1629,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 				for (let i = messages.length - 1; i >= 0; i--) {
 					if (messages[i].role === 'user') {
-						const msgParts = parts.get(messages[i].id) || [];
+						const msgParts = this.getPartsForMessage(parts, messages[i].id);
 						const textContent = this.extractTextFromParts(msgParts);
 						if (textContent.trim().toLowerCase() === normalizedFallback) {
 							userMessageIndex = i;
@@ -1653,7 +1664,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				messagesToDelete.push(messages[i]);
 
 				// Collect tool parts from messages being deleted
-				const msgParts = parts.get(messages[i].id) || [];
+				const msgParts = this.getPartsForMessage(parts, messages[i].id);
 				for (const part of msgParts) {
 					if (part.type === 'tool') {
 						toolPartsBeingDeleted.push(part);
@@ -1704,7 +1715,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				for (const msg of messages) {
 					if (messagesToDelete.includes(msg)) continue;
 
-					const msgParts = parts.get(msg.id) || [];
+					const msgParts = this.getPartsForMessage(parts, msg.id);
 					const partDir = this.getPartDir(msg.id);
 
 					for (const part of msgParts) {

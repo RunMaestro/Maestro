@@ -110,7 +110,8 @@ export const normalizeExplorerName = (name: string): string => name.trim().toLow
 
 export const getExplorerFileExtension = (name: string): string => {
 	const normalized = normalizeExplorerName(name);
-	return normalized.includes('.') ? (normalized.split('.').pop() ?? '') : '';
+	const extensionStart = normalized.lastIndexOf('.');
+	return extensionStart === -1 ? '' : normalized.slice(extensionStart + 1);
 };
 
 export const isExplorerTestFile = (name: string): boolean => {

@@ -9,7 +9,7 @@
  * and use it when firing onData/onExit callbacks to match the internal guard.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Captured callbacks from onData/onExit registration
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
@@ -81,11 +81,18 @@ function setupSpawnMock(mockOutput: string) {
 }
 
 describe('inlineWizardDocumentGeneration - SSH Remote Support', () => {
+	let consoleLog: ReturnType<typeof vi.spyOn>;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		capturedDataCallback = null;
 		capturedExitCallback = null;
 		capturedFileChangedCallback = null;
+		consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		consoleLog.mockRestore();
 	});
 
 	describe('writeDoc operations', () => {

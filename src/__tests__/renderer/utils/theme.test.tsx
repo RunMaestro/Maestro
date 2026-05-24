@@ -500,6 +500,14 @@ describe('theme utilities', () => {
 			expect(icon?.getAttribute('data-file-explorer-icon-key')).toBe('readme');
 		});
 
+		it('returns the existing default folder icon theme by default', () => {
+			const { container } = render(getExplorerFolderIcon('src', false, mockTheme));
+			const icon = container.querySelector('svg');
+
+			expect(icon).toBeTruthy();
+			expect(container.querySelector('img')).toBeNull();
+		});
+
 		it('returns the JSON icon for rich JSON files', () => {
 			const { container } = render(
 				getExplorerFileIcon('package.json', mockTheme, undefined, 'rich')

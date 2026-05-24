@@ -127,6 +127,49 @@ describe('Git Preload API', () => {
 		});
 	});
 
+	describe('status detail operations', () => {
+		it.each([
+			{
+				name: 'numstat',
+				call: () => api.numstat('/home/user/project', 'remote-1', '/remote/project'),
+				channel: 'git:numstat',
+				args: ['/home/user/project', 'remote-1', '/remote/project'],
+				response: { stdout: '1\t2\tsrc/file.ts', stderr: '' },
+			},
+			{
+				name: 'branches',
+				call: () => api.branches('/home/user/project', 'remote-1', '/remote/project'),
+				channel: 'git:branches',
+				args: ['/home/user/project', 'remote-1', '/remote/project'],
+				response: { stdout: '* main\n  feature', stderr: '' },
+			},
+			{
+				name: 'tags',
+				call: () => api.tags('/home/user/project', 'remote-1', '/remote/project'),
+				channel: 'git:tags',
+				args: ['/home/user/project', 'remote-1', '/remote/project'],
+				response: { stdout: 'v1.0.0', stderr: '' },
+			},
+			{
+				name: 'remote',
+				call: () => api.remote('/home/user/project', 'remote-1', '/remote/project'),
+				channel: 'git:remote',
+				args: ['/home/user/project', 'remote-1', '/remote/project'],
+				response: { stdout: 'git@github.com:owner/repo.git', stderr: '' },
+			},
+		])(
+			'should invoke git:$name with SSH remote context',
+			async ({ call, channel, args, response }) => {
+				mockInvoke.mockResolvedValue(response);
+
+				const result = await call();
+
+				expect(mockInvoke).toHaveBeenCalledWith(channel, ...args);
+				expect(result).toEqual(response);
+			}
+		);
+	});
+
 	describe('info', () => {
 		it('should invoke git:info and return comprehensive info', async () => {
 			const mockInfo = {
@@ -179,6 +222,42 @@ describe('Git Preload API', () => {
 		});
 	});
 
+	describe('history operations', () => {
+		it.each([
+			{
+				name: 'commitCount',
+				call: () => api.commitCount('/home/user/project', 'remote-1'),
+				channel: 'git:commitCount',
+				args: ['/home/user/project', 'remote-1'],
+				response: { count: 42, error: null },
+			},
+			{
+				name: 'show',
+				call: () => api.show('/home/user/project', 'abc123', 'remote-1'),
+				channel: 'git:show',
+				args: ['/home/user/project', 'abc123', 'remote-1'],
+				response: { stdout: 'commit abc123', stderr: '' },
+			},
+			{
+				name: 'showFile',
+				call: () => api.showFile('/home/user/project', 'HEAD', 'src/file.ts'),
+				channel: 'git:showFile',
+				args: ['/home/user/project', 'HEAD', 'src/file.ts'],
+				response: { content: 'export const value = 1;' },
+			},
+		])(
+			'should invoke git:$name and return the handler result',
+			async ({ call, channel, args, response }) => {
+				mockInvoke.mockResolvedValue(response);
+
+				const result = await call();
+
+				expect(mockInvoke).toHaveBeenCalledWith(channel, ...args);
+				expect(result).toEqual(response);
+			}
+		);
+	});
+
 	describe('worktreeInfo', () => {
 		it('should invoke git:worktreeInfo', async () => {
 			mockInvoke.mockResolvedValue({
@@ -195,6 +274,74 @@ describe('Git Preload API', () => {
 			expect(result.success).toBe(true);
 			expect(result.isWorktree).toBe(true);
 		});
+	});
+
+	describe('worktree management operations', () => {
+		it.each([
+			{
+				name: 'getRepoRoot',
+				call: () => api.getRepoRoot('/home/user/project', 'remote-1'),
+				channel: 'git:getRepoRoot',
+				args: ['/home/user/project', 'remote-1'],
+				response: { success: true, root: '/home/user/project' },
+			},
+			{
+				name: 'worktreeCheckout',
+				call: () => api.worktreeCheckout('/home/user/worktree', 'feature', true, 'remote-1'),
+				channel: 'git:worktreeCheckout',
+				args: ['/home/user/worktree', 'feature', true, 'remote-1'],
+				response: { success: true, hasUncommittedChanges: false },
+			},
+			{
+				name: 'getDefaultBranch',
+				call: () => api.getDefaultBranch('/home/user/project'),
+				channel: 'git:getDefaultBranch',
+				args: ['/home/user/project'],
+				response: { success: true, branch: 'main' },
+			},
+			{
+				name: 'scanWorktreeDirectory',
+				call: () => api.scanWorktreeDirectory('/home/user/worktrees', 'remote-1'),
+				channel: 'git:scanWorktreeDirectory',
+				args: ['/home/user/worktrees', 'remote-1'],
+				response: {
+					gitSubdirs: [
+						{ path: '/home/user/worktrees/feature', name: 'feature', branch: 'feature' },
+					],
+				},
+			},
+			{
+				name: 'watchWorktreeDirectory',
+				call: () => api.watchWorktreeDirectory('session-1', '/home/user/worktrees', 'remote-1'),
+				channel: 'git:watchWorktreeDirectory',
+				args: ['session-1', '/home/user/worktrees', 'remote-1'],
+				response: { success: true, isRemote: true, message: 'Polling required' },
+			},
+			{
+				name: 'unwatchWorktreeDirectory',
+				call: () => api.unwatchWorktreeDirectory('session-1'),
+				channel: 'git:unwatchWorktreeDirectory',
+				args: ['session-1'],
+				response: { success: true },
+			},
+			{
+				name: 'removeWorktree',
+				call: () => api.removeWorktree('/home/user/worktree', true),
+				channel: 'git:removeWorktree',
+				args: ['/home/user/worktree', true],
+				response: { success: true },
+			},
+		])(
+			'should invoke git:$name and preserve arguments',
+			async ({ call, channel, args, response }) => {
+				mockInvoke.mockResolvedValue(response);
+
+				const result = await call();
+
+				expect(mockInvoke).toHaveBeenCalledWith(channel, ...args);
+				expect(result).toEqual(response);
+			}
+		);
 	});
 
 	describe('worktreeSetup', () => {
@@ -324,6 +471,22 @@ describe('Git Preload API', () => {
 			registeredHandler!({}, data);
 
 			expect(callback).toHaveBeenCalledWith(data);
+		});
+
+		it('should remove the registered listener when cleanup is called', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, data: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'worktree:discovered') {
+					registeredHandler = handler;
+				}
+			});
+
+			const cleanup = api.onWorktreeDiscovered(callback);
+			cleanup();
+
+			expect(mockRemoveListener).toHaveBeenCalledWith('worktree:discovered', registeredHandler!);
 		});
 	});
 });

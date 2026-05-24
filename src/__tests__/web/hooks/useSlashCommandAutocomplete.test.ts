@@ -111,4 +111,23 @@ describe('useSlashCommandAutocomplete', () => {
 		expect(result.current.isOpen).toBe(false);
 		expect(onChange).toHaveBeenCalledWith('');
 	});
+
+	it('does not clear completed slash input on close', () => {
+		const onChange = vi.fn();
+
+		const { result } = renderHook(() =>
+			useSlashCommandAutocomplete({
+				inputValue: '/help me',
+				isControlled: true,
+				onChange,
+			})
+		);
+
+		act(() => {
+			result.current.handleClose();
+		});
+
+		expect(result.current.isOpen).toBe(false);
+		expect(onChange).not.toHaveBeenCalled();
+	});
 });

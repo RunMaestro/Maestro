@@ -175,8 +175,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const handleScroll = useCallback(() => {
 			if (!hasMore || loadingMoreRef.current || isLoading) return;
 
-			const el = listRef.current;
-			if (!el) return;
+			const el = listRef.current!;
 
 			const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_LOAD_THRESHOLD;
 			if (nearBottom) {
@@ -290,12 +289,12 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// Navigate to a session tab — looks up sourceSessionId from the unified entry
 		const handleOpenSessionAsTab = useCallback(
 			(agentSessionId: string) => {
-				if (!onResumeSession) return;
+				const resumeSession = onResumeSession!;
 				const entry = entries.find((e) => e.agentSessionId === agentSessionId) as
 					| UnifiedHistoryEntry
 					| undefined;
 				if (entry) {
-					onResumeSession(entry.sourceSessionId, agentSessionId);
+					resumeSession(entry.sourceSessionId, agentSessionId);
 				}
 			},
 			[onResumeSession, entries]
@@ -304,9 +303,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// Navigate to a session from the detail modal
 		const handleDetailResumeSession = useCallback(
 			(agentSessionId: string) => {
-				if (!onResumeSession || !detailModalEntry) return;
+				const resumeSession = onResumeSession!;
 				const entry = detailModalEntry as UnifiedHistoryEntry;
-				onResumeSession(entry.sourceSessionId, agentSessionId);
+				resumeSession(entry.sourceSessionId, agentSessionId);
 			},
 			[onResumeSession, detailModalEntry]
 		);

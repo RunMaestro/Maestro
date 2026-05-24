@@ -674,6 +674,27 @@ describe('useAutoRunDocumentLoader', () => {
 			});
 		});
 
+		it('sets autoRunContent to empty string when selected file read succeeds without content', async () => {
+			mockListDocs.mockResolvedValue({ success: true, files: [], tree: [] });
+			mockReadDoc.mockResolvedValue({ success: true, content: undefined });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+				autoRunSelectedFile: 'doc',
+				autoRunContent: 'old content',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+
+			await waitFor(() => {
+				const sessions = useSessionStore.getState().sessions;
+				const updated = sessions.find((s) => s.id === 'session-1');
+				expect(updated?.autoRunContent).toBe('');
+			});
+		});
+
 		it('does not call readDoc for selected file when no autoRunSelectedFile', async () => {
 			mockListDocs.mockResolvedValue({ success: true, files: [], tree: [] });
 
@@ -1020,6 +1041,73 @@ describe('useAutoRunDocumentLoader', () => {
 			expect(afterContent).toBe(initialContent);
 		});
 
+		it('leaves document state unchanged when file change document listing fails', async () => {
+			let fileChangedCallback: ((data: any) => void) | null = null;
+			mockOnFileChanged.mockImplementation((cb) => {
+				fileChangedCallback = cb;
+				return vi.fn();
+			});
+
+			mockListDocs
+				.mockResolvedValueOnce({ success: true, files: ['stable-doc'], tree: [] })
+				.mockResolvedValueOnce({ success: false });
+			mockReadDoc.mockResolvedValue({ success: true, content: '' });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+
+			await waitFor(() => {
+				expect(fileChangedCallback).not.toBeNull();
+				expect(useBatchStore.getState().documentList).toEqual(['stable-doc']);
+			});
+
+			await act(async () => {
+				fileChangedCallback!({ folderPath: '/docs', filename: 'stable-doc' });
+			});
+
+			expect(useBatchStore.getState().documentList).toEqual(['stable-doc']);
+		});
+
+		it('falls back to empty file and tree arrays when file change listing omits them', async () => {
+			let fileChangedCallback: ((data: any) => void) | null = null;
+			mockOnFileChanged.mockImplementation((cb) => {
+				fileChangedCallback = cb;
+				return vi.fn();
+			});
+
+			mockListDocs
+				.mockResolvedValueOnce({ success: true, files: ['initial-doc'], tree: [{ name: 'root' }] })
+				.mockResolvedValueOnce({ success: true });
+			mockReadDoc.mockResolvedValue({ success: true, content: '' });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+
+			await waitFor(() => {
+				expect(fileChangedCallback).not.toBeNull();
+				expect(useBatchStore.getState().documentList).toEqual(['initial-doc']);
+			});
+
+			await act(async () => {
+				fileChangedCallback!({ folderPath: '/docs', filename: 'new-doc' });
+			});
+
+			await waitFor(() => {
+				expect(useBatchStore.getState().documentList).toEqual([]);
+				expect(useBatchStore.getState().documentTree).toEqual([]);
+			});
+		});
+
 		it('increments autoRunContentVersion on file change content reload', async () => {
 			let fileChangedCallback: ((data: any) => void) | null = null;
 			mockOnFileChanged.mockImplementation((cb) => {
@@ -1064,6 +1152,109 @@ describe('useAutoRunDocumentLoader', () => {
 			await waitFor(() => {
 				const s = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 				expect(s?.autoRunContentVersion).toBe(versionAfterInit + 1);
+			});
+		});
+
+		it('does not update selected content when file change read fails', async () => {
+			let fileChangedCallback: ((data: any) => void) | null = null;
+			mockOnFileChanged.mockImplementation((cb) => {
+				fileChangedCallback = cb;
+				return vi.fn();
+			});
+
+			mockListDocs.mockResolvedValue({ success: true, files: ['doc'], tree: [] });
+			mockReadDoc
+				.mockResolvedValueOnce({ success: true, content: '' })
+				.mockResolvedValueOnce({ success: true, content: 'initial content' })
+				.mockResolvedValueOnce({ success: true, content: '' })
+				.mockResolvedValueOnce({ success: false, content: undefined });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+				autoRunSelectedFile: 'doc',
+				autoRunContent: 'old content',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+
+			await waitFor(() => {
+				expect(fileChangedCallback).not.toBeNull();
+				const current = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+				expect(current?.autoRunContent).toBe('initial content');
+			});
+
+			await act(async () => {
+				fileChangedCallback!({ folderPath: '/docs', filename: 'doc' });
+			});
+
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === 'session-1')?.autoRunContent
+			).toBe('initial content');
+		});
+
+		it('uses empty content and initial version when changed selected file read has no content', async () => {
+			let fileChangedCallback: ((data: any) => void) | null = null;
+			mockOnFileChanged.mockImplementation((cb) => {
+				fileChangedCallback = cb;
+				return vi.fn();
+			});
+
+			mockListDocs.mockResolvedValue({ success: true, files: ['doc'], tree: [] });
+			mockReadDoc
+				.mockResolvedValueOnce({ success: true, content: '' })
+				.mockResolvedValueOnce({ success: true, content: 'initial content' })
+				.mockResolvedValueOnce({ success: true, content: '' })
+				.mockResolvedValueOnce({ success: true, content: undefined });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+				autoRunSelectedFile: 'doc',
+				autoRunContent: 'old content',
+				autoRunContentVersion: undefined,
+			});
+			const otherSession = createMockSession({
+				id: 'session-2',
+				autoRunContent: 'untouched',
+				autoRunContentVersion: 7,
+			});
+			useSessionStore.setState({
+				sessions: [session, otherSession],
+				activeSessionId: 'session-1',
+			});
+
+			renderHook(() => useAutoRunDocumentLoader());
+
+			await waitFor(() => {
+				expect(fileChangedCallback).not.toBeNull();
+				const current = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+				expect(current?.autoRunContent).toBe('initial content');
+			});
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: useSessionStore
+						.getState()
+						.sessions.map((s) =>
+							s.id === 'session-1' ? { ...s, autoRunContentVersion: undefined } : s
+						),
+				});
+			});
+
+			await act(async () => {
+				fileChangedCallback!({ folderPath: '/docs', filename: 'doc' });
+			});
+
+			await waitFor(() => {
+				const sessions = useSessionStore.getState().sessions;
+				const updated = sessions.find((s) => s.id === 'session-1');
+				const untouched = sessions.find((s) => s.id === 'session-2');
+				expect(updated?.autoRunContent).toBe('');
+				expect(updated?.autoRunContentVersion).toBe(1);
+				expect(untouched?.autoRunContent).toBe('untouched');
+				expect(untouched?.autoRunContentVersion).toBe(7);
 			});
 		});
 

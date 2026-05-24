@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useKeyboardVisibility } from '../../../web/hooks/useKeyboardVisibility';
 
 type MockViewport = {
@@ -96,5 +96,120 @@ describe('useKeyboardVisibility', () => {
 
 		expect(removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
 		expect(removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+	});
+
+	it('recalculates keyboard offset when the visual viewport resizes', async () => {
+		const handlers = new Map<string, () => void>();
+		const viewport = {
+			height: 780,
+			offsetTop: 0,
+			addEventListener: vi.fn((event: string, handler: () => void) => {
+				handlers.set(event, handler);
+			}),
+			removeEventListener: vi.fn(),
+		};
+
+		setVisualViewport(viewport);
+		window.innerHeight = 800;
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		expect(result.current.keyboardOffset).toBe(0);
+
+		viewport.height = 620;
+		await act(async () => {
+			handlers.get('resize')?.();
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(180);
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+	});
+
+	it('ignores scroll recalculation while the keyboard is hidden', async () => {
+		const handlers = new Map<string, () => void>();
+		const viewport = {
+			height: 790,
+			offsetTop: 0,
+			addEventListener: vi.fn((event: string, handler: () => void) => {
+				handlers.set(event, handler);
+			}),
+			removeEventListener: vi.fn(),
+		};
+
+		setVisualViewport(viewport);
+		window.innerHeight = 800;
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		viewport.height = 600;
+		await act(async () => {
+			handlers.get('scroll')?.();
+		});
+
+		expect(result.current.keyboardOffset).toBe(0);
+		expect(result.current.isKeyboardVisible).toBe(false);
+	});
+
+	it('recalculates keyboard offset on scroll while the keyboard is visible', async () => {
+		const handlers = new Map<string, () => void>();
+		const viewport = {
+			height: 600,
+			offsetTop: 0,
+			addEventListener: vi.fn((event: string, handler: () => void) => {
+				handlers.set(event, handler);
+			}),
+			removeEventListener: vi.fn(),
+		};
+
+		setVisualViewport(viewport);
+		window.innerHeight = 800;
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		await waitFor(() => {
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+
+		viewport.height = 650;
+		viewport.offsetTop = 25;
+		await act(async () => {
+			handlers.get('scroll')?.();
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(125);
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+	});
+
+	it('handles a missing visual viewport during a resize event', async () => {
+		const handlers = new Map<string, () => void>();
+		const viewport = {
+			height: 600,
+			offsetTop: 0,
+			addEventListener: vi.fn((event: string, handler: () => void) => {
+				handlers.set(event, handler);
+			}),
+			removeEventListener: vi.fn(),
+		};
+
+		setVisualViewport(viewport);
+		window.innerHeight = 800;
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		await waitFor(() => {
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+
+		setVisualViewport(undefined);
+		await act(async () => {
+			handlers.get('resize')?.();
+		});
+
+		expect(result.current.keyboardOffset).toBe(200);
+		expect(result.current.isKeyboardVisible).toBe(true);
 	});
 });

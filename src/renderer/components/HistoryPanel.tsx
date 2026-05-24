@@ -84,7 +84,7 @@ export const HistoryPanel = React.memo(
 		const loadHistory = useCallback(
 			async (isRefresh = false) => {
 				// Save current scroll position before loading
-				const currentScrollTop = listRef.current?.scrollTop ?? 0;
+				const currentScrollTop = isRefresh ? listRef.current!.scrollTop : 0;
 
 				if (!isRefresh) {
 					setIsLoading(true);
@@ -229,9 +229,7 @@ export const HistoryPanel = React.memo(
 		// Handle Enter key selection - opens detail modal for selected entry
 		const handleSelectByIndex = useCallback(
 			(index: number) => {
-				if (index >= 0 && index < allFilteredEntries.length) {
-					setDetailModalEntry(allFilteredEntries[index]);
-				}
+				setDetailModalEntry(allFilteredEntries[index]!);
 			},
 			[allFilteredEntries]
 		);
@@ -309,8 +307,7 @@ export const HistoryPanel = React.memo(
 		// PERF: Inner handler contains the actual logic
 		// Note: With virtualization, we no longer need to load more entries on scroll
 		const handleScrollInner = useCallback(() => {
-			const target = scrollTargetRef.current;
-			if (!target) return;
+			const target = scrollTargetRef.current!;
 
 			// Save scroll position to module-level cache (persists across session switches)
 			scrollPositionCache.set(session.id, target.scrollTop);
@@ -369,9 +366,7 @@ export const HistoryPanel = React.memo(
 			setSelectedIndex(-1);
 			setGraphReferenceTime(undefined); // Reset to "now" when filters change
 			// Scroll to top when filters change
-			if (listRef.current) {
-				listRef.current.scrollTop = 0;
-			}
+			listRef.current!.scrollTop = 0;
 		}, [activeFilters, searchFilter, graphLookbackHours, setSelectedIndex]);
 
 		// Scroll selected item into view when selectedIndex changes (keyboard navigation)
@@ -490,7 +485,7 @@ export const HistoryPanel = React.memo(
 									setSearchFilterOpen(false);
 									setSearchFilter('');
 									// Return focus to the list
-									listRef.current?.focus();
+									listRef.current!.focus();
 								} else if (e.key === 'ArrowDown') {
 									e.preventDefault();
 									// Move focus to list and select first item

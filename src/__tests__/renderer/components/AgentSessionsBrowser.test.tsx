@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import * as LayerStackContext from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Session, LogEntry } from '../../../renderer/types';
 
 // Mock lucide-react icons
@@ -206,6 +207,7 @@ describe('AgentSessionsBrowser', () => {
 		vi.mocked(window.maestro.claude.updateSessionName).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agentSessions.updateSessionName).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agentSessions.setSessionName).mockResolvedValue(undefined);
+		vi.mocked(window.maestro.agentSessions.setSessionStarred).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -505,6 +507,63 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByText(/Claude Sessions for My Project/i)).toBeInTheDocument();
 		});
 
+		it('uses SSH workingDirOverride when remote cwd is unavailable', async () => {
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({
+								sshRemoteId: 'remote-1',
+								remoteCwd: undefined,
+								projectRoot: '/local/project',
+								sessionSshRemoteConfig: {
+									enabled: true,
+									remoteId: 'remote-1',
+									workingDirOverride: '/remote/override',
+								},
+							}),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.agentSessions.listPaginated).toHaveBeenCalledWith(
+				'claude-code',
+				'/remote/override',
+				{ limit: 100 },
+				'remote-1'
+			);
+		});
+
+		it('falls back to project root for SSH sessions without remote paths', async () => {
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({
+								sshRemoteId: 'remote-1',
+								remoteCwd: undefined,
+								projectRoot: '/local/project',
+								sessionSshRemoteConfig: {
+									enabled: true,
+									remoteId: 'remote-1',
+								},
+							}),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.agentSessions.listPaginated).toHaveBeenCalledWith(
+				'claude-code',
+				'/local/project',
+				{ limit: 100 },
+				'remote-1'
+			);
+		});
+
 		it('shows active Claude session ID badge when provided', async () => {
 			const props = createDefaultProps({
 				activeAgentSessionId: 'abc12345-def6-7890',
@@ -592,6 +651,28 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByText(/No Claude sessions found for this project/i)).toBeInTheDocument();
 		});
 
+		it('shows non-Claude empty state wording for generic agents', async () => {
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [],
+				hasMore: false,
+				totalCount: 0,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ toolType: 'opencode' }),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText(/No agent sessions found for this project/i)).toBeInTheDocument();
+		});
+
 		it('handles API error gracefully', async () => {
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockRejectedValue(
@@ -656,6 +737,126 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByText('5 sessions')).toBeInTheDocument();
 			expect(screen.getByText('100 messages')).toBeInTheDocument();
 			expect(screen.getByText('$2.50')).toBeInTheDocument();
+		});
+
+		it('computes aggregate stats from loaded sessions for non-Claude agents', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					messageCount: 10,
+					costUsd: 1.25,
+					sizeBytes: 1024,
+					inputTokens: 1000,
+					outputTokens: 500,
+					timestamp: '2025-01-10T00:00:00Z',
+				}),
+				createMockClaudeSession({
+					sessionId: 'session-2',
+					messageCount: 5,
+					costUsd: 0.75,
+					sizeBytes: 2048,
+					inputTokens: 2000,
+					outputTokens: 750,
+					timestamp: '2024-01-01T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ toolType: 'opencode' }),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.agentSessions.getOrigins).toHaveBeenCalledWith(
+				'opencode',
+				'/path/to/project'
+			);
+			expect(window.maestro.claude.onProjectStatsUpdate).not.toHaveBeenCalled();
+			expect(window.maestro.claude.getProjectStats).not.toHaveBeenCalled();
+			expect(screen.getByText('2 sessions')).toBeInTheDocument();
+			expect(screen.getByText('15 messages')).toBeInTheDocument();
+			expect(screen.getByText('$2.00')).toBeInTheDocument();
+			expect(screen.getByText('~4K tokens')).toBeInTheDocument();
+			expect(screen.getByText(/Since/i)).toHaveTextContent('2025');
+		});
+
+		it('computes zero-valued aggregate stats from sparse non-Claude sessions', async () => {
+			const sparseSession = {
+				...createMockClaudeSession({ sessionId: 'session-1' }),
+				messageCount: undefined,
+				costUsd: undefined,
+				sizeBytes: undefined,
+				inputTokens: undefined,
+				outputTokens: undefined,
+				timestamp: undefined,
+			} as unknown as ClaudeSession;
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [sparseSession],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ toolType: 'opencode' }),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('1 session')).toBeInTheDocument();
+			expect(screen.getByText('0 messages')).toBeInTheDocument();
+			expect(screen.getByText('0 B')).toBeInTheDocument();
+			expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+			expect(screen.queryByText(/tokens/i)).not.toBeInTheDocument();
+			expect(screen.getByText(/Since/i)).toHaveTextContent('2025');
+		});
+
+		it('keeps the oldest non-Claude timestamp when later sessions are newer', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					timestamp: '2024-01-02T12:00:00Z',
+				}),
+				createMockClaudeSession({
+					sessionId: 'session-2',
+					timestamp: '2025-01-10T00:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ toolType: 'opencode' }),
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText(/Since/i)).toHaveTextContent('2025');
 		});
 
 		it('shows loading indicator while stats incomplete', async () => {
@@ -1074,6 +1275,303 @@ describe('AgentSessionsBrowser', () => {
 			);
 		});
 
+		it('debounces content search and clears the pending query before searching again', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1', firstMessage: 'Test' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.search).mockResolvedValue([]);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'first query' } });
+				await vi.advanceTimersByTimeAsync(100);
+				fireEvent.change(searchInput, { target: { value: 'second query' } });
+				await vi.advanceTimersByTimeAsync(400);
+			});
+
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledTimes(1);
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'second query',
+				'all',
+				undefined
+			);
+		});
+
+		it('clears backend search results and logs when content search fails', async () => {
+			const searchError = new Error('search unavailable');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Unrelated session',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.search).mockRejectedValue(searchError);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'missing backend result' } });
+				await vi.advanceTimersByTimeAsync(400);
+			});
+
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'missing backend result',
+				'all',
+				undefined
+			);
+			expect(consoleError).toHaveBeenCalledWith('Search failed:', searchError);
+			expect(screen.getByText('No sessions match your search')).toBeInTheDocument();
+
+			consoleError.mockRestore();
+		});
+
+		it('does not call backend search when there is no project path', async () => {
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({ projectRoot: undefined }),
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'needs project path' } });
+				await vi.advanceTimersByTimeAsync(400);
+			});
+
+			expect(window.maestro.agentSessions.search).not.toHaveBeenCalled();
+		});
+
+		it('opens the search panel with Meta+F from the activity graph', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Graph visible session',
+					modifiedAt: '2025-01-15T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+			expect(screen.queryByPlaceholderText(/Search all content/i)).not.toBeInTheDocument();
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByPlaceholderText(/Search all content/i)).toBeInTheDocument();
+		});
+
+		it('keeps the activity graph open for unrelated global key presses', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Graph key session',
+					modifiedAt: '2025-01-15T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'g',
+						metaKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByPlaceholderText(/Search all content/i)).not.toBeInTheDocument();
+			expect(screen.getByTitle(/All time: 1 session/)).toBeInTheDocument();
+		});
+
+		it('toggles from activity graph back to search and returns to the graph', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Graph toggle session',
+					modifiedAt: '2025-01-15T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+			expect(screen.queryByPlaceholderText(/Search all content/i)).not.toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(/Search sessions/));
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'graph query' } });
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByPlaceholderText(/Search all content/i)).not.toBeInTheDocument();
+			expect(screen.getByTitle(/All time: 1 session/)).toBeInTheDocument();
+		});
+
+		it('shows user and assistant search placeholders when modes are selected', async () => {
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchModeButton = screen.getByText('All').closest('button');
+			await act(async () => {
+				fireEvent.click(searchModeButton!);
+				await vi.runAllTimersAsync();
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByText('My Messages'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByPlaceholderText(/Search your messages/i)).toBeInTheDocument();
+			expect(screen.getByTestId('icon-user')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/^user$/i).closest('button')!);
+				await vi.runAllTimersAsync();
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByText('AI Responses'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByPlaceholderText(/Search AI responses/i)).toBeInTheDocument();
+			expect(screen.getByTestId('icon-bot')).toBeInTheDocument();
+		});
+
+		it('selects and scrolls to the first session in a clicked activity bucket', async () => {
+			vi.setSystemTime(new Date('2025-01-16T00:00:00Z'));
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'newer-session',
+					firstMessage: 'Newer session',
+					modifiedAt: '2025-01-15T23:00:00Z',
+				}),
+				createMockClaudeSession({
+					sessionId: 'older-session',
+					firstMessage: 'Older session',
+					modifiedAt: '2025-01-01T00:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+			scrollIntoView.mockClear();
+			const graph = screen.getByTitle(/All time: 2 sessions/);
+			const bars = graph.querySelectorAll('div.cursor-pointer');
+
+			await act(async () => {
+				fireEvent.click(bars[0]);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+		});
+
 		it('shows search mode dropdown options', async () => {
 			await act(async () => {
 				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
@@ -1361,6 +1859,81 @@ describe('AgentSessionsBrowser', () => {
 			);
 		});
 
+		it('uses generic session starred persistence for non-Claude agents', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onUpdateTab = vi.fn();
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({
+					toolType: 'opencode',
+					cwd: '/path/to/project/nested',
+					projectRoot: '/path/to/project',
+				}),
+				onUpdateTab,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const starButton = screen.getByTestId('icon-star').closest('button');
+			await act(async () => {
+				fireEvent.click(starButton!);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionStarred).toHaveBeenCalledWith(
+				'opencode',
+				'/path/to/project',
+				'session-1',
+				true
+			);
+			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { starred: true });
+		});
+
+		it('skips star persistence when the active session has no project root', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onUpdateTab = vi.fn();
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({
+					projectRoot: undefined,
+					sshRemoteId: 'remote-1',
+					remoteCwd: '/path/to/project',
+				}),
+				onUpdateTab,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const starButton = screen.getByTestId('icon-star').closest('button');
+			await act(async () => {
+				fireEvent.click(starButton!);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
+			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { starred: true });
+		});
+
 		it('sorts starred sessions to the top', async () => {
 			const sessions = [
 				createMockClaudeSession({
@@ -1473,6 +2046,128 @@ describe('AgentSessionsBrowser', () => {
 				'New Name'
 			);
 			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { name: 'New Name' });
+		});
+
+		it('uses generic session name persistence for non-Claude agents', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onUpdateTab = vi.fn();
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({
+					toolType: 'opencode',
+					cwd: '/path/to/project/nested',
+					projectRoot: '/path/to/project',
+				}),
+				onUpdateTab,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen.getAllByTestId('icon-edit')[0].closest('button');
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Generic Name' } });
+				fireEvent.keyDown(input, { key: 'Enter' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+				'opencode',
+				'/path/to/project',
+				'session-1',
+				'Generic Name'
+			);
+			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { name: 'Generic Name' });
+		});
+
+		it('skips rename persistence when the active session has no project root', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const props = createDefaultProps({
+				activeSession: createMockActiveSession({
+					projectRoot: undefined,
+					sshRemoteId: 'remote-1',
+					remoteCwd: '/path/to/project',
+				}),
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen.getAllByTestId('icon-edit')[0].closest('button');
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'No Project Root Name' } });
+				fireEvent.keyDown(input, { key: 'Enter' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+
+		it('logs expected rename failures and exits rename mode', async () => {
+			const renameError = new Error('rename failed');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.claude.updateSessionName).mockRejectedValue(renameError);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen.getAllByTestId('icon-edit')[0].closest('button');
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Rejected Name' } });
+				fireEvent.keyDown(input, { key: 'Enter' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(consoleError).toHaveBeenCalledWith('Failed to rename session:', renameError);
+			expect(screen.queryByPlaceholderText('Enter session name...')).not.toBeInTheDocument();
+
+			consoleError.mockRestore();
 		});
 
 		it('cancels rename on Escape key (clears input value)', async () => {
@@ -1750,6 +2445,53 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByText('Resume')).toBeInTheDocument();
 		});
 
+		it('does not open a session when Enter is pressed with an empty list', async () => {
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [],
+				hasMore: false,
+				totalCount: 0,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.keyDown(searchInput, { key: 'Enter' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+			expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+		});
+
+		it('ignores non-navigation keys in list view', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.keyDown(searchInput, { key: 'Tab' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+			expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+		});
+
 		it('closes modal on Escape in list view', async () => {
 			const onClose = vi.fn();
 			const props = createDefaultProps({ onClose });
@@ -1809,9 +2551,11 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Escape should go back to list
+			// Escape inside the detail region should go back to list
+			expect(screen.getByText('Resume')).toBeInTheDocument();
+			const messagesRegion = screen.getByRole('region', { name: 'Session messages' });
 			await act(async () => {
-				fireEvent.keyDown(window, { key: 'Escape' });
+				fireEvent.keyDown(messagesRegion, { key: 'Escape' });
 				await vi.runAllTimersAsync();
 			});
 
@@ -1966,6 +2710,42 @@ describe('AgentSessionsBrowser', () => {
 			expect(screen.getByText('Of course!')).toBeInTheDocument();
 		});
 
+		it('uses zero cost fallback and light contrast for user messages in detail view', async () => {
+			const session = {
+				...createMockClaudeSession({ sessionId: 'session-1' }),
+				costUsd: undefined,
+			} as unknown as ClaudeSession;
+			const messages = [createMockMessage({ type: 'user', content: 'Light theme prompt' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+				messages,
+				total: 1,
+				hasMore: false,
+			});
+			const lightTheme: Theme = { ...defaultTheme, mode: 'light' };
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps({ theme: lightTheme })} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('$0.00')).toBeInTheDocument();
+			expect(screen.getByText('Light theme prompt')).toBeInTheDocument();
+		});
+
 		it('shows back button in detail view', async () => {
 			const session = createMockClaudeSession({ sessionId: 'session-1' });
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
@@ -2022,6 +2802,46 @@ describe('AgentSessionsBrowser', () => {
 			// Should be back in list view
 			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
 			expect(screen.getByText(/Help me with this code/i)).toBeInTheDocument();
+		});
+
+		it('restores search focus and selected session scroll when returning to list view', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+			scrollIntoView.mockClear();
+			const backButton = screen.getByTestId('icon-chevron-left').closest('button');
+			await act(async () => {
+				fireEvent.click(backButton!);
+			});
+
+			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(document.activeElement).toBe(searchInput);
+			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
 		});
 	});
 
@@ -2362,6 +3182,110 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(onResumeSession).toHaveBeenCalled();
 		});
+
+		it('does not resume from detail view for non-Enter keys', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const messagesContainer = document.querySelector('[aria-label="Session messages"]');
+			await act(async () => {
+				fireEvent.keyDown(messagesContainer!, { key: 'ArrowDown' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).not.toHaveBeenCalled();
+			expect(screen.getByText('Resume')).toBeInTheDocument();
+		});
+
+		it('resumes empty and tool-only messages with fallback log text and ids', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			const messages = [
+				createMockMessage({
+					uuid: '',
+					type: 'assistant',
+					content: '',
+					toolUse: [{ name: 'file_read' }],
+				}),
+				createMockMessage({
+					uuid: '',
+					type: 'assistant',
+					content: '',
+					toolUse: undefined,
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+				messages,
+				total: 2,
+				hasMore: false,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Resume'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).toHaveBeenCalledWith(
+				'session-1',
+				[
+					expect.objectContaining({
+						id: 'session-1-0',
+						text: '[Tool: file_read]',
+						source: 'stdout',
+					}),
+					expect.objectContaining({
+						id: 'session-1-1',
+						text: '[No content]',
+						source: 'stdout',
+					}),
+				],
+				undefined,
+				false,
+				expect.objectContaining({ totalCostUsd: 0.15 })
+			);
+		});
 	});
 
 	// ============================================================================
@@ -2411,6 +3335,35 @@ describe('AgentSessionsBrowser', () => {
 				})
 			);
 			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('quick resumes a zero-cost session without stale usage stats', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				costUsd: 0,
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const onResumeSession = vi.fn();
+			const props = createDefaultProps({ onResumeSession });
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const quickResumeButton = screen.getAllByTestId('icon-play')[0].closest('button');
+			await act(async () => {
+				fireEvent.click(quickResumeButton!);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(onResumeSession).toHaveBeenCalledWith('session-1', [], undefined, false, undefined);
 		});
 	});
 
@@ -2655,6 +3608,60 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 		});
+
+		it('shows loading spinner while earlier messages are loading', async () => {
+			const session = createMockClaudeSession({ sessionId: 'session-1' });
+			const firstBatch = [createMockMessage({ uuid: 'msg-1', content: 'Recent message' })];
+			let resolveOlderMessages: (value: unknown) => void;
+			const olderMessagesPromise = new Promise((resolve) => {
+				resolveOlderMessages = resolve;
+			});
+
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.read)
+				.mockResolvedValueOnce({
+					messages: firstBatch,
+					total: 2,
+					hasMore: true,
+				})
+				.mockImplementationOnce(
+					() =>
+						olderMessagesPromise as Promise<{
+							messages: SessionMessage[];
+							total: number;
+							hasMore: boolean;
+						}>
+				);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText(/Help me with this code/i)
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Load earlier messages/i));
+			});
+
+			expect(screen.getAllByTestId('icon-loader').length).toBeGreaterThan(0);
+
+			await act(async () => {
+				resolveOlderMessages!({ messages: [], total: 2, hasMore: false });
+				await vi.runAllTimersAsync();
+			});
+		});
 	});
 
 	// ============================================================================
@@ -2730,6 +3737,32 @@ describe('AgentSessionsBrowser', () => {
 
 			// Should be in detail view
 			expect(screen.getByText('Resume')).toBeInTheDocument();
+		});
+
+		it('stays in list view when activeAgentSessionId does not match loaded sessions', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'other-session',
+				firstMessage: 'Other session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const props = createDefaultProps({
+				activeAgentSessionId: 'missing-session',
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...props} />);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('Other session')).toBeInTheDocument();
+			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+			expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2811,6 +3844,150 @@ describe('AgentSessionsBrowser', () => {
 			// Session name should be in header
 			const headerName = screen.getAllByText('My Named Session')[0];
 			expect(headerName).toBeInTheDocument();
+		});
+
+		it('submits detail header rename for named sessions on blur', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'My Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen
+				.getByText('My Named Session')
+				.closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Blurred Detail Name' } });
+				fireEvent.blur(input);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.claude.updateSessionName).toHaveBeenCalledWith(
+				'/path/to/project',
+				'session-1',
+				'Blurred Detail Name'
+			);
+		});
+
+		it('clears a generic-agent session name from the detail header', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			const onUpdateTab = vi.fn();
+
+			await act(async () => {
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ toolType: 'opencode' }),
+							onUpdateTab,
+						})}
+					/>
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen.getByText('Named Session').closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: '   ' } });
+				fireEvent.keyDown(input, { key: 'Enter' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+				'opencode',
+				'/path/to/project',
+				'session-1',
+				null
+			);
+			expect(onUpdateTab).toHaveBeenCalledWith('session-1', { name: null });
+		});
+
+		it('keeps editing when a non-Enter key is pressed in the detail rename input', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const sessionItem = screen.getByText('Named Session').closest('div[class*="cursor-pointer"]');
+			await act(async () => {
+				fireEvent.click(sessionItem!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Still Editing' } });
+				fireEvent.keyDown(input, { key: 'Escape' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByDisplayValue('Still Editing')).toBeInTheDocument();
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2939,6 +4116,376 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			expect(screen.getByText('[No content]')).toBeInTheDocument();
+		});
+	});
+
+	// ============================================================================
+	// Branch Edge Case Tests
+	// ============================================================================
+
+	describe('branch edge cases', () => {
+		it('skips layer cleanup and handler updates when registration returns no layer id', async () => {
+			const registerLayer = vi.fn(() => undefined as unknown as string);
+			const unregisterLayer = vi.fn();
+			const updateLayerHandler = vi.fn();
+			const useLayerStackSpy = vi.spyOn(LayerStackContext, 'useLayerStack').mockReturnValue({
+				registerLayer,
+				unregisterLayer,
+				updateLayerHandler,
+			} as unknown as ReturnType<typeof LayerStackContext.useLayerStack>);
+
+			let rendered: ReturnType<typeof render> | undefined;
+			try {
+				await act(async () => {
+					rendered = render(<AgentSessionsBrowser {...createDefaultProps()} />);
+					await vi.runAllTimersAsync();
+				});
+
+				expect(registerLayer).toHaveBeenCalledWith(
+					expect.objectContaining({ ariaLabel: 'Agent Sessions Browser' })
+				);
+				expect(updateLayerHandler).not.toHaveBeenCalled();
+
+				await act(async () => {
+					rendered?.unmount();
+					await vi.runAllTimersAsync();
+				});
+
+				expect(unregisterLayer).not.toHaveBeenCalled();
+			} finally {
+				useLayerStackSpy.mockRestore();
+			}
+		});
+
+		it('does not keep a completed search timeout live after unmount', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1', firstMessage: 'Test' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.search).mockResolvedValue([]);
+
+			let rendered: ReturnType<typeof render> | undefined;
+			await act(async () => {
+				rendered = renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'finished query' } });
+				await vi.advanceTimersByTimeAsync(400);
+			});
+
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				rendered?.unmount();
+				await vi.runAllTimersAsync();
+			});
+
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledTimes(1);
+		});
+
+		it('cancels a pending content search when the query changes before debounce', async () => {
+			const sessions = [createMockClaudeSession({ sessionId: 'session-1', firstMessage: 'Test' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.search).mockResolvedValue([]);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			const searchInput = screen.getByPlaceholderText(/Search all content/i);
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'first query' } });
+			});
+			await act(async () => {
+				fireEvent.change(searchInput, { target: { value: 'second query' } });
+				await vi.advanceTimersByTimeAsync(400);
+			});
+
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledTimes(1);
+			expect(window.maestro.agentSessions.search).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'second query',
+				'all',
+				undefined
+			);
+		});
+
+		it('updates graph entries when sessions arrive while the graph is visible', async () => {
+			let resolveList:
+				| ((value: {
+						sessions: ClaudeSession[];
+						hasMore: boolean;
+						totalCount: number;
+						nextCursor: null;
+				  }) => void)
+				| undefined;
+			const listPromise = new Promise<{
+				sessions: ClaudeSession[];
+				hasMore: boolean;
+				totalCount: number;
+				nextCursor: null;
+			}>((resolve) => {
+				resolveList = resolve;
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockReturnValue(listPromise);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				resolveList?.({
+					sessions: [
+						createMockClaudeSession({
+							sessionId: 'late-session',
+							firstMessage: 'Late session',
+							modifiedAt: '2025-01-15T12:00:00Z',
+						}),
+					],
+					hasMore: false,
+					totalCount: 1,
+					nextCursor: null,
+				});
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByTitle(/All time: 1 session/)).toBeInTheDocument();
+		});
+
+		it('refreshes graph entries when filters change while the graph is visible', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'named-session',
+					sessionName: 'Named Session',
+					modifiedAt: '2025-01-15T12:00:00Z',
+				}),
+				createMockClaudeSession({
+					sessionId: 'unnamed-session',
+					firstMessage: 'Unnamed session',
+					modifiedAt: '2025-01-14T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByTitle(/All time: 2 sessions/)).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Named'));
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByTitle(/All time: 1 session/)).toBeInTheDocument();
+		});
+
+		it('ignores graph bucket clicks after filters remove matching sessions', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'unnamed-session',
+				firstMessage: 'Unnamed session',
+				modifiedAt: '2025-01-15T12:00:00Z',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Named'));
+				await vi.runAllTimersAsync();
+			});
+
+			const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+			scrollIntoView.mockClear();
+			const graph = screen.getByTitle(/All time: 1 session/);
+			const bars = graph.querySelectorAll('div.cursor-pointer');
+
+			await act(async () => {
+				bars.forEach((bar) => fireEvent.click(bar));
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(scrollIntoView).not.toHaveBeenCalled();
+		});
+
+		it('opens the search panel with Ctrl+F from the activity graph', async () => {
+			const sessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Control key graph session',
+					modifiedAt: '2025-01-15T12:00:00Z',
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Show activity graph'));
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				document.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByPlaceholderText(/Search all content/i)).toBeInTheDocument();
+		});
+
+		it('does not resurrect detail view when a rename resolves after navigating back', async () => {
+			let resolveRename: (() => void) | undefined;
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Original Name',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.claude.updateSessionName).mockReturnValue(
+				new Promise<void>((resolve) => {
+					resolveRename = resolve;
+				})
+			);
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Original Name').closest('div[class*="cursor-pointer"]')!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.change(input, { target: { value: 'Slow Rename' } });
+				fireEvent.keyDown(input, { key: 'Enter' });
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('icon-chevron-left').closest('button')!);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				resolveRename?.();
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('New Session')).toBeInTheDocument();
+			expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+		});
+
+		it('keeps detail rename input open for non-Enter keys', async () => {
+			const session = createMockClaudeSession({
+				sessionId: 'session-1',
+				sessionName: 'Named Session',
+			});
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: [session],
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			await act(async () => {
+				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				await vi.runAllTimersAsync();
+			});
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Named Session').closest('div[class*="cursor-pointer"]')!);
+				await vi.runAllTimersAsync();
+			});
+
+			const editButton = screen
+				.getAllByTitle('Rename session')
+				.find((button) => !button.closest('div[class*="cursor-pointer"]'));
+			await act(async () => {
+				fireEvent.click(editButton!);
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const input = screen.getByPlaceholderText('Enter session name...');
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Tab' });
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByDisplayValue('Named Session')).toBeInTheDocument();
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
 		});
 	});
 

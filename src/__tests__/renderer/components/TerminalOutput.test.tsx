@@ -11,11 +11,15 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, createEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
-import type { Session, Theme, LogEntry } from '../../../renderer/types';
+import {
+	TerminalOutput,
+	addTerminalHighlightMarkers,
+	getTerminalScrollSnapshot,
+} from '../../../renderer/components/TerminalOutput';
+import type { Session, Theme, LogEntry, AgentError } from '../../../renderer/types';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -161,6 +165,56 @@ describe('TerminalOutput', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	describe('terminal helpers', () => {
+		it('returns unchanged highlight text when the search query is empty', () => {
+			expect(
+				addTerminalHighlightMarkers('alpha beta', '', defaultTheme.colors.warning, 'dark')
+			).toBe('alpha beta');
+		});
+
+		it('adds highlight markers for case-insensitive terminal matches', () => {
+			expect(
+				addTerminalHighlightMarkers(
+					'Alpha beta ALPHA',
+					'alpha',
+					defaultTheme.colors.warning,
+					'light'
+				)
+			).toContain('<mark');
+			expect(
+				addTerminalHighlightMarkers(
+					'Alpha beta ALPHA',
+					'alpha',
+					defaultTheme.colors.warning,
+					'light'
+				)
+			).toContain('color: #fff');
+		});
+
+		it('returns no scroll snapshot when the scroll container is missing', () => {
+			expect(getTerminalScrollSnapshot(null)).toBeNull();
+		});
+
+		it('computes bottom state from scroll geometry', () => {
+			expect(
+				getTerminalScrollSnapshot({
+					scrollTop: 450,
+					scrollHeight: 1000,
+					clientHeight: 520,
+				})
+			).toEqual({ scrollTop: 450, atBottom: true });
+
+			expect(
+				getTerminalScrollSnapshot({
+					scrollTop: 0,
+					scrollHeight: 1000,
+					clientHeight: 520,
+				})
+			).toEqual({ scrollTop: 0, atBottom: false });
+		});
 	});
 
 	describe('basic rendering', () => {
@@ -211,6 +265,28 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('First message')).toBeInTheDocument();
 		});
 
+		it('shows the calendar date for older log entries', () => {
+			const olderDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+			const expectedDate = `${olderDate.getFullYear()}-${String(olderDate.getMonth() + 1).padStart(2, '0')}-${String(olderDate.getDate()).padStart(2, '0')}`;
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Earlier message',
+					source: 'stdout',
+					timestamp: olderDate.getTime(),
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText(expectedDate)).toBeInTheDocument();
+			expect(screen.getByText('Earlier message')).toBeInTheDocument();
+		});
+
 		it('renders shell logs in terminal mode', () => {
 			const shellLogs: LogEntry[] = [
 				createLogEntry({ text: 'ls -la', source: 'user' }),
@@ -226,6 +302,96 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText(/total 100/)).toBeInTheDocument();
+		});
+
+		it('strips echoed terminal commands before rendering command output', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({ text: 'npm test', source: 'user' }),
+				createLogEntry({ text: 'npm test\r\nPASS all suites', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('npm test')).toBeInTheDocument();
+			expect(screen.getByText('PASS all suites')).toBeInTheDocument();
+			expect(screen.queryByText('npm test\r\nPASS all suites')).not.toBeInTheDocument();
+		});
+
+		it('strips echoed terminal commands followed by bare newline or carriage return', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({ text: 'echo newline', source: 'user' }),
+				createLogEntry({ text: 'echo newline\nnewline output', source: 'stdout' }),
+				createLogEntry({ text: 'echo carriage', source: 'user' }),
+				createLogEntry({ text: 'echo carriage\rcarriage output', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('newline output')).toBeInTheDocument();
+			expect(screen.getByText('carriage output')).toBeInTheDocument();
+			expect(screen.queryByText('echo newline\nnewline output')).not.toBeInTheDocument();
+			expect(screen.queryByText('echo carriage\rcarriage output')).not.toBeInTheDocument();
+		});
+
+		it('strips echoed terminal commands when output continues on the same line', () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({ text: 'npm test', source: 'user' }),
+				createLogEntry({ text: 'npm test--passed', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('npm test')).toBeInTheDocument();
+			expect(screen.getByText('--passed')).toBeInTheDocument();
+			expect(screen.queryByText('npm test--passed')).not.toBeInTheDocument();
+		});
+
+		it('keeps filtered terminal output unhighlighted when matching lines are locally excluded', async () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({
+					id: 'filtered-search-log',
+					text: 'needle match\nplain line',
+					source: 'stdout',
+				}),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, outputSearchQuery: 'needle' })} />
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Filter this output'));
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Include matching lines'));
+			});
+			await act(async () => {
+				fireEvent.change(screen.getByPlaceholderText(/Exclude by keyword/), {
+					target: { value: 'needle' },
+				});
+			});
+
+			expect(screen.getByText('plain line')).toBeInTheDocument();
+			expect(container.querySelector('mark')).not.toBeInTheDocument();
 		});
 
 		it('displays user messages with different styling', () => {
@@ -322,6 +488,57 @@ describe('TerminalOutput', () => {
 			// Should have 2 log items: 1 user + 1 combined response
 			const logItems = container.querySelectorAll('[data-log-index]');
 			expect(logItems.length).toBe(2);
+		});
+
+		it('highlights repeated matches in AI command output', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'beta before beta after',
+					source: 'stdout',
+					aiCommand: {
+						command: '/review',
+						description: 'Review the current diff',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, outputSearchQuery: 'beta' })} />);
+
+			expect(screen.getByText('/review:')).toBeInTheDocument();
+			expect(screen.getAllByText('beta')).toHaveLength(2);
+		});
+
+		it('uses light-theme contrast when highlighting an exact AI command match', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'beta',
+					source: 'stdout',
+					aiCommand: {
+						command: '/review',
+						description: 'Review the current diff',
+					},
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			const lightTheme: Theme = { ...defaultTheme, mode: 'light' };
+
+			render(
+				<TerminalOutput
+					{...createDefaultProps({ session, theme: lightTheme, outputSearchQuery: 'beta' })}
+				/>
+			);
+
+			const highlight = screen.getByText('beta');
+			expect(highlight).toHaveStyle({ backgroundColor: defaultTheme.colors.warning });
+			expect(highlight).toHaveStyle({ color: '#fff' });
 		});
 	});
 
@@ -506,6 +723,55 @@ describe('TerminalOutput', () => {
 			);
 		});
 
+		it('closes search and returns focus through registered layer escape handler', () => {
+			mockRegisterLayer.mockClear();
+			const setOutputSearchOpen = vi.fn();
+			const setOutputSearchQuery = vi.fn();
+			const props = createDefaultProps({
+				outputSearchOpen: true,
+				outputSearchQuery: 'needle',
+				setOutputSearchOpen,
+				setOutputSearchQuery,
+			});
+			render(<TerminalOutput {...props} />);
+
+			const terminalOutput = screen.getByRole('region', { name: 'Terminal output' });
+			const registeredLayer = mockRegisterLayer.mock.calls.at(-1)?.[0];
+
+			act(() => {
+				registeredLayer.onEscape();
+			});
+
+			expect(setOutputSearchOpen).toHaveBeenCalledWith(false);
+			expect(setOutputSearchQuery).toHaveBeenCalledWith('');
+			expect(terminalOutput).toHaveFocus();
+		});
+
+		it('keeps the layer escape handler current when search dependencies change', () => {
+			mockUpdateLayerHandler.mockClear();
+			const setOutputSearchOpen = vi.fn();
+			const setOutputSearchQuery = vi.fn();
+			const props = createDefaultProps({
+				outputSearchOpen: true,
+				outputSearchQuery: 'needle',
+				setOutputSearchOpen,
+				setOutputSearchQuery,
+			});
+			render(<TerminalOutput {...props} />);
+
+			const terminalOutput = screen.getByRole('region', { name: 'Terminal output' });
+			const updateHandler = mockUpdateLayerHandler.mock.calls.at(-1)?.[1];
+
+			act(() => {
+				updateHandler();
+			});
+
+			expect(mockUpdateLayerHandler).toHaveBeenCalledWith('layer-1', expect.any(Function));
+			expect(setOutputSearchOpen).toHaveBeenCalledWith(false);
+			expect(setOutputSearchQuery).toHaveBeenCalledWith('');
+			expect(terminalOutput).toHaveFocus();
+		});
+
 		it('unregisters layer when component unmounts with search open', () => {
 			mockUnregisterLayer.mockClear();
 			const props = createDefaultProps({ outputSearchOpen: true });
@@ -514,6 +780,17 @@ describe('TerminalOutput', () => {
 			unmount();
 
 			expect(mockUnregisterLayer).toHaveBeenCalled();
+		});
+
+		it('skips unregistering search layer when registration does not return an id', () => {
+			mockRegisterLayer.mockReturnValueOnce(undefined as never);
+			mockUnregisterLayer.mockClear();
+			const props = createDefaultProps({ outputSearchOpen: true });
+			const { unmount } = render(<TerminalOutput {...props} />);
+
+			unmount();
+
+			expect(mockUnregisterLayer).not.toHaveBeenCalled();
 		});
 
 		it('matches logs containing partial words (terminal mode)', async () => {
@@ -625,6 +902,21 @@ describe('TerminalOutput', () => {
 			expect(scrollToSpy).toHaveBeenCalledWith({ top: 0 });
 		});
 
+		it('scrolls to top on Ctrl+ArrowUp', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowUp', ctrlKey: true });
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 0 });
+		});
+
 		it('scrolls to bottom on Cmd+ArrowDown', () => {
 			const props = createDefaultProps();
 			const { container } = render(<TerminalOutput {...props} />);
@@ -638,6 +930,22 @@ describe('TerminalOutput', () => {
 			fireEvent.keyDown(outputDiv, { key: 'ArrowDown', metaKey: true });
 
 			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('scrolls to bottom on Ctrl+ArrowDown', () => {
+			const props = createDefaultProps();
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const outputDiv = container.firstChild as HTMLElement;
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 2400, configurable: true });
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			fireEvent.keyDown(outputDiv, { key: 'ArrowDown', ctrlKey: true });
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 2400 });
 		});
 
 		it('focuses input on Escape when search is not open', () => {
@@ -684,6 +992,161 @@ describe('TerminalOutput', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Copied to Clipboard')).toBeInTheDocument();
 			});
+
+			act(() => {
+				vi.advanceTimersByTime(1500);
+			});
+
+			await waitFor(() => {
+				expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
+			});
+		});
+
+		it('does not show copied notification when clipboard write fails', async () => {
+			const logs: LogEntry[] = [createLogEntry({ text: 'Copy failure text', source: 'stdout' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			const writeTextMock = vi.fn().mockRejectedValue(new Error('clipboard denied'));
+			Object.assign(navigator, {
+				clipboard: { writeText: writeTextMock },
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Copy to clipboard'));
+			});
+
+			expect(writeTextMock).toHaveBeenCalledWith('Copy failure text');
+			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
+		});
+
+		it('replays user messages with their images', async () => {
+			const onReplayMessage = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Please retry this prompt',
+					source: 'user',
+					images: ['data:image/png;base64,abc123'],
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, onReplayMessage })} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Replay message'));
+			});
+
+			expect(onReplayMessage).toHaveBeenCalledWith('Please retry this prompt', [
+				'data:image/png;base64,abc123',
+			]);
+		});
+
+		it('saves AI responses through the save markdown modal', async () => {
+			const originalWriteFile = window.maestro.fs.writeFile;
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			window.maestro.fs.writeFile = writeFile;
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'save-log', text: '# Release notes', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			try {
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				await act(async () => {
+					fireEvent.click(screen.getByTitle('Save to file'));
+				});
+
+				expect(screen.getByText('Save Markdown')).toBeInTheDocument();
+
+				await act(async () => {
+					fireEvent.change(screen.getByPlaceholderText('document.md'), {
+						target: { value: 'release-notes' },
+					});
+					fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				});
+
+				expect(writeFile).toHaveBeenCalledWith(
+					'/test/path/release-notes.md',
+					'# Release notes',
+					undefined
+				);
+			} finally {
+				window.maestro.fs.writeFile = originalWriteFile;
+			}
+		});
+
+		it('opens save markdown with empty local defaults when remote config has no id', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'missing-remote-save-log',
+					text: '# Needs destination',
+					source: 'stdout',
+				}),
+			];
+			const session = createDefaultSession({
+				cwd: '',
+				sessionSshRemoteConfig: { enabled: true, remoteId: undefined },
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ cwd: '', session })} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Save to file'));
+			});
+
+			expect(screen.getByText('Save Markdown')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText('document.md')).toHaveValue('');
+			expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+		});
+
+		it('saves AI responses to the SSH remote when the session is remote', async () => {
+			const originalWriteFile = window.maestro.fs.writeFile;
+			const writeFile = vi.fn().mockResolvedValue({ success: true });
+			window.maestro.fs.writeFile = writeFile;
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'remote-save-log', text: '# Remote notes', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				cwd: '/remote/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			try {
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				await act(async () => {
+					fireEvent.click(screen.getByTitle('Save to file'));
+				});
+				await act(async () => {
+					fireEvent.change(screen.getByPlaceholderText('document.md'), {
+						target: { value: 'remote-notes' },
+					});
+					fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				});
+
+				expect(writeFile).toHaveBeenCalledWith(
+					'/remote/project/remote-notes.md',
+					'# Remote notes',
+					'remote-1'
+				);
+			} finally {
+				window.maestro.fs.writeFile = originalWriteFile;
+			}
 		});
 	});
 
@@ -705,6 +1168,143 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText(/Show all 100 lines/)).toBeInTheDocument();
+		});
+
+		it('highlights collapsed terminal output while search is active', () => {
+			const longText = Array.from({ length: 20 }, (_, index) => `needle line ${index + 1}`).join(
+				'\n'
+			);
+			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({
+						session,
+						maxOutputLines: 5,
+						outputSearchQuery: 'needle',
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/Show all 20 lines/)).toBeInTheDocument();
+			expect(container.querySelector('mark')).toBeInTheDocument();
+		});
+
+		it('renders long AI output as markdown while collapsed and expanded', async () => {
+			const longText = Array.from({ length: 20 }, (_, index) => `## AI line ${index + 1}`).join(
+				'\n'
+			);
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'long-ai-log', text: longText, source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, maxOutputLines: 5 })} />);
+
+			expect(screen.getByText(/Show all 20 lines/)).toBeInTheDocument();
+			expect(screen.getAllByTestId('react-markdown')).toHaveLength(1);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 20 lines/));
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(screen.getByText('Show less')).toBeInTheDocument();
+			expect(screen.getAllByTestId('react-markdown')).toHaveLength(1);
+		});
+
+		it('shows long terminal user input with a prompt when expanded', async () => {
+			const longText = Array.from({ length: 20 }, (_, index) => `echo line ${index + 1}`).join(
+				'\n'
+			);
+			const shellLogs: LogEntry[] = [
+				createLogEntry({ id: 'long-user-command', text: longText, source: 'user' }),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, maxOutputLines: 5 })} />
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 20 lines/));
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(screen.getByText('Show less')).toBeInTheDocument();
+			expect(container.textContent).toContain('$');
+			expect(container.textContent).toContain('echo line 20');
+		});
+
+		it('shows AI command metadata when a long command response is expanded', async () => {
+			const longText = Array.from({ length: 20 }, (_, index) => `Finding ${index + 1}`).join('\n');
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'long-ai-command',
+					text: longText,
+					source: 'stdout',
+					aiCommand: {
+						command: '/review',
+						description: 'Review the current diff',
+					},
+				}),
+			];
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, maxOutputLines: 5 })} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 20 lines/));
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(screen.getByText('/review:')).toBeInTheDocument();
+			expect(screen.getByText('Review the current diff')).toBeInTheDocument();
+			expect(screen.getByText('Show less')).toBeInTheDocument();
+		});
+
+		it('shows raw long AI output when expanded in markdown edit mode', async () => {
+			const longText = Array.from({ length: 20 }, (_, index) => `# Raw line ${index + 1}`).join(
+				'\n'
+			);
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'raw-long-ai-log', text: longText, source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				inputMode: 'ai',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ session, maxOutputLines: 5, markdownEditMode: true })}
+				/>
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 20 lines/));
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(screen.getByText('Show less')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(container.textContent).toContain('# Raw line 20');
 		});
 
 		it('expands message when "Show all" button is clicked', async () => {
@@ -729,6 +1329,13 @@ describe('TerminalOutput', () => {
 				scrollContainer.scrollTo = vi.fn();
 				scrollContainer.scrollBy = vi.fn();
 			}
+			const logItem = container.querySelector('[data-log-index]') as HTMLElement;
+			logItem.getBoundingClientRect = vi.fn(
+				() => ({ bottom: 820, top: 0, left: 0, right: 0, width: 0, height: 820 }) as DOMRect
+			);
+			scrollContainer.getBoundingClientRect = vi.fn(
+				() => ({ bottom: 500, top: 0, left: 0, right: 0, width: 0, height: 500 }) as DOMRect
+			);
 
 			const expandButton = screen.getByText(/Show all 100 lines/);
 			await act(async () => {
@@ -736,8 +1343,88 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(100);
 			});
 
+			expect(scrollContainer.scrollBy).toHaveBeenCalledWith({ top: 340, behavior: 'smooth' });
+
 			// After expanding, should show "Show less"
 			expect(screen.getByText('Show less')).toBeInTheDocument();
+
+			const expandedOutput = screen.getByText('Show less').previousElementSibling as HTMLElement;
+			Object.defineProperty(expandedOutput, 'scrollTop', { value: 100, configurable: true });
+			Object.defineProperty(expandedOutput, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(expandedOutput, 'clientHeight', { value: 200, configurable: true });
+
+			const wheelEvent = createEvent.wheel(expandedOutput, { deltaY: 40 });
+			const stopPropagation = vi.spyOn(wheelEvent, 'stopPropagation');
+			fireEvent(expandedOutput, wheelEvent);
+
+			expect(stopPropagation).toHaveBeenCalled();
+
+			Object.defineProperty(expandedOutput, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(expandedOutput, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(expandedOutput, 'clientHeight', { value: 200, configurable: true });
+
+			const boundaryWheelEvent = createEvent.wheel(expandedOutput, { deltaY: -40 });
+			const boundaryStopPropagation = vi.spyOn(boundaryWheelEvent, 'stopPropagation');
+			fireEvent(expandedOutput, boundaryWheelEvent);
+
+			expect(boundaryStopPropagation).not.toHaveBeenCalled();
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Show less'));
+			});
+
+			expect(screen.getByText(/Show all 100 lines/)).toBeInTheDocument();
+		});
+
+		it('does not scroll the container when expanded content already fits in view', async () => {
+			const longText = Array(100).fill('Line of text').join('\n');
+			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, maxOutputLines: 10 })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			scrollContainer.scrollBy = vi.fn();
+			const logItem = container.querySelector('[data-log-index]') as HTMLElement;
+			logItem.getBoundingClientRect = vi.fn(
+				() => ({ bottom: 400, top: 0, left: 0, right: 0, width: 0, height: 400 }) as DOMRect
+			);
+			scrollContainer.getBoundingClientRect = vi.fn(
+				() => ({ bottom: 500, top: 0, left: 0, right: 0, width: 0, height: 500 }) as DOMRect
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 100 lines/));
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(scrollContainer.scrollBy).not.toHaveBeenCalled();
+			expect(screen.getByText('Show less')).toBeInTheDocument();
+		});
+
+		it('ignores pending expand scroll work after unmount', async () => {
+			const longText = Array(100).fill('Line of text').join('\n');
+			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+			const { container, unmount } = render(
+				<TerminalOutput {...createDefaultProps({ session, maxOutputLines: 10 })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			scrollContainer.scrollBy = vi.fn();
+
+			await act(async () => {
+				fireEvent.click(screen.getByText(/Show all 100 lines/));
+				unmount();
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(scrollContainer.scrollBy).not.toHaveBeenCalled();
 		});
 	});
 
@@ -785,6 +1472,22 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('QUEUED (2)')).toBeInTheDocument();
 			expect(screen.getByText('Queued message 1')).toBeInTheDocument();
 			expect(screen.getByText('/history')).toBeInTheDocument();
+		});
+
+		it('shows queued items from all tabs when there is no active tab id', () => {
+			const session = createDefaultSession({
+				activeTabId: undefined as never,
+				executionQueue: [
+					{ id: 'q1', type: 'message', text: 'Queued tab one', tabId: 'tab-1' },
+					{ id: 'q2', type: 'message', text: 'Queued tab two', tabId: 'tab-2' },
+				],
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('QUEUED (2)')).toBeInTheDocument();
+			expect(screen.getByText('Queued tab one')).toBeInTheDocument();
+			expect(screen.getByText('Queued tab two')).toBeInTheDocument();
 		});
 
 		it('shows remove button for queued items', () => {
@@ -1303,10 +2006,14 @@ describe('TerminalOutput', () => {
 				onDeleteLog,
 			});
 
-			render(<TerminalOutput {...props} />);
+			const { container } = render(<TerminalOutput {...props} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
 			// Click delete on first message
 			const deleteButtons = screen.getAllByTitle(/Delete message/);
+			const logItems = container.querySelectorAll('[data-log-index]');
+			Object.defineProperty(logItems[0], 'offsetTop', { value: 240, configurable: true });
+
 			await act(async () => {
 				fireEvent.click(deleteButtons[0]);
 			});
@@ -1314,9 +2021,39 @@ describe('TerminalOutput', () => {
 			const confirmButton = screen.getByRole('button', { name: 'Yes' });
 			await act(async () => {
 				fireEvent.click(confirmButton);
+				vi.advanceTimersByTime(50);
 			});
 
 			expect(onDeleteLog).toHaveBeenCalledWith('log-1');
+			expect(scrollContainer.scrollTop).toBe(240);
+		});
+
+		it('does not change scroll position when delete returns an out-of-range index', async () => {
+			const onDeleteLog = vi.fn().mockReturnValue(99);
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'log-1', text: 'First message', source: 'user' }),
+				createLogEntry({ id: 'log-2', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, onDeleteLog })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			scrollContainer.scrollTop = 30;
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(/Delete message/));
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(onDeleteLog).toHaveBeenCalledWith('log-1');
+			expect(scrollContainer.scrollTop).toBe(30);
 		});
 	});
 
@@ -1437,6 +2174,35 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByTitle(/Show formatted/)).toBeInTheDocument();
+		});
+
+		it('opens structured agent error details from error logs', () => {
+			const agentError: AgentError = {
+				type: 'unknown',
+				message: 'Agent returned structured error',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: Date.now(),
+				parsedJson: { code: 'E_AGENT' },
+			};
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Agent returned structured error',
+					source: 'error',
+					agentError,
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			const onShowErrorDetails = vi.fn();
+
+			render(<TerminalOutput {...createDefaultProps({ session, onShowErrorDetails })} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /view details/i }));
+
+			expect(onShowErrorDetails).toHaveBeenCalledWith(agentError);
 		});
 
 		it('toggles from formatted mode to plain text mode when clicked', async () => {
@@ -1938,6 +2704,32 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
 		});
 
+		it('renders TodoWrite task count when todos have no labels', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'TodoWrite',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								todos: [{ status: 'pending' }, { status: 'pending' }],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('2 tasks')).toBeInTheDocument();
+		});
+
 		it('renders Bash tool with command detail', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -1976,6 +2768,15 @@ describe('TerminalOutput', () => {
 						},
 					},
 				}),
+				createLogEntry({
+					text: 'NoInputTool',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+						},
+					},
+				}),
 			];
 
 			const session = createDefaultSession({
@@ -1988,6 +2789,54 @@ describe('TerminalOutput', () => {
 
 			// Tool name should still render even with no detail
 			expect(screen.getByText('SomeUnknownTool')).toBeInTheDocument();
+			expect(screen.getByText('NoInputTool')).toBeInTheDocument();
+		});
+
+		it('renders Codex-style array commands and truncates write content details', () => {
+			const longContent = 'A'.repeat(140);
+			const shortContent = 'short write content';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { command: ['npm', 'run', 'test'] },
+						},
+					},
+				}),
+				createLogEntry({
+					text: 'Write',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { content: longContent },
+						},
+					},
+				}),
+				createLogEntry({
+					text: 'WriteShort',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { content: shortContent },
+						},
+					},
+				}),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+			expect(screen.getByText(`${'A'.repeat(100)}…`)).toBeInTheDocument();
+			expect(screen.getByText(shortContent)).toBeInTheDocument();
 		});
 	});
 
@@ -2023,6 +2872,25 @@ describe('TerminalOutput', () => {
 			});
 
 			expect(screen.getByPlaceholderText(/Include by keyword/)).toBeInTheDocument();
+		});
+
+		it('keeps the local filter closed after a rapid double-click', async () => {
+			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const filterButton = screen.getByTitle('Filter this output');
+			await act(async () => {
+				fireEvent.click(filterButton);
+				fireEvent.click(filterButton);
+			});
+
+			expect(screen.queryByPlaceholderText(/Include by keyword/)).not.toBeInTheDocument();
 		});
 
 		it('toggles between include and exclude mode', async () => {
@@ -2075,6 +2943,36 @@ describe('TerminalOutput', () => {
 			});
 
 			expect(screen.getByTitle('Using regex')).toBeInTheDocument();
+		});
+
+		it('clears local filter query and mode with Escape', async () => {
+			const logs: LogEntry[] = [createLogEntry({ text: 'alpha\nbeta\ncharlie', source: 'stdout' })];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Filter this output'));
+			});
+
+			const filterInput = screen.getByPlaceholderText(/Include by keyword/);
+			await act(async () => {
+				fireEvent.change(filterInput, { target: { value: 'alpha' } });
+			});
+
+			expect(screen.queryByText(/beta/)).not.toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.keyDown(filterInput, { key: 'Escape' });
+			});
+
+			expect(screen.queryByPlaceholderText(/Include by keyword/)).not.toBeInTheDocument();
+			expect(screen.getByText(/beta/)).toBeInTheDocument();
 		});
 	});
 
@@ -2170,6 +3068,20 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('1:05')).toBeInTheDocument();
 		});
 
+		it('formats elapsed time with hours after long-running terminal work', () => {
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				state: 'busy',
+				busySource: 'terminal',
+				thinkingStartTime: Date.now() - 3723000,
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('1:02:03')).toBeInTheDocument();
+		});
+
 		it('updates elapsed time every second', async () => {
 			const session = createDefaultSession({
 				inputMode: 'terminal',
@@ -2201,6 +3113,36 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('auto-scroll when at bottom', () => {
+		it('ignores a scheduled auto-scroll frame after unmount', () => {
+			let rafCallback: FrameRequestCallback | undefined;
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				rafCallback = callback;
+				return 1;
+			});
+
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, unmount } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			unmount();
+
+			expect(() => {
+				act(() => {
+					rafCallback?.(0);
+				});
+			}).not.toThrow();
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
 		it('auto-scrolls to bottom when user is at bottom and new content arrives (no autoScrollAiMode)', async () => {
 			// isAtBottom starts as true (initial state), so auto-scroll should work
 			// even when autoScrollAiMode preference is OFF
@@ -2353,6 +3295,276 @@ describe('TerminalOutput', () => {
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
+		it('treats programmatic auto-scroll events as internal while autoScrollAiMode is on', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session, autoScrollAiMode: true })} />
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			const scrollToSpy = vi.fn(() => {
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy;
+
+			const nextSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'resp-1', text: 'AI response', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+			};
+
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: nextSession, autoScrollAiMode: true })} />
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('pauses auto-scroll after a genuine user scroll away from bottom', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session, autoScrollAiMode: true })} />
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			scrollToSpy.mockClear();
+
+			const nextSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'resp-1', text: 'AI response', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+			};
+
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: nextSession, autoScrollAiMode: true })} />
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('updates read state for new same-tab messages at and away from bottom', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session, autoScrollAiMode: false })} />
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollHeight', {
+				value: 400,
+				configurable: true,
+			});
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+
+			const secondTabs = [
+				{
+					id: 'tab-1',
+					agentSessionId: 'claude-123',
+					logs: [
+						...logs,
+						createLogEntry({ id: 'resp-1', text: 'Second response', source: 'stdout' }),
+					],
+					isUnread: false,
+				},
+			];
+			const secondSession = {
+				...session,
+				tabs: secondTabs,
+				aiTabs: secondTabs,
+			};
+
+			await act(async () => {
+				rerender(
+					<TerminalOutput
+						{...createDefaultProps({ session: secondSession, autoScrollAiMode: false })}
+					/>
+				);
+			});
+
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', {
+				value: 1000,
+				configurable: true,
+			});
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+
+			const thirdTabs = [
+				{
+					id: 'tab-1',
+					agentSessionId: 'claude-123',
+					logs: [
+						...secondSession.tabs[0].logs,
+						createLogEntry({ id: 'user-2', text: 'Third user message', source: 'user' }),
+					],
+					isUnread: false,
+				},
+			];
+			const thirdSession = {
+				...secondSession,
+				tabs: thirdTabs,
+				aiTabs: thirdTabs,
+			};
+
+			await act(async () => {
+				rerender(
+					<TerminalOutput
+						{...createDefaultProps({ session: thirdSession, autoScrollAiMode: false })}
+					/>
+				);
+			});
+
+			expect(screen.getByText('Third user message')).toBeInTheDocument();
+		});
+
+		it('handles bottom scroll in terminal mode without tab read state', async () => {
+			const shellLogs: LogEntry[] = [
+				createLogEntry({ id: 'terminal-output', text: 'Terminal output', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs,
+			});
+			const onAtBottomChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, onAtBottomChange })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 600, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(screen.queryByTitle('Scroll to new messages')).not.toBeInTheDocument();
+			expect(onAtBottomChange).not.toHaveBeenCalled();
+		});
+
+		it('restores saved read state when switching between tabs', async () => {
+			const tabOneInitialLogs = [
+				createLogEntry({ id: 'tab-one-1', text: 'Tab one message', source: 'stdout' }),
+			];
+			const tabTwoLogs = [
+				createLogEntry({ id: 'tab-two-1', text: 'Tab two message', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs: tabOneInitialLogs, isUnread: false },
+					{ id: 'tab-2', agentSessionId: 'claude-456', logs: tabTwoLogs, isUnread: false },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session, autoScrollAiMode: false })} />
+			);
+
+			const tabTwoSession = { ...session, activeTabId: 'tab-2' };
+			await act(async () => {
+				rerender(
+					<TerminalOutput
+						{...createDefaultProps({ session: tabTwoSession, autoScrollAiMode: false })}
+					/>
+				);
+			});
+
+			const tabOneWithUnread = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...tabOneInitialLogs,
+							createLogEntry({ id: 'tab-one-2', text: 'Unread tab one message', source: 'user' }),
+						],
+						isUnread: false,
+					},
+					{ id: 'tab-2', agentSessionId: 'claude-456', logs: tabTwoLogs, isUnread: false },
+				],
+				activeTabId: 'tab-1',
+			};
+			await act(async () => {
+				rerender(
+					<TerminalOutput
+						{...createDefaultProps({ session: tabOneWithUnread, autoScrollAiMode: false })}
+					/>
+				);
+			});
+
+			await act(async () => {
+				rerender(
+					<TerminalOutput
+						{...createDefaultProps({ session: tabTwoSession, autoScrollAiMode: false })}
+					/>
+				);
+			});
+
+			expect(screen.getByText('Tab two message')).toBeInTheDocument();
+		});
+
 		it('always auto-scrolls in terminal mode regardless of autoScrollAiMode', async () => {
 			const logs: LogEntry[] = [createLogEntry({ id: 'cmd-1', text: 'ls', source: 'user' })];
 
@@ -2416,12 +3628,100 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
+		it('clears a pending scroll-position save when a new scroll happens', async () => {
+			const onScrollPositionChange = vi.fn();
+			const props = createDefaultProps({ onScrollPositionChange });
+			const { container } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 100,
+				configurable: true,
+			});
+			fireEvent.scroll(scrollContainer);
+
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 250,
+				configurable: true,
+			});
+			fireEvent.scroll(scrollContainer);
+
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(onScrollPositionChange).toHaveBeenCalledTimes(1);
+			expect(onScrollPositionChange).toHaveBeenCalledWith(250);
+		});
+
+		it('clears a pending scroll-position save on unmount', async () => {
+			const onScrollPositionChange = vi.fn();
+			const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+			const props = createDefaultProps({ onScrollPositionChange });
+			const { container, unmount } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 100, configurable: true });
+			fireEvent.scroll(scrollContainer);
+
+			unmount();
+
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(clearTimeoutSpy).toHaveBeenCalled();
+			expect(onScrollPositionChange).not.toHaveBeenCalled();
+		});
+
 		it('restores scroll position from initialScrollTop', () => {
+			let rafCallback: FrameRequestCallback | undefined;
+			const requestAnimationFrameSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback) => {
+					rafCallback = callback;
+					return 1;
+				});
 			const props = createDefaultProps({ initialScrollTop: 500 });
 			const { container } = render(<TerminalOutput {...props} />);
 
-			// The scroll restoration happens via requestAnimationFrame
-			// In tests this is mocked, so we just verify the prop is used
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 300, configurable: true });
+
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(scrollContainer.scrollTop).toBe(500);
+			expect(requestAnimationFrameSpy).toHaveBeenCalled();
+		});
+
+		it('skips initial scroll restoration after unmount', () => {
+			let rafCallback: FrameRequestCallback | undefined;
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				rafCallback = callback;
+				return 1;
+			});
+			const props = createDefaultProps({ initialScrollTop: 500 });
+			const { container, unmount } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 300, configurable: true });
+
+			unmount();
+
+			act(() => {
+				rafCallback?.(0);
+			});
+
+			expect(scrollContainer.scrollTop).toBe(0);
 		});
 	});
 

@@ -115,6 +115,16 @@ describe('GroupChat Preload API', () => {
 				expect(mockInvoke).toHaveBeenCalledWith('groupChat:update', 'gc-123', updates);
 			});
 		});
+
+		describe('archive', () => {
+			it('should invoke groupChat:archive with the requested archive state', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.archive('gc-123', true);
+
+				expect(mockInvoke).toHaveBeenCalledWith('groupChat:archive', 'gc-123', true);
+			});
+		});
 	});
 
 	describe('Chat log operations', () => {
@@ -209,6 +219,31 @@ describe('GroupChat Preload API', () => {
 				await api.stopModerator('gc-123');
 
 				expect(mockInvoke).toHaveBeenCalledWith('groupChat:stopModerator', 'gc-123');
+			});
+		});
+
+		describe('stopAll', () => {
+			it('should invoke groupChat:stopAll', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.stopAll('gc-123');
+
+				expect(mockInvoke).toHaveBeenCalledWith('groupChat:stopAll', 'gc-123');
+			});
+		});
+
+		describe('reportAutoRunComplete', () => {
+			it('should invoke groupChat:reportAutoRunComplete with completion summary', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.reportAutoRunComplete('gc-123', 'Agent1', 'Finished selected documents');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'groupChat:reportAutoRunComplete',
+					'gc-123',
+					'Agent1',
+					'Finished selected documents'
+				);
 			});
 		});
 
@@ -678,6 +713,183 @@ describe('GroupChat Preload API', () => {
 
 				expect(mockRemoveListener).toHaveBeenCalledWith(
 					'groupChat:participantState',
+					registeredHandler!
+				);
+			});
+		});
+
+		describe('onParticipantLiveOutput', () => {
+			it('should register and handle participant live output events', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string,
+					chunk: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (
+							event: unknown,
+							groupChatId: string,
+							participantName: string,
+							chunk: string
+						) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				api.onParticipantLiveOutput(callback);
+				registeredHandler!({}, 'gc-123', 'Agent1', 'stream chunk');
+
+				expect(callback).toHaveBeenCalledWith('gc-123', 'Agent1', 'stream chunk');
+			});
+
+			it('should remove listener when cleanup is called', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string,
+					chunk: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (
+							event: unknown,
+							groupChatId: string,
+							participantName: string,
+							chunk: string
+						) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onParticipantLiveOutput(callback);
+				cleanup();
+
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'groupChat:participantLiveOutput',
+					registeredHandler!
+				);
+			});
+		});
+
+		describe('onAutoRunTriggered', () => {
+			it('should register and handle Auto Run trigger events', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string,
+					filename?: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (
+							event: unknown,
+							groupChatId: string,
+							participantName: string,
+							filename?: string
+						) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				api.onAutoRunTriggered(callback);
+				registeredHandler!({}, 'gc-123', 'Agent1', 'plan.md');
+
+				expect(callback).toHaveBeenCalledWith('gc-123', 'Agent1', 'plan.md');
+			});
+
+			it('should remove listener when cleanup is called', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string,
+					filename?: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (
+							event: unknown,
+							groupChatId: string,
+							participantName: string,
+							filename?: string
+						) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onAutoRunTriggered(callback);
+				cleanup();
+
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'groupChat:autoRunTriggered',
+					registeredHandler!
+				);
+			});
+		});
+
+		describe('onAutoRunBatchComplete', () => {
+			it('should register and handle Auto Run batch completion events', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (event: unknown, groupChatId: string, participantName: string) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				api.onAutoRunBatchComplete(callback);
+				registeredHandler!({}, 'gc-123', 'Agent1');
+
+				expect(callback).toHaveBeenCalledWith('gc-123', 'Agent1');
+			});
+
+			it('should remove listener when cleanup is called', () => {
+				const callback = vi.fn();
+				let registeredHandler: (
+					event: unknown,
+					groupChatId: string,
+					participantName: string
+				) => void;
+
+				mockOn.mockImplementation(
+					(
+						_channel: string,
+						handler: (event: unknown, groupChatId: string, participantName: string) => void
+					) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onAutoRunBatchComplete(callback);
+				cleanup();
+
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'groupChat:autoRunBatchComplete',
 					registeredHandler!
 				);
 			});

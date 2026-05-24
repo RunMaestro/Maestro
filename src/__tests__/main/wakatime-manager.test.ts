@@ -4,7 +4,7 @@
  * and auto-installation of the WakaTime CLI.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	WakaTimeManager,
 	detectLanguageFromPath,
@@ -42,6 +42,7 @@ vi.mock('fs', () => ({
 		mkdirSync: vi.fn(),
 		chmodSync: vi.fn(),
 		createWriteStream: vi.fn(),
+		readdirSync: vi.fn(() => []),
 		unlinkSync: vi.fn(),
 		unlink: vi.fn(),
 	},
@@ -50,6 +51,7 @@ vi.mock('fs', () => ({
 	mkdirSync: vi.fn(),
 	chmodSync: vi.fn(),
 	createWriteStream: vi.fn(),
+	readdirSync: vi.fn(() => []),
 	unlinkSync: vi.fn(),
 	unlink: vi.fn(),
 }));
@@ -68,15 +70,86 @@ import fs from 'fs';
 import https from 'https';
 
 describe('WakaTimeManager', () => {
+	const originalPlatform = process.platform;
+	const originalArch = process.arch;
 	let mockStore: { get: ReturnType<typeof vi.fn> };
 	let manager: WakaTimeManager;
 
+	function mockProcessPlatform(platform: string, arch = originalArch): void {
+		Object.defineProperty(process, 'platform', {
+			value: platform,
+			configurable: true,
+		});
+		Object.defineProperty(process, 'arch', {
+			value: arch,
+			configurable: true,
+		});
+	}
+
+	function restoreProcessPlatform(): void {
+		Object.defineProperty(process, 'platform', {
+			value: originalPlatform,
+			configurable: true,
+		});
+		Object.defineProperty(process, 'arch', {
+			value: originalArch,
+			configurable: true,
+		});
+	}
+
+	function mockSuccessfulDownload(): void {
+		const handlers: Record<string, (...args: any[]) => void> = {};
+		const fileStream = {
+			close: vi.fn(),
+			on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+				handlers[event] = handler;
+				return fileStream;
+			}),
+		};
+		vi.mocked(fs.createWriteStream).mockReturnValue(fileStream as any);
+		vi.mocked(https.get).mockImplementation((_url: any, cb: any) => {
+			const response = {
+				statusCode: 200,
+				headers: {},
+				pipe: vi.fn(() => {
+					setTimeout(() => handlers.finish?.(), 0);
+				}),
+				resume: vi.fn(),
+			};
+			cb(response);
+			return { on: vi.fn().mockReturnThis() } as any;
+		});
+	}
+
+	function mockFailedPathDetection(): void {
+		vi.mocked(execFileNoThrow)
+			.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+			.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' });
+		vi.mocked(fs.existsSync).mockReturnValue(false);
+	}
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(execFileNoThrow).mockReset();
+		vi.mocked(https.get).mockReset();
+		vi.mocked(fs.existsSync).mockReset().mockReturnValue(false);
+		vi.mocked(fs.readFileSync).mockReset().mockReturnValue('');
+		vi.mocked(fs.readdirSync).mockReset().mockReturnValue([]);
+		vi.mocked(fs.mkdirSync).mockReset();
+		vi.mocked(fs.chmodSync).mockReset();
+		vi.mocked(fs.createWriteStream).mockReset();
+		vi.mocked(fs.unlinkSync).mockReset();
+		vi.mocked(fs.unlink).mockReset();
+		restoreProcessPlatform();
 		mockStore = {
 			get: vi.fn(),
 		};
 		manager = new WakaTimeManager(mockStore as never);
+	});
+
+	afterEach(() => {
+		restoreProcessPlatform();
+		vi.useRealTimers();
 	});
 
 	describe('detectCli', () => {
@@ -143,6 +216,81 @@ describe('WakaTimeManager', () => {
 				expect.stringContaining('Found WakaTime CLI:'),
 				'[WakaTime]'
 			);
+		});
+
+		it('should ignore a broken CLI in ~/.wakatime/', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'broken local install' });
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = await manager.detectCli();
+
+			expect(result).toBe(false);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(3);
+			expect(logger.debug).toHaveBeenCalledWith(
+				'WakaTime CLI not found on PATH or in ~/.wakatime/',
+				'[WakaTime]'
+			);
+		});
+
+		it('should resolve a Linux amd64 local install path', async () => {
+			mockProcessPlatform('linux', 'x64');
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' });
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = await manager.detectCli();
+
+			expect(result).toBe(true);
+			expect(execFileNoThrow).toHaveBeenLastCalledWith(
+				expect.stringContaining('wakatime-cli-linux-amd64'),
+				['--version']
+			);
+		});
+
+		it('should resolve a Windows 386 local install path with exe suffix', async () => {
+			mockProcessPlatform('win32', 'ia32');
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' });
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			const result = await manager.detectCli();
+
+			expect(result).toBe(true);
+			expect(execFileNoThrow).toHaveBeenLastCalledWith(
+				expect.stringContaining('wakatime-cli-windows-386.exe'),
+				['--version']
+			);
+		});
+
+		it('should skip local install lookup on unsupported platform', async () => {
+			mockProcessPlatform('freebsd', 'arm64');
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' });
+
+			const result = await manager.detectCli();
+
+			expect(result).toBe(false);
+			expect(fs.existsSync).not.toHaveBeenCalled();
+		});
+
+		it('should skip local install lookup on unsupported arch', async () => {
+			mockProcessPlatform('darwin', 'mips');
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' });
+
+			const result = await manager.detectCli();
+
+			expect(result).toBe(false);
+			expect(fs.existsSync).not.toHaveBeenCalled();
 		});
 
 		it('should return false when no CLI is found', async () => {
@@ -268,6 +416,258 @@ describe('WakaTimeManager', () => {
 
 			// https.get should only be called once (concurrent guard)
 			expect(https.get).toHaveBeenCalledTimes(1);
+		});
+
+		it('should install the CLI successfully with unzip on macOS/Linux', async () => {
+			mockFailedPathDetection();
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+			mockSuccessfulDownload();
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(true);
+			expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('.wakatime'), {
+				recursive: true,
+			});
+			expect(execFileNoThrow).toHaveBeenLastCalledWith('unzip', [
+				'-o',
+				expect.stringContaining('wakatime-cli-'),
+				'-d',
+				expect.stringContaining('.wakatime'),
+			]);
+			expect(fs.chmodSync).toHaveBeenCalledWith(expect.stringContaining('wakatime-cli-'), 0o755);
+			expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('wakatime-cli-'));
+			expect(manager.getCliPath()).toEqual(expect.stringContaining('wakatime-cli-'));
+		});
+
+		it('should follow redirects when downloading the CLI archive', async () => {
+			mockFailedPathDetection();
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+			const handlers: Record<string, (...args: any[]) => void> = {};
+			const fileStream = {
+				close: vi.fn(),
+				on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+					handlers[event] = handler;
+					return fileStream;
+				}),
+			};
+			vi.mocked(fs.createWriteStream).mockReturnValue(fileStream as any);
+			vi.mocked(https.get)
+				.mockImplementationOnce((_url: any, cb: any) => {
+					const response = {
+						statusCode: 302,
+						headers: { location: 'https://download.example.com/wakatime.zip' },
+						resume: vi.fn(),
+					};
+					cb(response);
+					return { on: vi.fn().mockReturnThis() } as any;
+				})
+				.mockImplementationOnce((_url: any, cb: any) => {
+					const response = {
+						statusCode: 200,
+						headers: {},
+						pipe: vi.fn(() => {
+							setTimeout(() => handlers.finish?.(), 0);
+						}),
+						resume: vi.fn(),
+					};
+					cb(response);
+					return { on: vi.fn().mockReturnThis() } as any;
+				});
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(true);
+			expect(https.get).toHaveBeenCalledTimes(2);
+		});
+
+		it('should fail installation when the CLI download returns a non-200 status', async () => {
+			mockFailedPathDetection();
+			const response = {
+				statusCode: 500,
+				headers: {},
+				resume: vi.fn(),
+			};
+			vi.mocked(https.get).mockImplementation((_url: any, cb: any) => {
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(response.resume).toHaveBeenCalled();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'Failed to auto-install WakaTime CLI: Download failed with status 500'
+				),
+				'[WakaTime]'
+			);
+		});
+
+		it('should clean up a partial CLI archive when the download stream errors', async () => {
+			mockFailedPathDetection();
+			const handlers: Record<string, (...args: any[]) => void> = {};
+			const fileStream = {
+				close: vi.fn(),
+				on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+					handlers[event] = handler;
+					return fileStream;
+				}),
+			};
+			vi.mocked(fs.createWriteStream).mockReturnValue(fileStream as any);
+			vi.mocked(https.get).mockImplementation((_url: any, cb: any) => {
+				const response = {
+					statusCode: 200,
+					headers: {},
+					pipe: vi.fn(() => {
+						setTimeout(() => handlers.error?.(new Error('disk full')), 0);
+					}),
+					resume: vi.fn(),
+				};
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+			vi.mocked(fs.unlink).mockImplementation((_path: any, cb: any) => cb());
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(fs.unlink).toHaveBeenCalledWith(
+				expect.stringContaining('wakatime-cli-'),
+				expect.any(Function)
+			);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to auto-install WakaTime CLI: disk full'),
+				'[WakaTime]'
+			);
+		});
+
+		it('should stringify non-Error installation failures', async () => {
+			mockFailedPathDetection();
+			vi.mocked(https.get).mockImplementation((_url: any, _cb: any) => {
+				const req = {
+					on: vi.fn((_event: string, cb: (err: unknown) => void) => {
+						setTimeout(() => cb('offline'), 0);
+						return req;
+					}),
+				};
+				return req as any;
+			});
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to auto-install WakaTime CLI: offline',
+				'[WakaTime]'
+			);
+		});
+
+		it('should fail installation after too many download redirects', async () => {
+			mockFailedPathDetection();
+			vi.mocked(https.get).mockImplementation((_url: any, cb: any) => {
+				const response = {
+					statusCode: 302,
+					headers: { location: 'https://download.example.com/again.zip' },
+					resume: vi.fn(),
+				};
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(https.get).toHaveBeenCalledTimes(5);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to auto-install WakaTime CLI: Too many redirects'),
+				'[WakaTime]'
+			);
+		});
+
+		it('should use PowerShell extraction on Windows', async () => {
+			mockProcessPlatform('win32', 'x64');
+			mockFailedPathDetection();
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+			mockSuccessfulDownload();
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(true);
+			expect(execFileNoThrow).toHaveBeenLastCalledWith('powershell', [
+				'-Command',
+				expect.stringContaining('Expand-Archive -Force -Path'),
+			]);
+			expect(fs.chmodSync).not.toHaveBeenCalled();
+			expect(manager.getCliPath()).toEqual(
+				expect.stringContaining('wakatime-cli-windows-amd64.exe')
+			);
+		});
+
+		it('should fail when Windows PowerShell extraction fails', async () => {
+			mockProcessPlatform('win32', 'x64');
+			mockFailedPathDetection();
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr: 'extract failed',
+			});
+			mockSuccessfulDownload();
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to extract WakaTime CLI: extract failed',
+				'[WakaTime]'
+			);
+		});
+
+		it('should fail when unzip extraction fails', async () => {
+			mockFailedPathDetection();
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr: 'bad zip',
+			});
+			mockSuccessfulDownload();
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to extract WakaTime CLI: bad zip',
+				'[WakaTime]'
+			);
+		});
+
+		it('should fail installation on unsupported platform or arch', async () => {
+			mockProcessPlatform('freebsd', 'mips');
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' });
+
+			const result = await manager.ensureCliInstalled();
+
+			expect(result).toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Unsupported platform/arch for WakaTime CLI auto-install'),
+				'[WakaTime]'
+			);
+			expect(https.get).not.toHaveBeenCalled();
 		});
 	});
 
@@ -526,6 +926,113 @@ describe('WakaTimeManager', () => {
 			// detectCli (1 call, cached) + heartbeat session-1 (1 call) + heartbeat session-2 (1 call) = 3
 			expect(execFileNoThrow).toHaveBeenCalledTimes(3);
 		});
+
+		it('should include project language and branch when project cwd is provided', async () => {
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => String(p).endsWith('tsconfig.json'));
+			vi.mocked(execFileNoThrow).mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 0, stdout: 'feature/wakatime\n', stderr: '' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).toEqual(
+				expect.arrayContaining([
+					'--language',
+					'TypeScript',
+					'--alternate-branch',
+					'feature/wakatime',
+				])
+			);
+		});
+
+		it('should detect project language from glob-style markers', async () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.readdirSync).mockReturnValue(['App.csproj'] as any);
+			vi.mocked(execFileNoThrow).mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 1, stdout: '', stderr: 'not a repo' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			expect(heartbeatCall[1]).toEqual(expect.arrayContaining(['--language', 'C#']));
+		});
+
+		it('should ignore unreadable project directories during language detection', async () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.readdirSync).mockImplementation(() => {
+				throw new Error('permission denied');
+			});
+			vi.mocked(execFileNoThrow).mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 1, stdout: '', stderr: 'not a repo' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			expect(heartbeatCall[1]).not.toContain('--language');
+		});
+
+		it('should cache detected branches within the branch TTL', async () => {
+			vi.mocked(execFileNoThrow).mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 0, stdout: 'main\n', stderr: '' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+			(manager as any).lastHeartbeatPerSession.clear();
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+
+			const gitCalls = vi.mocked(execFileNoThrow).mock.calls.filter(([cmd]) => cmd === 'git');
+			expect(gitCalls).toHaveLength(1);
+		});
+
+		it('should not cache failed branch detection', async () => {
+			vi.mocked(execFileNoThrow).mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 1, stdout: '', stderr: 'not a repo' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+			(manager as any).lastHeartbeatPerSession.clear();
+			await manager.sendHeartbeat('session-1', 'My Project', '/project');
+
+			const gitCalls = vi.mocked(execFileNoThrow).mock.calls.filter(([cmd]) => cmd === 'git');
+			expect(gitCalls).toHaveLength(2);
+		});
 	});
 
 	describe('checkForUpdate (via ensureCliInstalled)', () => {
@@ -676,6 +1183,195 @@ describe('WakaTimeManager', () => {
 					'[WakaTime]'
 				);
 			});
+		});
+
+		it('should follow redirects while fetching the latest release metadata', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' });
+			vi.mocked(https.get)
+				.mockImplementationOnce((_opts: any, cb: any) => {
+					const response = {
+						statusCode: 302,
+						headers: { location: 'https://api.example.com/latest' },
+						resume: vi.fn(),
+					};
+					cb(response);
+					return { on: vi.fn().mockReturnThis() } as any;
+				})
+				.mockImplementationOnce((_opts: any, cb: any) => {
+					const response = {
+						statusCode: 200,
+						headers: {},
+						on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+							if (event === 'data') handler(Buffer.from(JSON.stringify({ tag_name: 'v1.73.1' })));
+							if (event === 'end') handler();
+							return response;
+						}),
+						resume: vi.fn(),
+					};
+					cb(response);
+					return { on: vi.fn().mockReturnThis() } as any;
+				});
+
+			await manager.ensureCliInstalled();
+
+			await vi.waitFor(() => {
+				expect(https.get).toHaveBeenCalledTimes(2);
+			});
+		});
+
+		it('should handle HTTP errors while fetching latest release metadata', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+			const response = {
+				statusCode: 500,
+				headers: {},
+				resume: vi.fn(),
+			};
+			vi.mocked(https.get).mockImplementation((_opts: any, cb: any) => {
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+
+			await manager.ensureCliInstalled();
+
+			await vi.waitFor(() => {
+				expect(logger.debug).toHaveBeenCalledWith(
+					expect.stringContaining('WakaTime CLI update check failed: HTTP 500'),
+					'[WakaTime]'
+				);
+			});
+			expect(response.resume).toHaveBeenCalled();
+		});
+
+		it('should handle invalid JSON while fetching latest release metadata', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+			vi.mocked(https.get).mockImplementation((_opts: any, cb: any) => {
+				const response = {
+					statusCode: 200,
+					headers: {},
+					on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+						if (event === 'data') handler(Buffer.from('not json'));
+						if (event === 'end') handler();
+						return response;
+					}),
+					resume: vi.fn(),
+				};
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+
+			await manager.ensureCliInstalled();
+
+			await vi.waitFor(() => {
+				expect(logger.debug).toHaveBeenCalledWith(
+					expect.stringContaining('WakaTime CLI update check failed'),
+					'[WakaTime]'
+				);
+			});
+		});
+
+		it('should handle too many redirects while fetching latest release metadata', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+			vi.mocked(https.get).mockImplementation((_opts: any, cb: any) => {
+				const response = {
+					statusCode: 302,
+					headers: { location: 'https://api.example.com/latest' },
+					resume: vi.fn(),
+				};
+				cb(response);
+				return { on: vi.fn().mockReturnThis() } as any;
+			});
+
+			await manager.ensureCliInstalled();
+
+			await vi.waitFor(() => {
+				expect(logger.debug).toHaveBeenCalledWith(
+					expect.stringContaining('WakaTime CLI update check failed: Too many redirects'),
+					'[WakaTime]'
+				);
+			});
+			expect(https.get).toHaveBeenCalledTimes(5);
+		});
+
+		it('should stringify non-Error update check failures', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+			vi.mocked(https.get).mockImplementation((_opts: any, _cb: any) => {
+				const req = {
+					on: vi.fn((_event: string, cb: (err: unknown) => void) => {
+						setTimeout(() => cb('offline'), 0);
+						return req;
+					}),
+				};
+				return req as any;
+			});
+
+			await manager.ensureCliInstalled();
+
+			await vi.waitFor(() => {
+				expect(logger.debug).toHaveBeenCalledWith(
+					'WakaTime CLI update check failed: offline',
+					'[WakaTime]'
+				);
+			});
+		});
+
+		it('should swallow rejected background update checks from ensureCliInstalled', async () => {
+			const checkForUpdate = vi.fn().mockRejectedValue(new Error('background failure'));
+			(manager as any).checkForUpdate = checkForUpdate;
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+
+			await expect(manager.ensureCliInstalled()).resolves.toBe(true);
+
+			await vi.waitFor(() => {
+				expect(checkForUpdate).toHaveBeenCalled();
+			});
+		});
+
+		it('should return from update checks when the CLI path is missing', async () => {
+			mockGithubApiResponse({ tag_name: 'v1.73.1' });
+			(manager as any).cliPath = null;
+
+			await (manager as any).checkForUpdate();
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should return from update checks when the current version command fails', async () => {
+			mockGithubApiResponse({ tag_name: 'v1.73.1' });
+			(manager as any).cliPath = 'wakatime-cli';
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '',
+				stderr: 'failed',
+			});
+
+			await (manager as any).checkForUpdate();
+
+			expect(logger.info).not.toHaveBeenCalledWith(
+				expect.stringContaining('WakaTime CLI update available'),
+				'[WakaTime]'
+			);
 		});
 	});
 
@@ -915,6 +1611,35 @@ describe('WakaTimeManager', () => {
 			expect(detectLanguageFromPath('/project/config.test.ts')).toBe('TypeScript');
 			expect(detectLanguageFromPath('/project/styles.module.css')).toBe('CSS');
 		});
+
+		it('should detect additional mapped language extensions', () => {
+			expect(detectLanguageFromPath('/project/main.jsx')).toBe('JavaScript');
+			expect(detectLanguageFromPath('/project/app.rb')).toBe('Ruby');
+			expect(detectLanguageFromPath('/project/Main.java')).toBe('Java');
+			expect(detectLanguageFromPath('/project/App.kt')).toBe('Kotlin');
+			expect(detectLanguageFromPath('/project/Package.swift')).toBe('Swift');
+			expect(detectLanguageFromPath('/project/Program.cs')).toBe('C#');
+			expect(detectLanguageFromPath('/project/index.php')).toBe('PHP');
+			expect(detectLanguageFromPath('/project/main.exs')).toBe('Elixir');
+			expect(detectLanguageFromPath('/project/main.dart')).toBe('Dart');
+			expect(detectLanguageFromPath('/project/config.yaml')).toBe('YAML');
+			expect(detectLanguageFromPath('/project/style.scss')).toBe('SCSS');
+			expect(detectLanguageFromPath('/project/style.less')).toBe('LESS');
+			expect(detectLanguageFromPath('/project/query.sql')).toBe('SQL');
+			expect(detectLanguageFromPath('/project/shell.zsh')).toBe('Shell Script');
+			expect(detectLanguageFromPath('/project/App.vue')).toBe('Vue.js');
+			expect(detectLanguageFromPath('/project/App.svelte')).toBe('Svelte');
+			expect(detectLanguageFromPath('/project/init.lua')).toBe('Lua');
+			expect(detectLanguageFromPath('/project/main.zig')).toBe('Zig');
+			expect(detectLanguageFromPath('/project/analysis.r')).toBe('R');
+			expect(detectLanguageFromPath('/project/Main.scala')).toBe('Scala');
+			expect(detectLanguageFromPath('/project/core.clj')).toBe('Clojure');
+			expect(detectLanguageFromPath('/project/server.erl')).toBe('Erlang');
+			expect(detectLanguageFromPath('/project/Main.hs')).toBe('Haskell');
+			expect(detectLanguageFromPath('/project/main.ml')).toBe('OCaml');
+			expect(detectLanguageFromPath('/project/main.nim')).toBe('Nim');
+			expect(detectLanguageFromPath('/project/main.cr')).toBe('Crystal');
+		});
 	});
 
 	describe('sendFileHeartbeats', () => {
@@ -1135,6 +1860,27 @@ describe('WakaTimeManager', () => {
 			expect(extraArray[0].category).toBe('ai coding');
 		});
 
+		it('should omit language from extra heartbeats with unknown file extensions', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/data.unknown', timestamp: 1708700001000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray[0]).not.toHaveProperty('language');
+		});
+
 		it('should include branch info when projectCwd is provided', async () => {
 			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
 			vi.mocked(execFileNoThrow)
@@ -1278,6 +2024,66 @@ describe('WakaTimeManager', () => {
 			const heartbeatCall = calls[calls.length - 1];
 			const args = heartbeatCall[1] as string[];
 			expect(args).toContain('cfg-key-456');
+		});
+
+		it('should warn when CLI is unavailable for file heartbeats', async () => {
+			vi.mocked(execFileNoThrow).mockReset();
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' })
+				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'not found' });
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(https.get).mockImplementation((_url: any, _cb: any) => {
+				const req = {
+					on: vi.fn((_event: string, cb: (err: Error) => void) => {
+						setTimeout(() => cb(new Error('Network error')), 0);
+						return req;
+					}),
+				};
+				return req as any;
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(logger.warn).toHaveBeenCalledWith(
+				'WakaTime CLI not available — skipping file heartbeats',
+				'[WakaTime]'
+			);
+		});
+
+		it('should log warning when file heartbeat command fails', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 101,
+				stdout: '',
+				stderr: 'bad key',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(logger.warn).toHaveBeenCalledWith('File heartbeats failed: bad key', '[WakaTime]', {
+				count: 1,
+			});
+		});
+	});
+
+	describe('getCliPath', () => {
+		it('should return null before CLI detection and the resolved path afterward', async () => {
+			expect(manager.getCliPath()).toBeNull();
+
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+
+			await manager.detectCli();
+
+			expect(manager.getCliPath()).toBe('wakatime-cli');
 		});
 	});
 });

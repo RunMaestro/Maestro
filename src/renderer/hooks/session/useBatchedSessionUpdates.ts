@@ -113,8 +113,6 @@ export function useBatchedSessionUpdates(
 ): UseBatchedSessionUpdatesReturn {
 	// Accumulated updates per session
 	const accumulatorRef = useRef<Map<string, SessionAccumulator>>(new Map());
-	// Timer ID for periodic flushing
-	const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	// Track if there are pending updates
 	const hasPendingRef = useRef(false);
 
@@ -173,7 +171,6 @@ export function useBatchedSessionUpdates(
 
 					for (const [_key, logAcc] of acc.logAccumulators) {
 						const combinedData = logAcc.chunks.join('');
-						if (!combinedData) continue;
 
 						if (logAcc.isAi && logAcc.tabId) {
 							// AI tab log
@@ -267,7 +264,7 @@ export function useBatchedSessionUpdates(
 							} else {
 								shellLogs.push({
 									id: generateId(),
-									timestamp: shellStdoutTimestamp || Date.now(),
+									timestamp: shellStdoutTimestamp,
 									source: 'stdout',
 									text: shellStdout,
 								});
@@ -287,7 +284,7 @@ export function useBatchedSessionUpdates(
 							} else {
 								shellLogs.push({
 									id: generateId(),
-									timestamp: shellStderrTimestamp || Date.now(),
+									timestamp: shellStderrTimestamp,
 									source: 'stderr',
 									text: shellStderr,
 								});
@@ -437,17 +434,14 @@ export function useBatchedSessionUpdates(
 	 * Start the flush interval timer
 	 */
 	useEffect(() => {
-		timerRef.current = setInterval(() => {
+		const timer = setInterval(() => {
 			if (hasPendingRef.current) {
 				flush();
 			}
 		}, flushInterval);
 
 		return () => {
-			if (timerRef.current) {
-				clearInterval(timerRef.current);
-				timerRef.current = null;
-			}
+			clearInterval(timer);
 			// Flush any pending updates on unmount
 			flush();
 		};

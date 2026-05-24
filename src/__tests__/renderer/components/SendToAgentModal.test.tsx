@@ -204,6 +204,21 @@ describe('SendToAgentModal', () => {
 		vi.restoreAllMocks();
 	});
 
+	const renderModal = (overrides: Partial<React.ComponentProps<typeof SendToAgentModal>> = {}) => {
+		return renderWithLayerStack(
+			<SendToAgentModal
+				theme={testTheme}
+				isOpen={true}
+				sourceSession={mockSession}
+				sourceTabId="tab-1"
+				allSessions={mockSessions}
+				onClose={mockOnClose}
+				onSend={mockOnSend}
+				{...overrides}
+			/>
+		);
+	};
+
 	// TODO: Update tests to use session names instead of agent names
 	describe.skip('rendering', () => {
 		it('does not render when isOpen is false', () => {
@@ -633,6 +648,348 @@ describe('SendToAgentModal', () => {
 			// There should be at least one token display (source tokens)
 			const tokenElements = screen.getAllByText(/tokens/i);
 			expect(tokenElements.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('session-based behavior', () => {
+		it('does not render when closed', () => {
+			renderModal({ isOpen: false });
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('excludes source and terminal sessions while using fallback session names', () => {
+			const sourceSession = createMockSession({
+				id: 'source-session',
+				name: 'Source Session',
+			});
+			const terminalSession = createMockTargetSession(
+				'terminal-session',
+				'Terminal Session',
+				'terminal'
+			);
+			const projectNameSession = {
+				...createMockTargetSession('project-session', '', 'codex'),
+				name: '',
+				projectRoot: '/workspace/fallback-app',
+			};
+			const unnamedSession = {
+				...createMockTargetSession('unnamed-session', '', 'opencode'),
+				name: '',
+				projectRoot: '/',
+			};
+
+			renderModal({
+				sourceSession,
+				allSessions: [sourceSession, terminalSession, projectNameSession, unnamedSession],
+			});
+
+			expect(screen.queryByText('Source Session')).not.toBeInTheDocument();
+			expect(screen.queryByText('Terminal Session')).not.toBeInTheDocument();
+			expect(screen.getByText('fallback-app')).toBeInTheDocument();
+			expect(screen.getByText('Unnamed Session')).toBeInTheDocument();
+		});
+
+		it('filters sessions by search query and shows the no-match state', () => {
+			const sessions = [
+				{
+					...createMockTargetSession('docs-session', 'Docs Session', 'codex'),
+					projectRoot: '/workspace/docs-app',
+				},
+				{
+					...createMockTargetSession('api-session', 'API Session', 'opencode'),
+					projectRoot: '/workspace/api',
+				},
+			];
+
+			renderModal({ allSessions: sessions });
+
+			fireEvent.change(screen.getByLabelText('Search sessions'), {
+				target: { value: 'session' },
+			});
+			expect(screen.getAllByRole('option')).toHaveLength(2);
+
+			fireEvent.change(screen.getByLabelText('Search sessions'), {
+				target: { value: 'docs-app' },
+			});
+
+			expect(screen.getByRole('option', { name: /Docs Session/ })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: /API Session/ })).not.toBeInTheDocument();
+
+			fireEvent.change(screen.getByLabelText('Search sessions'), {
+				target: { value: 'no-match' },
+			});
+
+			expect(screen.getByText('No matching sessions found')).toBeInTheDocument();
+		});
+
+		it('shows the empty state when no target sessions are available', () => {
+			renderModal({
+				allSessions: [
+					mockSession,
+					createMockTargetSession('terminal-session', 'Terminal Session', 'terminal'),
+				],
+			});
+
+			expect(screen.getByText('No other sessions available')).toBeInTheDocument();
+		});
+
+		it('shows Unknown and zero tokens when the source tab cannot be found', () => {
+			renderModal({
+				sourceSession: createMockSession({ aiTabs: [] }),
+				sourceTabId: 'missing-tab',
+			});
+
+			expect(screen.getByText(/Source: Unknown/)).toBeInTheDocument();
+			expect(screen.getByText('~0 tokens')).toBeInTheDocument();
+		});
+
+		it('falls back to the agent session prefix for unnamed source tabs', () => {
+			renderModal({
+				sourceSession: createMockSession({
+					aiTabs: [
+						{
+							...mockSession.aiTabs[0],
+							id: 'codex-tab',
+							name: null,
+							agentSessionId: 'codex-session-123',
+						},
+					],
+				}),
+				sourceTabId: 'codex-tab',
+			});
+
+			expect(screen.getByText(/Source: CODEX/)).toBeInTheDocument();
+		});
+
+		it('falls back to New Tab and ignores log entries without text', () => {
+			renderModal({
+				sourceSession: createMockSession({
+					aiTabs: [
+						{
+							...mockSession.aiTabs[0],
+							id: 'new-tab',
+							name: null,
+							agentSessionId: null,
+							logs: [
+								{
+									id: 'empty-log',
+									timestamp: Date.now(),
+									source: 'ai',
+									text: undefined as unknown as string,
+								},
+							],
+						},
+					],
+				}),
+				sourceTabId: 'new-tab',
+			});
+
+			expect(screen.getByText(/Source: New Tab/)).toBeInTheDocument();
+			expect(screen.getByText('~0 tokens')).toBeInTheDocument();
+		});
+
+		it('omits numeric quick-select hints after the ninth session', () => {
+			const sessions = Array.from({ length: 10 }, (_, index) =>
+				createMockTargetSession(`session-${index + 1}`, `Agent ${index + 1}`, 'codex')
+			);
+
+			renderModal({ allSessions: sessions });
+
+			expect(
+				screen.getByRole('option', { name: 'Agent 9, Idle, press 9 to select' })
+			).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: 'Agent 10, Idle' })).toBeInTheDocument();
+		});
+
+		it('sends the selected session with the default clean-context option', async () => {
+			renderModal();
+
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
+			expect(screen.getByText('Target: OpenCode Session')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }));
+
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('session-opencode', {
+					groomContext: true,
+					targetSessionId: 'session-opencode',
+				});
+			});
+			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('sends without cleaning context when the option is disabled', async () => {
+			renderModal();
+
+			fireEvent.click(screen.getByRole('option', { name: /Codex Session/ }));
+			fireEvent.click(screen.getByLabelText(/Clean context/));
+
+			expect(screen.queryByText('After cleaning:')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }));
+
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('session-codex', {
+					groomContext: false,
+					targetSessionId: 'session-codex',
+				});
+			});
+		});
+
+		it('keeps the modal open and reports send failures', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockOnSend.mockRejectedValueOnce(new Error('send failed'));
+			renderModal();
+
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
+			fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }));
+
+			await waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Send to session failed:', expect.any(Error));
+			});
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
+
+		it('shows sending state while the transfer is in progress', async () => {
+			let resolveSend: ((value: { success: boolean }) => void) | undefined;
+			const pendingSend = vi.fn(
+				() =>
+					new Promise<{ success: boolean }>((resolve) => {
+						resolveSend = resolve;
+					})
+			);
+			renderModal({ onSend: pendingSend });
+
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
+			fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }));
+
+			expect(await screen.findByText('Sending...')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Sending/i })).toBeDisabled();
+
+			resolveSend?.({ success: true });
+
+			await waitFor(() => {
+				expect(mockOnClose).toHaveBeenCalled();
+			});
+		});
+
+		it('disables sending when the selected target disappears', () => {
+			const props: React.ComponentProps<typeof SendToAgentModal> = {
+				theme: testTheme,
+				isOpen: true,
+				sourceSession: mockSession,
+				sourceTabId: 'tab-1',
+				allSessions: mockSessions,
+				onClose: mockOnClose,
+				onSend: mockOnSend,
+			};
+
+			const { rerender } = renderWithLayerStack(<SendToAgentModal {...props} />);
+
+			fireEvent.click(screen.getByRole('option', { name: /OpenCode Session/ }));
+			expect(screen.getByText('Target: OpenCode Session')).toBeInTheDocument();
+
+			rerender(
+				<LayerStackProvider>
+					<SendToAgentModal {...props} allSessions={[]} />
+				</LayerStackProvider>
+			);
+
+			expect(screen.queryByText('Target: OpenCode Session')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Send to Session/i })).toBeDisabled();
+		});
+
+		it('closes through the layer stack Escape handler', async () => {
+			renderModal();
+
+			fireEvent.keyDown(window, { key: 'Escape' });
+
+			await waitFor(() => {
+				expect(mockOnClose).toHaveBeenCalled();
+			});
+		});
+
+		it('selects the highlighted session on first Enter and sends it on the next Enter', async () => {
+			renderModal();
+			const dialog = screen.getByRole('dialog');
+
+			fireEvent.keyDown(dialog, { key: 'Enter' });
+
+			expect(screen.getByRole('option', { name: /OpenCode Session/ })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(mockOnSend).not.toHaveBeenCalled();
+
+			fireEvent.keyDown(dialog, { key: 'Enter' });
+
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('session-opencode', {
+					groomContext: true,
+					targetSessionId: 'session-opencode',
+				});
+			});
+		});
+
+		it('keeps arrow navigation bounded at the last session', async () => {
+			renderModal();
+			const dialog = screen.getByRole('dialog');
+
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: ' ' });
+
+			await waitFor(() => {
+				expect(screen.getByRole('option', { name: /Busy Session/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				);
+			});
+		});
+
+		it('ignores unrelated keys and Enter when no session is highlighted', () => {
+			renderModal({ allSessions: [] });
+			const dialog = screen.getByRole('dialog');
+
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			fireEvent.keyDown(dialog, { key: 'Enter' });
+
+			expect(mockOnSend).not.toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('button', { name: /Send to Session/i })).toBeDisabled();
+		});
+
+		it('supports arrow navigation and numeric quick selection', async () => {
+			renderModal();
+			const dialog = screen.getByRole('dialog');
+
+			fireEvent.keyDown(dialog, { key: 'ArrowUp' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: 'ArrowUp' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+			fireEvent.keyDown(dialog, { key: '9' });
+			expect(mockOnSend).not.toHaveBeenCalled();
+
+			fireEvent.keyDown(dialog, { key: ' ' });
+
+			await waitFor(() => {
+				expect(screen.getByRole('option', { name: /Busy Session/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				);
+			});
+
+			fireEvent.keyDown(dialog, { key: '2' });
+
+			await waitFor(() => {
+				expect(screen.getByRole('option', { name: /Codex Session/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				);
+			});
 		});
 	});
 

@@ -1057,6 +1057,21 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
 			});
 
+			it('should not persist when flushNow is called without pending changes', () => {
+				const session = makeSession();
+				const initialLoadRef = makeInitialLoadRef(false);
+
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				expect(result.current.isPending).toBe(false);
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			});
+
 			it('should cancel pending debounce timer when flushing', () => {
 				const sessions = [makeSession()];
 				const initialLoadRef = makeInitialLoadRef(true);
@@ -1087,6 +1102,107 @@ describe('useDebouncedPersistence', () => {
 				// by flushNow, so no additional call should occur
 				act(() => {
 					vi.advanceTimersByTime(3000);
+				});
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+			});
+
+			it('should ignore reentrant flush attempts while persistence is in progress', () => {
+				const sessions = [makeSession()];
+				const initialLoadRef = makeInitialLoadRef(true);
+				let currentResult: { current: ReturnType<typeof useDebouncedPersistence> } | undefined;
+				vi.mocked(window.maestro.sessions.setAll).mockImplementationOnce(() => {
+					currentResult?.current.flushNow();
+				});
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
+				currentResult = result;
+
+				expect(result.current.isPending).toBe(true);
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+				expect(result.current.isPending).toBe(false);
+			});
+		});
+
+		describe('lifecycle event flushing', () => {
+			it('should flush pending changes when the document becomes hidden', () => {
+				const sessions = [makeSession()];
+				const initialLoadRef = makeInitialLoadRef(true);
+				const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
+
+				try {
+					expect(result.current.isPending).toBe(true);
+					vi.clearAllMocks();
+
+					act(() => {
+						document.dispatchEvent(new Event('visibilitychange'));
+					});
+
+					expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+					expect(result.current.isPending).toBe(false);
+				} finally {
+					hiddenSpy.mockRestore();
+				}
+			});
+
+			it('should not flush pending changes while the document remains visible', () => {
+				const sessions = [makeSession()];
+				const initialLoadRef = makeInitialLoadRef(true);
+				const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
+
+				try {
+					expect(result.current.isPending).toBe(true);
+					vi.clearAllMocks();
+
+					act(() => {
+						document.dispatchEvent(new Event('visibilitychange'));
+					});
+
+					expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+					expect(result.current.isPending).toBe(true);
+				} finally {
+					hiddenSpy.mockRestore();
+				}
+			});
+
+			it('should synchronously flush pending changes before unload', () => {
+				const sessions = [makeSession()];
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
+
+				expect(result.current.isPending).toBe(true);
+				vi.clearAllMocks();
+
+				act(() => {
+					window.dispatchEvent(new Event('beforeunload'));
+				});
+
+				expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+			});
+
+			it('should not flush before unload when there are no pending changes', () => {
+				const session = makeSession();
+				const initialLoadRef = makeInitialLoadRef(false);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				expect(result.current.isPending).toBe(false);
+
+				act(() => {
+					window.dispatchEvent(new Event('beforeunload'));
 				});
 
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();

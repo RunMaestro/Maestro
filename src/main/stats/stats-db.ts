@@ -528,17 +528,6 @@ export class StatsDB {
 		logger.warn('Attempting to recover from database corruption...', LOG_CONTEXT);
 
 		try {
-			// Close current database if open
-			if (this.db) {
-				try {
-					this.db.close();
-				} catch {
-					// Ignore errors closing corrupted database
-				}
-				this.db = null;
-				this.initialized = false;
-			}
-
 			// First, backup the corrupted database for forensics
 			if (fs.existsSync(this.dbPath)) {
 				const timestamp = Date.now();

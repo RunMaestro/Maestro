@@ -233,6 +233,31 @@ describe('main/constants', () => {
 			// If DEBUG_GROUP_CHAT is true, it will log; if false, it won't
 			// We're just testing it doesn't throw
 		});
+
+		it('should log formatted debug messages when DEBUG_GROUP_CHAT is enabled', async () => {
+			const originalDebugGroupChat = process.env.DEBUG_GROUP_CHAT;
+			process.env.DEBUG_GROUP_CHAT = '1';
+			vi.resetModules();
+
+			try {
+				const { DEBUG_GROUP_CHAT: freshDebugGroupChat, debugLog: freshDebugLog } =
+					await import('../../main/constants');
+
+				expect(freshDebugGroupChat).toBe(true);
+				freshDebugLog('TestPrefix', 'Test message', { extra: 'data' });
+
+				expect(consoleSpy).toHaveBeenCalledWith('[TestPrefix] Test message', {
+					extra: 'data',
+				});
+			} finally {
+				if (originalDebugGroupChat === undefined) {
+					delete process.env.DEBUG_GROUP_CHAT;
+				} else {
+					process.env.DEBUG_GROUP_CHAT = originalDebugGroupChat;
+				}
+				vi.resetModules();
+			}
+		});
 	});
 
 	describe('debugLogLazy', () => {
@@ -274,6 +299,32 @@ describe('main/constants', () => {
 			expect(() =>
 				debugLogLazy('Parser', () => `Parsed ${items.length} items: ${JSON.stringify(items)}`)
 			).not.toThrow();
+		});
+
+		it('should evaluate and log lazy debug messages when DEBUG_GROUP_CHAT is enabled', async () => {
+			const originalDebugGroupChat = process.env.DEBUG_GROUP_CHAT;
+			process.env.DEBUG_GROUP_CHAT = '1';
+			vi.resetModules();
+
+			try {
+				const { debugLogLazy: freshDebugLogLazy } = await import('../../main/constants');
+				const messageFn = vi.fn(() => 'Expensive computation result');
+
+				freshDebugLogLazy('Parser', messageFn, 'extra-arg');
+
+				expect(messageFn).toHaveBeenCalledOnce();
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'[Parser] Expensive computation result',
+					'extra-arg'
+				);
+			} finally {
+				if (originalDebugGroupChat === undefined) {
+					delete process.env.DEBUG_GROUP_CHAT;
+				} else {
+					process.env.DEBUG_GROUP_CHAT = originalDebugGroupChat;
+				}
+				vi.resetModules();
+			}
 		});
 	});
 

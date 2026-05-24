@@ -51,12 +51,10 @@ class TunnelManager {
 
 			// Timeout after 30 seconds
 			const timeout = setTimeout(() => {
-				if (!resolved) {
-					resolved = true;
-					logger.error('Tunnel startup timed out', 'TunnelManager');
-					this.stop();
-					resolve({ success: false, error: 'Tunnel startup timed out (30s)' });
-				}
+				resolved = true;
+				logger.error('Tunnel startup timed out', 'TunnelManager');
+				this.stop();
+				resolve({ success: false, error: 'Tunnel startup timed out (30s)' });
 			}, 30000);
 
 			// Cloudflare outputs the URL to stderr

@@ -411,8 +411,8 @@ export const AutoRunStats = memo(function AutoRunStats({
 							aria-label="Tasks completed by date"
 						>
 							{tasksByDate.map((day) => {
-								const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-								const successRatio = day.count > 0 ? day.successCount / day.count : 0;
+								const height = (day.count / maxCount) * 100;
+								const successRatio = day.successCount / day.count;
 								const isHovered = hoveredBar?.date === day.date;
 
 								return (
@@ -438,7 +438,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 										onBlur={handleMouseLeave}
 										data-testid={`task-bar-${day.date}`}
 										role="listitem"
-										aria-label={`${formatFullDate(day.date)}: ${day.count} tasks attempted, ${day.successCount} successful (${day.count > 0 ? Math.round((day.successCount / day.count) * 100) : 0}%)`}
+										aria-label={`${formatFullDate(day.date)}: ${day.count} tasks attempted, ${day.successCount} successful (${Math.round((day.successCount / day.count) * 100)}%)`}
 										tabIndex={0}
 									/>
 								);

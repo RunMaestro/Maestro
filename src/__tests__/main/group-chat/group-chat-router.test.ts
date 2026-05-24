@@ -40,6 +40,54 @@ vi.mock('electron-store', () => {
 	};
 });
 
+const mockFsPromiseFaults = vi.hoisted(() => ({
+	appendFile: undefined as undefined | ((file: unknown) => Error | undefined),
+	rename: undefined as undefined | ((oldPath: unknown, newPath: unknown) => Error | undefined),
+}));
+
+vi.mock('fs/promises', async () => {
+	const actual = await import('node:fs/promises');
+	return {
+		mkdir: actual.mkdir,
+		rm: actual.rm,
+		readFile: actual.readFile,
+		writeFile: actual.writeFile,
+		readdir: actual.readdir,
+		stat: actual.stat,
+		appendFile: (...args: unknown[]) => {
+			const error = mockFsPromiseFaults.appendFile?.(args[0]);
+			if (error) return Promise.reject(error);
+			return (actual.appendFile as (...appendArgs: unknown[]) => Promise<void>)(...args);
+		},
+		rename: (...args: unknown[]) => {
+			const error = mockFsPromiseFaults.rename?.(args[0], args[1]);
+			if (error) return Promise.reject(error);
+			return (actual.rename as (...renameArgs: unknown[]) => Promise<void>)(...args);
+		},
+	};
+});
+
+const mockGroupChatAgentOverrides = vi.hoisted(() => ({
+	addParticipant: undefined as undefined | ((...args: unknown[]) => unknown),
+}));
+
+vi.mock('../../../main/group-chat/group-chat-agent', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/group-chat/group-chat-agent')>(
+		'../../../main/group-chat/group-chat-agent'
+	);
+
+	return {
+		...actual,
+		addParticipant: (...args: Parameters<typeof actual.addParticipant>) => {
+			if (mockGroupChatAgentOverrides.addParticipant) {
+				return mockGroupChatAgentOverrides.addParticipant(...args);
+			}
+
+			return actual.addParticipant(...args);
+		},
+	};
+});
+
 // Mock wrapSpawnWithSsh so we can verify it's called for SSH sessions
 const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
@@ -65,8 +113,18 @@ import {
 	routeUserMessage,
 	routeModeratorResponse,
 	routeAgentResponse,
+	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
+	setGroupChatReadOnlyState,
+	clearActiveParticipantTaskSession,
+	getPendingParticipants,
+	clearPendingParticipants,
+	markParticipantResponded,
+	respawnParticipantWithRecovery,
 	setGetSessionsCallback,
+	setGetCustomEnvVarsCallback,
+	setGetAgentConfigCallback,
+	setGetModeratorSettingsCallback,
 	setSshStore,
 	type SessionInfo,
 } from '../../../main/group-chat/group-chat-router';
@@ -78,24 +136,67 @@ import {
 import {
 	addParticipant,
 	clearAllParticipantSessionsGlobal,
+	getParticipantSessionId,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	createGroupChat,
 	deleteGroupChat,
 	loadGroupChat,
+	updateGroupChat,
 	GroupChatParticipant,
 } from '../../../main/group-chat/group-chat-storage';
-import { readLog } from '../../../main/group-chat/group-chat-log';
+import { appendToLog, readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
+import { setGetCustomShellPathCallback } from '../../../main/group-chat/group-chat-config';
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
 	let mockAgentDetector: AgentDetector;
 	let createdChats: string[] = [];
 	let testDir: string;
+	const originalPlatform = process.platform;
+	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+	let unexpectedConsoleLogs: string[] = [];
+	let unexpectedConsoleErrors: string[] = [];
+
+	const expectedConsoleLogPrefixes = [
+		'[GroupChat:Debug]',
+		'[GroupChatRouter]',
+		'[GroupChatModerator]',
+	];
+	const expectedConsoleErrorPrefixes = ['[GroupChat:Debug] ERROR:', '[GroupChatRouter]'];
 
 	beforeEach(async () => {
+		unexpectedConsoleLogs = [];
+		unexpectedConsoleErrors = [];
+		const originalConsoleLog = console.log.bind(console);
+		const originalConsoleError = console.error.bind(console);
+		consoleLogSpy = vi.spyOn(console, 'log').mockImplementation((message?: unknown, ...args) => {
+			const text = String(message);
+			if (expectedConsoleLogPrefixes.some((prefix) => text.startsWith(prefix))) {
+				return;
+			}
+
+			unexpectedConsoleLogs.push(text);
+			originalConsoleLog(message, ...args);
+		});
+		consoleErrorSpy = vi
+			.spyOn(console, 'error')
+			.mockImplementation((message?: unknown, ...args) => {
+				const text = String(message);
+				if (
+					expectedConsoleErrorPrefixes.some((prefix) => text.startsWith(prefix)) ||
+					text.includes('[ERROR] [[GroupChatRouter]]')
+				) {
+					return;
+				}
+
+				unexpectedConsoleErrors.push(text);
+				originalConsoleError(message, ...args);
+			});
+
 		// Create a unique temp directory for each test
 		testDir = path.join(
 			os.tmpdir(),
@@ -139,9 +240,16 @@ describe('group-chat-router', () => {
 		// Clear any leftover sessions from previous tests
 		clearAllModeratorSessions();
 		clearAllParticipantSessionsGlobal();
+		mockGroupChatAgentOverrides.addParticipant = undefined;
+		mockFsPromiseFaults.appendFile = undefined;
+		mockFsPromiseFaults.rename = undefined;
 	});
 
 	afterEach(async () => {
+		for (const id of createdChats) {
+			clearPendingParticipants(id);
+		}
+
 		// Clean up any created chats
 		for (const id of createdChats) {
 			try {
@@ -151,6 +259,11 @@ describe('group-chat-router', () => {
 			}
 		}
 		createdChats = [];
+
+		consoleLogSpy.mockRestore();
+		consoleErrorSpy.mockRestore();
+		expect(unexpectedConsoleLogs).toEqual([]);
+		expect(unexpectedConsoleErrors).toEqual([]);
 
 		// Clear sessions
 		clearAllModeratorSessions();
@@ -166,6 +279,29 @@ describe('group-chat-router', () => {
 		// Clear mocks
 		vi.clearAllMocks();
 		groupChatEmitters.emitMessage = undefined;
+		groupChatEmitters.emitStateChange = undefined;
+		groupChatEmitters.emitParticipantState = undefined;
+		groupChatEmitters.emitParticipantsChanged = undefined;
+		groupChatEmitters.emitHistoryEntry = undefined;
+		groupChatEmitters.emitAutoRunTriggered = undefined;
+		groupChatEmitters.emitAutoRunBatchComplete = undefined;
+		setGetSessionsCallback(null as unknown as () => SessionInfo[]);
+		setGetCustomEnvVarsCallback(null as unknown as () => undefined);
+		setGetAgentConfigCallback(null as unknown as () => undefined);
+		setGetModeratorSettingsCallback(
+			null as unknown as () => {
+				standingInstructions: string;
+				conductorProfile: string;
+			}
+		);
+		setGetCustomShellPathCallback(() => undefined);
+		setSshStore(null as never);
+		mockFsPromiseFaults.appendFile = undefined;
+		mockFsPromiseFaults.rename = undefined;
+		Object.defineProperty(process, 'platform', {
+			value: originalPlatform,
+			configurable: true,
+		});
 	});
 
 	// Helper to track created chats for cleanup
@@ -180,6 +316,32 @@ describe('group-chat-router', () => {
 		const chat = await createTestChat(name, agentId);
 		await spawnModerator(chat, mockProcessManager);
 		return chat;
+	}
+
+	async function waitForAssertion(assertion: () => void): Promise<void> {
+		const deadline = Date.now() + 1000;
+		let lastError: unknown;
+
+		while (Date.now() < deadline) {
+			try {
+				assertion();
+				return;
+			} catch (error) {
+				lastError = error;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+		}
+
+		if (lastError) throw lastError;
+		assertion();
+	}
+
+	function simulateWindows(shellPath = 'C:\\Tools\\pwsh.exe'): void {
+		Object.defineProperty(process, 'platform', {
+			value: 'win32',
+			configurable: true,
+		});
+		setGetCustomShellPathCallback(() => shellPath);
 	}
 
 	// ===========================================================================
@@ -388,6 +550,11 @@ describe('group-chat-router', () => {
 			);
 			expect(mentions).toEqual(['controlplane', 'dataplane']);
 		});
+
+		it('skips empty names created by markdown-only mention tokens', () => {
+			const mentions = extractMentions('@** and @Client should coordinate', participants);
+			expect(mentions).toEqual(['Client']);
+		});
 	});
 
 	// ===========================================================================
@@ -408,6 +575,11 @@ describe('group-chat-router', () => {
 			const mentions = extractAllMentions('@** is not a real mention');
 			expect(mentions).toEqual([]);
 		});
+
+		it('deduplicates repeated mentions after markdown is stripped', () => {
+			const mentions = extractAllMentions('**@Client** and @Client and `@Server`');
+			expect(mentions).toEqual(['Client', 'Server']);
+		});
 	});
 
 	// ===========================================================================
@@ -424,6 +596,15 @@ describe('group-chat-router', () => {
 			expect(result.autoRunDirectives).toEqual([
 				{ participantName: 'controlplane', filename: 'plan.md' },
 			]);
+		});
+
+		it('skips empty markdown-only directives and keeps the first duplicate directive', () => {
+			const result = extractAutoRunDirectives(
+				'!autorun @**\n!autorun @controlplane\n!autorun @controlplane:plan.md'
+			);
+
+			expect(result.autoRunDirectives).toEqual([{ participantName: 'controlplane' }]);
+			expect(result.autoRunParticipants).toEqual(['controlplane']);
 		});
 	});
 
@@ -495,6 +676,376 @@ describe('group-chat-router', () => {
 			const messages = await readLog(chat.logPath);
 			expect(messages.some((m) => m.from === 'user' && m.content === 'Log only message')).toBe(
 				true
+			);
+		});
+
+		it('includes available session context, moderator settings, and custom env vars in moderator spawn', async () => {
+			const chat = await createTestChatWithModerator('Moderator Context Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'server-session',
+					name: 'Server Agent',
+					toolType: 'claude-code',
+					cwd: '/repo/server',
+				},
+				{
+					id: 'terminal-session',
+					name: 'Terminal',
+					toolType: 'terminal',
+					cwd: '/repo/project',
+				},
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+				},
+			]);
+			setGetCustomEnvVarsCallback((agentId) =>
+				agentId === 'claude-code' ? { MAESTRO_ENV: 'group-chat' } : undefined
+			);
+			setGetModeratorSettingsCallback(() => ({
+				standingInstructions: 'Always call out tradeoffs.',
+				conductorProfile: 'Pragmatic conductor profile',
+			}));
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'Please coordinate the server work',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnConfig.prompt).toContain('Pragmatic conductor profile');
+			expect(spawnConfig.prompt).toContain('Always call out tradeoffs.');
+			expect(spawnConfig.prompt).toContain('@Server-Agent (claude-code)');
+			expect(spawnConfig.prompt).not.toContain('@Terminal');
+			expect(spawnConfig.customEnvVars).toEqual({ MAESTRO_ENV: 'group-chat' });
+		});
+
+		it('throws when a process manager is provided without an agent detector', async () => {
+			const chat = await createTestChatWithModerator('Missing Detector Test');
+
+			await expect(routeUserMessage(chat.id, 'Hello', mockProcessManager)).rejects.toThrow(
+				'AgentDetector not available'
+			);
+		});
+
+		it('throws when the moderator agent cannot be resolved as available', async () => {
+			const chat = await createTestChatWithModerator('Unavailable Moderator Test');
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: [],
+				available: false,
+				path: '/usr/local/bin/claude',
+				capabilities: {},
+			});
+
+			await expect(
+				routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow("Agent 'claude-code' is not available");
+		});
+
+		it('continues routing when auto-adding a mentioned session fails', async () => {
+			const chat = await createTestChatWithModerator('User Mention Auto Add Failure Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'broken-session',
+					name: 'BrokenAgent',
+					toolType: 'claude-code',
+					cwd: '/repo/broken',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('participant storage unavailable'));
+
+			await routeUserMessage(
+				chat.id,
+				'@BrokenAgent please investigate',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([]);
+			expect(mockGroupChatAgentOverrides.addParticipant).toHaveBeenCalledWith(
+				chat.id,
+				'BrokenAgent',
+				'claude-code',
+				mockProcessManager,
+				'/repo/broken',
+				mockAgentDetector,
+				{},
+				undefined,
+				expect.objectContaining({ sshRemoteConfig: undefined }),
+				undefined
+			);
+			const spawnConfig = vi.mocked(mockProcessManager.spawn).mock.calls[0]?.[0];
+			expect(spawnConfig.prompt).toContain('@BrokenAgent please investigate');
+			expect(spawnConfig.prompt).toContain('@BrokenAgent (claude-code)');
+		});
+
+		it('does not auto-add a user mention that already matches a participant name', async () => {
+			const chat = await createTestChatWithModerator('Existing User Mention Test');
+			await addParticipant(chat.id, 'Client Agent', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client Agent',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'@Client-Agent please continue',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockGroupChatAgentOverrides.addParticipant).not.toHaveBeenCalled();
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toHaveLength(1);
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not auto-add terminal sessions mentioned by the user', async () => {
+			const chat = await createTestChatWithModerator('User Mention Terminal Skip Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'terminal-session',
+					name: 'Terminal',
+					toolType: 'terminal',
+					cwd: '/repo/terminal',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'Please ask @Terminal to inspect this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockGroupChatAgentOverrides.addParticipant).not.toHaveBeenCalled();
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([]);
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('throws when a user mention auto-add removes the chat before reload', async () => {
+			const chat = await createTestChatWithModerator('User Mention Vanishing Chat Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'vanishing-session',
+					name: 'VanishingAgent',
+					toolType: 'claude-code',
+					cwd: '/repo/vanishing',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi.fn(async () => {
+				await deleteGroupChat(chat.id);
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await expect(
+				routeUserMessage(
+					chat.id,
+					'@VanishingAgent please join',
+					mockProcessManager,
+					mockAgentDetector
+				)
+			).rejects.toThrow(`Group chat not found after participant update: ${chat.id}`);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('applies SSH wrapping for a moderator configured on a remote', async () => {
+			const sshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/user/project',
+			};
+			const mockSshStore = {
+				getSshRemotes: vi
+					.fn()
+					.mockReturnValue([
+						{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
+					]),
+			};
+			mockWrapSpawnWithSsh.mockResolvedValueOnce({
+				command: 'ssh',
+				args: ['-t', 'user@pedtome.local', 'claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'remote moderator prompt',
+				customEnvVars: { REMOTE: '1' },
+				sshRemoteUsed: { name: 'PedTome' },
+			});
+			const chat = await createGroupChat('SSH Moderator User Message Test', 'claude-code', {
+				sshRemoteConfig,
+			});
+			createdChats.push(chat.id);
+			await spawnModerator(chat, mockProcessManager);
+			setSshStore(mockSshStore);
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(chat.id, 'Coordinate remotely', mockProcessManager, mockAgentDetector);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/usr/local/bin/claude',
+					agentBinaryName: 'claude',
+					prompt: expect.stringContaining('Coordinate remotely'),
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					cwd: '/home/user/project',
+					prompt: 'remote moderator prompt',
+					customEnvVars: { REMOTE: '1' },
+				})
+			);
+		});
+
+		it('handles SSH-wrapped moderator spawns when no remote record is returned', async () => {
+			const sshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/user/project',
+			};
+			const chat = await createGroupChat('SSH Moderator No Remote Used Test', 'claude-code', {
+				sshRemoteConfig,
+			});
+			createdChats.push(chat.id);
+			await spawnModerator(chat, mockProcessManager);
+			setSshStore({
+				getSshRemotes: vi.fn().mockReturnValue([]),
+			});
+			mockWrapSpawnWithSsh.mockResolvedValueOnce({
+				command: 'ssh',
+				args: ['claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'remote moderator prompt',
+				customEnvVars: {},
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(chat.id, 'Coordinate remotely', mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					cwd: '/home/user/project',
+					prompt: 'remote moderator prompt',
+				})
+			);
+		});
+
+		it('resets state and reports spawn failure when moderator spawn throws', async () => {
+			const chat = await createTestChatWithModerator('Moderator Spawn Failure Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+			mockProcessManager.spawn.mockImplementationOnce(() => {
+				throw new Error('moderator spawn failed');
+			});
+
+			await expect(
+				routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow('Failed to spawn moderator: moderator spawn failed');
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'moderator-thinking');
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+		});
+
+		it('reports non-Error moderator spawn failures with their string value', async () => {
+			const chat = await createTestChatWithModerator('Moderator String Spawn Failure Test');
+			mockProcessManager.spawn.mockImplementationOnce(() => {
+				throw 'spawn failed as string';
+			});
+
+			await expect(
+				routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow('Failed to spawn moderator: spawn failed as string');
+		});
+
+		it('applies Windows shell config to local moderator spawns', async () => {
+			const chat = await createTestChatWithModerator('Windows Moderator Spawn Test');
+			simulateWindows();
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'Coordinate on Windows',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shell: 'C:\\Tools\\pwsh.exe',
+					runInShell: true,
+					sendPromptViaStdin: true,
+					sendPromptViaStdinRaw: false,
+				})
+			);
+		});
+
+		it('throws when the moderator agent detector returns no config', async () => {
+			const chat = await createTestChatWithModerator('Missing Moderator Config Test');
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce(null as never);
+
+			await expect(
+				routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow("Agent 'claude-code' is not available");
+			expect(mockProcessManager.spawn).not.toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: expect.stringContaining('Hello'),
+				})
+			);
+		});
+
+		it('uses command fallback and disables Gemini sandbox when read-only is CLI-enforced', async () => {
+			const chat = await createTestChatWithModerator('Gemini Moderator Spawn Test');
+			await updateGroupChat(chat.id, { moderatorAgentId: 'gemini-cli' });
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'gemini-cli',
+				name: 'Gemini CLI',
+				binaryName: 'gemini',
+				command: 'gemini',
+				args: ['--yolo'],
+				available: true,
+				capabilities: {},
+				promptArgs: ['--prompt'],
+				readOnlyCliEnforced: true,
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await routeUserMessage(
+				chat.id,
+				'Coordinate through Gemini',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'gemini-cli',
+					command: 'gemini',
+					args: expect.arrayContaining(['--no-sandbox']),
+					readOnlyMode: true,
+				})
 			);
 		});
 	});
@@ -593,6 +1144,27 @@ describe('group-chat-router', () => {
 			);
 		});
 
+		it('continues moderator response flow when adding a history entry fails', async () => {
+			const chat = await createTestChatWithModerator('Moderator History Failure Test');
+			mockFsPromiseFaults.appendFile = (file) =>
+				String(file).endsWith('history.jsonl') ? new Error('history write failed') : undefined;
+
+			await routeModeratorResponse(
+				chat.id,
+				'Final answer without participant mentions',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.from === 'moderator')).toBe(true);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: expect.stringContaining('participant'),
+				})
+			);
+		});
+
 		it('throws for non-existent chat', async () => {
 			await expect(
 				routeModeratorResponse('non-existent-id', 'Hello', mockProcessManager)
@@ -610,6 +1182,1210 @@ describe('group-chat-router', () => {
 
 			const messages = await readLog(chat.logPath);
 			expect(messages.some((m) => m.from === 'moderator')).toBe(true);
+		});
+
+		it('logs long final moderator messages without routing unresolved mentions', async () => {
+			const chat = await createTestChatWithModerator('Long Moderator Final Test');
+			const longMessage = `${'M'.repeat(320)} final synthesis without participants`;
+			groupChatEmitters.emitMessage = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(chat.id, longMessage, mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({
+					from: 'moderator',
+					content: longMessage,
+				})
+			);
+		});
+
+		it('triggers autorun directives without persisting directive-only moderator messages', async () => {
+			const chat = await createTestChatWithModerator('Autorun Trigger Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+					autoRunFolderPath: '/repo/client/docs',
+				},
+			]);
+			groupChatEmitters.emitAutoRunTriggered = vi.fn();
+			groupChatEmitters.emitParticipantState = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'!autorun @Client:plan.md',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+				chat.id,
+				'Client',
+				'working'
+			);
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'agent-working');
+			expect(groupChatEmitters.emitAutoRunTriggered).toHaveBeenCalledWith(
+				chat.id,
+				'Client',
+				'plan.md'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.from === 'moderator')).toBe(false);
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(true);
+		});
+
+		it('triggers autorun directives without target filenames', async () => {
+			const chat = await createTestChatWithModerator('Autorun No Filename Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+					autoRunFolderPath: '/repo/client/docs',
+				},
+			]);
+			groupChatEmitters.emitAutoRunTriggered = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			await routeModeratorResponse(
+				chat.id,
+				'!autorun @Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(groupChatEmitters.emitAutoRunTriggered).toHaveBeenCalledWith(
+				chat.id,
+				'Client',
+				undefined
+			);
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'agent-working');
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(true);
+		});
+
+		it('triggers multiple autorun participants without process dependencies', async () => {
+			const chat = await createTestChatWithModerator('Autorun No Process Dependencies Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Server', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+					autoRunFolderPath: '/repo/client/docs',
+				},
+				{
+					id: 'server-session',
+					name: 'Server',
+					toolType: 'claude-code',
+					cwd: '/repo/server',
+					autoRunFolderPath: '/repo/server/docs',
+				},
+			]);
+			groupChatEmitters.emitAutoRunTriggered = vi.fn();
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			await routeModeratorResponse(chat.id, '!autorun @Client\n!autorun @Server');
+
+			expect(groupChatEmitters.emitAutoRunTriggered).toHaveBeenCalledWith(
+				chat.id,
+				'Client',
+				undefined
+			);
+			expect(groupChatEmitters.emitAutoRunTriggered).toHaveBeenCalledWith(
+				chat.id,
+				'Server',
+				undefined
+			);
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledTimes(1);
+			expect([...getPendingParticipants(chat.id)].sort()).toEqual(['Client', 'Server']);
+			clearPendingParticipants(chat.id);
+		});
+
+		it('emits system warnings when autorun directives cannot be activated', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Autorun Missing Participant Test');
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
+				groupChatEmitters.emitStateChange = vi.fn();
+
+				await routeModeratorResponse(
+					chat.id,
+					'!autorun @MissingAgent',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect(emitMessage).toHaveBeenCalledWith(
+					chat.id,
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('Could not find participant @MissingAgent'),
+					})
+				);
+				expect(emitMessage).toHaveBeenCalledWith(
+					chat.id,
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('none could be activated'),
+					})
+				);
+				expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[GroupChat:Debug] Autorun participant MissingAgent not found in chat - skipping'
+				);
+			} finally {
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('warns when an autorun participant has no configured Auto Run folder', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Autorun Missing Folder Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [
+					{
+						id: 'client-session',
+						name: 'Client',
+						toolType: 'claude-code',
+						cwd: '/repo/client',
+					},
+				]);
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
+				groupChatEmitters.emitStateChange = vi.fn();
+				groupChatEmitters.emitAutoRunTriggered = vi.fn();
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'!autorun @Client',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect(emitMessage).toHaveBeenCalledWith(
+					chat.id,
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('No Auto Run folder configured for @Client'),
+					})
+				);
+				expect(groupChatEmitters.emitAutoRunTriggered).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[GroupChat:Debug] No autoRunFolderPath configured for Client - skipping'
+				);
+			} finally {
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('cleans up lifecycle state when participant spawn fails', async () => {
+			const chat = await createTestChatWithModerator('Participant Spawn Failure Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+				},
+			]);
+			groupChatEmitters.emitStateChange = vi.fn();
+			mockProcessManager.spawn.mockImplementationOnce(() => {
+				throw new Error('participant spawn failed');
+			});
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please handle this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+		});
+
+		it('continues when moderator auto-adding a mentioned session fails', async () => {
+			const chat = await createTestChatWithModerator('Moderator Auto Add Failure Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'broken-session',
+					name: 'BrokenAgent',
+					toolType: 'claude-code',
+					cwd: '/repo/broken',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('participant add failed'));
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@BrokenAgent please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockGroupChatAgentOverrides.addParticipant).toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([]);
+		});
+
+		it('does not auto-add terminal sessions mentioned by the moderator', async () => {
+			const chat = await createTestChatWithModerator('Moderator Mention Terminal Skip Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'terminal-session',
+					name: 'Terminal',
+					toolType: 'terminal',
+					cwd: '/repo/terminal',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Terminal should stay literal, not become a participant',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockGroupChatAgentOverrides.addParticipant).not.toHaveBeenCalled();
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toEqual([]);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('returns without spawning if moderator auto-add removes the chat before reload', async () => {
+			const chat = await createTestChatWithModerator('Moderator Vanishing Chat Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'vanishing-session',
+					name: 'VanishingAgent',
+					toolType: 'claude-code',
+					cwd: '/repo/vanishing',
+				},
+			]);
+			mockGroupChatAgentOverrides.addParticipant = vi.fn(async () => {
+				await deleteGroupChat(chat.id);
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@VanishingAgent please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('skips a mentioned participant when the participant agent is unavailable', async () => {
+			const chat = await createTestChatWithModerator('Unavailable Participant Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: [],
+				available: false,
+				path: '/usr/local/bin/claude',
+				capabilities: {},
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please handle this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+		});
+
+		it('skips a mentioned participant when the agent detector returns no config', async () => {
+			const chat = await createTestChatWithModerator('Missing Agent Config Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce(null as never);
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please handle this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+		});
+
+		it('applies Windows shell config to local participant spawns', async () => {
+			const chat = await createTestChatWithModerator('Windows Participant Spawn Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			simulateWindows();
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please handle this on Windows',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shell: 'C:\\Tools\\pwsh.exe',
+					runInShell: true,
+					sendPromptViaStdin: true,
+					sendPromptViaStdinRaw: false,
+				})
+			);
+		});
+
+		it('uses agent command fallback when participant config has no resolved path', async () => {
+			const chat = await createTestChatWithModerator('Participant Command Fallback Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'user', 'B'.repeat(520));
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print'],
+				available: true,
+				capabilities: {},
+				promptArgs: ['--prompt'],
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please handle command fallback',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'claude',
+					cwd: os.homedir(),
+				})
+			);
+		});
+
+		it('replaces an existing participant response timeout for repeated handoffs', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Repeated Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please start this task',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please restart with this context',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('ignores a stale timeout after the participant is no longer pending', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Stale Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				groupChatEmitters.emitParticipantState = vi.fn();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please handle this task',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				getPendingParticipants(chat.id).delete('Client');
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+
+				expect(groupChatEmitters.emitParticipantState).not.toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					'idle'
+				);
+				expect(consoleWarn).not.toHaveBeenCalledWith(
+					expect.stringContaining('Participant Client timed out')
+				);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('continues timeout completion when writing the timeout log entry fails', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Timeout Log Failure Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				groupChatEmitters.emitParticipantState = vi.fn();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please handle a task that may time out',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				mockFsPromiseFaults.appendFile = (file) =>
+					String(file) === chat.logPath ? new Error('timeout log write failed') : undefined;
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+						chat.id,
+						'Client',
+						'idle'
+					)
+				);
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+				mockFsPromiseFaults.appendFile = undefined;
+			}
+		});
+
+		it('resets group state when synthesis after a participant timeout fails', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Timeout Synthesis Failure Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				groupChatEmitters.emitStateChange = vi.fn();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client please handle a task before synthesis fails',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				vi.mocked(mockAgentDetector.getAgent).mockRejectedValueOnce(new Error('detector offline'));
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle')
+				);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('force-completes unanswered mentioned participants and triggers synthesis after timeout', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Mention Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				groupChatEmitters.emitMessage = vi.fn();
+				groupChatEmitters.emitParticipantState = vi.fn();
+				groupChatEmitters.emitStateChange = vi.fn();
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: please handle this long task',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+				mockProcessManager.spawn.mockClear();
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+						chat.id,
+						'Client',
+						'idle'
+					)
+				);
+
+				expect(consoleWarn).toHaveBeenCalledWith(
+					expect.stringContaining('Participant Client timed out')
+				);
+				expect(groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+					chat.id,
+					expect.objectContaining({
+						from: 'system',
+						content: expect.stringContaining('@Client did not respond within 10 minutes'),
+					})
+				);
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+				await waitForAssertion(() =>
+					expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+						expect.objectContaining({
+							toolType: 'claude-code',
+							readOnlyMode: true,
+						})
+					)
+				);
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some(
+						(message) =>
+							message.from === 'Client' &&
+							message.content.includes('[Timed out') &&
+							message.content.includes('10 minutes')
+					)
+				).toBe(true);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('emits Auto Run batch completion when an autorun participant times out', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Autorun Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [
+					{
+						id: 'client-session',
+						name: 'Client',
+						toolType: 'claude-code',
+						cwd: '/repo/client',
+						autoRunFolderPath: '/repo/client/docs',
+					},
+				]);
+				groupChatEmitters.emitAutoRunTriggered = vi.fn();
+				groupChatEmitters.emitAutoRunBatchComplete = vi.fn();
+				groupChatEmitters.emitParticipantState = vi.fn();
+				groupChatEmitters.emitStateChange = vi.fn();
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'!autorun @Client:plan.md',
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect(groupChatEmitters.emitAutoRunTriggered).toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					'plan.md'
+				);
+				expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitAutoRunBatchComplete).toHaveBeenCalledWith(chat.id, 'Client')
+				);
+
+				expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					'idle'
+				);
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('keeps Auto Run tracking active until all timed-out participants finish', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Multiple Autorun Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				await addParticipant(chat.id, 'Server', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [
+					{
+						id: 'client-session',
+						name: 'Client',
+						toolType: 'claude-code',
+						cwd: '/repo/client',
+						autoRunFolderPath: '/repo/client/docs',
+					},
+					{
+						id: 'server-session',
+						name: 'Server',
+						toolType: 'claude-code',
+						cwd: '/repo/server',
+						autoRunFolderPath: '/repo/server/docs',
+					},
+				]);
+				groupChatEmitters.emitAutoRunTriggered = vi.fn();
+				groupChatEmitters.emitAutoRunBatchComplete = vi.fn();
+				groupChatEmitters.emitParticipantState = vi.fn();
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(chat.id, '!autorun @Client:plan.md\n!autorun @Server:api.md');
+				expect([...getPendingParticipants(chat.id)].sort()).toEqual(['Client', 'Server']);
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitAutoRunBatchComplete).toHaveBeenCalledTimes(2)
+				);
+
+				expect(groupChatEmitters.emitAutoRunBatchComplete).toHaveBeenCalledWith(chat.id, 'Client');
+				expect(groupChatEmitters.emitAutoRunBatchComplete).toHaveBeenCalledWith(chat.id, 'Server');
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('continues Auto Run timeout cleanup when the chat was deleted', async () => {
+			vi.useFakeTimers();
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const chat = await createTestChatWithModerator('Deleted Autorun Timeout Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [
+					{
+						id: 'client-session',
+						name: 'Client',
+						toolType: 'claude-code',
+						cwd: '/repo/client',
+						autoRunFolderPath: '/repo/client/docs',
+					},
+				]);
+				groupChatEmitters.emitAutoRunTriggered = vi.fn();
+				groupChatEmitters.emitAutoRunBatchComplete = vi.fn();
+				groupChatEmitters.emitParticipantState = vi.fn();
+
+				await routeModeratorResponse(chat.id, '!autorun @Client:plan.md');
+				await deleteGroupChat(chat.id);
+
+				await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+				vi.useRealTimers();
+				await waitForAssertion(() =>
+					expect(groupChatEmitters.emitAutoRunBatchComplete).toHaveBeenCalledWith(chat.id, 'Client')
+				);
+
+				expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					'idle'
+				);
+				expect(getPendingParticipants(chat.id).size).toBe(0);
+			} finally {
+				vi.useRealTimers();
+				consoleWarn.mockRestore();
+			}
+		});
+	});
+
+	describe('routing state helpers', () => {
+		it('tracks read-only state and pending participant lifecycle', async () => {
+			const chat = await createTestChatWithModerator('Pending State Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			expect(getGroupChatReadOnlyState(chat.id)).toBe(false);
+			setGroupChatReadOnlyState(chat.id, true);
+			expect(getGroupChatReadOnlyState(chat.id)).toBe(true);
+			setGroupChatReadOnlyState(chat.id, false);
+			expect(getGroupChatReadOnlyState(chat.id)).toBe(false);
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(false);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: please implement this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(true);
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: please review this too',
+				mockProcessManager,
+				mockAgentDetector
+			);
+			expect([...getPendingParticipants(chat.id)]).toEqual(['Client']);
+			clearPendingParticipants(chat.id);
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+		});
+
+		it('returns false when one of multiple pending participants has responded', async () => {
+			const chat = await createTestChatWithModerator('Multiple Pending State Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await addParticipant(chat.id, 'Server', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client and @Server please coordinate',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect([...getPendingParticipants(chat.id)].sort()).toEqual(['Client', 'Server']);
+			expect(markParticipantResponded(chat.id, 'Client')).toBe(false);
+			expect([...getPendingParticipants(chat.id)]).toEqual(['Server']);
+			expect(markParticipantResponded(chat.id, 'Server')).toBe(true);
+		});
+
+		it('clears the active participant task session tracked by a router spawn', async () => {
+			const chat = await createTestChatWithModerator('Active Participant Clear Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please implement this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(getParticipantSessionId(chat.id, 'Client')).toContain(
+				`group-chat-${chat.id}-participant-Client-`
+			);
+			clearActiveParticipantTaskSession(chat.id, 'Client');
+			expect(getParticipantSessionId(chat.id, 'Client')).toBeUndefined();
+		});
+	});
+
+	describe('spawnModeratorSynthesis', () => {
+		it('spawns a synthesis moderator with recent history, participant context, settings, and env vars', async () => {
+			const chat = await createTestChatWithModerator('Synthesis Test');
+			await addParticipant(chat.id, 'Client Agent', 'claude-code', mockProcessManager);
+			await routeAgentResponse(
+				chat.id,
+				'Client Agent',
+				'Implemented the server route. The API is ready.',
+				mockProcessManager
+			);
+			setGetModeratorSettingsCallback(() => ({
+				standingInstructions: 'Summarize decisions crisply.',
+				conductorProfile: 'Synthesis conductor profile',
+			}));
+			setGetCustomEnvVarsCallback((agentId) =>
+				agentId === 'claude-code' ? { SYNTH_ENV: 'enabled' } : undefined
+			);
+			groupChatEmitters.emitStateChange = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'moderator-thinking');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'claude-code',
+					readOnlyMode: true,
+					customEnvVars: { SYNTH_ENV: 'enabled' },
+					prompt: expect.stringContaining('Synthesis conductor profile'),
+				})
+			);
+			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnConfig.prompt).toContain('Summarize decisions crisply.');
+			expect(spawnConfig.prompt).toContain('@Client-Agent (claude-code session)');
+			expect(spawnConfig.prompt).toContain('[Client Agent]: Implemented the server route.');
+			expect(spawnConfig.prompt).toContain('Do NOT include any !autorun directives');
+		});
+
+		it('resets state without spawning when the chat or moderator is unavailable', async () => {
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			await spawnModeratorSynthesis('missing-chat', mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith('missing-chat', 'idle');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			const chat = await createTestChat('Inactive Moderator Synthesis Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('resets state when synthesis cannot resolve or spawn the moderator agent', async () => {
+			const unavailableChat = await createTestChatWithModerator('Unavailable Synthesis Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: [],
+				available: false,
+				path: '/usr/local/bin/claude',
+				capabilities: {},
+			});
+
+			await spawnModeratorSynthesis(unavailableChat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(unavailableChat.id, 'idle');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			const spawnErrorChat = await createTestChatWithModerator('Synthesis Spawn Error Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+			vi.mocked(mockProcessManager.spawn).mockImplementationOnce(() => {
+				throw new Error('spawn failed');
+			});
+
+			await spawnModeratorSynthesis(spawnErrorChat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(
+				spawnErrorChat.id,
+				'moderator-thinking'
+			);
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(spawnErrorChat.id, 'idle');
+		});
+
+		it('resets state without spawning when the moderator session id was cleared', async () => {
+			const chat = await createTestChatWithModerator('Missing Moderator Session Synthesis Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+			clearAllModeratorSessions();
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('applies Windows shell config to synthesis moderator spawns', async () => {
+			const chat = await createTestChatWithModerator('Windows Synthesis Spawn Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'Client', 'Windows synthesis input.');
+			simulateWindows();
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shell: 'C:\\Tools\\pwsh.exe',
+					runInShell: true,
+					sendPromptViaStdin: true,
+					sendPromptViaStdinRaw: false,
+				})
+			);
+		});
+
+		it('resets state when synthesis agent config is missing', async () => {
+			const chat = await createTestChatWithModerator('Missing Synthesis Agent Test');
+			groupChatEmitters.emitStateChange = vi.fn();
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce(null as never);
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(groupChatEmitters.emitStateChange).toHaveBeenCalledWith(chat.id, 'idle');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('uses Gemini command fallback and no-sandbox args for synthesis', async () => {
+			const chat = await createTestChatWithModerator('Gemini Synthesis Test');
+			await updateGroupChat(chat.id, { moderatorAgentId: 'gemini-cli' });
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'gemini-cli',
+				name: 'Gemini CLI',
+				binaryName: 'gemini',
+				command: 'gemini',
+				args: ['--json'],
+				available: true,
+				capabilities: {},
+				promptArgs: ['--prompt'],
+				readOnlyCliEnforced: true,
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'gemini-cli',
+					command: 'gemini',
+					args: expect.arrayContaining(['--no-sandbox']),
+					readOnlyMode: true,
+				})
+			);
+		});
+
+		it('handles SSH-wrapped synthesis when no remote record is returned', async () => {
+			const sshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/user/project',
+			};
+			const chat = await createGroupChat('SSH Synthesis No Remote Used Test', 'claude-code', {
+				sshRemoteConfig,
+			});
+			createdChats.push(chat.id);
+			await spawnModerator(chat, mockProcessManager);
+			await appendToLog(chat.logPath, 'Client', 'Synthesis input.');
+			setSshStore({
+				getSshRemotes: vi.fn().mockReturnValue([]),
+			});
+			mockWrapSpawnWithSsh.mockResolvedValueOnce({
+				command: 'ssh',
+				args: ['claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'remote synthesis prompt',
+				customEnvVars: {},
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					cwd: '/home/user/project',
+					prompt: 'remote synthesis prompt',
+				})
+			);
+		});
+	});
+
+	describe('respawnParticipantWithRecovery', () => {
+		it('respawns a participant with recovery context, read-only mode, cwd, and env vars', async () => {
+			const chat = await createTestChatWithModerator('Recovery Respawn Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'user', 'Please recover the prior work.');
+			await appendToLog(chat.logPath, 'Client', 'Prior conclusion from Client.');
+			setGroupChatReadOnlyState(chat.id, true);
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+					customEnvVars: { SESSION_ENV: 'ignored-when-callback-present' },
+				},
+			]);
+			setGetCustomEnvVarsCallback((agentId) =>
+				agentId === 'claude-code' ? { RECOVERY_ENV: 'enabled' } : undefined
+			);
+			groupChatEmitters.emitParticipantState = vi.fn();
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(groupChatEmitters.emitParticipantState).toHaveBeenCalledWith(
+				chat.id,
+				'Client',
+				'working'
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionId).toContain(`group-chat-${chat.id}-participant-Client-recovery-`);
+			expect(spawnConfig.cwd).toBe('/repo/client');
+			expect(spawnConfig.readOnlyMode).toBe(true);
+			expect(spawnConfig.customEnvVars).toEqual({
+				SESSION_ENV: 'ignored-when-callback-present',
+			});
+			expect(spawnConfig.prompt).toContain('Session Recovery Context');
+			expect(spawnConfig.prompt).toContain('Prior conclusion from Client.');
+			expect(spawnConfig.prompt).toContain('READ-ONLY MODE');
+			expect(spawnConfig.prompt).toContain('Please continue from where you left off');
+		});
+
+		it('applies Windows shell config to recovery participant spawns', async () => {
+			const chat = await createTestChatWithModerator('Windows Recovery Respawn Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'Client', 'Prior Windows conclusion.');
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/repo/client',
+				},
+			]);
+			simulateWindows();
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shell: 'C:\\Tools\\pwsh.exe',
+					runInShell: true,
+					sendPromptViaStdin: true,
+					sendPromptViaStdinRaw: false,
+				})
+			);
+		});
+
+		it('uses fallback cwd, command, and read-write mode when recovery has no session match', async () => {
+			const chat = await createTestChatWithModerator('Recovery Fallback Spawn Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'user', 'R'.repeat(520));
+			await appendToLog(chat.logPath, 'Client', 'Prior fallback conclusion.');
+			setGetSessionsCallback(() => null as never);
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print'],
+				available: true,
+				capabilities: {},
+				promptArgs: ['--prompt'],
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'claude',
+					cwd: os.homedir(),
+					readOnlyMode: false,
+					prompt: expect.stringContaining('Prior fallback conclusion.'),
+				})
+			);
+		});
+
+		it('handles SSH-wrapped recovery when no remote record is returned', async () => {
+			const sshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/user/project',
+			};
+			const chat = await createTestChatWithModerator('Recovery SSH No Remote Used Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'Client', 'Prior remote conclusion.');
+			setGetSessionsCallback(() => [
+				{
+					id: 'client-session',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/home/user/project',
+					sshRemoteConfig,
+				},
+			]);
+			setSshStore({
+				getSshRemotes: vi.fn().mockReturnValue([]),
+			});
+			mockWrapSpawnWithSsh.mockResolvedValueOnce({
+				command: 'ssh',
+				args: ['claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'remote recovery prompt',
+				customEnvVars: {},
+			});
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'Client',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					cwd: '/home/user/project',
+					prompt: 'remote recovery prompt',
+				})
+			);
+		});
+
+		it('throws when recovery chat, participant, or agent cannot be resolved', async () => {
+			await expect(
+				respawnParticipantWithRecovery(
+					'missing-chat',
+					'Client',
+					mockProcessManager,
+					mockAgentDetector
+				)
+			).rejects.toThrow('Group chat not found');
+
+			const chat = await createTestChatWithModerator('Recovery Missing Participant Test');
+			await expect(
+				respawnParticipantWithRecovery(chat.id, 'Missing', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow('Participant not found: Missing');
+
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValueOnce({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: [],
+				available: false,
+				path: '/usr/local/bin/claude',
+				capabilities: {},
+			});
+
+			await expect(
+				respawnParticipantWithRecovery(chat.id, 'Client', mockProcessManager, mockAgentDetector)
+			).rejects.toThrow('Agent not available: claude-code');
 		});
 	});
 
@@ -691,6 +2467,73 @@ describe('group-chat-router', () => {
 			const messages = await readLog(chat.logPath);
 			const clientMessages = messages.filter((m) => m.from === 'Client');
 			expect(clientMessages).toHaveLength(2);
+		});
+
+		it('emits and logs long agent response previews without truncating stored content', async () => {
+			const chat = await createTestChatWithModerator('Long Agent Response Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			const longMessage = `${'A'.repeat(220)} final detail`;
+			groupChatEmitters.emitMessage = vi.fn();
+
+			await routeAgentResponse(chat.id, 'Client', longMessage, mockProcessManager);
+
+			expect(groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+				chat.id,
+				expect.objectContaining({
+					from: 'Client',
+					content: longMessage,
+				})
+			);
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.from === 'Client' && m.content === longMessage)).toBe(true);
+		});
+
+		it('continues agent response flow when participant stats update fails', async () => {
+			const chat = await createTestChatWithModerator('Agent Stats Failure Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			let shouldFailRename = true;
+			mockFsPromiseFaults.rename = (oldPath) => {
+				if (shouldFailRename && String(oldPath).endsWith('metadata.json.tmp')) {
+					shouldFailRename = false;
+					return new Error('metadata rename failed');
+				}
+				return undefined;
+			};
+
+			await routeAgentResponse(
+				chat.id,
+				'Client',
+				'Stats update should fail but response should be logged.',
+				mockProcessManager
+			);
+
+			const messages = await readLog(chat.logPath);
+			expect(
+				messages.some((m) => m.from === 'Client' && m.content.includes('Stats update should fail'))
+			).toBe(true);
+		});
+
+		it('continues agent response flow when adding a participant history entry fails', async () => {
+			const chat = await createTestChatWithModerator('Agent History Failure Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			mockFsPromiseFaults.appendFile = (file) =>
+				String(file).endsWith('history.jsonl')
+					? new Error('participant history write failed')
+					: undefined;
+
+			await routeAgentResponse(
+				chat.id,
+				'Client',
+				'History update should fail but response should be logged.',
+				mockProcessManager
+			);
+
+			const messages = await readLog(chat.logPath);
+			expect(
+				messages.some(
+					(m) => m.from === 'Client' && m.content.includes('History update should fail')
+				)
+			).toBe(true);
 		});
 	});
 
@@ -1040,6 +2883,60 @@ describe('group-chat-router', () => {
 			);
 		});
 
+		it('uses SSH participant spawn output when the remote record is omitted', async () => {
+			const chat = await createTestChatWithModerator('SSH Participant No Remote Record Test');
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-no-remote',
+				name: 'SSHWorker',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+
+			await addParticipant(
+				chat.id,
+				'SSHWorker',
+				'claude-code',
+				mockProcessManager,
+				'/home/user/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+
+			mockWrapSpawnWithSsh.mockClear();
+			mockProcessManager.spawn.mockClear();
+			mockWrapSpawnWithSsh.mockResolvedValueOnce({
+				command: 'ssh',
+				args: ['-t', 'user@pedtome.local', 'claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'remote participant prompt',
+				customEnvVars: { REMOTE_EXECUTION: '1' },
+			});
+
+			await routeModeratorResponse(
+				chat.id,
+				'@SSHWorker: implement the remote feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					args: ['-t', 'user@pedtome.local', 'claude', '--print'],
+					cwd: '/home/user/project',
+					prompt: 'remote participant prompt',
+					customEnvVars: { REMOTE_EXECUTION: '1' },
+				})
+			);
+		});
+
 		it('does not apply SSH wrapping for non-SSH sessions', async () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 
@@ -1062,6 +2959,80 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+
+		it('participant recovery spawn applies SSH wrapping from the matching session', async () => {
+			const chat = await createTestChatWithModerator('SSH Recovery Test');
+			await addParticipant(chat.id, 'SSHWorker', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'SSHWorker', 'Remote work summary.');
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-recovery',
+				name: 'SSHWorker',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+			mockProcessManager.spawn.mockClear();
+
+			await respawnParticipantWithRecovery(
+				chat.id,
+				'SSHWorker',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: expect.any(String),
+					cwd: '/home/user/project',
+					agentBinaryName: 'claude',
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					args: ['-t', 'user@pedtome.local', 'claude', '--print'],
+					cwd: '/home/user/project',
+					prompt: 'test prompt',
+				})
+			);
+		});
+
+		it('moderator synthesis applies SSH wrapping from moderator config', async () => {
+			const chat = await createGroupChat('SSH Synthesis Test', 'claude-code', {
+				sshRemoteConfig,
+			});
+			createdChats.push(chat.id);
+			await spawnModerator(chat, mockProcessManager);
+			await addParticipant(chat.id, 'SSHWorker', 'claude-code', mockProcessManager);
+			await appendToLog(chat.logPath, 'SSHWorker', 'Remote work is complete.');
+			setSshStore(mockSshStore);
+			mockWrapSpawnWithSsh.mockClear();
+			mockProcessManager.spawn.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: '/usr/local/bin/claude',
+					agentBinaryName: 'claude',
+					prompt: expect.stringContaining('Remote work is complete.'),
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					cwd: '/home/user/project',
+					prompt: 'test prompt',
+				})
+			);
 		});
 	});
 

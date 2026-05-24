@@ -312,9 +312,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			return;
 		}
 
-		if (!tabWizardState) {
-			return;
-		}
+		const liveWizardState = tabWizardState as NonNullable<typeof tabWizardState>;
 
 		setSessions((prev) =>
 			prev.map((s) => {
@@ -324,13 +322,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				const latestWizardState = latestTab?.wizardState;
 
 				const newWizardState: SessionWizardState = {
-					isActive: tabWizardState.isActive,
-					isWaiting: tabWizardState.isWaiting,
-					mode: (tabWizardState.mode === 'ask' ? 'new' : tabWizardState.mode) as WizardMode,
-					goal: tabWizardState.goal ?? undefined,
-					confidence: tabWizardState.confidence,
-					ready: tabWizardState.ready,
-					conversationHistory: tabWizardState.conversationHistory.map((msg) => ({
+					isActive: liveWizardState.isActive,
+					isWaiting: liveWizardState.isWaiting,
+					mode: (liveWizardState.mode === 'ask' ? 'new' : liveWizardState.mode) as WizardMode,
+					goal: liveWizardState.goal ?? undefined,
+					confidence: liveWizardState.confidence,
+					ready: liveWizardState.ready,
+					conversationHistory: liveWizardState.conversationHistory.map((msg) => ({
 						id: msg.id,
 						role: msg.role as 'user' | 'assistant' | 'system',
 						content: msg.content,
@@ -339,29 +337,29 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						ready: msg.ready,
 						images: msg.images,
 					})),
-					previousUIState: tabWizardState.previousUIState ?? {
+					previousUIState: liveWizardState.previousUIState ?? {
 						readOnlyMode: false,
 						saveToHistory: true,
 						showThinking: 'off',
 					},
-					error: tabWizardState.error,
-					isGeneratingDocs: tabWizardState.isGeneratingDocs,
-					generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
+					error: liveWizardState.error,
+					isGeneratingDocs: liveWizardState.isGeneratingDocs,
+					generatedDocuments: liveWizardState.generatedDocuments.map((doc) => ({
 						filename: doc.filename,
 						content: doc.content,
 						taskCount: doc.taskCount,
 						savedPath: doc.savedPath,
 					})),
-					streamingContent: tabWizardState.streamingContent,
-					currentDocumentIndex: tabWizardState.currentDocumentIndex,
-					currentGeneratingIndex: tabWizardState.generationProgress?.current,
-					totalDocuments: tabWizardState.generationProgress?.total,
-					autoRunFolderPath: tabWizardState.projectPath
-						? `${tabWizardState.projectPath}/Auto Run Docs`
+					streamingContent: liveWizardState.streamingContent,
+					currentDocumentIndex: liveWizardState.currentDocumentIndex,
+					currentGeneratingIndex: liveWizardState.generationProgress?.current,
+					totalDocuments: liveWizardState.generationProgress?.total,
+					autoRunFolderPath: liveWizardState.projectPath
+						? `${liveWizardState.projectPath}/Auto Run Docs`
 						: undefined,
-					subfolderPath: tabWizardState.subfolderPath ?? undefined,
-					agentSessionId: tabWizardState.agentSessionId ?? undefined,
-					subfolderName: tabWizardState.subfolderName ?? undefined,
+					subfolderPath: liveWizardState.subfolderPath ?? undefined,
+					agentSessionId: liveWizardState.agentSessionId ?? undefined,
+					subfolderName: liveWizardState.subfolderName ?? undefined,
 					showWizardThinking: latestWizardState?.showWizardThinking ?? false,
 					thinkingContent: latestWizardState?.thinkingContent ?? '',
 				};

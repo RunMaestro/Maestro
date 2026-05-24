@@ -314,14 +314,14 @@ function IssueCard({
 	issue: SymphonyIssue;
 	theme: Theme;
 	isSelected: boolean;
-	onSelect: () => void;
+	onSelect?: () => void;
 }) {
 	const isBlocked = issue.labels?.some(
 		(l) => l.name.toLowerCase() === SYMPHONY_BLOCKING_LABEL.toLowerCase()
 	);
 	const isAvailable = issue.status === 'available' && !isBlocked;
 	const isClaimed = issue.status === 'in_progress';
-	const isSelectable = isAvailable || isBlocked;
+	const isSelectable = (isAvailable || isBlocked) && !!onSelect;
 
 	return (
 		<div
@@ -334,7 +334,7 @@ function IssueCard({
 							if (e.target !== e.currentTarget) return;
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
-								onSelect();
+								onSelect?.();
 							}
 						}
 					: undefined
@@ -550,8 +550,7 @@ function RepositoryDetailView({
 	}, [selectedIssue, selectedDocIndex, onPreviewDocument]);
 
 	const handleSelectDoc = (index: number) => {
-		if (!selectedIssue) return;
-		const doc = selectedIssue.documentPaths[index];
+		const doc = selectedIssue!.documentPaths[index];
 		setSelectedDocIndex(index);
 		setShowDocDropdown(false);
 		onPreviewDocument(doc.path, doc.isExternal);
@@ -702,7 +701,6 @@ function RepositoryDetailView({
 												issue={issue}
 												theme={theme}
 												isSelected={selectedIssue?.number === issue.number}
-												onSelect={() => onSelectIssue(issue)}
 											/>
 										))}
 									</div>
@@ -716,12 +714,6 @@ function RepositoryDetailView({
 									style={{ color: theme.colors.textDim }}
 								>
 									<span>Available Issues ({availableIssues.length})</span>
-									{isLoadingIssues && (
-										<Loader2
-											className="w-3 h-3 animate-spin"
-											style={{ color: theme.colors.accent }}
-										/>
-									)}
 								</h4>
 								{availableIssues.length === 0 && blockedIssues.length === 0 ? (
 									<p className="text-sm text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -1415,7 +1407,7 @@ export function SymphonyModal({
 		if (isOpen) {
 			const id = registerLayer({
 				type: 'modal',
-				priority: MODAL_PRIORITIES.SYMPHONY ?? 710,
+				priority: MODAL_PRIORITIES.SYMPHONY,
 				blocksLowerLayers: true,
 				capturesFocus: true,
 				focusTrap: 'strict',
@@ -1460,42 +1452,37 @@ export function SymphonyModal({
 	}, []);
 
 	// Preview document - fetches content from external URLs (GitHub attachments)
-	const handlePreviewDocument = useCallback(
-		async (path: string, isExternal: boolean) => {
-			if (!selectedRepo) return;
-			setIsLoadingDocument(true);
-			setDocumentPreview(null);
+	const handlePreviewDocument = useCallback(async (path: string, isExternal: boolean) => {
+		setIsLoadingDocument(true);
+		setDocumentPreview(null);
 
-			try {
-				if (isExternal && path.startsWith('http')) {
-					// Fetch content from external URL via main process (to avoid CORS)
-					const result = await window.maestro.symphony.fetchDocumentContent(path);
-					if (result.success && result.content) {
-						setDocumentPreview(result.content);
-					} else {
-						setDocumentPreview(`*Failed to load document: ${result.error || 'Unknown error'}*`);
-					}
+		try {
+			if (isExternal && path.startsWith('http')) {
+				// Fetch content from external URL via main process (to avoid CORS)
+				const result = await window.maestro.symphony.fetchDocumentContent(path);
+				if (result.success && result.content) {
+					setDocumentPreview(result.content);
 				} else {
-					// For repo-relative paths, we can't preview until contribution starts
-					setDocumentPreview(
-						`*This document is located at \`${path}\` in the repository and will be available when you start the contribution.*`
-					);
+					setDocumentPreview(`*Failed to load document: ${result.error || 'Unknown error'}*`);
 				}
-			} catch (error) {
-				console.error('Failed to fetch document:', error);
+			} else {
+				// For repo-relative paths, we can't preview until contribution starts
 				setDocumentPreview(
-					`*Failed to load document: ${error instanceof Error ? error.message : 'Unknown error'}*`
+					`*This document is located at \`${path}\` in the repository and will be available when you start the contribution.*`
 				);
-			} finally {
-				setIsLoadingDocument(false);
 			}
-		},
-		[selectedRepo]
-	);
+		} catch (error) {
+			console.error('Failed to fetch document:', error);
+			setDocumentPreview(
+				`*Failed to load document: ${error instanceof Error ? error.message : 'Unknown error'}*`
+			);
+		} finally {
+			setIsLoadingDocument(false);
+		}
+	}, []);
 
 	// Start contribution - check gh CLI and show build warning
 	const handleStartContribution = useCallback(() => {
-		if (!selectedRepo || !selectedIssue) return;
 		setGhCliStatus(null);
 		setIsCheckingGh(true);
 		setShowBuildWarning(true);
@@ -1504,7 +1491,7 @@ export function SymphonyModal({
 			.then((status) => setGhCliStatus(status))
 			.catch(() => setGhCliStatus({ installed: false, authenticated: false }))
 			.finally(() => setIsCheckingGh(false));
-	}, [selectedRepo, selectedIssue]);
+	}, []);
 
 	const handleBuildWarningConfirm = useCallback(() => {
 		setShowBuildWarning(false);
@@ -1514,10 +1501,6 @@ export function SymphonyModal({
 	// Handle agent creation from dialog
 	const handleCreateAgent = useCallback(
 		async (config: AgentCreationConfig): Promise<{ success: boolean; error?: string }> => {
-			if (!selectedRepo || !selectedIssue) {
-				return { success: false, error: 'No repository or issue selected' };
-			}
-
 			setIsStarting(true);
 			const result = await startContribution(
 				config.repo,
@@ -1555,7 +1538,7 @@ export function SymphonyModal({
 
 			return { success: false, error: result.error ?? 'Failed to start contribution' };
 		},
-		[selectedRepo, selectedIssue, startContribution, onStartContribution, handleBack]
+		[startContribution, onStartContribution, handleBack]
 	);
 
 	// Contribution actions
@@ -1591,11 +1574,13 @@ export function SymphonyModal({
 		try {
 			const result = await window.maestro.symphony.checkPRStatuses();
 			const messages: string[] = [];
-			if ((result.merged ?? 0) > 0) {
-				messages.push(`${result.merged} PR${(result.merged ?? 0) > 1 ? 's' : ''} merged`);
+			const mergedCount = result.merged ?? 0;
+			const closedCount = result.closed ?? 0;
+			if (mergedCount > 0) {
+				messages.push(`${mergedCount} PR${mergedCount > 1 ? 's' : ''} merged`);
 			}
-			if ((result.closed ?? 0) > 0) {
-				messages.push(`${result.closed} PR${(result.closed ?? 0) > 1 ? 's' : ''} closed`);
+			if (closedCount > 0) {
+				messages.push(`${closedCount} PR${closedCount > 1 ? 's' : ''} closed`);
 			}
 			if (messages.length > 0) {
 				setPrStatusMessage(messages.join(', '));
@@ -2138,10 +2123,8 @@ export function SymphonyModal({
 															isSyncing={syncingContributionId === contribution.id}
 															sessionName={session?.name ?? null}
 															onNavigateToSession={() => {
-																if (session) {
-																	onSelectSession(session.id);
-																	onClose();
-																}
+																onSelectSession(session!.id);
+																onClose();
 															}}
 														/>
 													);

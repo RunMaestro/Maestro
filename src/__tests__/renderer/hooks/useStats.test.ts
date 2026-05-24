@@ -8,8 +8,16 @@ describe('useStats', () => {
 		vi.clearAllMocks();
 	});
 
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	describe('initialization and data fetching', () => {
 		it('should initialize with loading state', () => {
+			vi.mocked(window.maestro.stats.getAggregation).mockReturnValue(
+				new Promise<StatsAggregation>(() => {})
+			);
+
 			const { result } = renderHook(() => useStats('week'));
 			expect(result.current.loading).toBe(true);
 			expect(result.current.data).toBe(null);
@@ -40,16 +48,95 @@ describe('useStats', () => {
 		});
 
 		it('should set error state when fetch fails', async () => {
-			vi.mocked(window.maestro.stats.getAggregation).mockRejectedValue(new Error('Network error'));
+			const fetchError = new Error('Network error');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.stats.getAggregation).mockRejectedValue(fetchError);
 
-			const { result } = renderHook(() => useStats('week'));
+			try {
+				const { result } = renderHook(() => useStats('week'));
 
-			await waitFor(() => {
-				expect(result.current.loading).toBe(false);
+				await waitFor(() => {
+					expect(result.current.loading).toBe(false);
+				});
+
+				expect(result.current.data).toBe(null);
+				expect(result.current.error).toBe('Network error');
+				expect(consoleError).toHaveBeenCalledWith('Failed to fetch usage stats:', fetchError);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
+		it('should use a fallback error message for non-Error failures', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(window.maestro.stats.getAggregation).mockRejectedValue('stats unavailable');
+
+			try {
+				const { result } = renderHook(() => useStats('week'));
+
+				await waitFor(() => {
+					expect(result.current.loading).toBe(false);
+				});
+
+				expect(result.current.error).toBe('Failed to load stats');
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to fetch usage stats:',
+					'stats unavailable'
+				);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+
+		it('should ignore successful fetch results after unmount', async () => {
+			let resolveStats: ((stats: StatsAggregation) => void) | undefined;
+			const pendingStats = new Promise<StatsAggregation>((resolve) => {
+				resolveStats = resolve;
+			});
+			vi.mocked(window.maestro.stats.getAggregation).mockReturnValue(pendingStats);
+
+			const { unmount } = renderHook(() => useStats('week'));
+			unmount();
+
+			await act(async () => {
+				resolveStats?.({
+					totalQueries: 1,
+					totalDuration: 1000,
+					avgDuration: 1000,
+					byAgent: {},
+					bySource: { user: 1, auto: 0 },
+					byDay: [],
+				});
+				await pendingStats;
 			});
 
-			expect(result.current.data).toBe(null);
-			expect(result.current.error).toBe('Network error');
+			expect(window.maestro.stats.getAggregation).toHaveBeenCalledWith('week');
+		});
+
+		it('should ignore failed fetch results after unmount', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let rejectStats: ((error: Error) => void) | undefined;
+			const pendingStats = new Promise<StatsAggregation>((_resolve, reject) => {
+				rejectStats = reject;
+			});
+			vi.mocked(window.maestro.stats.getAggregation).mockReturnValue(pendingStats);
+
+			try {
+				const { unmount } = renderHook(() => useStats('week'));
+				unmount();
+
+				await act(async () => {
+					rejectStats?.(new Error('late failure'));
+					await pendingStats.catch(() => undefined);
+				});
+
+				expect(consoleError).toHaveBeenCalledWith(
+					'Failed to fetch usage stats:',
+					expect.any(Error)
+				);
+			} finally {
+				consoleError.mockRestore();
+			}
 		});
 
 		it('should refetch when time range changes', async () => {
@@ -135,6 +222,18 @@ describe('useStats', () => {
 			});
 
 			expect(window.maestro.stats.getAggregation).toHaveBeenCalledWith('week');
+		});
+
+		it('should not refresh while disabled', async () => {
+			const { result } = renderHook(() => useStats('week', false));
+
+			await act(async () => {
+				await result.current.refresh();
+			});
+
+			expect(window.maestro.stats.getAggregation).not.toHaveBeenCalled();
+			expect(result.current.loading).toBe(true);
+			expect(result.current.refreshing).toBe(false);
 		});
 	});
 
@@ -301,6 +400,39 @@ describe('useStats', () => {
 
 			expect(typeof result.current.refresh).toBe('function');
 		});
+
+		it('should keep the refresh spinner visible briefly before clearing it', async () => {
+			vi.useFakeTimers();
+			const mockData: StatsAggregation = {
+				totalQueries: 10,
+				totalDuration: 360000,
+				avgDuration: 36000,
+				byAgent: {},
+				bySource: { user: 5, auto: 5 },
+				byDay: [],
+			};
+
+			vi.mocked(window.maestro.stats.getAggregation).mockResolvedValue(mockData);
+
+			const { result } = renderHook(() => useStats('week'));
+
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			await act(async () => {
+				await result.current.refresh();
+			});
+
+			expect(result.current.refreshing).toBe(true);
+
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(result.current.refreshing).toBe(false);
+		});
 	});
 
 	describe('time range options', () => {
@@ -453,6 +585,21 @@ describe('useComputedStats', () => {
 			totalDuration: 3600000,
 			avgDuration: 36000,
 			byAgent: {},
+			bySource: { user: 60, auto: 40 },
+			byDay: [],
+		};
+
+		const { result } = renderHook(() => useComputedStats(data));
+
+		expect(result.current.mostActiveAgent).toBe(null);
+	});
+
+	it('should handle missing byAgent data', () => {
+		const data: StatsAggregation = {
+			totalQueries: 100,
+			totalDuration: 3600000,
+			avgDuration: 36000,
+			byAgent: undefined as unknown as StatsAggregation['byAgent'],
 			bySource: { user: 60, auto: 40 },
 			byDay: [],
 		};

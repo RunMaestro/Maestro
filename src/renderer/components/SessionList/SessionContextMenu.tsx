@@ -99,19 +99,17 @@ export function SessionContextMenu({
 		}
 		setShowMoveSubmenu(true);
 
-		if (moveToGroupRef.current) {
-			const rect = moveToGroupRef.current.getBoundingClientRect();
-			const itemHeight = 28;
-			const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
-			const submenuWidth = 160;
-			const spaceBelow = window.innerHeight - rect.top;
-			const spaceRight = window.innerWidth - rect.right;
+		const rect = moveToGroupRef.current!.getBoundingClientRect();
+		const itemHeight = 28;
+		const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
+		const submenuWidth = 160;
+		const spaceBelow = window.innerHeight - rect.top;
+		const spaceRight = window.innerWidth - rect.right;
 
-			const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
-			const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
+		const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
+		const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
 
-			setSubmenuPosition({ vertical, horizontal });
-		}
+		setSubmenuPosition({ vertical, horizontal });
 	};
 
 	const handleMoveToGroupLeave = () => {

@@ -94,9 +94,6 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 
 			// Helper to add session with its worktree children to visual order
 			const addSessionWithWorktrees = (session: Session) => {
-				// Skip worktree children - they're added with their parent
-				if (session.parentSessionId) return;
-
 				visualOrder.push({
 					type: 'session' as const,
 					id: session.id,

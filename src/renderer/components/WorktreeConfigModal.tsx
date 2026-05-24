@@ -20,7 +20,6 @@ interface WorktreeConfigModalProps {
  * Validates that a directory exists (works over SSH for remote sessions)
  */
 async function validateDirectory(path: string, sshRemoteId?: string): Promise<boolean> {
-	if (!path.trim()) return false;
 	try {
 		await window.maestro.fs.readDir(path, sshRemoteId);
 		return true;
@@ -107,7 +106,6 @@ export function WorktreeConfigModal({
 
 	const handleBrowse = async () => {
 		// Browse is only available for local sessions
-		if (isRemoteSession) return;
 		const result = await window.maestro.dialog.selectFolder();
 		if (result) {
 			setBasePath(result);
@@ -145,10 +143,6 @@ export function WorktreeConfigModal({
 	const handleCreateWorktree = async () => {
 		if (!basePath.trim()) {
 			setError('Please select a worktree directory first');
-			return;
-		}
-		if (!newBranchName.trim()) {
-			setError('Please enter a branch name');
 			return;
 		}
 

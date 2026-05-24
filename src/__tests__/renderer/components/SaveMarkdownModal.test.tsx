@@ -419,6 +419,24 @@ describe('SaveMarkdownModal', () => {
 			});
 		});
 
+		it('shows fallback error message for non-Error save exceptions', async () => {
+			mockWriteFile.mockRejectedValue('Permission denied');
+			render(<SaveMarkdownModal {...defaultProps} />);
+
+			const filenameInput = screen.getByPlaceholderText('document.md');
+			fireEvent.change(filenameInput, { target: { value: 'test.md' } });
+
+			const saveButton = screen.getByRole('button', { name: 'Save' });
+			await act(async () => {
+				fireEvent.click(saveButton);
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Failed to save file')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+			});
+		});
+
 		it('shows Saving... label while saving', async () => {
 			mockWriteFile.mockImplementation(
 				() => new Promise((resolve) => setTimeout(() => resolve({ success: true }), 100))

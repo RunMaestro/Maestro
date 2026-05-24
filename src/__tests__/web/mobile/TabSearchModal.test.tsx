@@ -785,6 +785,44 @@ describe('TabSearchModal', () => {
 				expect(screen.queryByText('Feature')).not.toBeInTheDocument();
 			});
 
+			it('filters by agentSessionId when tab name is missing', () => {
+				const tabs = [
+					createTab({ id: 'tab-1', name: '', agentSessionId: 'match-session-123' }),
+					createTab({ id: 'tab-2', name: 'Other', agentSessionId: 'other-session-456' }),
+				];
+				render(
+					<TabSearchModal
+						tabs={tabs}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onClose={mockOnClose}
+					/>
+				);
+				const input = screen.getByPlaceholderText(/Search.*tabs/);
+				fireEvent.change(input, { target: { value: 'match-session' } });
+				expect(screen.getByText('MATCH')).toBeInTheDocument();
+				expect(screen.queryByText('Other')).not.toBeInTheDocument();
+			});
+
+			it('filters by name when agentSessionId is missing', () => {
+				const tabs = [
+					createTab({ id: 'tab-1', name: 'Named Tab', agentSessionId: '' }),
+					createTab({ id: 'tab-2', name: 'Other', agentSessionId: 'other-session-456' }),
+				];
+				render(
+					<TabSearchModal
+						tabs={tabs}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onClose={mockOnClose}
+					/>
+				);
+				const input = screen.getByPlaceholderText(/Search.*tabs/);
+				fireEvent.change(input, { target: { value: 'named' } });
+				expect(screen.getByText('Named Tab')).toBeInTheDocument();
+				expect(screen.queryByText('Other')).not.toBeInTheDocument();
+			});
+
 			it('shows partial matches', () => {
 				render(
 					<TabSearchModal

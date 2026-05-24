@@ -564,7 +564,7 @@ export function useMobileSessionManagement(
 
 				setSessionLogs((prev) => {
 					const logKey = source === 'ai' ? 'aiLogs' : 'shellLogs';
-					const existingLogs = prev[logKey] || [];
+					const existingLogs = prev[logKey];
 
 					// Check if the last entry is a streaming entry we should append to
 					const lastLog = existingLogs[existingLogs.length - 1];

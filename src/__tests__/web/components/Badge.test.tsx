@@ -113,6 +113,18 @@ describe('Badge Component', () => {
 			render(<Badge badgeStyle="dot" icon={<span data-testid="icon">I</span>} />);
 			expect(screen.queryByTestId('icon')).not.toBeInTheDocument();
 		});
+
+		it('handles unknown badge style gracefully', () => {
+			render(
+				<Badge variant="success" badgeStyle={'unknown' as any}>
+					Unknown Style
+				</Badge>
+			);
+
+			const badge = screen.getByRole('status');
+			expect(badge).toBeInTheDocument();
+			expect(badge).not.toHaveStyle({ color: '#22c55e' });
+		});
 	});
 
 	describe('sizes', () => {

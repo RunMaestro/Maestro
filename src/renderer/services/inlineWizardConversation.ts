@@ -823,7 +823,7 @@ export async function sendWizardMessage(
 		if (result.success) {
 			callbacks?.onComplete?.(result);
 		} else {
-			callbacks?.onError?.(result.error || 'Unknown error');
+			callbacks?.onError?.(result.error!);
 		}
 
 		return result;

@@ -92,13 +92,16 @@ export function AutoRunExpandedModal({
 	onOpenMarketplace,
 	...autoRunProps
 }: AutoRunExpandedModalProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
-	const handleCloseRef = useRef<() => void>(() => {});
+	const handleCloseRef = useRef<() => void>(onClose);
 	const autoRunRef = useRef<AutoRunHandle>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	onCloseRef.current = onClose;
+
+	const handleLayerEscape = useCallback(() => {
+		handleCloseRef.current();
+	}, []);
 
 	// Local mode state - independent from the right panel behind the modal
 	const [localMode, setLocalMode] = useState<'edit' | 'preview'>(initialMode);
@@ -184,27 +187,13 @@ export function AutoRunExpandedModal({
 			blocksLowerLayers: true,
 			capturesFocus: true,
 			focusTrap: 'strict',
-			onEscape: () => {
-				handleCloseRef.current();
-			},
+			onEscape: handleLayerEscape,
 		});
-		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Keep escape handler up to date
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				handleCloseRef.current();
-			});
-		}
-	}, [handleClose, updateLayerHandler]);
+	}, [registerLayer, unregisterLayer, handleLayerEscape]);
 
 	// Focus the AutoRun component on mount
 	useEffect(() => {

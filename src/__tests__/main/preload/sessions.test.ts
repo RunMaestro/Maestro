@@ -82,6 +82,98 @@ describe('Sessions Preload API', () => {
 			});
 		});
 
+		describe('getSessionTimestamps', () => {
+			it('should invoke claude:getSessionTimestamps', async () => {
+				mockInvoke.mockResolvedValue({ timestamps: ['2024-01-01T00:00:00.000Z'] });
+
+				const result = await api.getSessionTimestamps('/project');
+
+				expect(mockInvoke).toHaveBeenCalledWith('claude:getSessionTimestamps', '/project');
+				expect(result).toEqual({ timestamps: ['2024-01-01T00:00:00.000Z'] });
+			});
+		});
+
+		describe('onProjectStatsUpdate', () => {
+			it('should forward project stats updates and remove the listener on cleanup', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, stats: unknown) => void;
+
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, stats: unknown) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onProjectStatsUpdate(callback);
+				const stats = {
+					projectPath: '/project',
+					totalSessions: 2,
+					totalMessages: 10,
+					totalCostUsd: 0.25,
+					totalSizeBytes: 1024,
+					oldestTimestamp: null,
+					processedCount: 2,
+					isComplete: true,
+				};
+				registeredHandler!({}, stats);
+				cleanup();
+
+				expect(mockOn).toHaveBeenCalledWith('claude:projectStatsUpdate', registeredHandler!);
+				expect(callback).toHaveBeenCalledWith(stats);
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'claude:projectStatsUpdate',
+					registeredHandler!
+				);
+			});
+		});
+
+		describe('getGlobalStats', () => {
+			it('should invoke claude:getGlobalStats', async () => {
+				const stats = { totalSessions: 10, isComplete: true };
+				mockInvoke.mockResolvedValue(stats);
+
+				const result = await api.getGlobalStats();
+
+				expect(mockInvoke).toHaveBeenCalledWith('claude:getGlobalStats');
+				expect(result).toEqual(stats);
+			});
+		});
+
+		describe('onGlobalStatsUpdate', () => {
+			it('should forward global stats updates and remove the listener on cleanup', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, stats: unknown) => void;
+
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, stats: unknown) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onGlobalStatsUpdate(callback);
+				const stats = {
+					totalSessions: 10,
+					totalMessages: 100,
+					totalInputTokens: 1000,
+					totalOutputTokens: 500,
+					totalCacheReadTokens: 20,
+					totalCacheCreationTokens: 10,
+					totalCostUsd: 1.5,
+					totalSizeBytes: 2048,
+					isComplete: false,
+				};
+				registeredHandler!({}, stats);
+				cleanup();
+
+				expect(mockOn).toHaveBeenCalledWith('claude:globalStatsUpdate', registeredHandler!);
+				expect(callback).toHaveBeenCalledWith(stats);
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'claude:globalStatsUpdate',
+					registeredHandler!
+				);
+			});
+		});
+
 		describe('readSessionMessages', () => {
 			it('should invoke claude:readSessionMessages', async () => {
 				mockInvoke.mockResolvedValue({ messages: [] });
@@ -109,6 +201,107 @@ describe('Sessions Preload API', () => {
 					'query',
 					'all'
 				);
+			});
+		});
+
+		describe('commands and skills', () => {
+			it.each([
+				{
+					name: 'getCommands',
+					call: () => api.getCommands('/project'),
+					channel: 'claude:getCommands',
+					response: [{ name: 'build', description: 'Build project' }],
+				},
+				{
+					name: 'getSkills',
+					call: () => api.getSkills('/project'),
+					channel: 'claude:getSkills',
+					response: [{ name: 'review', path: '/skills/review' }],
+				},
+			])('should invoke claude:$name', async ({ call, channel, response }) => {
+				mockInvoke.mockResolvedValue(response);
+
+				const result = await call();
+
+				expect(mockInvoke).toHaveBeenCalledWith(channel, '/project');
+				expect(result).toEqual(response);
+			});
+		});
+
+		describe('session metadata', () => {
+			it('should invoke claude:registerSessionOrigin', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await api.registerSessionOrigin('/project', 'agent-session-123', 'auto', 'Auto Session');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'claude:registerSessionOrigin',
+					'/project',
+					'agent-session-123',
+					'auto',
+					'Auto Session'
+				);
+			});
+
+			it('should invoke claude:updateSessionName', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await api.updateSessionName('/project', 'agent-session-123', 'Renamed Session');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'claude:updateSessionName',
+					'/project',
+					'agent-session-123',
+					'Renamed Session'
+				);
+			});
+
+			it('should invoke claude:updateSessionStarred', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await api.updateSessionStarred('/project', 'agent-session-123', true);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'claude:updateSessionStarred',
+					'/project',
+					'agent-session-123',
+					true
+				);
+			});
+
+			it('should invoke claude:updateSessionContextUsage', async () => {
+				mockInvoke.mockResolvedValue(true);
+
+				await api.updateSessionContextUsage('/project', 'agent-session-123', 73);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'claude:updateSessionContextUsage',
+					'/project',
+					'agent-session-123',
+					73
+				);
+			});
+
+			it('should invoke claude:getSessionOrigins', async () => {
+				const origins = { 'agent-session-123': { origin: 'user', sessionName: 'Named' } };
+				mockInvoke.mockResolvedValue(origins);
+
+				const result = await api.getSessionOrigins('/project');
+
+				expect(mockInvoke).toHaveBeenCalledWith('claude:getSessionOrigins', '/project');
+				expect(result).toEqual(origins);
+			});
+
+			it('should invoke claude:getAllNamedSessions', async () => {
+				const namedSessions = [
+					{ agentSessionId: 'agent-session-123', projectPath: '/project', sessionName: 'Named' },
+				];
+				mockInvoke.mockResolvedValue(namedSessions);
+
+				const result = await api.getAllNamedSessions();
+
+				expect(mockInvoke).toHaveBeenCalledWith('claude:getAllNamedSessions');
+				expect(result).toEqual(namedSessions);
 			});
 		});
 

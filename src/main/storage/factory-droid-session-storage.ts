@@ -141,11 +141,13 @@ function extractTextFromContent(content: FactoryContentItem[] | string): string 
 	}
 
 	if (Array.isArray(content)) {
-		return content
-			.filter((c) => c.type === 'text' && c.text)
-			.map((c) => c.text || '')
-			.join(' ')
-			.trim();
+		const textParts: string[] = [];
+		for (const item of content) {
+			if (item.type === 'text' && item.text) {
+				textParts.push(item.text);
+			}
+		}
+		return textParts.join(' ').trim();
 	}
 
 	return '';

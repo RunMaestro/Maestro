@@ -19,6 +19,7 @@ import type { RefObject, SetStateAction } from 'react';
 import { loadFileTree, compareFileTrees } from '../../../renderer/utils/fileExplorer';
 import { gitService } from '../../../renderer/services/git';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { logger } from '../../../renderer/utils/logger';
 
 vi.mock('../../../renderer/utils/fileExplorer', () => ({
 	loadFileTree: vi.fn(),
@@ -30,6 +31,15 @@ vi.mock('../../../renderer/services/git', () => ({
 		isRepo: vi.fn(),
 		getBranches: vi.fn(),
 		getTags: vi.fn(),
+	},
+}));
+
+vi.mock('../../../renderer/utils/logger', () => ({
+	logger: {
+		debug: vi.fn(),
+		error: vi.fn(),
+		info: vi.fn(),
+		warn: vi.fn(),
 	},
 }));
 
@@ -95,36 +105,65 @@ const createDeps = (
 	...overrides,
 });
 
+const createDeferred = <T>() => {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((promiseResolve, promiseReject) => {
+		resolve = promiseResolve;
+		reject = promiseReject;
+	});
+	return { promise, resolve, reject };
+};
+
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('useFileTreeManagement', () => {
 	let originalHistory: typeof window.maestro.history | undefined;
+	let originalFs: typeof window.maestro.fs | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		useFileExplorerStore.setState({ fileTreeFilter: '' });
 		originalHistory = window.maestro.history as typeof window.maestro.history | undefined;
+		originalFs = window.maestro.fs as typeof window.maestro.fs | undefined;
 		window.maestro = {
 			...window.maestro,
 			history: {
 				reload: vi.fn().mockResolvedValue(true),
 			},
+			fs: {
+				...window.maestro.fs,
+				directorySize: vi.fn().mockResolvedValue({
+					fileCount: 3,
+					folderCount: 1,
+					totalSize: 1024,
+				}),
+			},
 		};
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		if (originalHistory) {
 			window.maestro.history = originalHistory;
 		} else {
 			delete (window.maestro as { history?: unknown }).history;
 		}
+		if (originalFs) {
+			window.maestro.fs = originalFs;
+		} else {
+			delete (window.maestro as { fs?: unknown }).fs;
+		}
 	});
 
 	it('refreshFileTree updates tree and returns changes', async () => {
-		const initialTree: FileNode[] = [{ name: 'old.txt', type: 'file' }];
 		const nextTree: FileNode[] = [{ name: 'new.txt', type: 'file' }];
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
 		const changes = {
 			totalChanges: 1,
 			newFiles: 1,
@@ -136,7 +175,7 @@ describe('useFileTreeManagement', () => {
 		vi.mocked(loadFileTree).mockResolvedValue(nextTree);
 		vi.mocked(compareFileTrees).mockReturnValue(changes);
 
-		const state = createSessionsState([createMockSession({ fileTree: initialTree })]);
+		const state = createSessionsState([createMockSession({ fileTree: undefined }), siblingSession]);
 		const deps = createDeps(state);
 		const { result } = renderHook(() => useFileTreeManagement(deps));
 
@@ -154,10 +193,11 @@ describe('useFileTreeManagement', () => {
 			undefined,
 			undefined
 		);
-		expect(compareFileTrees).toHaveBeenCalledWith(initialTree, nextTree);
+		expect(compareFileTrees).toHaveBeenCalledWith([], nextTree);
 		expect(returnedChanges).toEqual(changes);
 		expect(state.getSessions()[0].fileTree).toEqual(nextTree);
 		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
+		expect(state.getSessions()[1]).toBe(siblingSession);
 	});
 
 	it('refreshFileTree handles load errors', async () => {
@@ -179,6 +219,206 @@ describe('useFileTreeManagement', () => {
 		expect(state.getSessions()[0].fileTree).toEqual([{ name: 'keep', type: 'file' }]);
 	});
 
+	it('refreshFileTree logs unknown load and stats failures', async () => {
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(undefined);
+		vi.mocked(loadFileTree).mockRejectedValue(undefined);
+
+		const state = createSessionsState([
+			createMockSession({ fileTree: [{ name: 'keep', type: 'file' }] }),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshFileTree(state.getSessions()[0].id);
+		});
+
+		await waitFor(() => {
+			expect(logger.warn).toHaveBeenCalledWith(
+				'directorySize failed during refresh (non-fatal)',
+				'FileTreeManagement',
+				{ error: 'Unknown error' }
+			);
+		});
+		expect(logger.error).toHaveBeenCalledWith('File tree refresh error', 'FileTreeManagement', {
+			error: 'Unknown error',
+		});
+		expect(state.getSessions()[0].fileTree).toEqual([{ name: 'keep', type: 'file' }]);
+	});
+
+	it('refreshFileTree returns undefined without touching loaders for a missing session', async () => {
+		const state = createSessionsState([
+			createMockSession({
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let returnedChanges: unknown = 'not-called';
+		await act(async () => {
+			returnedChanges = await result.current.refreshFileTree('missing-session');
+		});
+
+		expect(returnedChanges).toBeUndefined();
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(window.maestro.fs.directorySize).not.toHaveBeenCalled();
+	});
+
+	it('refreshFileTree uses session SSH fallback, local options, and keeps stats when size fails', async () => {
+		const initialTree: FileNode[] = [{ name: 'old.txt', type: 'file' }];
+		const nextTree: FileNode[] = [{ name: 'remote-new.txt', type: 'file' }];
+		const existingStats = { fileCount: 9, folderCount: 2, totalSize: 2048 };
+		const changes = {
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		};
+
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(new Error('du failed'));
+		vi.mocked(loadFileTree).mockResolvedValue(nextTree);
+		vi.mocked(compareFileTrees).mockReturnValue(changes);
+
+		const session = createMockSession({
+			cwd: '/fallback/project',
+			fileTree: initialTree,
+			fileTreeStats: existingStats,
+			projectRoot: undefined,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-from-session',
+				workingDirOverride: '/remote/work',
+			},
+		});
+		const state = createSessionsState([session]);
+		const deps = createDeps(state, {
+			localHonorGitignore: false,
+			localIgnorePatterns: ['node_modules'],
+			sshRemoteHonorGitignore: true,
+			sshRemoteIgnorePatterns: ['dist'],
+		});
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshFileTree(session.id);
+		});
+
+		expect(window.maestro.fs.directorySize).toHaveBeenCalledWith(
+			'/fallback/project',
+			'remote-from-session'
+		);
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/fallback/project',
+			10,
+			0,
+			{
+				sshRemoteId: 'remote-from-session',
+				remoteCwd: '/remote/work',
+				ignorePatterns: ['dist'],
+				honorGitignore: true,
+			},
+			undefined,
+			{
+				ignorePatterns: ['node_modules'],
+				honorGitignore: false,
+			}
+		);
+		expect(logger.warn).toHaveBeenCalledWith(
+			'directorySize failed during refresh (non-fatal)',
+			'FileTreeManagement',
+			{ error: 'du failed' }
+		);
+		expect(state.getSessions()[0].fileTree).toEqual(nextTree);
+		expect(state.getSessions()[0].fileTreeStats).toEqual(existingStats);
+	});
+
+	it('refreshFileTree discards stale results when a newer refresh starts first', async () => {
+		const staleTree = createDeferred<FileNode[]>();
+		const freshTree: FileNode[] = [{ name: 'fresh.txt', type: 'file' }];
+		vi.mocked(loadFileTree).mockReturnValueOnce(staleTree.promise).mockResolvedValueOnce(freshTree);
+		vi.mocked(compareFileTrees).mockReturnValue({
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		});
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<unknown>;
+		let freshRefresh: Promise<unknown>;
+		await act(async () => {
+			staleRefresh = result.current.refreshFileTree('session-1');
+			freshRefresh = result.current.refreshFileTree('session-1');
+			await freshRefresh;
+			staleTree.resolve([{ name: 'stale.txt', type: 'file' }]);
+			await staleRefresh;
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(compareFileTrees).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshFileTree discards stale results when a newer refresh starts while stats are pending', async () => {
+		const staleStats = createDeferred<{
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}>();
+		const freshTree: FileNode[] = [{ name: 'fresh-after-stats.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize)
+			.mockReturnValueOnce(staleStats.promise)
+			.mockResolvedValueOnce({ fileCount: 2, folderCount: 1, totalSize: 24 });
+		vi.mocked(loadFileTree)
+			.mockResolvedValueOnce([{ name: 'stale-after-stats.txt', type: 'file' }])
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(compareFileTrees).mockReturnValue({
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		});
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<unknown>;
+		let freshRefresh: Promise<unknown>;
+		await act(async () => {
+			staleRefresh = result.current.refreshFileTree('session-1');
+			await Promise.resolve();
+			freshRefresh = result.current.refreshFileTree('session-1');
+			await freshRefresh;
+			staleStats.resolve({ fileCount: 99, folderCount: 9, totalSize: 999 });
+			await staleRefresh;
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(state.getSessions()[0].fileTreeStats).toEqual({
+			fileCount: 2,
+			folderCount: 1,
+			totalSize: 24,
+		});
+		expect(compareFileTrees).toHaveBeenCalledTimes(1);
+	});
+
 	it('refreshGitFileState refreshes git metadata and history', async () => {
 		const nextTree: FileNode[] = [{ name: 'src', type: 'folder', children: [] }];
 
@@ -192,7 +432,11 @@ describe('useFileTreeManagement', () => {
 			shellCwd: '/test/shell',
 			fileTree: [{ name: 'existing', type: 'file' }],
 		});
-		const state = createSessionsState([session]);
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
+		const state = createSessionsState([session, siblingSession]);
 		const rightPanelRef: RefObject<RightPanelHandle | null> = {
 			current: { refreshHistoryPanel: vi.fn() },
 		};
@@ -225,6 +469,334 @@ describe('useFileTreeManagement', () => {
 		expect(updated.gitBranches).toEqual(['main']);
 		expect(updated.gitTags).toEqual(['v1.0.0']);
 		expect(updated.gitRefsCacheTime).toEqual(expect.any(Number));
+		expect(state.getSessions()[1]).toBe(siblingSession);
+	});
+
+	it('refreshGitFileState returns without work for a missing session', async () => {
+		const state = createSessionsState([
+			createMockSession({
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshGitFileState('missing-session');
+		});
+
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(gitService.isRepo).not.toHaveBeenCalled();
+		expect(window.maestro.history.reload).not.toHaveBeenCalled();
+	});
+
+	it('refreshGitFileState skips refs for non-git folders and preserves stats when size fails', async () => {
+		const existingStats = { fileCount: 4, folderCount: 1, totalSize: 512 };
+		const nextTree: FileNode[] = [{ name: 'plain.txt', type: 'file' }];
+
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(new Error('du failed'));
+		vi.mocked(loadFileTree).mockResolvedValue(nextTree);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const session = createMockSession({
+			cwd: '/repo/work',
+			fileTree: [{ name: 'old.txt', type: 'file' }],
+			fileTreeStats: existingStats,
+			projectRoot: undefined,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-git',
+				workingDirOverride: '/remote/repo',
+			},
+		});
+		const state = createSessionsState([session]);
+		const rightPanelRef: RefObject<RightPanelHandle | null> = {
+			current: null,
+		};
+		const deps = createDeps(state, {
+			rightPanelRef,
+			sshRemoteHonorGitignore: false,
+			sshRemoteIgnorePatterns: ['vendor'],
+		});
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshGitFileState(session.id);
+		});
+
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/repo/work',
+			10,
+			0,
+			{
+				sshRemoteId: 'remote-git',
+				remoteCwd: '/remote/repo',
+				ignorePatterns: ['vendor'],
+				honorGitignore: false,
+			},
+			undefined,
+			undefined
+		);
+		expect(gitService.isRepo).toHaveBeenCalledWith('/repo/work', 'remote-git');
+		expect(gitService.getBranches).not.toHaveBeenCalled();
+		expect(gitService.getTags).not.toHaveBeenCalled();
+		expect(window.maestro.history.reload).toHaveBeenCalled();
+		expect(logger.warn).toHaveBeenCalledWith(
+			'directorySize failed during git refresh (non-fatal)',
+			'FileTreeManagement',
+			{ error: 'du failed' }
+		);
+
+		const updated = state.getSessions()[0];
+		expect(updated.fileTree).toEqual(nextTree);
+		expect(updated.fileTreeStats).toEqual(existingStats);
+		expect(updated.isGitRepo).toBe(false);
+		expect(updated.gitBranches).toBeUndefined();
+		expect(updated.gitTags).toBeUndefined();
+		expect(updated.gitRefsCacheTime).toBeUndefined();
+	});
+
+	it('refreshGitFileState logs failures and preserves the existing tree', async () => {
+		vi.mocked(loadFileTree).mockRejectedValue(undefined);
+		vi.mocked(gitService.isRepo).mockResolvedValue(true);
+
+		const existingTree: FileNode[] = [{ name: 'keep.txt', type: 'file' }];
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: existingTree,
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshGitFileState('session-1');
+		});
+
+		expect(logger.error).toHaveBeenCalledWith(
+			'Git/file state refresh error',
+			'FileTreeManagement',
+			{ error: 'Unknown error' }
+		);
+		expect(state.getSessions()[0].fileTree).toEqual(existingTree);
+		expect(window.maestro.history.reload).not.toHaveBeenCalled();
+	});
+
+	it('refreshGitFileState discards stale git results when a newer refresh starts first', async () => {
+		const staleTree = createDeferred<FileNode[]>();
+		const freshTree: FileNode[] = [{ name: 'fresh-git.txt', type: 'file' }];
+		vi.mocked(loadFileTree).mockReturnValueOnce(staleTree.promise).mockResolvedValueOnce(freshTree);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<void>;
+		let freshRefresh: Promise<void>;
+		await act(async () => {
+			staleRefresh = result.current.refreshGitFileState('session-1');
+			freshRefresh = result.current.refreshGitFileState('session-1');
+			await freshRefresh;
+			staleTree.resolve([{ name: 'stale-git.txt', type: 'file' }]);
+			await staleRefresh;
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(window.maestro.history.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshGitFileState discards stale git results when stats finish after a newer refresh', async () => {
+		const staleStats = createDeferred<{
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}>();
+		const freshTree: FileNode[] = [{ name: 'fresh-git-stats.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize)
+			.mockReturnValueOnce(staleStats.promise)
+			.mockResolvedValueOnce({ fileCount: 3, folderCount: 1, totalSize: 48 });
+		vi.mocked(loadFileTree)
+			.mockResolvedValueOnce([{ name: 'stale-git-stats.txt', type: 'file' }])
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<void>;
+		let freshRefresh: Promise<void>;
+		await act(async () => {
+			staleRefresh = result.current.refreshGitFileState('session-1');
+			await Promise.resolve();
+			freshRefresh = result.current.refreshGitFileState('session-1');
+			await freshRefresh;
+			staleStats.resolve({ fileCount: 99, folderCount: 9, totalSize: 999 });
+			await staleRefresh;
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(state.getSessions()[0].fileTreeStats).toEqual({
+			fileCount: 3,
+			folderCount: 1,
+			totalSize: 48,
+		});
+		expect(window.maestro.history.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshGitFileState discards stale git results after an awaited stats response', async () => {
+		const staleStats = createDeferred<{
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}>();
+		const freshTree: FileNode[] = [{ name: 'fresh-after-git-stats.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize)
+			.mockReturnValueOnce(staleStats.promise)
+			.mockResolvedValueOnce({ fileCount: 4, folderCount: 1, totalSize: 64 });
+		vi.mocked(loadFileTree)
+			.mockResolvedValueOnce([{ name: 'stale-after-git-stats.txt', type: 'file' }])
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<void>;
+		await act(async () => {
+			staleRefresh = result.current.refreshGitFileState('session-1');
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		await act(async () => {
+			await result.current.refreshGitFileState('session-1');
+		});
+
+		await act(async () => {
+			staleStats.resolve({ fileCount: 99, folderCount: 9, totalSize: 999 });
+			await staleRefresh;
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(state.getSessions()[0].fileTreeStats).toEqual({
+			fileCount: 4,
+			folderCount: 1,
+			totalSize: 64,
+		});
+		expect(window.maestro.history.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshGitFileState discards stale git refs that finish after a newer refresh', async () => {
+		const staleBranches = createDeferred<string[]>();
+		const staleTags = createDeferred<string[]>();
+		const freshTree: FileNode[] = [{ name: 'fresh-after-refs.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize)
+			.mockResolvedValueOnce({ fileCount: 2, folderCount: 1, totalSize: 24 })
+			.mockResolvedValueOnce({ fileCount: 5, folderCount: 2, totalSize: 80 });
+		vi.mocked(loadFileTree)
+			.mockResolvedValueOnce([{ name: 'stale-after-refs.txt', type: 'file' }])
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(gitService.isRepo).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+		vi.mocked(gitService.getBranches).mockReturnValueOnce(staleBranches.promise);
+		vi.mocked(gitService.getTags).mockReturnValueOnce(staleTags.promise);
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		let staleRefresh: Promise<void>;
+		await act(async () => {
+			staleRefresh = result.current.refreshGitFileState('session-1');
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		await act(async () => {
+			await result.current.refreshGitFileState('session-1');
+		});
+
+		await act(async () => {
+			staleBranches.resolve(['stale-main']);
+			staleTags.resolve(['stale-v1']);
+			await staleRefresh;
+		});
+
+		const updated = state.getSessions()[0];
+		expect(updated.fileTree).toEqual(freshTree);
+		expect(updated.isGitRepo).toBe(false);
+		expect(updated.gitBranches).toBeUndefined();
+		expect(updated.gitTags).toBeUndefined();
+		expect(window.maestro.history.reload).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshGitFileState uses cwd for terminal git operations when shellCwd is missing', async () => {
+		vi.mocked(loadFileTree).mockResolvedValue([{ name: 'terminal.txt', type: 'file' }]);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const state = createSessionsState([
+			createMockSession({
+				inputMode: 'terminal',
+				shellCwd: undefined,
+				cwd: '/terminal/cwd',
+				projectRoot: '/tree/root',
+			}),
+		]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshGitFileState('session-1');
+		});
+
+		expect(loadFileTree).toHaveBeenCalledWith('/tree/root', 10, 0, undefined, undefined, undefined);
+		expect(gitService.isRepo).toHaveBeenCalledWith('/terminal/cwd', undefined);
+	});
+
+	it('refreshGitFileState logs unknown directory size failures without blocking git refresh', async () => {
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(undefined);
+		vi.mocked(loadFileTree).mockResolvedValue([{ name: 'git-unknown-stats.txt', type: 'file' }]);
+		vi.mocked(gitService.isRepo).mockResolvedValue(false);
+
+		const state = createSessionsState([createMockSession()]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await act(async () => {
+			await result.current.refreshGitFileState('session-1');
+		});
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			'directorySize failed during git refresh (non-fatal)',
+			'FileTreeManagement',
+			{ error: 'Unknown error' }
+		);
+		expect(state.getSessions()[0].fileTree).toEqual([
+			{ name: 'git-unknown-stats.txt', type: 'file' },
+		]);
 	});
 
 	it('filters file tree by fuzzy match and keeps matching folders', () => {
@@ -280,6 +852,384 @@ describe('useFileTreeManagement', () => {
 			);
 			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
 		});
+	});
+
+	it('streams SSH load progress and keeps loading successful when stats fail', async () => {
+		const nextTree: FileNode[] = [{ name: 'remote-loaded.txt', type: 'file' }];
+		let progressSnapshot: unknown;
+		let state: ReturnType<typeof createSessionsState>;
+
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(new Error('du timeout'));
+		vi.mocked(loadFileTree).mockImplementation(
+			async (_root, _maxDepth, _currentDepth, _ssh, onProgress) => {
+				onProgress?.({
+					directoriesScanned: 2,
+					filesFound: 5,
+					currentDirectory: '/remote/work/src',
+				});
+				progressSnapshot = state.getSessions()[0].fileTreeLoadingProgress;
+				return nextTree;
+			}
+		);
+
+		const session = createMockSession({
+			fileTree: [],
+			projectRoot: undefined,
+			sshRemoteId: 'remote-load',
+			remoteCwd: '/remote/work',
+		});
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
+		state = createSessionsState([session, siblingSession]);
+		const deps = createDeps(state, {
+			localHonorGitignore: true,
+			localIgnorePatterns: ['coverage'],
+		});
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
+		});
+
+		expect(progressSnapshot).toEqual({
+			directoriesScanned: 2,
+			filesFound: 5,
+			currentDirectory: '/remote/work/src',
+		});
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/test/project',
+			10,
+			0,
+			{
+				sshRemoteId: 'remote-load',
+				remoteCwd: '/remote/work',
+				ignorePatterns: undefined,
+				honorGitignore: undefined,
+			},
+			expect.any(Function),
+			{
+				ignorePatterns: ['coverage'],
+				honorGitignore: true,
+			}
+		);
+		expect(window.maestro.fs.directorySize).toHaveBeenCalledWith('/test/project', 'remote-load');
+		expect(logger.warn).toHaveBeenCalledWith(
+			'directorySize failed (non-fatal)',
+			'FileTreeManagement',
+			{ error: 'du timeout' }
+		);
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+		expect(state.getSessions()[1]).toBe(siblingSession);
+	});
+
+	it('keeps newer refresh data when an initial load becomes stale while awaiting stats', async () => {
+		const initialStats = createDeferred<{
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}>();
+		const freshTree: FileNode[] = [{ name: 'fresh-after-initial-stats.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize)
+			.mockReturnValueOnce(initialStats.promise)
+			.mockResolvedValueOnce({ fileCount: 6, folderCount: 2, totalSize: 96 });
+		vi.mocked(loadFileTree)
+			.mockResolvedValueOnce([{ name: 'stale-initial.txt', type: 'file' }])
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(compareFileTrees).mockReturnValue({
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		});
+
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
+		const state = createSessionsState([createMockSession({ fileTree: [] }), siblingSession]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(loadFileTree).toHaveBeenCalledTimes(1);
+		});
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		await act(async () => {
+			await result.current.refreshFileTree('session-1');
+		});
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+
+		await act(async () => {
+			initialStats.resolve({ fileCount: 99, folderCount: 9, totalSize: 999 });
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+		expect(state.getSessions()[1]).toBe(siblingSession);
+	});
+
+	it('does not report stale initial-load failures after a newer refresh succeeds', async () => {
+		const staleInitialTree = createDeferred<FileNode[]>();
+		const freshTree: FileNode[] = [{ name: 'fresh-after-initial-error.txt', type: 'file' }];
+		vi.mocked(loadFileTree)
+			.mockReturnValueOnce(staleInitialTree.promise)
+			.mockResolvedValueOnce(freshTree);
+		vi.mocked(compareFileTrees).mockReturnValue({
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		});
+
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
+		const state = createSessionsState([createMockSession({ fileTree: [] }), siblingSession]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(loadFileTree).toHaveBeenCalledTimes(1);
+		});
+
+		await act(async () => {
+			await result.current.refreshFileTree('session-1');
+		});
+
+		await act(async () => {
+			staleInitialTree.reject(new Error('stale initial failure'));
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(state.getSessions()[0].fileTree).toEqual(freshTree);
+		expect(state.getSessions()[0].fileTreeError).toBeUndefined();
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[1]).toBe(siblingSession);
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'File tree error',
+			'FileTreeManagement',
+			expect.anything()
+		);
+	});
+
+	it('logs unknown directorySize errors during initial load without failing the tree load', async () => {
+		const nextTree: FileNode[] = [{ name: 'loaded-without-stats.txt', type: 'file' }];
+		vi.mocked(window.maestro.fs.directorySize).mockRejectedValue(undefined);
+		vi.mocked(loadFileTree).mockResolvedValue(nextTree);
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
+		});
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			'directorySize failed (non-fatal)',
+			'FileTreeManagement',
+			{
+				error: 'Unknown error',
+			}
+		);
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+	});
+
+	it('sets retry state when initial file tree load fails without an error message', async () => {
+		vi.mocked(loadFileTree).mockRejectedValue(undefined);
+		const beforeRetryAt = Date.now() + 20000;
+
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+		});
+		const state = createSessionsState([createMockSession({ fileTree: [] }), siblingSession]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeError).toBe(
+				'Cannot access directory: /test/project\nUnknown error'
+			);
+		});
+		expect(state.getSessions()[0].fileTree).toEqual([]);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+		expect(state.getSessions()[0].fileTreeRetryAt).toBeGreaterThanOrEqual(beforeRetryAt);
+		expect(state.getSessions()[0].fileTreeRetryAt).toBeLessThanOrEqual(Date.now() + 20000);
+		expect(state.getSessions()[1]).toBe(siblingSession);
+		expect(logger.error).toHaveBeenCalledWith('File tree error', 'FileTreeManagement', {
+			error: 'Unknown error',
+		});
+	});
+
+	it('honors retry backoff and clears the retry marker when the timer expires', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+		const retryAt = new Date('2026-01-01T00:00:01.000Z').getTime();
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [],
+				fileTreeRetryAt: retryAt,
+			}),
+			createMockSession({
+				id: 'session-2',
+				fileTree: [{ name: 'sibling.txt', type: 'file' }],
+			}),
+		]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(1);
+
+		act(() => {
+			vi.advanceTimersByTime(1000);
+		});
+
+		expect(state.getSessions()[0].fileTreeRetryAt).toBeUndefined();
+		expect(state.getSessions()[1].fileTree).toEqual([{ name: 'sibling.txt', type: 'file' }]);
+	});
+
+	it('does not schedule duplicate retry timers while already in backoff', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+		const retryAt = new Date('2026-01-01T00:00:05.000Z').getTime();
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [],
+				fileTreeRetryAt: retryAt,
+			}),
+		]);
+		const { rerender } = renderHook((props) => useFileTreeManagement(props), {
+			initialProps: createDeps(state),
+		});
+
+		expect(vi.getTimerCount()).toBe(1);
+
+		rerender(createDeps(state, { localIgnorePatterns: ['tmp'] }));
+
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(1);
+	});
+
+	it('clears pending retry timers on unmount', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+		const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [],
+				fileTreeRetryAt: new Date('2026-01-01T00:00:05.000Z').getTime(),
+			}),
+		]);
+		const deps = createDeps(state);
+
+		const { unmount } = renderHook(() => useFileTreeManagement(deps));
+
+		expect(vi.getTimerCount()).toBe(1);
+		unmount();
+
+		expect(clearTimeoutSpy).toHaveBeenCalled();
+		clearTimeoutSpy.mockRestore();
+	});
+
+	it('re-scans an already loaded active tree when local file options change', async () => {
+		const nextTree: FileNode[] = [{ name: 'rescanned.txt', type: 'file' }];
+		vi.mocked(loadFileTree).mockResolvedValue(nextTree);
+		vi.mocked(compareFileTrees).mockReturnValue({
+			totalChanges: 1,
+			newFiles: 1,
+			newFolders: 0,
+			removedFiles: 0,
+			removedFolders: 0,
+		});
+
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'old.txt', type: 'file' }],
+				fileTreeStats: { fileCount: 1, folderCount: 0, totalSize: 12 },
+			}),
+		]);
+		const initialDeps = createDeps(state);
+		const { rerender } = renderHook((props) => useFileTreeManagement(props), {
+			initialProps: initialDeps,
+		});
+
+		rerender(
+			createDeps(state, {
+				localHonorGitignore: true,
+				localIgnorePatterns: ['tmp'],
+			})
+		);
+
+		await waitFor(() => {
+			expect(loadFileTree).toHaveBeenCalledWith('/test/project', 10, 0, undefined, undefined, {
+				ignorePatterns: ['tmp'],
+				honorGitignore: true,
+			});
+		});
+		expect(state.getSessions()[0].fileTree).toEqual(nextTree);
+	});
+
+	it('does not load, migrate, or re-scan when no active session is available', () => {
+		const state = createSessionsState([]);
+		const initialDeps = createDeps(state);
+		const { rerender } = renderHook((props) => useFileTreeManagement(props), {
+			initialProps: initialDeps,
+		});
+
+		rerender(
+			createDeps(state, {
+				localIgnorePatterns: ['tmp'],
+			})
+		);
+
+		expect(loadFileTree).not.toHaveBeenCalled();
+		expect(window.maestro.fs.directorySize).not.toHaveBeenCalled();
+	});
+
+	it('does not re-scan on local option changes before a tree has stats', () => {
+		const state = createSessionsState([
+			createMockSession({
+				fileTree: [{ name: 'loaded-without-stats.txt', type: 'file' }],
+				fileTreeError: 'skip stats migration for this branch test',
+				fileTreeStats: undefined,
+			}),
+		]);
+		const initialDeps = createDeps(state);
+		const { rerender } = renderHook((props) => useFileTreeManagement(props), {
+			initialProps: initialDeps,
+		});
+
+		rerender(
+			createDeps(state, {
+				localIgnorePatterns: ['tmp'],
+			})
+		);
+
+		expect(loadFileTree).not.toHaveBeenCalled();
 	});
 
 	it('passes SSH context when session has sshRemoteId', async () => {
@@ -349,7 +1299,14 @@ describe('useFileTreeManagement', () => {
 			fileTreeError: undefined,
 			fileTreeLoading: false,
 		});
-		const state = createSessionsState([sessionWithTreeNoStats]);
+		const siblingSession = createMockSession({
+			id: 'session-2',
+			fileTree: [{ name: 'sibling.txt', type: 'file' }],
+			fileTreeStats: undefined,
+			fileTreeError: undefined,
+			fileTreeLoading: false,
+		});
+		const state = createSessionsState([sessionWithTreeNoStats, siblingSession]);
 		const deps = createDeps(state);
 
 		renderHook(() => useFileTreeManagement(deps));
@@ -368,8 +1325,92 @@ describe('useFileTreeManagement', () => {
 				totalSize: 5000000,
 			});
 		});
+		expect(state.getSessions()[1]).toBe(siblingSession);
 
 		// Restore original
+		if (originalFs) {
+			window.maestro.fs = originalFs;
+		}
+	});
+
+	it('logs and preserves the existing tree when stats migration fails', async () => {
+		const mockDirectorySize = vi.fn().mockRejectedValue(new Error('stat failed'));
+
+		const originalFs = window.maestro?.fs;
+		window.maestro = {
+			...window.maestro,
+			fs: {
+				...originalFs,
+				directorySize: mockDirectorySize,
+			},
+		};
+
+		const sessionWithTreeNoStats = createMockSession({
+			fileTree: [{ name: 'existing.txt', type: 'file' }],
+			fileTreeStats: undefined,
+			fileTreeError: undefined,
+			fileTreeLoading: false,
+		});
+		const state = createSessionsState([sessionWithTreeNoStats]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(logger.warn).toHaveBeenCalledWith('Stats migration failed', 'FileTreeManagement', {
+				error: 'stat failed',
+				sessionId: sessionWithTreeNoStats.id,
+			});
+		});
+		expect(state.getSessions()[0].fileTree).toEqual([{ name: 'existing.txt', type: 'file' }]);
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+
+		if (originalFs) {
+			window.maestro.fs = originalFs;
+		}
+	});
+
+	it('uses cwd and logs an unknown error when remote stats migration fails without an Error', async () => {
+		const mockDirectorySize = vi.fn().mockRejectedValue(undefined);
+
+		const originalFs = window.maestro?.fs;
+		window.maestro = {
+			...window.maestro,
+			fs: {
+				...originalFs,
+				directorySize: mockDirectorySize,
+			},
+		};
+
+		const sessionWithTreeNoStats = createMockSession({
+			cwd: '/fallback/cwd',
+			projectRoot: undefined,
+			fileTree: [{ name: 'existing.txt', type: 'file' }],
+			fileTreeStats: undefined,
+			fileTreeError: undefined,
+			fileTreeLoading: false,
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'stats-remote',
+				workingDirOverride: '/remote/stats',
+			},
+		});
+		const state = createSessionsState([sessionWithTreeNoStats]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(mockDirectorySize).toHaveBeenCalledWith('/fallback/cwd', 'stats-remote');
+		});
+		await waitFor(() => {
+			expect(logger.warn).toHaveBeenCalledWith('Stats migration failed', 'FileTreeManagement', {
+				error: 'Unknown error',
+				sessionId: sessionWithTreeNoStats.id,
+			});
+		});
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+
 		if (originalFs) {
 			window.maestro.fs = originalFs;
 		}

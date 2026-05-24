@@ -34,6 +34,54 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 const BIONIFY_BUTTON_LABEL = 'B';
 
+export interface TerminalScrollSnapshot {
+	scrollTop: number;
+	atBottom: boolean;
+}
+
+export const getTerminalScrollSnapshot = (
+	container: Pick<HTMLElement, 'scrollTop' | 'scrollHeight' | 'clientHeight'> | null,
+	thresholdPx = 50
+): TerminalScrollSnapshot | null => {
+	if (!container) return null;
+	const { scrollTop, scrollHeight, clientHeight } = container;
+	return {
+		scrollTop,
+		atBottom: scrollHeight - scrollTop - clientHeight < thresholdPx,
+	};
+};
+
+export const addTerminalHighlightMarkers = (
+	text: string,
+	query: string,
+	warningColor: string,
+	themeMode: Theme['mode']
+): string => {
+	if (!query) return text;
+
+	let result = '';
+	let lastIndex = 0;
+	const lowerText = text.toLowerCase();
+	const lowerQuery = query.toLowerCase();
+	let searchIndex = 0;
+
+	while (searchIndex < lowerText.length) {
+		const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
+		if (matchStart === -1) break;
+
+		result += text.substring(lastIndex, matchStart);
+		result += `<mark style="background-color: ${warningColor}; color: ${themeMode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
+		result += text.substring(matchStart, matchStart + query.length);
+		result += '</mark>';
+
+		lastIndex = matchStart + query.length;
+		searchIndex = lastIndex;
+	}
+
+	result += text.substring(lastIndex);
+	return result;
+};
+
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
@@ -249,34 +297,7 @@ const LogItemComponent = memo(
 				parts.push(text.substring(lastIndex));
 			}
 
-			return parts.length > 0 ? parts : text;
-		};
-
-		// Helper function to add search highlighting markers to text (before ANSI conversion)
-		const addHighlightMarkers = (text: string, query: string): string => {
-			if (!query) return text;
-
-			let result = '';
-			let lastIndex = 0;
-			const lowerText = text.toLowerCase();
-			const lowerQuery = query.toLowerCase();
-			let searchIndex = 0;
-
-			while (searchIndex < lowerText.length) {
-				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
-				if (matchStart === -1) break;
-
-				result += text.substring(lastIndex, matchStart);
-				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.mode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
-				result += text.substring(matchStart, matchStart + query.length);
-				result += '</mark>';
-
-				lastIndex = matchStart + query.length;
-				searchIndex = lastIndex;
-			}
-
-			result += text.substring(lastIndex);
-			return result;
+			return parts;
 		};
 
 		// Strip command echo from terminal output
@@ -335,7 +356,12 @@ const LogItemComponent = memo(
 		// Apply search highlighting before ANSI conversion for terminal output
 		const contentWithHighlights =
 			isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(contentToDisplay, outputSearchQuery)
+				? addTerminalHighlightMarkers(
+						contentToDisplay,
+						outputSearchQuery,
+						theme.colors.warning,
+						theme.mode
+					)
 				: contentToDisplay;
 
 		// PERF: Convert ANSI codes to HTML, using cache when no search highlighting is applied
@@ -362,7 +388,12 @@ const LogItemComponent = memo(
 		// Apply highlighting to truncated text as well
 		const displayTextWithHighlights =
 			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(displayText, outputSearchQuery)
+				? addTerminalHighlightMarkers(
+						displayText,
+						outputSearchQuery,
+						theme.colors.warning,
+						theme.mode
+					)
 				: displayText;
 
 		// PERF: Sanitize with DOMPurify, using cache when no search highlighting
@@ -1429,10 +1460,7 @@ export const TerminalOutput = memo(
 		// PERF: Throttle scroll handler to reduce state updates (4ms = ~240fps for smooth scrollbar)
 		// The actual logic is in handleScrollInner, wrapped with useThrottledCallback
 		const handleScrollInner = useCallback(() => {
-			if (!scrollContainerRef.current) return;
-			const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
-			// Consider "at bottom" if within 50px of the bottom
-			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+			const { scrollTop, atBottom } = getTerminalScrollSnapshot(scrollContainerRef.current)!;
 			setIsAtBottom(atBottom);
 
 			// Notify parent when isAtBottom changes (for hasUnread logic)
@@ -1521,12 +1549,8 @@ export const TerminalOutput = memo(
 			const currentCount = filteredLogs.length;
 			if (currentCount > lastLogCountRef.current) {
 				// Check actual scroll position, not just state (state may be stale)
-				const container = scrollContainerRef.current;
-				let actuallyAtBottom = isAtBottom;
-				if (container) {
-					const { scrollTop, scrollHeight, clientHeight } = container;
-					actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-				}
+				const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current!;
+				const actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
 
 				if (!actuallyAtBottom) {
 					// Update isAtBottom state to match reality
@@ -1554,25 +1578,23 @@ export const TerminalOutput = memo(
 		// This replaces the previous filteredLogs.length dependency, which missed in-place
 		// text updates during thinking/tool streaming (GitHub issue #402).
 		useEffect(() => {
-			const container = scrollContainerRef.current;
-			if (!container) return;
-
+			const container = scrollContainerRef.current!;
 			const shouldAutoScroll = () =>
 				session.inputMode === 'terminal' ||
 				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused) ||
 				(session.inputMode === 'ai' && isAtBottomRef.current);
 
 			const scrollToBottom = () => {
-				if (!scrollContainerRef.current) return;
 				requestAnimationFrame(() => {
-					if (scrollContainerRef.current) {
+					const currentContainer = scrollContainerRef.current;
+					if (currentContainer) {
 						// Set guard flag BEFORE scrollTo — the throttled scroll handler
 						// checks this flag and consumes it (clears it) when it fires,
 						// preventing the programmatic scroll from being misinterpreted
 						// as a user scroll-up that should pause auto-scroll.
 						isProgrammaticScrollRef.current = true;
-						scrollContainerRef.current.scrollTo({
-							top: scrollContainerRef.current.scrollHeight,
+						currentContainer.scrollTo({
+							top: currentContainer.scrollHeight,
 							behavior: 'auto',
 						});
 						// Fallback: if scrollTo is a no-op (already at bottom), the browser
@@ -1725,10 +1747,8 @@ export const TerminalOutput = memo(
 					// Cmd+Down to jump to bottom
 					if (e.key === 'ArrowDown' && (e.metaKey || e.ctrlKey) && !e.altKey) {
 						e.preventDefault();
-						const container = scrollContainerRef.current;
-						if (container) {
-							container.scrollTo({ top: container.scrollHeight });
-						}
+						const container = scrollContainerRef.current!;
+						container.scrollTo({ top: container.scrollHeight });
 						return;
 					}
 				}}

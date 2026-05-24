@@ -24,6 +24,10 @@ describe('group-chat/session-parser', () => {
 			it('should return null for session ID containing "participant" but not in correct format', () => {
 				expect(parseParticipantSessionId('participant-abc123')).toBeNull();
 			});
+
+			it('should return null for malformed group chat participant IDs', () => {
+				expect(parseParticipantSessionId('group-chat-abc123-participant-')).toBeNull();
+			});
 		});
 
 		describe('participant session IDs with UUID suffix', () => {

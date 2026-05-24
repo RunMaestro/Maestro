@@ -312,6 +312,28 @@ describe('EncoreTab', () => {
 			expect(options[1]).toHaveTextContent('Codex');
 		});
 
+		it('marks beta provider options when beta agents are available', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				...mockAvailableAgents,
+				{
+					id: 'factory-droid',
+					name: 'Factory Droid',
+					available: true,
+					path: '/usr/local/bin/factory',
+					binaryName: 'factory',
+					hidden: false,
+				},
+			] as AgentConfig[]);
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('option', { name: 'Factory Droid (Beta)' })).toBeInTheDocument();
+		});
+
 		it('should call setDirectorNotesSettings on provider change', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -759,6 +781,39 @@ describe('EncoreTab', () => {
 			);
 		});
 
+		it('should add a numbered env var key when NEW_VAR already exists', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'claude-code',
+					defaultLookbackDays: 7,
+					customEnvVars: { NEW_VAR: 'existing' },
+				},
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByTitle('Customize provider settings'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByTestId('trigger-env-var-add'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByTestId('agent-config-env-vars')).toHaveTextContent(
+				JSON.stringify({ NEW_VAR: 'existing', NEW_VAR_1: '' })
+			);
+		});
+
 		it('should update env var key via callback', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -1047,6 +1102,31 @@ describe('EncoreTab', () => {
 			});
 
 			expect(screen.getByTestId('agent-config-agent-id')).toHaveTextContent('claude-code');
+		});
+
+		it('should not render AgentConfigPanel when the selected provider is not detected', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'factory-droid',
+					defaultLookbackDays: 7,
+				},
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByTitle('Customize provider settings'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByTestId('agent-config-panel')).not.toBeInTheDocument();
+			expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
 		});
 
 		it('should show "Customized" indicator when custom config exists', async () => {

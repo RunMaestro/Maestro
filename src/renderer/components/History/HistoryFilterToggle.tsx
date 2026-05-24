@@ -23,12 +23,6 @@ const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 				text: theme.colors.accent,
 				border: theme.colors.accent + '40',
 			};
-		default:
-			return {
-				bg: theme.colors.bgActivity,
-				text: theme.colors.textDim,
-				border: theme.colors.border,
-			};
 	}
 };
 
@@ -39,8 +33,6 @@ const getEntryIcon = (type: HistoryEntryType) => {
 			return Bot;
 		case 'USER':
 			return User;
-		default:
-			return Bot;
 	}
 };
 

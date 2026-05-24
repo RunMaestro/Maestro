@@ -196,6 +196,14 @@ describe('agent-definitions', () => {
 			expect(args).toEqual(['-C', '/path/to/project']);
 		});
 
+		it('should have modelArgs function for codex', () => {
+			const codex = getAgentDefinition('codex');
+			expect(codex?.modelArgs).toBeDefined();
+
+			const args = codex?.modelArgs?.('gpt-5.3-codex');
+			expect(args).toEqual(['-m', 'gpt-5.3-codex']);
+		});
+
 		it('should have imageArgs function for codex', () => {
 			const codex = getAgentDefinition('codex');
 			expect(codex?.imageArgs).toBeDefined();
@@ -204,12 +212,45 @@ describe('agent-definitions', () => {
 			expect(args).toEqual(['-i', '/path/to/image.png']);
 		});
 
+		it('should have Gemini batch argument builders', () => {
+			const gemini = getAgentDefinition('gemini-cli');
+			expect(gemini?.batchModePrefix).toEqual([]);
+			expect(gemini?.batchModeArgs).toEqual(['-y']);
+			expect(gemini?.jsonOutputArgs).toEqual(['--output-format', 'stream-json']);
+			expect(gemini?.resumeArgs?.('gemini-session')).toEqual(['--resume', 'gemini-session']);
+			expect(gemini?.workingDirArgs?.('/workspace/project')).toEqual([
+				'--include-directories',
+				'/workspace/project',
+			]);
+			expect(gemini?.imageArgs).toBeUndefined();
+			expect(gemini?.modelArgs?.('gemini-3-pro-preview')).toEqual(['-m', 'gemini-3-pro-preview']);
+			expect(gemini?.promptArgs?.('Summarize this diff')).toEqual(['-p', 'Summarize this diff']);
+		});
+
 		it('should have imageArgs function for opencode', () => {
 			const opencode = getAgentDefinition('opencode');
 			expect(opencode?.imageArgs).toBeDefined();
 
 			const args = opencode?.imageArgs?.('/path/to/image.png');
 			expect(args).toEqual(['-f', '/path/to/image.png']);
+		});
+
+		it('should have Factory Droid batch argument builders', () => {
+			const droid = getAgentDefinition('factory-droid');
+			expect(droid?.batchModePrefix).toEqual(['exec']);
+			expect(droid?.batchModeArgs).toEqual(['--skip-permissions-unsafe']);
+			expect(droid?.jsonOutputArgs).toEqual(['-o', 'stream-json']);
+			expect(droid?.resumeArgs?.('droid-session')).toEqual(['-s', 'droid-session']);
+			expect(droid?.readOnlyArgs).toEqual([]);
+			expect(droid?.readOnlyCliEnforced).toBe(true);
+			expect(droid?.yoloModeArgs).toEqual(['--skip-permissions-unsafe']);
+			expect(droid?.workingDirArgs?.('/workspace/project')).toEqual([
+				'--cwd',
+				'/workspace/project',
+			]);
+			expect(droid?.imageArgs?.('/path/to/image.png')).toEqual(['-f', '/path/to/image.png']);
+			expect(droid?.noPromptSeparator).toBe(true);
+			expect(droid?.defaultEnvVars).toEqual({});
 		});
 	});
 
@@ -223,6 +264,12 @@ describe('agent-definitions', () => {
 			expect(contextWindowOption).toBeDefined();
 			expect(contextWindowOption?.type).toBe('number');
 			expect(contextWindowOption?.default).toBe(400000);
+
+			const modelOption = codex?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('text');
+			expect(modelOption?.argBuilder?.('  gpt-5.3-codex  ')).toEqual(['-m', 'gpt-5.3-codex']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
 		});
 
 		it('should have configOptions for opencode', () => {
@@ -239,6 +286,50 @@ describe('agent-definitions', () => {
 			expect(modelOption?.argBuilder?.('ollama/qwen3:8b')).toEqual(['--model', 'ollama/qwen3:8b']);
 			expect(modelOption?.argBuilder?.('')).toEqual([]);
 			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+		});
+
+		it('should have configOptions for Gemini CLI', () => {
+			const gemini = getAgentDefinition('gemini-cli');
+			expect(gemini?.configOptions).toBeDefined();
+
+			const modelOption = gemini?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('select');
+			expect(modelOption?.default).toBe('');
+			expect(modelOption && 'options' in modelOption ? modelOption.options : []).toContain(
+				'gemini-3-pro-preview'
+			);
+			expect(modelOption?.argBuilder?.('  gemini-2.5-flash  ')).toEqual(['-m', 'gemini-2.5-flash']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+
+			const contextWindowOption = gemini?.configOptions?.find((opt) => opt.key === 'contextWindow');
+			expect(contextWindowOption?.type).toBe('number');
+			expect(contextWindowOption?.default).toBe(1048576);
+		});
+
+		it('should have configOptions for Factory Droid', () => {
+			const droid = getAgentDefinition('factory-droid');
+			expect(droid?.configOptions).toBeDefined();
+
+			const modelOption = droid?.configOptions?.find((opt) => opt.key === 'model');
+			expect(modelOption?.type).toBe('select');
+			expect(modelOption?.default).toBe('');
+			expect(modelOption && 'options' in modelOption ? modelOption.options : []).toContain(
+				'claude-opus-4-5-20251101'
+			);
+			expect(modelOption?.argBuilder?.('  gpt-5.2  ')).toEqual(['-m', 'gpt-5.2']);
+			expect(modelOption?.argBuilder?.('')).toEqual([]);
+			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+
+			const reasoningOption = droid?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+			expect(reasoningOption?.type).toBe('select');
+			expect(reasoningOption?.argBuilder?.('  high  ')).toEqual(['-r', 'high']);
+			expect(reasoningOption?.argBuilder?.('')).toEqual([]);
+			expect(reasoningOption?.argBuilder?.('  ')).toEqual([]);
+
+			const contextWindowOption = droid?.configOptions?.find((opt) => opt.key === 'contextWindow');
+			expect(contextWindowOption?.type).toBe('number');
+			expect(contextWindowOption?.default).toBe(200000);
 		});
 	});
 

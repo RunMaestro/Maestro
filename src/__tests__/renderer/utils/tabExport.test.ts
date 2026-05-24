@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('marked', () => ({
 	marked: {
@@ -7,7 +7,7 @@ vi.mock('marked', () => ({
 	},
 }));
 
-import { generateTabExportHtml } from '../../../renderer/utils/tabExport';
+import { downloadTabExport, generateTabExportHtml } from '../../../renderer/utils/tabExport';
 import type { AITab, LogEntry, Theme } from '../../../renderer/types';
 
 // Mock theme for testing
@@ -928,6 +928,93 @@ describe('tabExport', () => {
 				// stdout gets labeled as 'AI'
 				expect(html).toContain('>AI<');
 			});
+		});
+	});
+
+	describe('downloadTabExport', () => {
+		const hadCreateObjectURL = 'createObjectURL' in URL;
+		const hadRevokeObjectURL = 'revokeObjectURL' in URL;
+		const originalCreateObjectURL = URL.createObjectURL;
+		const originalRevokeObjectURL = URL.revokeObjectURL;
+
+		afterEach(() => {
+			if (hadCreateObjectURL) {
+				Object.defineProperty(URL, 'createObjectURL', {
+					configurable: true,
+					value: originalCreateObjectURL,
+				});
+			} else {
+				Reflect.deleteProperty(URL, 'createObjectURL');
+			}
+
+			if (hadRevokeObjectURL) {
+				Object.defineProperty(URL, 'revokeObjectURL', {
+					configurable: true,
+					value: originalRevokeObjectURL,
+				});
+			} else {
+				Reflect.deleteProperty(URL, 'revokeObjectURL');
+			}
+
+			vi.restoreAllMocks();
+		});
+
+		const installDownloadMocks = () => {
+			const createObjectURL = vi.fn<[Blob], string>(() => 'blob:tab-export');
+			const revokeObjectURL = vi.fn<[string], void>();
+			Object.defineProperty(URL, 'createObjectURL', {
+				configurable: true,
+				value: createObjectURL,
+			});
+			Object.defineProperty(URL, 'revokeObjectURL', {
+				configurable: true,
+				value: revokeObjectURL,
+			});
+
+			const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+			const appendSpy = vi.spyOn(document.body, 'appendChild');
+			const removeSpy = vi.spyOn(document.body, 'removeChild');
+
+			return { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL };
+		};
+
+		it('downloads a named tab with a sanitized filename and revokes the object URL', async () => {
+			const { appendSpy, clickSpy, createObjectURL, removeSpy, revokeObjectURL } =
+				installDownloadMocks();
+			const tab = createMockTab({ name: 'My Tab!' });
+
+			await downloadTabExport(tab, mockSession, mockTheme);
+
+			expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
+			expect(link.href).toBe('blob:tab-export');
+			expect(link.download).toBe('my-tab--export.html');
+			expect(clickSpy).toHaveBeenCalledTimes(1);
+			expect(removeSpy).toHaveBeenCalledWith(link);
+			expect(revokeObjectURL).toHaveBeenCalledWith('blob:tab-export');
+		});
+
+		it('uses the agent session id prefix when the tab has no name', async () => {
+			const { appendSpy } = installDownloadMocks();
+			const tab = createMockTab({
+				name: null,
+				agentSessionId: 'ABC12345-def6-7890-ghij-klmnopqrstuv',
+			});
+
+			await downloadTabExport(tab, mockSession, mockTheme);
+
+			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
+			expect(link.download).toBe('abc12345-export.html');
+		});
+
+		it('uses a generic filename when the tab has no name or session id', async () => {
+			const { appendSpy } = installDownloadMocks();
+			const tab = createMockTab({ name: null, agentSessionId: null });
+
+			await downloadTabExport(tab, mockSession, mockTheme);
+
+			const link = appendSpy.mock.calls[0][0] as HTMLAnchorElement;
+			expect(link.download).toBe('tab-export.html');
 		});
 	});
 });

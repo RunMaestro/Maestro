@@ -15,6 +15,8 @@ import { ipcMain } from 'electron';
 import { registerSshRemoteHandlers } from '../../../../main/ipc/handlers/ssh-remote';
 import { SshRemoteConfig } from '../../../../shared/types';
 import * as sshRemoteManagerModule from '../../../../main/ssh-remote-manager';
+import { parseSshConfig } from '../../../../main/utils/ssh-config-parser';
+import { logger } from '../../../../main/utils/logger';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -31,6 +33,11 @@ vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
 	},
+}));
+
+// Mock SSH config parser
+vi.mock('../../../../main/utils/ssh-config-parser', () => ({
+	parseSshConfig: vi.fn(),
 }));
 
 // Capture registered handlers
@@ -103,6 +110,10 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(ipcMain.handle).toHaveBeenCalledWith('ssh-remote:getDefaultId', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('ssh-remote:setDefaultId', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('ssh-remote:test', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'ssh-remote:getSshConfigHosts',
+				expect.any(Function)
+			);
 		});
 	});
 
@@ -313,6 +324,20 @@ describe('SSH Remote IPC Handlers', () => {
 			);
 		});
 
+		it('logs unknown host when a successful connection omits remote info', async () => {
+			vi.spyOn(sshRemoteManagerModule.sshRemoteManager, 'testConnection').mockResolvedValue({
+				success: true,
+			});
+
+			const config = createMockConfig();
+			await invokeHandler('ssh-remote:test', config);
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'SSH connection test successful: unknown host',
+				'[SshRemote]'
+			);
+		});
+
 		it('tests connection by config ID', async () => {
 			const config = createMockConfig();
 			mockSettingsStore.get.mockImplementation((key: string) => {
@@ -373,6 +398,46 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(result.success).toBe(true); // IPC call succeeded
 			expect(result.result?.success).toBe(false); // But test failed
 			expect(result.result?.error).toBe('Connection refused');
+		});
+	});
+
+	describe('ssh-remote:getSshConfigHosts', () => {
+		it('returns parsed SSH config hosts', async () => {
+			const parseResult = {
+				success: true,
+				hosts: [
+					{
+						host: 'prod',
+						hostname: 'prod.example.com',
+						user: 'deploy',
+						port: 22,
+						identityFile: '~/.ssh/prod',
+					},
+				],
+			};
+			vi.mocked(parseSshConfig).mockReturnValue(parseResult);
+
+			const result = await invokeHandler('ssh-remote:getSshConfigHosts');
+
+			expect(result).toEqual({ success: true, ...parseResult });
+			expect(logger.debug).toHaveBeenCalledWith('Found 1 hosts in SSH config', '[SshRemote]');
+		});
+
+		it('returns parser failures for invalid SSH config files', async () => {
+			const parseResult = {
+				success: false,
+				hosts: [],
+				error: 'Could not read ~/.ssh/config',
+			};
+			vi.mocked(parseSshConfig).mockReturnValue(parseResult);
+
+			const result = await invokeHandler('ssh-remote:getSshConfigHosts');
+
+			expect(result).toEqual({ success: true, ...parseResult });
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Failed to parse SSH config: Could not read ~/.ssh/config',
+				'[SshRemote]'
+			);
 		});
 	});
 });

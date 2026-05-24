@@ -208,7 +208,7 @@ export function MergeSessionModal({
 	useEffect(() => {
 		if (!isOpen) return;
 
-		layerIdRef.current = registerLayer({
+		const id = registerLayer({
 			type: 'modal',
 			priority: MODAL_PRIORITIES.MERGE_SESSION,
 			blocksLowerLayers: true,
@@ -217,11 +217,10 @@ export function MergeSessionModal({
 			ariaLabel: 'Merge Session Contexts',
 			onEscape: () => onCloseRef.current(),
 		});
+		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [isOpen, registerLayer, unregisterLayer]);
 
@@ -249,6 +248,7 @@ export function MergeSessionModal({
 		if (!sourceTab) return 0;
 		return estimateTokens(sourceTab.logs);
 	}, [sourceTab]);
+	const sourceDisplayName = sourceTab ? getTabDisplayName(sourceTab) : 'Context';
 
 	// Build flat list of sessions and tabs for navigation
 	const allItems = useMemo((): SessionListItem[] => {
@@ -295,7 +295,7 @@ export function MergeSessionModal({
 		items.sort((a, b) => {
 			const sessionCompare = a.sessionName.localeCompare(b.sessionName);
 			if (sessionCompare !== 0) return sessionCompare;
-			return (a.tabName || '').localeCompare(b.tabName || '');
+			return a.tabName!.localeCompare(b.tabName!);
 		});
 
 		return items;
@@ -310,7 +310,7 @@ export function MergeSessionModal({
 		const query = searchQuery.trim();
 		return allItems
 			.map((item) => {
-				const searchText = `${item.sessionName} ${item.tabName || ''} ${item.agentSessionId || ''}`;
+				const searchText = `${item.sessionName} ${item.tabName} ${item.agentSessionId || ''}`;
 				const result = fuzzyMatchWithScore(searchText, query);
 				return { item, score: result.score };
 			})
@@ -370,10 +370,7 @@ export function MergeSessionModal({
 	// Handle selection by index (for keyboard navigation)
 	const handleSelectByIndex = useCallback(
 		(index: number) => {
-			const item = filteredItems[index];
-			if (item) {
-				handleSelectItem(item);
-			}
+			handleSelectItem(filteredItems[index]!);
 		},
 		[filteredItems, handleSelectItem]
 	);
@@ -457,20 +454,20 @@ export function MergeSessionModal({
 	}, []);
 
 	// Handle merge action
-	const handleMerge = useCallback(async () => {
-		const target = viewMode === 'paste' ? pastedIdMatch : selectedTarget;
-		if (!target) return;
-
-		setIsMerging(true);
-		try {
-			await onMerge(target.sessionId, target.tabId, options);
-			onClose();
-		} catch (error) {
-			console.error('Merge failed:', error);
-		} finally {
-			setIsMerging(false);
-		}
-	}, [viewMode, pastedIdMatch, selectedTarget, options, onMerge, onClose]);
+	const handleMerge = useCallback(
+		async (target: SessionListItem) => {
+			setIsMerging(true);
+			try {
+				await onMerge(target.sessionId, target.tabId, options);
+				onClose();
+			} catch (error) {
+				console.error('Merge failed:', error);
+			} finally {
+				setIsMerging(false);
+			}
+		},
+		[options, onMerge, onClose]
+	);
 
 	// Handle key down
 	const handleKeyDown = useCallback(
@@ -529,11 +526,11 @@ export function MergeSessionModal({
 				e.preventDefault();
 				e.stopPropagation();
 				if (viewMode === 'paste' && pastedIdValid && pastedIdMatch) {
-					handleMerge();
+					handleMerge(pastedIdMatch);
 				} else if (viewMode === 'search' && selectedTarget) {
-					handleMerge();
+					handleMerge(selectedTarget);
 				} else if (filteredItems[selectedIndex]) {
-					handleSelectItem(filteredItems[selectedIndex]);
+					handleSelectByIndex(selectedIndex);
 				}
 				return;
 			}
@@ -550,6 +547,7 @@ export function MergeSessionModal({
 			pastedIdMatch,
 			handleMerge,
 			handleSelectItem,
+			handleSelectByIndex,
 			handleViewModeChange,
 			listKeyDown,
 		]
@@ -614,7 +612,7 @@ export function MergeSessionModal({
 							className="text-sm font-bold"
 							style={{ color: theme.colors.textMain }}
 						>
-							Merge "{sourceTab ? getTabDisplayName(sourceTab) : 'Context'}" Into
+							Merge "{sourceDisplayName}" Into
 						</h2>
 					</div>
 					<button
@@ -956,9 +954,7 @@ export function MergeSessionModal({
 						aria-label="Token estimate"
 					>
 						<div className="flex justify-between">
-							<span style={{ color: theme.colors.textDim }}>
-								Source: {sourceTab?.name || getTabDisplayName(sourceTab!)}
-							</span>
+							<span style={{ color: theme.colors.textDim }}>Source: {sourceDisplayName}</span>
 							<span style={{ color: theme.colors.textMain }}>
 								~{formatTokensCompact(sourceTokens)} tokens
 							</span>
@@ -1046,7 +1042,7 @@ export function MergeSessionModal({
 					</button>
 					<button
 						type="button"
-						onClick={handleMerge}
+						onClick={() => handleMerge(viewMode === 'paste' ? pastedIdMatch! : selectedTarget!)}
 						disabled={!canMerge}
 						className="px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 						style={{

@@ -379,9 +379,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
-					if (isReadOnlyMode) return false; // Only applies to write commands
-					if (activeSession.state !== 'busy') return false; // Nothing to bypass
-
 					// Check all busy tabs are in read-only mode
 					const busyTabs = activeSession.aiTabs.filter((tab) => tab.state === 'busy');
 					const allBusyTabsReadOnly = busyTabs.every((tab) => tab.readOnlyMode === true);

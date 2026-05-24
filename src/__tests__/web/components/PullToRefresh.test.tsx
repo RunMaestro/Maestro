@@ -332,6 +332,25 @@ describe('PullToRefresh', () => {
 				expect(outerDiv.style.backgroundColor).toBe('rgba(255, 255, 255, 0.2)');
 			});
 
+			it('handles 8-digit hex colors by ignoring alpha', () => {
+				mockedUseThemeColors.mockReturnValue({
+					accent: '#ff550080',
+					textDim: '#888888',
+					background: '#1a1a1a',
+					textMain: '#ffffff',
+				});
+				const { container } = render(
+					<PullToRefreshIndicator
+						pullDistance={80}
+						progress={1}
+						isRefreshing={false}
+						isThresholdReached={true}
+					/>
+				);
+				const outerDiv = container.firstChild as HTMLElement;
+				expect(outerDiv.style.backgroundColor).toBe('rgba(255, 85, 0, 0.2)');
+			});
+
 			it('handles rgb colors', () => {
 				mockedUseThemeColors.mockReturnValue({
 					accent: 'rgb(10, 20, 30)',
@@ -368,6 +387,25 @@ describe('PullToRefresh', () => {
 				);
 				const outerDiv = container.firstChild as HTMLElement;
 				expect(outerDiv.style.backgroundColor).toBe('rgba(10, 20, 30, 0.2)');
+			});
+
+			it('falls back to black for malformed rgb colors', () => {
+				mockedUseThemeColors.mockReturnValue({
+					accent: 'rgb(not-a-number)',
+					textDim: '#888888',
+					background: '#1a1a1a',
+					textMain: '#ffffff',
+				});
+				const { container } = render(
+					<PullToRefreshIndicator
+						pullDistance={80}
+						progress={1}
+						isRefreshing={false}
+						isThresholdReached={true}
+					/>
+				);
+				const outerDiv = container.firstChild as HTMLElement;
+				expect(outerDiv.style.backgroundColor).toBe('rgba(0, 0, 0, 0.2)');
 			});
 
 			it('falls back to black for invalid colors', () => {

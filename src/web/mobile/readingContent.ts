@@ -95,11 +95,8 @@ export function parseTextWithCodeBlocks(text: string): WebReaderTextSegment[] {
 
 		if (!code.trim() && language.includes(' ')) {
 			const [languageToken, ...inlineCodeParts] = language.split(/\s+/);
-			const inlineCode = inlineCodeParts.join(' ');
-			if (inlineCode.trim()) {
-				language = languageToken;
-				code = inlineCode;
-			}
+			language = languageToken;
+			code = inlineCodeParts.join(' ');
 		}
 
 		if (code.trim()) {

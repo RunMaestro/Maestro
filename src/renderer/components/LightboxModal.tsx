@@ -62,17 +62,13 @@ export function LightboxModal({
 		layerIdRef.current = layerId;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(layerId);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Update handler when onClose changes
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, onClose);
-		}
+		updateLayerHandler(layerIdRef.current!, onClose);
 	}, [onClose, updateLayerHandler]);
 
 	useEffect(() => {
@@ -96,35 +92,35 @@ export function LightboxModal({
 
 	// Show delete confirmation modal
 	const promptDelete = useCallback(() => {
-		if (!onDelete) return;
 		setShowDeleteConfirm(true);
-	}, [onDelete]);
+	}, []);
 
 	// Handle confirmed deletion
-	const handleDeleteConfirmed = useCallback(() => {
-		if (!onDelete) return;
+	const handleDeleteConfirmed = useCallback(
+		(deleteImage: (image: string) => void) => {
+			const totalImages = stagedImages.length;
 
-		const totalImages = stagedImages.length;
+			// Call the delete handler
+			deleteImage(image);
 
-		// Call the delete handler
-		onDelete(image);
+			// Navigate to next/prev image or close lightbox
+			if (totalImages <= 1) {
+				onClose();
+			} else if (currentIndex >= totalImages - 1) {
+				// Was last image, go to previous
+				const newList = stagedImages.filter((img) => img !== image);
+				onNavigate(newList[newList.length - 1]);
+			} else {
+				// Go to next image (same index in new list)
+				const newList = stagedImages.filter((img) => img !== image);
+				onNavigate(newList[currentIndex]);
+			}
 
-		// Navigate to next/prev image or close lightbox
-		if (totalImages <= 1) {
-			onClose();
-		} else if (currentIndex >= totalImages - 1) {
-			// Was last image, go to previous
-			const newList = stagedImages.filter((img) => img !== image);
-			onNavigate(newList[newList.length - 1]);
-		} else {
-			// Go to next image (same index in new list)
-			const newList = stagedImages.filter((img) => img !== image);
-			onNavigate(newList[currentIndex]);
-		}
-
-		// Refocus the lightbox after deletion so keyboard navigation continues working
-		setTimeout(() => lightboxRef.current?.focus(), 0);
-	}, [image, stagedImages, currentIndex, onDelete, onNavigate, onClose]);
+			// Refocus the lightbox after deletion so keyboard navigation continues working
+			setTimeout(() => lightboxRef.current?.focus(), 0);
+		},
+		[image, stagedImages, currentIndex, onNavigate, onClose]
+	);
 
 	// Default theme for ConfirmModal if not provided
 	const defaultTheme: Theme = {
@@ -247,11 +243,11 @@ export function LightboxModal({
 			</div>
 
 			{/* Delete confirmation modal */}
-			{showDeleteConfirm && (
+			{showDeleteConfirm && onDelete && (
 				<ConfirmModal
 					theme={theme || defaultTheme}
 					message="Are you sure you want to remove this image? This will remove it from the staged images."
-					onConfirm={handleDeleteConfirmed}
+					onConfirm={() => handleDeleteConfirmed(onDelete)}
 					onClose={() => setShowDeleteConfirm(false)}
 				/>
 			)}

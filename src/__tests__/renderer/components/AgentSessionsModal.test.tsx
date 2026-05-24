@@ -90,8 +90,8 @@ const createMockClaudeSession = (
 ): MockClaudeSession => ({
 	sessionId: 'claude-session-1',
 	projectPath: '/test/project',
-	timestamp: new Date().toISOString(),
-	modifiedAt: new Date().toISOString(),
+	timestamp: '2026-05-11T10:00:00.000Z',
+	modifiedAt: '2026-05-11T10:00:00.000Z',
 	firstMessage: 'Hello, can you help me?',
 	messageCount: 10,
 	sizeBytes: 1024 * 50, // 50KB
@@ -121,6 +121,7 @@ describe('AgentSessionsModal', () => {
 	let mockOnResumeSession: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		vi.clearAllMocks();
 		mockOnClose = vi.fn();
 		mockOnResumeSession = vi.fn();
 		mockRegisterLayer.mockClear();
@@ -141,8 +142,11 @@ describe('AgentSessionsModal', () => {
 			total: 0,
 			hasMore: false,
 		});
+		vi.mocked(window.maestro.agentSessions.getOrigins).mockResolvedValue({});
+		vi.mocked(window.maestro.agentSessions.setSessionStarred).mockResolvedValue(undefined);
 		// Origin tracking remains Claude-specific
 		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({});
+		vi.mocked(window.maestro.claude.updateSessionStarred).mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -313,6 +317,54 @@ describe('AgentSessionsModal', () => {
 
 			expect(mockOnClose).toHaveBeenCalled();
 		});
+
+		it('should call onClose via updated escape handler in list view', async () => {
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(mockUpdateLayerHandler).toHaveBeenCalled();
+			});
+
+			const lastCall =
+				mockUpdateLayerHandler.mock.calls[mockUpdateLayerHandler.mock.calls.length - 1];
+			const updatedHandler = lastCall[1];
+
+			await act(async () => {
+				updatedHandler();
+			});
+
+			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('should skip layer cleanup and handler update when registration returns no id', async () => {
+			mockRegisterLayer.mockReturnValueOnce(undefined);
+
+			const { unmount } = render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(mockRegisterLayer).toHaveBeenCalled();
+			});
+
+			expect(mockUpdateLayerHandler).not.toHaveBeenCalled();
+
+			unmount();
+
+			expect(mockUnregisterLayer).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Sessions Loading', () => {
@@ -341,6 +393,100 @@ describe('AgentSessionsModal', () => {
 					{ limit: 100 }
 				);
 			});
+		});
+
+		it('should fall back to Claude Code and ignore unstarred or malformed origin entries', async () => {
+			vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({
+				'session-1': { origin: 'user', starred: true },
+				'session-2': { origin: 'user', starred: false },
+				legacy: 'corrupt-origin-entry',
+			} as any);
+
+			const olderStarred = new Date('2026-05-11T10:00:00.000Z');
+			const newerUnstarred = new Date('2026-05-11T11:00:00.000Z');
+			const mockSessions = [
+				createMockClaudeSession({
+					sessionId: 'session-1',
+					firstMessage: 'Starred fallback session',
+					modifiedAt: olderStarred.toISOString(),
+				}),
+				createMockClaudeSession({
+					sessionId: 'session-2',
+					firstMessage: 'Plain fallback session',
+					modifiedAt: newerUnstarred.toISOString(),
+				}),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({ toolType: undefined })}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.claude.getSessionOrigins).toHaveBeenCalledWith('/test/project');
+				expect(window.maestro.agentSessions.listPaginated).toHaveBeenCalledWith(
+					'claude-code',
+					'/test/project',
+					{ limit: 100 }
+				);
+			});
+
+			const sessionButtons = screen
+				.getAllByRole('button')
+				.filter((button) => button.textContent?.includes('fallback session'));
+			expect(sessionButtons[0].textContent).toContain('Starred fallback session');
+		});
+
+		it('should load starred sessions from generic origins for non-Claude agents', async () => {
+			vi.mocked(window.maestro.agentSessions.getOrigins).mockResolvedValue({
+				'session-1': { origin: 'user', starred: true },
+				'session-2': { origin: 'user', starred: false },
+			});
+
+			const mockSessions = [
+				createMockClaudeSession({ sessionId: 'session-1', firstMessage: 'Codex starred' }),
+				createMockClaudeSession({ sessionId: 'session-2', firstMessage: 'Codex plain' }),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 2,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({
+						toolType: 'codex',
+						projectRoot: '/test/project',
+						cwd: '/test/project/subdir',
+					})}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.getOrigins).toHaveBeenCalledWith(
+					'codex',
+					'/test/project'
+				);
+				expect(screen.getByTitle('Remove from favorites')).toBeInTheDocument();
+				expect(screen.getByTitle('Add to favorites')).toBeInTheDocument();
+			});
+
+			expect(window.maestro.claude.getSessionOrigins).not.toHaveBeenCalled();
 		});
 
 		it('should not load sessions when no activeSession', async () => {
@@ -906,8 +1052,10 @@ describe('AgentSessionsModal', () => {
 			const input = screen.getByPlaceholderText(/Search.*sessions/);
 
 			// First item should be selected initially
-			const firstButton = screen.getByText('First').closest('button');
-			expect(firstButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			await waitFor(() => {
+				const firstButton = screen.getByText('First').closest('button');
+				expect(firstButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			});
 
 			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
@@ -1249,6 +1397,82 @@ describe('AgentSessionsModal', () => {
 				expect(screen.getByText('Session Preview')).toBeInTheDocument();
 			});
 		});
+
+		it('should not read messages if the active session loses cwd before viewing', async () => {
+			const mockSessions = [
+				createMockClaudeSession({ sessionId: 's1', firstMessage: 'Session without cwd' }),
+			];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			const { rerender } = render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Session without cwd')).toBeInTheDocument();
+			});
+
+			vi.mocked(window.maestro.agentSessions.read).mockClear();
+
+			rerender(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({ cwd: undefined })}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Session without cwd'));
+
+			await waitFor(() => {
+				expect(screen.getByText('Resume')).toBeInTheDocument();
+			});
+
+			expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+		});
+
+		it('should fall back to Claude Code when reading messages without a session tool type', async () => {
+			const mockSessions = [createMockClaudeSession({ sessionId: 's1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({ toolType: undefined })}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				fireEvent.click(screen.getByText(/Hello, can you help me/));
+			});
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+					'claude-code',
+					'/test/project',
+					's1',
+					{ offset: 0, limit: 20 }
+				);
+			});
+		});
 	});
 
 	describe('Message Display', () => {
@@ -1373,6 +1597,7 @@ describe('AgentSessionsModal', () => {
 						type: 'assistant',
 						content: '',
 						toolUse: undefined,
+						uuid: undefined as unknown as string,
 					}),
 				],
 				total: 1,
@@ -1574,6 +1799,115 @@ describe('AgentSessionsModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Older message')).toBeInTheDocument();
 			});
+		});
+
+		it('should load more messages when scrolled near the top', async () => {
+			const requestAnimationFrameSpy = vi
+				.spyOn(window, 'requestAnimationFrame')
+				.mockImplementation((callback) => {
+					callback(0);
+					return 1;
+				});
+			const mockSessions = [createMockClaudeSession({ sessionId: 's1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			let readCount = 0;
+			vi.mocked(window.maestro.agentSessions.read).mockImplementation(async () => {
+				readCount++;
+				if (readCount === 1) {
+					return {
+						messages: [createMockMessage({ content: 'Recent message' })],
+						total: 2,
+						hasMore: true,
+					};
+				}
+				return {
+					messages: [createMockMessage({ content: 'Older message' })],
+					total: 2,
+					hasMore: false,
+				};
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				fireEvent.click(screen.getByText(/Hello, can you help me/));
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Recent message')).toBeInTheDocument();
+			});
+
+			const container = screen
+				.getByText('Recent message')
+				.closest('[class*="overflow-y-auto"]') as HTMLElement;
+			Object.defineProperty(container, 'scrollTop', { value: 50, writable: true });
+			Object.defineProperty(container, 'scrollHeight', { value: 1000, writable: true });
+
+			fireEvent.scroll(container);
+
+			await waitFor(() => {
+				expect(screen.getByText('Older message')).toBeInTheDocument();
+				expect(window.maestro.agentSessions.read).toHaveBeenLastCalledWith(
+					'claude-code',
+					'/test/project',
+					's1',
+					{ offset: 1, limit: 20 }
+				);
+				expect(requestAnimationFrameSpy).toHaveBeenCalled();
+			});
+		});
+
+		it('should not load more messages when the scroll position stays below the top threshold', async () => {
+			const mockSessions = [createMockClaudeSession({ sessionId: 's1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+			vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+				messages: [createMockMessage({ content: 'Recent message' })],
+				total: 50,
+				hasMore: true,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				fireEvent.click(screen.getByText(/Hello, can you help me/));
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Load earlier messages...')).toBeInTheDocument();
+			});
+
+			const container = document.querySelector('.flex-1.overflow-y-auto.p-4');
+			expect(container).toBeInTheDocument();
+			Object.defineProperty(container, 'scrollTop', { value: 150, writable: true });
+			Object.defineProperty(container, 'scrollHeight', { value: 1000, writable: true });
+			fireEvent.scroll(container!);
+
+			expect(window.maestro.agentSessions.read).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -1801,6 +2135,37 @@ describe('AgentSessionsModal', () => {
 			});
 		});
 
+		it('should update starred state without persisting when projectRoot is missing', async () => {
+			const mockSessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({ projectRoot: '' })}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Add to favorites')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Add to favorites'));
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Remove from favorites')).toBeInTheDocument();
+			});
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
+		});
+
 		it('should not open session view when clicking star', async () => {
 			vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({});
 
@@ -1831,6 +2196,45 @@ describe('AgentSessionsModal', () => {
 				// Should still be in list view
 				expect(screen.getByPlaceholderText(/Search.*sessions/)).toBeInTheDocument();
 				expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+			});
+		});
+
+		it('should persist starred state through generic origins for non-Claude agents', async () => {
+			const mockSessions = [createMockClaudeSession({ sessionId: 'session-1' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: false,
+				totalCount: 1,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession({
+						toolType: 'codex',
+						projectRoot: '/test/project',
+						cwd: '/test/project/subdir',
+					})}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Add to favorites')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Add to favorites'));
+
+			await waitFor(() => {
+				expect(window.maestro.agentSessions.setSessionStarred).toHaveBeenCalledWith(
+					'codex',
+					'/test/project',
+					'session-1',
+					true
+				);
+				expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
 			});
 		});
 	});
@@ -1891,6 +2295,41 @@ describe('AgentSessionsModal', () => {
 			});
 		});
 
+		it('should not load more sessions when pagination has no cursor', async () => {
+			const mockSessions = [createMockClaudeSession({ firstMessage: 'Test' })];
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
+				sessions: mockSessions,
+				hasMore: true,
+				totalCount: 200,
+				nextCursor: null,
+			});
+
+			render(
+				<AgentSessionsModal
+					theme={mockTheme}
+					activeSession={createMockSession()}
+					onClose={mockOnClose}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('1 of 200 sessions loaded')).toBeInTheDocument();
+			});
+
+			vi.mocked(window.maestro.agentSessions.listPaginated).mockClear();
+
+			const container = document.querySelector('.overflow-y-auto.py-2');
+			if (container) {
+				Object.defineProperty(container, 'scrollTop', { value: 700, writable: true });
+				Object.defineProperty(container, 'scrollHeight', { value: 1000, writable: true });
+				Object.defineProperty(container, 'clientHeight', { value: 100, writable: true });
+				fireEvent.scroll(container);
+			}
+
+			expect(window.maestro.agentSessions.listPaginated).not.toHaveBeenCalled();
+		});
+
 		it('should load more sessions on scroll', async () => {
 			const mockSessions = Array.from({ length: 100 }, (_, i) =>
 				createMockClaudeSession({ sessionId: `s${i}`, firstMessage: `Session ${i}` })
@@ -1920,7 +2359,7 @@ describe('AgentSessionsModal', () => {
 			render(
 				<AgentSessionsModal
 					theme={mockTheme}
-					activeSession={createMockSession()}
+					activeSession={createMockSession({ toolType: undefined })}
 					onClose={mockOnClose}
 					onResumeSession={mockOnResumeSession}
 				/>

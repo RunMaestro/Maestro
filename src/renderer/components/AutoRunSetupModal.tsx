@@ -116,12 +116,10 @@ export function AutoRunSetupModal({
 	};
 
 	const handleContinue = () => {
-		if (selectedFolder) {
-			// Expand tilde before passing to callback
-			const expandedPath = expandTilde(selectedFolder.trim());
-			onFolderSelected(expandedPath);
-			onClose();
-		}
+		// Continue is only enabled, and Enter only handled, once a folder has been selected.
+		const expandedPath = expandTilde(selectedFolder.trim());
+		onFolderSelected(expandedPath);
+		onClose();
 	};
 
 	// Handle custom keyboard shortcuts

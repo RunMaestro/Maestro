@@ -388,9 +388,6 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 
 		case 'RESTORE_STATE':
 			return { ...state, ...action.state };
-
-		default:
-			return state;
 	}
 }
 

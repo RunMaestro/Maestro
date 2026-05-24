@@ -483,7 +483,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const prev = prevTabsRef.current.get(session.id);
 				const current = {
 					tabCount: session.aiTabs.length,
-					activeTabId: session.activeTabId || session.aiTabs[0]?.id || '',
+					activeTabId: session.activeTabId || session.aiTabs[0].id,
 					tabsHash,
 				};
 

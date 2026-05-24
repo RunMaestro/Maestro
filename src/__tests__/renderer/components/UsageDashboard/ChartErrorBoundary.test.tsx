@@ -76,16 +76,28 @@ const WorkingComponent = () => <div data-testid="working-child">Working componen
 
 describe('ChartErrorBoundary', () => {
 	const theme = createTheme();
-	const originalConsoleError = console.error;
+	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+	let expectedRenderErrorHandler: (event: ErrorEvent) => void;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// Suppress React error boundary console output during tests
-		console.error = vi.fn();
+		// Suppress only the render errors these error-boundary tests intentionally trigger.
+		expectedRenderErrorHandler = (event: ErrorEvent) => {
+			if (
+				event.error instanceof Error &&
+				['Test error from BrokenComponent', 'Conditional error'].includes(event.error.message)
+			) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+		};
+		window.addEventListener('error', expectedRenderErrorHandler);
+		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
-		console.error = originalConsoleError;
+		window.removeEventListener('error', expectedRenderErrorHandler);
+		consoleErrorSpy.mockRestore();
 	});
 
 	describe('Normal Rendering', () => {
@@ -329,6 +341,21 @@ describe('ChartErrorBoundary', () => {
 
 			const retryButton = screen.getByTestId('chart-retry-button');
 			expect(retryButton).toHaveStyle({ backgroundColor: theme.colors.accent });
+		});
+
+		it('dims the retry button while hovered', () => {
+			render(
+				<ChartErrorBoundary theme={theme}>
+					<BrokenComponent />
+				</ChartErrorBoundary>
+			);
+
+			const retryButton = screen.getByTestId('chart-retry-button');
+			fireEvent.mouseEnter(retryButton);
+			expect(retryButton).toHaveStyle({ opacity: '0.9' });
+
+			fireEvent.mouseLeave(retryButton);
+			expect(retryButton).toHaveStyle({ opacity: '1' });
 		});
 
 		it('applies theme text colors to error messages', () => {

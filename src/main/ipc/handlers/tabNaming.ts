@@ -325,11 +325,6 @@ function extractTabName(output: string): string | null {
 	// Remove trailing punctuation (periods, colons, etc.)
 	tabName = tabName.replace(/[.:;,!?]+$/, '');
 
-	// Ensure reasonable length (max 40 chars for tab names)
-	if (tabName.length > 40) {
-		tabName = tabName.substring(0, 37) + '...';
-	}
-
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {
 		return null;

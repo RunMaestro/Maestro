@@ -224,7 +224,6 @@ function formatDuration(ms: number): string {
  */
 function calculateIntensity(value: number, maxValue: number): number {
 	if (value === 0) return 0;
-	if (maxValue === 0) return 0;
 
 	const ratio = value / maxValue;
 	if (ratio <= 0.25) return 1;
@@ -271,10 +270,8 @@ function buildGitHubGrid(
 			// Start of a new month
 			if (lastMonth !== '') {
 				// Close out the previous month label
-				const lastLabel = monthLabels[monthLabels.length - 1];
-				if (lastLabel) {
-					lastLabel.colSpan = weekIndex - lastLabel.startCol;
-				}
+				const lastLabel = monthLabels[monthLabels.length - 1]!;
+				lastLabel.colSpan = weekIndex - lastLabel.startCol;
 			}
 			monthLabels.push({
 				month: monthStr,
@@ -319,32 +316,9 @@ function buildGitHubGrid(
 		}
 	}
 
-	// Handle partial last week
-	if (currentWeek.length > 0) {
-		// Fill remaining days as placeholders
-		while (currentWeek.length < 7) {
-			const nextDate = addDays(currentWeek[currentWeek.length - 1].date, 1);
-			currentWeek.push({
-				date: nextDate,
-				dateString: format(nextDate, 'yyyy-MM-dd'),
-				dayOfWeek: getDay(nextDate),
-				count: 0,
-				duration: 0,
-				intensity: 0,
-				isPlaceholder: true,
-			});
-		}
-		weeks.push({
-			weekStart: startOfWeek(currentWeek[0].date, { weekStartsOn: 0 }),
-			days: currentWeek,
-		});
-	}
-
 	// Close out the last month label
-	if (monthLabels.length > 0) {
-		const lastLabel = monthLabels[monthLabels.length - 1];
-		lastLabel.colSpan = weeks.length - lastLabel.startCol;
-	}
+	const lastLabel = monthLabels[monthLabels.length - 1]!;
+	lastLabel.colSpan = weeks.length - lastLabel.startCol;
 
 	// Calculate intensities
 	const maxVal = metricMode === 'count' ? Math.max(maxCount, 1) : Math.max(maxDuration, 1);
@@ -394,29 +368,22 @@ function getIntensityColor(intensity: number, theme: Theme, colorBlindMode?: boo
 		}
 	}
 
+	const clampedIntensity = Math.max(0, Math.min(4, Math.round(intensity)));
+
 	// Fallback to accent with varying opacity if parsing fails
 	if (!accentRgb) {
 		const opacities = [0.1, 0.3, 0.5, 0.7, 1.0];
-		return `${accent}${Math.round(opacities[intensity] * 255)
+		return `${accent}${Math.round(opacities[clampedIntensity] * 255)
 			.toString(16)
 			.padStart(2, '0')}`;
 	}
 
-	// Generate colors for each intensity level
-	switch (intensity) {
-		case 0:
-			return bgSecondary;
-		case 1:
-			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.2)`;
-		case 2:
-			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.4)`;
-		case 3:
-			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.6)`;
-		case 4:
-			return `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)`;
-		default:
-			return bgSecondary;
-	}
+	const opacities = [0, 0.2, 0.4, 0.6, 0.9];
+	const opacity = opacities[clampedIntensity]!;
+
+	return opacity === 0
+		? bgSecondary
+		: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, ${opacity})`;
 }
 
 export const ActivityHeatmap = memo(function ActivityHeatmap({
@@ -531,7 +498,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 			columns.push({
 				date,
 				dateString,
-				dayLabel: format(date, numDays <= 7 ? 'EEE' : 'd'),
+				dayLabel: format(date, 'EEE'),
 				hours: hourData,
 			});
 		}
@@ -572,7 +539,6 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 
 	const handleMouseEnterBlock = useCallback(
 		(cell: TimeBlockCell, event: React.MouseEvent<HTMLDivElement>) => {
-			if (cell.isPlaceholder) return;
 			setHoveredCell(cell);
 			setCellRect(event.currentTarget.getBoundingClientRect());
 		},
@@ -775,9 +741,11 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 												className="rounded-sm cursor-default"
 												style={{
 													height: 17,
-													backgroundColor: block.isPlaceholder
-														? 'transparent'
-														: getIntensityColor(block.intensity, theme, colorBlindMode),
+													backgroundColor: getIntensityColor(
+														block.intensity,
+														theme,
+														colorBlindMode
+													),
 													outline:
 														hoveredCell &&
 														'blockIndex' in hoveredCell &&

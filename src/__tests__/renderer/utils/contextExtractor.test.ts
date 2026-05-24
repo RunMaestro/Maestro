@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	extractTabContext,
+	extractStoredSessionContext,
 	formatLogsForGrooming,
 	parseGroomedOutput,
 	estimateTokenCount,
+	countContextTokens,
 	estimateTextTokenCount,
 	findDuplicateContent,
 	calculateTotalTokens,
+	formatLogsForClipboard,
 	getContextSummary,
 } from '../../../renderer/utils/contextExtractor';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
@@ -20,6 +23,10 @@ vi.stubGlobal('window', {
 			read: mockAgentSessionsRead,
 		},
 	},
+});
+
+beforeEach(() => {
+	vi.clearAllMocks();
 });
 
 // Helper to create a mock session
@@ -152,6 +159,144 @@ describe('extractTabContext', () => {
 	});
 });
 
+describe('extractStoredSessionContext', () => {
+	it('should convert stored agent messages into context logs', async () => {
+		const longUserMessage =
+			'Please review this stored session and summarize the key risks. '.repeat(2);
+		mockAgentSessionsRead.mockResolvedValue({
+			messages: [
+				{
+					type: 'message',
+					role: 'user',
+					content: longUserMessage,
+					timestamp: '2026-05-01T10:00:00.000Z',
+					uuid: 'msg-user',
+				},
+				{
+					type: 'message',
+					role: 'assistant',
+					content: 'I found the key risks.',
+					timestamp: '2026-05-01T10:01:00.000Z',
+					uuid: 'msg-assistant',
+				},
+				{
+					type: 'system',
+					content: 'System status',
+					timestamp: '2026-05-01T10:02:00.000Z',
+					uuid: 'msg-system',
+				},
+				{
+					type: 'error',
+					content: 'Tool failed',
+					timestamp: '2026-05-01T10:03:00.000Z',
+					uuid: 'msg-error',
+				},
+				{
+					type: 'tool_result',
+					content: 'Command output',
+					timestamp: '2026-05-01T10:04:00.000Z',
+					uuid: '',
+				},
+			],
+			total: 5,
+			hasMore: false,
+		});
+
+		const context = await extractStoredSessionContext(
+			'claude-code',
+			'/repo/project',
+			'stored-session-123456789'
+		);
+
+		expect(mockAgentSessionsRead).toHaveBeenCalledWith(
+			'claude-code',
+			'/repo/project',
+			'stored-session-123456789'
+		);
+		expect(context).toMatchObject({
+			type: 'session',
+			sessionId: '',
+			agentSessionId: 'stored-session-123456789',
+			projectRoot: '/repo/project',
+			agentType: 'claude-code',
+		});
+		expect(context!.name).toBe('Please review this stored session and summarize...');
+		expect(context!.logs.map((log) => log.source)).toEqual([
+			'user',
+			'ai',
+			'system',
+			'error',
+			'stdout',
+		]);
+		expect(context!.logs[4].id).toBe('stored-4');
+	});
+
+	it('should fall back to the session id when no user message exists', async () => {
+		mockAgentSessionsRead.mockResolvedValue({
+			messages: [
+				{
+					type: 'assistant',
+					content: 'Stored answer',
+					timestamp: '2026-05-01T10:01:00.000Z',
+					uuid: 'msg-ai',
+				},
+			],
+			total: 1,
+			hasMore: false,
+		});
+
+		const context = await extractStoredSessionContext('opencode', '/repo', 'abcdef1234567890');
+
+		expect(context!.name).toBe('Session abcdef12');
+		expect(context!.logs[0].source).toBe('ai');
+	});
+
+	it('should keep short first user messages untruncated in the display name', async () => {
+		mockAgentSessionsRead.mockResolvedValue({
+			messages: [
+				{
+					type: 'message',
+					role: 'user',
+					content: 'Short prompt',
+					timestamp: '2026-05-01T10:00:00.000Z',
+					uuid: 'msg-user',
+				},
+			],
+			total: 1,
+			hasMore: false,
+		});
+
+		const context = await extractStoredSessionContext('claude-code', '/repo', 'short-session');
+
+		expect(context!.name).toBe('Short prompt');
+	});
+
+	it('should return null for missing or empty stored sessions', async () => {
+		mockAgentSessionsRead.mockResolvedValueOnce(null);
+		await expect(
+			extractStoredSessionContext('claude-code', '/repo', 'missing')
+		).resolves.toBeNull();
+
+		mockAgentSessionsRead.mockResolvedValueOnce({ messages: [], total: 0, hasMore: false });
+		await expect(extractStoredSessionContext('claude-code', '/repo', 'empty')).resolves.toBeNull();
+	});
+
+	it('should return null and log when stored session extraction fails', async () => {
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const error = new Error('IPC failed');
+		mockAgentSessionsRead.mockRejectedValue(error);
+
+		try {
+			await expect(
+				extractStoredSessionContext('claude-code', '/repo', 'broken')
+			).resolves.toBeNull();
+			expect(consoleError).toHaveBeenCalledWith('Failed to extract stored session context:', error);
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+});
+
 describe('formatLogsForGrooming', () => {
 	it('should format logs with proper markdown headers', () => {
 		const logs: LogEntry[] = [
@@ -197,18 +342,25 @@ describe('formatLogsForGrooming', () => {
 		const logs: LogEntry[] = [
 			createMockLog({ source: 'user', text: 'User message' }),
 			createMockLog({ source: 'ai', text: 'AI response' }),
+			createMockLog({ source: 'system', text: 'Non-internal system message' }),
 			createMockLog({ source: 'error', text: 'Error message' }),
 			createMockLog({ source: 'stdout', text: 'Output message' }),
 			createMockLog({ source: 'stderr', text: 'Stderr message' }),
+			createMockLog({
+				source: 'custom' as LogEntry['source'],
+				text: 'Unknown source message',
+			}),
 		];
 
 		const result = formatLogsForGrooming(logs);
 
 		expect(result).toContain('## User');
 		expect(result).toContain('## Assistant');
+		expect(result).toContain('## System');
 		expect(result).toContain('## Error');
 		expect(result).toContain('## Output');
 		expect(result).toContain('## Error Output');
+		expect(result).toContain('## Message');
 	});
 
 	describe('file content stripping', () => {
@@ -228,6 +380,22 @@ describe('formatLogsForGrooming', () => {
 			expect(result).toContain('[File: src/utils/helper.ts');
 			expect(result).toContain('21 lines');
 			expect(result).toContain('content available on disk');
+			expect(result).not.toContain(fileContent);
+		});
+
+		it('should strip long file-path code blocks without a language marker', () => {
+			const fileContent = 'line\n'.repeat(16);
+			const logs: LogEntry[] = [
+				createMockLog({
+					source: 'ai',
+					text: `Config dump:\n\`\`\`:config/settings.json\n${fileContent}\`\`\``,
+				}),
+			];
+
+			const result = formatLogsForGrooming(logs);
+
+			expect(result).toContain('```[File: config/settings.json');
+			expect(result).toContain('17 lines');
 			expect(result).not.toContain(fileContent);
 		});
 
@@ -260,6 +428,21 @@ describe('formatLogsForGrooming', () => {
 
 			expect(result).toContain('[Read: /Users/test/project/src/main.ts');
 			expect(result).toContain('content available on disk');
+		});
+
+		it('should preserve short Read tool outputs', () => {
+			const fileContent = 'line\n'.repeat(3);
+			const logs: LogEntry[] = [
+				createMockLog({
+					source: 'ai',
+					text: `File: /Users/test/project/src/small.ts:\n\`\`\`typescript\n${fileContent}\`\`\``,
+				}),
+			];
+
+			const result = formatLogsForGrooming(logs);
+
+			expect(result).toContain(fileContent);
+			expect(result).not.toContain('content available on disk');
 		});
 
 		it('should preserve code blocks without file paths', () => {
@@ -376,6 +559,14 @@ Key points:
 		expect(logs[0].text).toContain('Key points');
 	});
 
+	it('should treat single-line unstructured text as a single AI message', () => {
+		const logs = parseGroomedOutput('Single line summary');
+
+		expect(logs).toHaveLength(1);
+		expect(logs[0].source).toBe('ai');
+		expect(logs[0].text).toBe('Single line summary');
+	});
+
 	it('should handle empty input', () => {
 		const logs = parseGroomedOutput('');
 
@@ -399,7 +590,13 @@ Second
 Third
 
 ## System Info
-Fourth`;
+Fourth
+
+## Command Output
+Fifth
+
+## Summary
+Sixth`;
 
 		const logs = parseGroomedOutput(groomedText);
 
@@ -407,6 +604,8 @@ Fourth`;
 		expect(logs[1].source).toBe('user');
 		expect(logs[2].source).toBe('error');
 		expect(logs[3].source).toBe('system');
+		expect(logs[4].source).toBe('stdout');
+		expect(logs[5].source).toBe('ai');
 	});
 });
 
@@ -471,6 +670,118 @@ describe('estimateTokenCount', () => {
 
 		// Should include both text and image overhead
 		expect(tokens).toBeGreaterThan(3000); // 2 images * 1500 tokens each
+	});
+
+	it('should treat missing usage stat fields as zero', () => {
+		const context: ContextSource = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			logs: [],
+			agentType: 'claude-code',
+			usageStats: {
+				costUsd: 0,
+			},
+		};
+
+		expect(estimateTokenCount(context)).toBe(0);
+	});
+
+	it('should handle contexts without logs', () => {
+		const context = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			agentType: 'claude-code',
+		} as ContextSource;
+
+		expect(estimateTokenCount(context)).toBe(0);
+	});
+});
+
+describe('countContextTokens', () => {
+	it('should use usage stats when available', async () => {
+		const context: ContextSource = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			logs: [],
+			agentType: 'claude-code',
+			usageStats: {
+				inputTokens: 120,
+				outputTokens: 60,
+				cacheReadInputTokens: 30,
+				cacheCreationInputTokens: 15,
+				costUsd: 0,
+			},
+		};
+
+		await expect(countContextTokens(context)).resolves.toBe(165);
+	});
+
+	it('should count log text and image overhead when usage stats are absent', async () => {
+		const context: ContextSource = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			logs: [
+				createMockLog({
+					text: 'Count this text',
+					images: ['/tmp/image.png'],
+				}),
+			],
+			agentType: 'claude-code',
+		};
+
+		await expect(countContextTokens(context)).resolves.toBeGreaterThan(1500);
+	});
+
+	it('should return zero for contexts without logs', async () => {
+		const context = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			agentType: 'claude-code',
+		} as ContextSource;
+
+		await expect(countContextTokens(context)).resolves.toBe(0);
+	});
+
+	it('should treat missing async usage stat fields as zero', async () => {
+		const context: ContextSource = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			logs: [],
+			agentType: 'claude-code',
+			usageStats: {
+				costUsd: 0,
+			},
+		};
+
+		await expect(countContextTokens(context)).resolves.toBe(0);
+	});
+
+	it('should count log text without adding image overhead', async () => {
+		const context: ContextSource = {
+			type: 'tab',
+			sessionId: 'session-1',
+			projectRoot: '/project',
+			name: 'Test',
+			logs: [createMockLog({ text: 'Count this plain text without images' })],
+			agentType: 'claude-code',
+		};
+
+		const tokens = await countContextTokens(context);
+
+		expect(tokens).toBeGreaterThan(0);
+		expect(tokens).toBeLessThan(1500);
 	});
 });
 
@@ -578,6 +889,33 @@ describe('findDuplicateContent', () => {
 		expect(result.estimatedSavings).toBeGreaterThan(0);
 	});
 
+	it('should ignore repeated small code blocks when looking for partial duplicates', () => {
+		const codeBlock = '```typescript\nconst x = 1;\n```';
+		const contexts: ContextSource[] = [
+			{
+				type: 'tab',
+				sessionId: 'session-1',
+				projectRoot: '/project',
+				name: 'Context 1',
+				logs: [createMockLog({ text: `Small example:\n${codeBlock}` })],
+				agentType: 'claude-code',
+			},
+			{
+				type: 'tab',
+				sessionId: 'session-2',
+				projectRoot: '/project',
+				name: 'Context 2',
+				logs: [createMockLog({ text: `Same small example:\n${codeBlock}` })],
+				agentType: 'claude-code',
+			},
+		];
+
+		const result = findDuplicateContent(contexts);
+
+		expect(result.duplicates).toHaveLength(0);
+		expect(result.estimatedSavings).toBe(0);
+	});
+
 	it('should return empty results for unique content', () => {
 		const contexts: ContextSource[] = [
 			{
@@ -610,6 +948,50 @@ describe('findDuplicateContent', () => {
 
 		expect(result.duplicates).toHaveLength(0);
 		expect(result.estimatedSavings).toBe(0);
+	});
+
+	it('should ignore contexts without logs', () => {
+		const contexts = [
+			{
+				type: 'tab',
+				sessionId: 'session-1',
+				projectRoot: '/project',
+				name: 'Context 1',
+				agentType: 'claude-code',
+			},
+		] as ContextSource[];
+
+		expect(findDuplicateContent(contexts)).toEqual({
+			duplicates: [],
+			estimatedSavings: 0,
+		});
+	});
+});
+
+describe('formatLogsForClipboard', () => {
+	it('should include user, ai, and stdout messages with clipboard labels', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: 'User question' }),
+			createMockLog({ source: 'ai', text: 'Assistant answer' }),
+			createMockLog({ source: 'stdout', text: 'Agent output' }),
+		];
+
+		expect(formatLogsForClipboard(logs)).toBe(
+			'USER:\nUser question\n\nASSISTANT:\nAssistant answer\n\nASSISTANT:\nAgent output'
+		);
+	});
+
+	it('should skip empty and non-conversation log entries', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ source: 'user', text: '   ' }),
+			createMockLog({ source: 'system', text: 'System prompt' }),
+			createMockLog({ source: 'error', text: 'Failure' }),
+			createMockLog({ source: 'stderr', text: 'stderr' }),
+			createMockLog({ source: 'tool', text: 'tool call' }),
+			createMockLog({ source: 'ai', text: 'Useful answer' }),
+		];
+
+		expect(formatLogsForClipboard(logs)).toBe('ASSISTANT:\nUseful answer');
 	});
 });
 
@@ -698,5 +1080,23 @@ describe('getContextSummary', () => {
 		expect(summary.estimatedTokens).toBe(475);
 		expect(summary.byAgent['claude-code']).toBe(1);
 		expect(summary.byAgent['opencode']).toBe(1);
+	});
+
+	it('should summarize contexts without logs', () => {
+		const contexts = [
+			{
+				type: 'tab',
+				sessionId: 'session-1',
+				projectRoot: '/project',
+				name: 'Context 1',
+				agentType: 'claude-code',
+			},
+		] as ContextSource[];
+
+		const summary = getContextSummary(contexts);
+
+		expect(summary.totalSources).toBe(1);
+		expect(summary.totalLogs).toBe(0);
+		expect(summary.byAgent['claude-code']).toBe(1);
 	});
 });

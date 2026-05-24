@@ -162,6 +162,76 @@ describe('CsvTableRenderer', () => {
 			expect(rows[2]).toHaveTextContent('100');
 		});
 
+		it('sorts numeric columns descending on second click', () => {
+			const { container } = render(
+				<CsvTableRenderer content={'Item,Price\nA,10\nB,2\nC,100'} theme={mockTheme} />
+			);
+
+			fireEvent.click(screen.getByText('Price'));
+			fireEvent.click(screen.getByText('Price'));
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows[0]).toHaveTextContent('100');
+			expect(rows[1]).toHaveTextContent('10');
+			expect(rows[2]).toHaveTextContent('2');
+		});
+
+		it('sorts rows with missing sort cells after populated values', () => {
+			const { container } = render(
+				<CsvTableRenderer content={'Item,Score\nNo Score\nTwo,2\nOne,1'} theme={mockTheme} />
+			);
+
+			fireEvent.click(screen.getByText('Score'));
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows[0]).toHaveTextContent('One');
+			expect(rows[1]).toHaveTextContent('Two');
+			expect(rows[2]).toHaveTextContent('No Score');
+		});
+
+		it('sorts populated values before a following row with a missing sort cell', () => {
+			const { container } = render(
+				<CsvTableRenderer content={'Item,Score\nTwo,2\nNo Score\nOne,1'} theme={mockTheme} />
+			);
+
+			fireEvent.click(screen.getByText('Score'));
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows[0]).toHaveTextContent('One');
+			expect(rows[1]).toHaveTextContent('Two');
+			expect(rows[2]).toHaveTextContent('No Score');
+		});
+
+		it('sorts empty values after populated values', () => {
+			const { container } = render(
+				<CsvTableRenderer
+					content={'Item,Score\nBlank A,\nTwo,2\nBlank B,\nOne,1'}
+					theme={mockTheme}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Score'));
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows[0]).toHaveTextContent('One');
+			expect(rows[1]).toHaveTextContent('Two');
+			expect(rows[2]).toHaveTextContent('Blank A');
+			expect(rows[3]).toHaveTextContent('Blank B');
+		});
+
+		it('sorts a trailing empty value after populated values', () => {
+			const { container } = render(
+				<CsvTableRenderer content={'Item,Score\nTwo,2\nBlank,\nOne,1'} theme={mockTheme} />
+			);
+
+			fireEvent.click(screen.getByText('Score'));
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows[0]).toHaveTextContent('One');
+			expect(rows[1]).toHaveTextContent('Two');
+			expect(rows[2]).toHaveTextContent('Blank');
+		});
+
 		it('shows sort indicator on sorted column', () => {
 			render(<CsvTableRenderer content={'Name,Age\nAlice,30'} theme={mockTheme} />);
 
@@ -187,6 +257,17 @@ describe('CsvTableRenderer', () => {
 			render(<CsvTableRenderer content={'A,B\n1,2\n3,4'} theme={mockTheme} />);
 
 			expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+		});
+
+		it('marks the truncation banner as matching when a search result set is truncated', () => {
+			const header = 'ID,Value';
+			const rows = Array.from({ length: 600 }, (_, i) => `${i},row-${i}-match`).join('\n');
+
+			render(
+				<CsvTableRenderer content={`${header}\n${rows}`} theme={mockTheme} searchQuery="match" />
+			);
+
+			expect(screen.getByText(/Showing 500 of 600 matching rows/)).toBeInTheDocument();
 		});
 	});
 
@@ -336,6 +417,20 @@ describe('CsvTableRenderer', () => {
 			expect(onMatchCount).toHaveBeenCalledWith(2);
 		});
 
+		it('calls onMatchCount with zero when search query is empty', () => {
+			const onMatchCount = vi.fn();
+			render(
+				<CsvTableRenderer
+					content={'Name,City\nAlice,NYC\nBob,LA'}
+					theme={mockTheme}
+					searchQuery=" "
+					onMatchCount={onMatchCount}
+				/>
+			);
+
+			expect(onMatchCount).toHaveBeenCalledWith(0);
+		});
+
 		it('truncates very long search queries to prevent ReDoS', () => {
 			const longQuery = 'a'.repeat(300);
 			const { container } = render(
@@ -359,6 +454,22 @@ describe('CsvTableRenderer', () => {
 			const marks = container.querySelectorAll('mark');
 			expect(marks).toHaveLength(1);
 			expect(marks[0]).toHaveTextContent('NYC');
+		});
+
+		it('renders missing cells while highlighting another cell in the row', () => {
+			const { container } = render(
+				<CsvTableRenderer
+					content={'Name,City\nAlice\nBob,LA'}
+					theme={mockTheme}
+					searchQuery="Alice"
+				/>
+			);
+
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows).toHaveLength(1);
+			expect(rows[0]).toHaveTextContent('Alice');
+			const cells = rows[0].querySelectorAll('td');
+			expect(cells[2]).toHaveTextContent('');
 		});
 	});
 });

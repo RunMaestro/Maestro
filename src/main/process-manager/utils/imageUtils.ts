@@ -27,7 +27,7 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 		return null;
 	}
 
-	const ext = parsed.mediaType.split('/')[1] || 'png';
+	const ext = parsed.mediaType.split('/')[1];
 	const filename = `maestro-image-${Date.now()}-${index}.${ext}`;
 	const tempPath = path.join(os.tmpdir(), filename);
 

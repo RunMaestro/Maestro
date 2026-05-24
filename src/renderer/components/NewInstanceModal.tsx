@@ -160,26 +160,23 @@ export function NewInstanceModal({
 		);
 	}, [instanceName, workingDir, selectedAgent, existingSessions, homeDir, agentSshRemoteConfigs]);
 
-	// Check if SSH remote is enabled for the selected agent or pending config
-	// When no agent is selected, check the _pending_ config (user may select SSH before choosing agent)
-	const isSshEnabled = useMemo(() => {
+	// Check SSH remote configuration for the selected agent or pending config.
+	// When no agent is selected, check the _pending_ config (user may select SSH before choosing agent).
+	const activeSshRemoteId = useMemo(() => {
 		const config = selectedAgent
 			? agentSshRemoteConfigs[selectedAgent]
 			: agentSshRemoteConfigs['_pending_'];
-		return config?.enabled && !!config?.remoteId;
+		return config?.enabled ? config.remoteId : null;
 	}, [selectedAgent, agentSshRemoteConfigs]);
+	const isSshEnabled = !!activeSshRemoteId;
 
 	// Get SSH remote host for display (moved up for use in validation)
 	// Also works with pending config when no agent is selected
 	const sshRemoteHost = useMemo(() => {
-		if (!isSshEnabled) return undefined;
-		const config = selectedAgent
-			? agentSshRemoteConfigs[selectedAgent]
-			: agentSshRemoteConfigs['_pending_'];
-		if (!config?.remoteId) return undefined;
-		const remote = sshRemotes.find((r) => r.id === config.remoteId);
+		if (!activeSshRemoteId) return undefined;
+		const remote = sshRemotes.find((r) => r.id === activeSshRemoteId);
 		return remote?.host;
-	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs, sshRemotes]);
+	}, [activeSshRemoteId, sshRemotes]);
 
 	// Validate remote path when SSH is enabled (debounced)
 	useEffect(() => {
@@ -195,20 +192,12 @@ export function NewInstanceModal({
 			return;
 		}
 
-		// Get the SSH remote ID for this agent
-		const config = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
-		const sshRemoteId = config?.remoteId;
-		if (!sshRemoteId) {
-			setRemotePathValidation({ checking: false, valid: false, isDirectory: false });
-			return;
-		}
-
 		// Debounce the validation
 		const timeoutId = setTimeout(async () => {
 			setRemotePathValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
-				const stat = await window.maestro.fs.stat(trimmedPath, sshRemoteId);
+				const stat = await window.maestro.fs.stat(trimmedPath, activeSshRemoteId!);
 				if (stat && stat.isDirectory) {
 					setRemotePathValidation({
 						checking: false,
@@ -241,7 +230,7 @@ export function NewInstanceModal({
 		}, 300);
 
 		return () => clearTimeout(timeoutId);
-	}, [workingDir, isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
+	}, [workingDir, isSshEnabled, activeSshRemoteId]);
 
 	// Define handlers first before they're used in effects
 	const loadAgents = async (source?: Session, sshRemoteId?: string) => {
@@ -646,7 +635,6 @@ export function NewInstanceModal({
 
 	// Track initial load to avoid re-running on first mount
 	const initialLoadDoneRef = useRef(false);
-	const lastSshRemoteIdRef = useRef<string | null | undefined>(undefined);
 
 	// Re-detect agents when SSH remote selection changes
 	// This allows users to see which agents are available on remote vs local
@@ -654,23 +642,14 @@ export function NewInstanceModal({
 		// Skip if modal not open
 		if (!isOpen) {
 			initialLoadDoneRef.current = false;
-			lastSshRemoteIdRef.current = undefined;
 			return;
 		}
 
 		// Skip the initial load (handled by the isOpen effect above)
 		if (!initialLoadDoneRef.current) {
 			initialLoadDoneRef.current = true;
-			lastSshRemoteIdRef.current = currentSshRemoteId;
 			return;
 		}
-
-		// Only re-detect if the SSH remote ID actually changed
-		if (lastSshRemoteIdRef.current === currentSshRemoteId) {
-			return;
-		}
-
-		lastSshRemoteIdRef.current = currentSshRemoteId;
 
 		// Re-run agent detection with the new SSH remote ID
 		loadAgents(undefined, currentSshRemoteId ?? undefined);
@@ -1080,7 +1059,6 @@ export function NewInstanceModal({
 								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
 								: 'Select directory...'
 						}
-						error={validation.errorField === 'directory' ? validation.error : undefined}
 						monospace
 						heightClass="p-2"
 						addon={
@@ -1272,8 +1250,7 @@ export function EditAgentModal({
 
 	// Copy session ID to clipboard
 	const handleCopySessionId = useCallback(async () => {
-		if (!session) return;
-		const ok = await safeClipboardWrite(session.id);
+		const ok = await safeClipboardWrite(session!.id);
 		if (ok) {
 			setCopiedId(true);
 			setTimeout(() => setCopiedId(false), 2000);
@@ -1376,23 +1353,20 @@ export function EditAgentModal({
 	}, [instanceName, session, existingSessions]);
 
 	// Check if SSH remote is enabled
-	const isSshEnabled = useMemo(() => {
-		return sshRemoteConfig?.enabled && !!sshRemoteConfig?.remoteId;
-	}, [sshRemoteConfig]);
+	const editSshRemoteId = sshRemoteConfig?.enabled ? sshRemoteConfig.remoteId : null;
+	const isSshEnabled = !!editSshRemoteId;
 
 	// Get SSH remote host for display
 	const sshRemoteHost = useMemo(() => {
-		if (!isSshEnabled) return undefined;
-		const remoteId = sshRemoteConfig?.remoteId;
-		if (!remoteId) return undefined;
-		const remote = sshRemotes.find((r) => r.id === remoteId);
+		if (!editSshRemoteId) return undefined;
+		const remote = sshRemotes.find((r) => r.id === editSshRemoteId);
 		return remote?.host;
-	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
+	}, [editSshRemoteId, sshRemotes]);
 
 	// Validate remote path when SSH is enabled (debounced)
 	useEffect(() => {
 		// Only validate when SSH is enabled and we have a session
-		if (!isSshEnabled || !session) {
+		if (!editSshRemoteId || !session) {
 			setRemotePathValidation({ checking: false, valid: false, isDirectory: false });
 			return;
 		}
@@ -1403,18 +1377,12 @@ export function EditAgentModal({
 			return;
 		}
 
-		const sshRemoteId = sshRemoteConfig?.remoteId;
-		if (!sshRemoteId) {
-			setRemotePathValidation({ checking: false, valid: false, isDirectory: false });
-			return;
-		}
-
 		// Debounce the validation (useful when user is switching remotes)
 		const timeoutId = setTimeout(async () => {
 			setRemotePathValidation((prev) => ({ ...prev, checking: true }));
 
 			try {
-				const stat = await window.maestro.fs.stat(projectRoot, sshRemoteId);
+				const stat = await window.maestro.fs.stat(projectRoot, editSshRemoteId);
 				if (stat && stat.isDirectory) {
 					setRemotePathValidation({
 						checking: false,
@@ -1447,15 +1415,15 @@ export function EditAgentModal({
 		}, 300);
 
 		return () => clearTimeout(timeoutId);
-	}, [isSshEnabled, session, sshRemoteConfig?.remoteId]);
+	}, [editSshRemoteId, session]);
 
 	const handleSave = useCallback(() => {
-		if (!session) return;
+		const currentSession = session!;
 		const name = instanceName.trim();
 		if (!name) return;
 
 		// Validate before saving
-		const result = validateEditSession(name, session.id, existingSessions);
+		const result = validateEditSession(name, currentSession.id, existingSessions);
 		if (!result.valid) return;
 
 		// Get model and contextWindow from agentConfig (which is updated via onConfigChange)
@@ -1478,7 +1446,7 @@ export function EditAgentModal({
 
 		// Save with per-session config fields including model, contextWindow, and SSH config
 		onSave(
-			session.id,
+			currentSession.id,
 			name,
 			providerChanged ? selectedToolType : undefined,
 			nudgeMessage.trim() || undefined,

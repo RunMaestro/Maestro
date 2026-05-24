@@ -22,6 +22,7 @@ import type { ToolType } from '../../../shared/types';
 // Mock window.maestro for IPC calls
 const mockCreateGroomingSession = vi.fn();
 const mockSendGroomingPrompt = vi.fn();
+const mockGroomContext = vi.fn();
 const mockCleanupGroomingSession = vi.fn();
 
 vi.stubGlobal('window', {
@@ -29,6 +30,7 @@ vi.stubGlobal('window', {
 		context: {
 			createGroomingSession: mockCreateGroomingSession,
 			sendGroomingPrompt: mockSendGroomingPrompt,
+			groomContext: mockGroomContext,
 			cleanupGroomingSession: mockCleanupGroomingSession,
 		},
 	},
@@ -60,6 +62,204 @@ function createMockContext(overrides: Partial<ContextSource> = {}): ContextSourc
 		...overrides,
 	};
 }
+
+describe('ContextGroomingService current API', () => {
+	let service: ContextGroomingService;
+	let progressUpdates: GroomingProgress[];
+
+	beforeEach(() => {
+		service = new ContextGroomingService();
+		progressUpdates = [];
+		vi.clearAllMocks();
+		mockGroomContext.mockResolvedValue(`## User
+Groomed user request
+
+## AI Response
+Groomed assistant response`);
+		mockCleanupGroomingSession.mockResolvedValue(undefined);
+	});
+
+	it('creates service instances and exposes the singleton', () => {
+		expect(new ContextGroomingService()).toBeInstanceOf(ContextGroomingService);
+		expect(
+			new ContextGroomingService({ timeoutMs: 60000, defaultAgentType: 'opencode' })
+		).toBeInstanceOf(ContextGroomingService);
+		expect(contextGroomingService).toBeInstanceOf(ContextGroomingService);
+	});
+
+	it('grooms contexts through the single-call groomContext API', async () => {
+		const request: MergeRequest = {
+			sources: [createMockContext(), createMockContext({ name: 'Second Context' })],
+			targetAgent: 'claude-code',
+			targetProjectRoot: '/test/project',
+		};
+
+		const result = await service.groomContexts(request, (progress) =>
+			progressUpdates.push(progress)
+		);
+
+		expect(result.success).toBe(true);
+		expect(result.error).toBeUndefined();
+		expect(result.groomedLogs.map((log) => log.text)).toEqual([
+			'Groomed user request',
+			'Groomed assistant response',
+		]);
+		expect(result.tokensSaved).toBeGreaterThanOrEqual(0);
+		expect(mockGroomContext).toHaveBeenCalledWith(
+			'/test/project',
+			'claude-code',
+			expect.stringContaining('### Context 1: Test Context')
+		);
+		const sentPrompt = mockGroomContext.mock.calls[0][2];
+		expect(sentPrompt).toContain('### Context 2: Second Context');
+		expect(sentPrompt).toContain('Agent: claude-code');
+		expect(sentPrompt).toContain('Project: /test/project');
+		expect(sentPrompt).toContain('How do I implement X?');
+		expect(sentPrompt).toContain('Please consolidate the above contexts');
+		expect(progressUpdates.map((progress) => progress.stage)).toEqual([
+			'collecting',
+			'collecting',
+			'grooming',
+			'grooming',
+			'grooming',
+			'complete',
+		]);
+		expect(progressUpdates.at(-1)).toMatchObject({ progress: 100, stage: 'complete' });
+	});
+
+	it('uses a custom grooming prompt when provided', async () => {
+		const request: MergeRequest = {
+			sources: [createMockContext()],
+			targetAgent: 'opencode',
+			targetProjectRoot: '/test/project',
+			groomingPrompt: 'Custom grooming instructions here',
+		};
+
+		await service.groomContexts(request, (progress) => progressUpdates.push(progress));
+
+		expect(mockGroomContext).toHaveBeenCalledWith(
+			'/test/project',
+			'opencode',
+			expect.stringContaining('Custom grooming instructions here')
+		);
+	});
+
+	it('returns token savings based on original and groomed token estimates', async () => {
+		mockGroomContext.mockResolvedValue('## Summary\nShort.');
+		const request: MergeRequest = {
+			sources: [
+				createMockContext({
+					usageStats: {
+						inputTokens: 500,
+						outputTokens: 500,
+						cacheReadTokens: 0,
+						cacheCreationTokens: 0,
+						costUsd: 0,
+					},
+				}),
+			],
+			targetAgent: 'claude-code',
+			targetProjectRoot: '/test/project',
+		};
+
+		const result = await service.groomContexts(request, () => {});
+
+		expect(result.success).toBe(true);
+		expect(result.tokensSaved).toBeGreaterThan(0);
+	});
+
+	it('handles an empty source list without failing', async () => {
+		mockGroomContext.mockResolvedValue('');
+		const request: MergeRequest = {
+			sources: [],
+			targetAgent: 'claude-code',
+			targetProjectRoot: '/test/project',
+		};
+
+		const result = await service.groomContexts(request, (progress) =>
+			progressUpdates.push(progress)
+		);
+
+		expect(result.success).toBe(true);
+		expect(result.groomedLogs).toEqual([]);
+		expect(mockGroomContext.mock.calls[0][2]).toContain('Please consolidate the above contexts');
+	});
+
+	it('returns a structured failure when grooming throws an Error', async () => {
+		mockGroomContext.mockRejectedValue(new Error('IPC connection failed'));
+		const request: MergeRequest = {
+			sources: [createMockContext()],
+			targetAgent: 'claude-code',
+			targetProjectRoot: '/test/project',
+		};
+
+		const result = await service.groomContexts(request, (progress) =>
+			progressUpdates.push(progress)
+		);
+
+		expect(result).toEqual({
+			groomedLogs: [],
+			tokensSaved: 0,
+			success: false,
+			error: 'IPC connection failed',
+		});
+		expect(progressUpdates.at(-1)?.message).toBe('Grooming failed: IPC connection failed');
+	});
+
+	it('uses a generic error message for non-Error grooming failures', async () => {
+		mockGroomContext.mockRejectedValue('string failure');
+		const request: MergeRequest = {
+			sources: [createMockContext()],
+			targetAgent: 'claude-code',
+			targetProjectRoot: '/test/project',
+		};
+
+		const result = await service.groomContexts(request, () => {});
+
+		expect(result.success).toBe(false);
+		expect(result.error).toBe('Unknown error during grooming');
+	});
+
+	it('cancels active grooming sessions and clears active state after cleanup', async () => {
+		(service as unknown as { activeGroomingSessionId: string | null }).activeGroomingSessionId =
+			'grooming-session-1';
+
+		await service.cancelGrooming();
+
+		expect(mockCleanupGroomingSession).toHaveBeenCalledWith('grooming-session-1');
+		expect(service.isGroomingActive()).toBe(false);
+	});
+
+	it('clears active state even when cleanup fails', async () => {
+		mockCleanupGroomingSession.mockRejectedValue(new Error('already gone'));
+		(service as unknown as { activeGroomingSessionId: string | null }).activeGroomingSessionId =
+			'grooming-session-2';
+
+		await expect(service.cancelGrooming()).resolves.toBeUndefined();
+
+		expect(service.isGroomingActive()).toBe(false);
+	});
+
+	it('does not clear a newer active session when stale cleanup finishes', async () => {
+		const serviceInternals = service as unknown as {
+			activeGroomingSessionId: string | null;
+			cleanupGroomingSession: (sessionId: string) => Promise<void>;
+		};
+		serviceInternals.activeGroomingSessionId = 'new-session';
+
+		await serviceInternals.cleanupGroomingSession('old-session');
+
+		expect(mockCleanupGroomingSession).toHaveBeenCalledWith('old-session');
+		expect(serviceInternals.activeGroomingSessionId).toBe('new-session');
+	});
+
+	it('does nothing when cancel is requested without an active grooming session', async () => {
+		await service.cancelGrooming();
+
+		expect(mockCleanupGroomingSession).not.toHaveBeenCalled();
+		expect(service.isGroomingActive()).toBe(false);
+	});
+});
 
 // TODO: Skip until IPC API is updated to match implementation
 describe.skip('ContextGroomingService', () => {
@@ -627,5 +827,15 @@ describe('buildContextTransferPrompt', () => {
 		// Should still work even though source and target are the same
 		expect(prompt).toContain('Claude Code');
 		expect(prompt).toContain('"/clear"');
+	});
+
+	it('should fall back for unknown source and target agent metadata', () => {
+		const prompt = buildContextTransferPrompt(
+			'unknown-source' as ToolType,
+			'unknown-target' as ToolType
+		);
+
+		expect(prompt).toContain('No specific artifacts to remove');
+		expect(prompt).toContain('No specific notes for this agent.');
 	});
 });

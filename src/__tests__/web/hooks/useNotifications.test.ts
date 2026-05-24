@@ -257,6 +257,18 @@ describe('useNotifications', () => {
 			expect(result.current.hasDeclined).toBe(false);
 		});
 
+		it('defaults prompt flags to false when localStorage is unavailable', () => {
+			Object.defineProperty(window, 'localStorage', {
+				value: undefined,
+				writable: true,
+			});
+
+			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
+
+			expect(result.current.hasPrompted).toBe(false);
+			expect(result.current.hasDeclined).toBe(false);
+		});
+
 		it('loads both prompted and declined from storage', () => {
 			localStorageMock.getItem.mockImplementation((key: string) => {
 				if (key === NOTIFICATION_PROMPT_KEY) return 'true';

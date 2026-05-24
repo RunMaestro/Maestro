@@ -297,6 +297,17 @@ describe('Stats Preload API', () => {
 		});
 	});
 
+	describe('getEarliestTimestamp', () => {
+		it('should invoke stats:get-earliest-timestamp', async () => {
+			mockInvoke.mockResolvedValue(1710000000000);
+
+			const result = await api.getEarliestTimestamp();
+
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-earliest-timestamp');
+			expect(result).toBe(1710000000000);
+		});
+	});
+
 	describe('recordSessionCreated', () => {
 		it('should invoke stats:record-session-created', async () => {
 			mockInvoke.mockResolvedValue('lifecycle-123');
@@ -363,6 +374,30 @@ describe('Stats Preload API', () => {
 
 			expect(mockInvoke).toHaveBeenCalledWith('stats:get-session-lifecycle', 'day');
 			expect(result).toEqual(lifecycle);
+		});
+	});
+
+	describe('initialization result', () => {
+		it('should invoke stats:get-initialization-result', async () => {
+			const initializationResult = {
+				hadCorruption: true,
+				resetAt: 1710000000000,
+				backupPath: '/tmp/stats-backup.db',
+			};
+			mockInvoke.mockResolvedValue(initializationResult);
+
+			const result = await api.getInitializationResult();
+
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-initialization-result');
+			expect(result).toEqual(initializationResult);
+		});
+
+		it('should invoke stats:clear-initialization-result', async () => {
+			mockInvoke.mockResolvedValue(undefined);
+
+			await api.clearInitializationResult();
+
+			expect(mockInvoke).toHaveBeenCalledWith('stats:clear-initialization-result');
 		});
 	});
 });

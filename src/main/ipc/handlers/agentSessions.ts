@@ -776,7 +776,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				};
 
 				// Aggregate Claude Code stats
-				const claudeSessions = cache.providers['claude-code']?.sessions || {};
+				const claudeSessions = cache.providers['claude-code'].sessions;
 				const claudeAgg = aggregateProviderStats(claudeSessions, true);
 				if (claudeAgg.sessions > 0) {
 					result.byProvider['claude-code'] = {
@@ -799,7 +799,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 
 				// Aggregate Codex stats
-				const codexSessions = cache.providers['codex']?.sessions || {};
+				const codexSessions = cache.providers['codex'].sessions;
 				const codexAgg = aggregateProviderStats(codexSessions, false);
 				if (codexAgg.sessions > 0) {
 					result.byProvider['codex'] = {

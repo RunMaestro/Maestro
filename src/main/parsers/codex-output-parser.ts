@@ -558,18 +558,14 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		if (parsedJson) {
-			return {
-				type: 'unknown',
-				message: errorText,
-				recoverable: true,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				parsedJson,
-			};
-		}
-
-		return null;
+		return {
+			type: 'unknown',
+			message: errorText,
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			parsedJson,
+		};
 	}
 
 	/**

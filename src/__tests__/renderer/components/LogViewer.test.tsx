@@ -112,6 +112,9 @@ afterEach(() => {
 // Helper to get the mock functions
 const getMockGetLogs = () => window.maestro.logger.getLogs as ReturnType<typeof vi.fn>;
 const getMockClearLogs = () => window.maestro.logger.clearLogs as ReturnType<typeof vi.fn>;
+const getMockOnNewLog = () => window.maestro.logger.onNewLog as ReturnType<typeof vi.fn>;
+const getMockGetMaxLogBuffer = () =>
+	window.maestro.logger.getMaxLogBuffer as ReturnType<typeof vi.fn>;
 
 describe('LogViewer', () => {
 	describe('Initial render', () => {
@@ -122,12 +125,20 @@ describe('LogViewer', () => {
 			expect(dialog).toBeInTheDocument();
 			expect(dialog).toHaveAttribute('aria-modal', 'true');
 			expect(dialog).toHaveAttribute('aria-label', 'System Log Viewer');
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalled();
+			});
 		});
 
 		it('should render header with title', async () => {
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
 			expect(screen.getByText('Maestro System Logs')).toBeInTheDocument();
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalled();
+			});
 		});
 
 		it('should display entry count', async () => {
@@ -161,6 +172,47 @@ describe('LogViewer', () => {
 			});
 		});
 
+		it('should fall back to the default max buffer when logger settings return zero', async () => {
+			getMockGetMaxLogBuffer().mockResolvedValue(0);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalledWith({ limit: 1000 });
+			});
+		});
+
+		it('should prepend live logs and trim to the max log buffer', async () => {
+			const liveHandlers: Array<(log: ReturnType<typeof createMockLog>) => void> = [];
+			getMockGetMaxLogBuffer().mockImplementation(() => ({
+				then: (cb: (value: number) => void) => {
+					cb(1);
+					return Promise.resolve(1);
+				},
+			}));
+			getMockGetLogs().mockResolvedValue([createMockLog({ message: 'Older log' })]);
+			getMockOnNewLog().mockImplementation((handler) => {
+				liveHandlers.push(handler);
+				return vi.fn();
+			});
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Older log')).toBeInTheDocument();
+			});
+			await waitFor(() => {
+				expect(liveHandlers.length).toBeGreaterThan(0);
+			});
+
+			act(() => {
+				liveHandlers.at(-1)?.(createMockLog({ message: 'Newest log' }));
+			});
+
+			expect(screen.getByText('Newest log')).toBeInTheDocument();
+			expect(screen.queryByText('Older log')).not.toBeInTheDocument();
+		});
+
 		it('should display empty state when no logs', async () => {
 			getMockGetLogs().mockResolvedValue([]);
 
@@ -185,6 +237,10 @@ describe('LogViewer', () => {
 					ariaLabel: 'System Log Viewer',
 				})
 			);
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalled();
+			});
 		});
 
 		it('should unregister layer on unmount', async () => {
@@ -204,6 +260,43 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				expect(mockUpdateLayerHandler).toHaveBeenCalled();
 			});
+		});
+
+		it('should invoke onClose from the initially registered Escape handler', async () => {
+			const onClose = vi.fn();
+			render(<LogViewer theme={mockTheme} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalled();
+			});
+
+			const registeredEscape = mockRegisterLayer.mock.calls[0][0].onEscape as () => void;
+			act(() => registeredEscape());
+
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should close search before closing the modal from the updated Escape handler', async () => {
+			const onClose = vi.fn();
+			render(<LogViewer theme={mockTheme} onClose={onClose} />);
+
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
+			const searchInput = await screen.findByPlaceholderText('Search logs...');
+			fireEvent.change(searchInput, { target: { value: 'trace' } });
+
+			const searchEscape = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
+			act(() => searchEscape());
+
+			expect(screen.queryByPlaceholderText('Search logs...')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+
+			await waitFor(() => {
+				expect(mockUpdateLayerHandler).toHaveBeenCalled();
+			});
+			const modalEscape = mockUpdateLayerHandler.mock.calls.at(-1)?.[1] as () => void;
+			act(() => modalEscape());
+
+			expect(onClose).toHaveBeenCalled();
 		});
 	});
 
@@ -362,9 +455,23 @@ describe('LogViewer', () => {
 		});
 
 		it('should open search with Cmd+F', async () => {
-			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+			const onShortcutUsed = vi.fn();
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} onShortcutUsed={onShortcutUsed} />);
 
 			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
+
+			await waitFor(() => {
+				expect(screen.getByPlaceholderText('Search logs...')).toBeInTheDocument();
+			});
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', metaKey: true });
+
+			expect(onShortcutUsed).toHaveBeenCalledTimes(1);
+		});
+
+		it('should open search with Ctrl+F', async () => {
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'f', ctrlKey: true });
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('Search logs...')).toBeInTheDocument();
@@ -631,12 +738,14 @@ describe('LogViewer', () => {
 			// Mock anchor element
 			const mockClick = vi.fn();
 			const originalCreateElement = document.createElement.bind(document);
-			vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-				if (tag === 'a') {
-					return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
-				}
-				return originalCreateElement(tag);
-			});
+			const createElementSpy = vi
+				.spyOn(document, 'createElement')
+				.mockImplementation((tag: string) => {
+					if (tag === 'a') {
+						return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
+					}
+					return originalCreateElement(tag);
+				});
 
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
@@ -652,6 +761,60 @@ describe('LogViewer', () => {
 
 			createObjectURLSpy.mockRestore();
 			revokeObjectURLSpy.mockRestore();
+			createElementSpy.mockRestore();
+		});
+
+		it('should export logs without context or data suffixes when they are absent', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					timestamp: new Date('2024-01-15T10:30:00').getTime(),
+					level: 'info',
+					message: 'Plain message',
+					context: undefined,
+					data: undefined,
+				}),
+			]);
+
+			let exportedBlob: Blob | undefined;
+			const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+				exportedBlob = blob as Blob;
+				return 'blob:test-url';
+			});
+			const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+			const mockClick = vi.fn();
+			const originalCreateElement = document.createElement.bind(document);
+			const createElementSpy = vi
+				.spyOn(document, 'createElement')
+				.mockImplementation((tag: string) => {
+					if (tag === 'a') {
+						return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
+					}
+					return originalCreateElement(tag);
+				});
+
+			try {
+				render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+				await waitFor(() => {
+					expect(screen.getByTitle('Export logs')).toBeInTheDocument();
+				});
+				fireEvent.click(screen.getByTitle('Export logs'));
+
+				expect(mockClick).toHaveBeenCalled();
+				expect(exportedBlob).toBeDefined();
+				const exportedText = await new Promise<string>((resolve, reject) => {
+					const reader = new FileReader();
+					reader.onload = () => resolve(String(reader.result));
+					reader.onerror = () => reject(reader.error);
+					reader.readAsText(exportedBlob!);
+				});
+				expect(exportedText).toContain('[INFO]  Plain message');
+				expect(exportedText).not.toContain('undefined');
+			} finally {
+				createObjectURLSpy.mockRestore();
+				revokeObjectURLSpy.mockRestore();
+				createElementSpy.mockRestore();
+			}
 		});
 	});
 
@@ -680,7 +843,10 @@ describe('LogViewer', () => {
 			});
 
 			fireEvent.click(screen.getByTitle('Clear logs'));
-			fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+				await Promise.resolve();
+			});
 
 			expect(getMockClearLogs()).toHaveBeenCalled();
 		});
@@ -709,6 +875,10 @@ describe('LogViewer', () => {
 			const onClose = vi.fn();
 
 			render(<LogViewer theme={mockTheme} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(getMockGetLogs()).toHaveBeenCalled();
+			});
 
 			fireEvent.click(screen.getByTitle('Close log viewer'));
 
@@ -970,6 +1140,20 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				const levelPill = screen.getByText('toast');
 				expect(levelPill).toHaveStyle({ color: '#a855f7' });
+			});
+		});
+
+		it('should fall back to theme colors for unknown log levels', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ level: 'trace' as any, message: 'Trace message' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} savedSelectedLevels={['trace']} />);
+
+			await waitFor(() => {
+				const levelPill = screen.getByText('trace');
+				expect(levelPill).toHaveStyle({ color: mockTheme.colors.textDim });
+				expect(levelPill.style.backgroundColor).toBe('transparent');
 			});
 		});
 	});

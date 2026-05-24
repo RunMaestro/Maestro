@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 
 // Add updates mock to window.maestro if not present
@@ -107,6 +107,34 @@ const createMockUpdateResult = (
 	...overrides,
 });
 
+const mockPendingUpdateCheck = () => {
+	(window.maestro as any).updates.check.mockImplementation(() => new Promise<never>(() => {}));
+};
+
+const emitUpdateStatus = async (statusCallback: ((status: any) => void) | null, status: any) => {
+	expect(statusCallback).toBeTruthy();
+
+	await act(async () => {
+		statusCallback!(status);
+	});
+};
+
+const renderUpdateCheckModal = async ({
+	theme = createMockTheme(),
+	onClose = vi.fn(),
+}: {
+	theme?: ReturnType<typeof createMockTheme>;
+	onClose?: () => void;
+} = {}) => {
+	let result: ReturnType<typeof render> | undefined;
+
+	await act(async () => {
+		result = render(<UpdateCheckModal theme={theme} onClose={onClose} />);
+	});
+
+	return result!;
+};
+
 describe('UpdateCheckModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -125,22 +153,17 @@ describe('UpdateCheckModal', () => {
 
 	describe('loading state', () => {
 		it('shows loading message initially', async () => {
-			// Make check take some time
-			(window.maestro as any).updates.check.mockImplementation(
-				() => new Promise((resolve) => setTimeout(() => resolve(createMockUpdateResult()), 100))
-			);
+			mockPendingUpdateCheck();
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			expect(screen.getByText('Checking for updates...')).toBeInTheDocument();
 		});
 
 		it('shows spinning loader during check', async () => {
-			(window.maestro as any).updates.check.mockImplementation(
-				() => new Promise((resolve) => setTimeout(() => resolve(createMockUpdateResult()), 100))
-			);
+			mockPendingUpdateCheck();
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			// The Loader2 icon has animate-spin class
 			const loadingIndicator = screen.getByText('Checking for updates...').previousElementSibling;
@@ -154,7 +177,7 @@ describe('UpdateCheckModal', () => {
 
 	describe('update available state', () => {
 		it('shows update available banner', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText('Update Available!')).toBeInTheDocument();
@@ -166,7 +189,7 @@ describe('UpdateCheckModal', () => {
 				createMockUpdateResult({ versionsBehind: 3 })
 			);
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText('3 versions')).toBeInTheDocument();
@@ -178,7 +201,7 @@ describe('UpdateCheckModal', () => {
 				createMockUpdateResult({ versionsBehind: 1 })
 			);
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText('1 version')).toBeInTheDocument();
@@ -186,7 +209,7 @@ describe('UpdateCheckModal', () => {
 		});
 
 		it('shows current and latest version', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText(/Current: v1\.0\.0/)).toBeInTheDocument();
@@ -195,7 +218,7 @@ describe('UpdateCheckModal', () => {
 		});
 
 		it('shows release notes section', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText('Release Notes')).toBeInTheDocument();
@@ -229,6 +252,21 @@ describe('UpdateCheckModal', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Or download manually from GitHub')).toBeInTheDocument();
+			});
+		});
+
+		it('shows building state when update assets are not ready', async () => {
+			(window.maestro as any).updates.check.mockResolvedValue(
+				createMockUpdateResult({
+					assetsReady: false,
+				})
+			);
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Binaries are still building...')).toBeInTheDocument();
+				expect(screen.getByText('Check release page for updates')).toBeInTheDocument();
 			});
 		});
 	});
@@ -383,6 +421,64 @@ describe('UpdateCheckModal', () => {
 			});
 		});
 
+		it('strips compact tag prefix with a leading dash separator', async () => {
+			(window.maestro as any).updates.check.mockResolvedValue(
+				createMockUpdateResult({
+					releases: [
+						createMockRelease({
+							tag_name: 'v1.1.0',
+							name: 'v1.1.0-Major Update',
+						}),
+					],
+				})
+			);
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('- Major Update')).toBeInTheDocument();
+			});
+		});
+
+		it('shows compact tag-prefix remainder when no separator is present', async () => {
+			(window.maestro as any).updates.check.mockResolvedValue(
+				createMockUpdateResult({
+					releases: [
+						createMockRelease({
+							tag_name: 'v1.1.0',
+							name: 'v1.1.0Beta',
+						}),
+					],
+				})
+			);
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('- Beta')).toBeInTheDocument();
+			});
+		});
+
+		it('omits release name when compact tag prefix has no remainder', async () => {
+			(window.maestro as any).updates.check.mockResolvedValue(
+				createMockUpdateResult({
+					releases: [
+						createMockRelease({
+							tag_name: 'v1.1.0',
+							name: 'v1.1.0 ',
+						}),
+					],
+				})
+			);
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('v1.1.0')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('- v1.1.0')).not.toBeInTheDocument();
+		});
+
 		it('keeps release name when it does not start with version', async () => {
 			(window.maestro as any).updates.check.mockResolvedValue(
 				createMockUpdateResult({
@@ -490,6 +586,29 @@ describe('UpdateCheckModal', () => {
 				'https://github.com/RunMaestro/Maestro/releases'
 			);
 		});
+
+		it('falls back to app version and default releases URL when optional fields are missing', async () => {
+			(window.maestro as any).updates.check.mockResolvedValue(
+				createMockUpdateResult({
+					currentVersion: undefined as unknown as string,
+					releasesUrl: undefined as unknown as string,
+					updateAvailable: false,
+					versionsBehind: 0,
+				})
+			);
+
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Maestro v1.0.0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('View all releases'));
+
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
+				'https://github.com/RunMaestro/Maestro/releases'
+			);
+		});
 	});
 
 	// =============================================================================
@@ -550,6 +669,11 @@ describe('UpdateCheckModal', () => {
 
 	describe('refresh button', () => {
 		it('re-checks for updates when clicked', async () => {
+			const updateCheck = (window.maestro as any).updates.check;
+			updateCheck
+				.mockResolvedValueOnce(createMockUpdateResult())
+				.mockImplementation(() => new Promise<never>(() => {}));
+
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
 			await waitFor(() => {
@@ -561,15 +685,15 @@ describe('UpdateCheckModal', () => {
 			fireEvent.click(refreshButton);
 
 			// Should call check again
-			expect((window.maestro as any).updates.check).toHaveBeenCalledTimes(2);
+			await waitFor(() => {
+				expect(updateCheck).toHaveBeenCalledTimes(2);
+			});
 		});
 
 		it('is disabled while loading', async () => {
-			(window.maestro as any).updates.check.mockImplementation(
-				() => new Promise((resolve) => setTimeout(() => resolve(createMockUpdateResult()), 100))
-			);
+			mockPendingUpdateCheck();
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			const refreshButton = screen.getByTitle('Refresh');
 			expect(refreshButton).toBeDisabled();
@@ -592,7 +716,9 @@ describe('UpdateCheckModal', () => {
 			expect(refreshIcon).toHaveClass('animate-spin');
 
 			// Resolve the check
-			resolveCheck!(createMockUpdateResult());
+			await act(async () => {
+				resolveCheck!(createMockUpdateResult());
+			});
 
 			await waitFor(() => {
 				expect(screen.getByText('Update Available!')).toBeInTheDocument();
@@ -633,7 +759,9 @@ describe('UpdateCheckModal', () => {
 
 	describe('layer stack integration', () => {
 		it('registers layer on mount', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(mockRegisterLayer).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -647,7 +775,9 @@ describe('UpdateCheckModal', () => {
 		});
 
 		it('unregisters layer on unmount', async () => {
-			const { unmount } = render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			const { unmount } = await renderUpdateCheckModal();
 
 			unmount();
 
@@ -657,7 +787,9 @@ describe('UpdateCheckModal', () => {
 		it('calls onClose on escape via layer', async () => {
 			const onClose = vi.fn();
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={onClose} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal({ onClose });
 
 			// Get the onEscape callback from registerLayer call
 			const registerCall = mockRegisterLayer.mock.calls[0][0];
@@ -676,19 +808,25 @@ describe('UpdateCheckModal', () => {
 
 	describe('accessibility', () => {
 		it('has dialog role', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
 		});
 
 		it('has aria-modal attribute', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true');
 		});
 
 		it('has aria-label', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(screen.getByRole('dialog')).toHaveAttribute('aria-label', 'Check for Updates');
 		});
@@ -721,7 +859,9 @@ describe('UpdateCheckModal', () => {
 
 	describe('header', () => {
 		it('shows title', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(screen.getByText('Check for Updates')).toBeInTheDocument();
 		});
@@ -744,7 +884,7 @@ describe('UpdateCheckModal', () => {
 				})
 			);
 
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await renderUpdateCheckModal();
 
 			await waitFor(() => {
 				expect(screen.getByText('v1.3.0')).toBeInTheDocument();
@@ -926,7 +1066,9 @@ describe('UpdateCheckModal', () => {
 		});
 
 		it('subscribes to status updates on mount', async () => {
-			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			mockPendingUpdateCheck();
+
+			await renderUpdateCheckModal();
 
 			expect(window.maestro.updates.onStatus).toHaveBeenCalled();
 		});
@@ -934,8 +1076,9 @@ describe('UpdateCheckModal', () => {
 		it('unsubscribes from status updates on unmount', async () => {
 			const mockUnsubscribe = vi.fn();
 			(window.maestro.updates.onStatus as any).mockReturnValue(mockUnsubscribe);
+			mockPendingUpdateCheck();
 
-			const { unmount } = render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			const { unmount } = await renderUpdateCheckModal();
 
 			unmount();
 
@@ -963,7 +1106,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			// Simulate update downloaded status
-			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await emitUpdateStatus(statusCallback, { status: 'downloaded', info: { version: '1.1.0' } });
 
 			await waitFor(() => {
 				expect(screen.getByText('Restart to Update')).toBeInTheDocument();
@@ -988,7 +1131,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			// Simulate download completed
-			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await emitUpdateStatus(statusCallback, { status: 'downloaded', info: { version: '1.1.0' } });
 
 			await waitFor(() => {
 				expect(screen.getByText('Restart to Update')).toBeInTheDocument();
@@ -1013,7 +1156,7 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await emitUpdateStatus(statusCallback, { status: 'downloaded', info: { version: '1.1.0' } });
 
 			await waitFor(() => {
 				const restartButton = screen.getByText('Restart to Update').closest('button');
@@ -1041,7 +1184,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			// Simulate downloading with progress
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'downloading',
 				progress: { percent: 50, bytesPerSecond: 1000000, total: 10000000, transferred: 5000000 },
 			});
@@ -1065,7 +1208,7 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'downloading',
 				progress: { percent: 25, bytesPerSecond: 1048576, total: 10485760, transferred: 2621440 },
 			});
@@ -1088,7 +1231,7 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'downloading',
 				progress: { percent: 50, bytesPerSecond: 500000, total: 10485760, transferred: 5242880 },
 			});
@@ -1111,7 +1254,7 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'downloading',
 				progress: { percent: 75, bytesPerSecond: 1000000, total: 10000000, transferred: 7500000 },
 			});
@@ -1140,7 +1283,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			// Simulate error during download
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'error',
 				error: 'Connection timed out',
 			});
@@ -1192,7 +1335,7 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({
+			await emitUpdateStatus(statusCallback, {
 				status: 'downloading',
 				progress: { percent: 50, bytesPerSecond: 1000000, total: 10000000, transferred: 5000000 },
 			});
@@ -1215,10 +1358,32 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await emitUpdateStatus(statusCallback, { status: 'downloaded', info: { version: '1.1.0' } });
 
 			await waitFor(() => {
 				expect(screen.getByText('Or download manually from GitHub')).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('beta update opt-in', () => {
+		it('passes the checked beta opt-in state to update checks', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Update Available!')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByLabelText(/Include pre-release updates/i));
+
+			await waitFor(() => {
+				expect((window.maestro as any).updates.check).toHaveBeenLastCalledWith(true);
+			});
+
+			fireEvent.click(screen.getByLabelText(/Include pre-release updates/i));
+
+			await waitFor(() => {
+				expect((window.maestro as any).updates.check).toHaveBeenLastCalledWith(false);
 			});
 		});
 	});

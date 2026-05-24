@@ -5,7 +5,7 @@
  * discovering connected documents up to maxDepth levels.
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
 	buildGraphData,
 	expandNode,
@@ -15,10 +15,13 @@ import {
 	invalidateCacheForFiles,
 	getGraphCacheStats,
 	type DocumentNodeData,
+	type ExternalLinkNodeData,
 	type ProgressData,
 	type BacklinkUpdateData,
 	BATCH_SIZE_BEFORE_YIELD,
+	LARGE_FILE_THRESHOLD,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
+import { getRendererPerfMetrics } from '../../../../renderer/utils/logger';
 
 // Type definitions for mock file system
 interface MockFile {
@@ -31,6 +34,28 @@ interface MockDirectory {
 	_isDirectory: boolean;
 }
 
+const expectedDocumentGraphLogPrefixes = [
+	'[DocumentGraph] Cache cleared',
+	'[DocumentGraph] Invalidated cache',
+	'[DocumentGraph] Building graph from focus file',
+	'[DocumentGraph] Found ',
+	'[DocumentGraph] BFS traversal complete',
+	'[DocumentGraph] Starting background backlink scan',
+	'[DocumentGraph] Backlink scan',
+	'[DocumentGraph] Expanding node',
+	'[DocumentGraph] Node expansion complete',
+];
+
+let unexpectedConsoleLogs: unknown[][] = [];
+
+function isExpectedDocumentGraphLog(args: unknown[]) {
+	const message = args[0];
+	return (
+		typeof message === 'string' &&
+		expectedDocumentGraphLogPrefixes.some((prefix) => message.startsWith(prefix))
+	);
+}
+
 describe('graphDataBuilder', () => {
 	// Store mock functions for easy reset
 	let mockReadDir: Mock;
@@ -40,6 +65,14 @@ describe('graphDataBuilder', () => {
 	// Mock file system with linked documents
 	const mockFileSystem: MockDirectory = {
 		_isDirectory: true,
+		'.hidden.md': {
+			content: '# Hidden\n\nThis file should not be scanned.',
+			size: 40,
+		},
+		'notes.txt': {
+			content: 'Plain text notes should not be scanned.',
+			size: 40,
+		},
 		'readme.md': {
 			content:
 				'# Project\n\nSee [[getting-started]] for help.\n\nVisit [GitHub](https://github.com/test/repo).',
@@ -98,6 +131,55 @@ describe('graphDataBuilder', () => {
 		return current;
 	}
 
+	function createFile(content: string, size = content.length): MockFile {
+		return { content, size };
+	}
+
+	function setEntry(path: string, entry: MockFile | MockDirectory): void {
+		const parts = path.split('/').filter(Boolean);
+		let current = mockFileSystem;
+
+		for (const part of parts.slice(0, -1)) {
+			const existing = current[part];
+			if (!existing || typeof existing !== 'object' || 'content' in existing) {
+				current[part] = { _isDirectory: true };
+			}
+			current = current[part] as MockDirectory;
+		}
+
+		current[parts[parts.length - 1]] = entry;
+	}
+
+	function deleteEntry(path: string): void {
+		const parts = path.split('/').filter(Boolean);
+		let current = mockFileSystem;
+
+		for (const part of parts.slice(0, -1)) {
+			const next = current[part];
+			if (!next || typeof next !== 'object' || 'content' in next) return;
+			current = next as MockDirectory;
+		}
+
+		delete current[parts[parts.length - 1]];
+	}
+
+	async function withTemporaryFiles<T>(
+		entries: Record<string, MockFile | MockDirectory>,
+		callback: () => Promise<T>
+	): Promise<T> {
+		for (const [path, entry] of Object.entries(entries)) {
+			setEntry(path, entry);
+		}
+
+		try {
+			return await callback();
+		} finally {
+			for (const path of Object.keys(entries)) {
+				deleteEntry(path);
+			}
+		}
+	}
+
 	function mockReadDirImpl(
 		dirPath: string
 	): Promise<Array<{ name: string; isDirectory: boolean; path: string }>> {
@@ -151,6 +233,13 @@ describe('graphDataBuilder', () => {
 	}
 
 	beforeEach(() => {
+		unexpectedConsoleLogs = [];
+		vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+			if (!isExpectedDocumentGraphLog(args)) {
+				unexpectedConsoleLogs.push(args);
+			}
+		});
+
 		// Clear the cache before each test to ensure isolation
 		clearGraphDataCache();
 
@@ -240,6 +329,7 @@ describe('graphDataBuilder', () => {
 		});
 
 		it('should terminate directory scan when symlink cycle would recurse forever', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			// Simulate a cycle: /test always reports a "loop" subdir that resolves
 			// back to /test. Without depth protection this recurses indefinitely.
 			const cyclicReadDir = vi.fn().mockImplementation(async (dirPath: string) => [
@@ -266,15 +356,22 @@ describe('graphDataBuilder', () => {
 				},
 			});
 
-			// The call must complete — depth cap prevents runaway recursion
-			const result = await buildGraphData({
-				rootPath: '/test',
-				focusFile: 'entry.md',
-			});
+			try {
+				// The call must complete — depth cap prevents runaway recursion
+				const result = await buildGraphData({
+					rootPath: '/test',
+					focusFile: 'entry.md',
+				});
 
-			expect(result.nodes.length).toBeGreaterThan(0);
-			// readDir should be called a bounded number of times (depth cap is 10)
-			expect(cyclicReadDir.mock.calls.length).toBeLessThanOrEqual(12);
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'scanMarkdownFiles: reached max depth 10 at /test; stopping recursion'
+				);
+				expect(result.nodes.length).toBeGreaterThan(0);
+				// readDir should be called a bounded number of times (depth cap is 10)
+				expect(cyclicReadDir.mock.calls.length).toBeLessThanOrEqual(12);
+			} finally {
+				consoleWarn.mockRestore();
+			}
 		});
 	});
 
@@ -303,6 +400,66 @@ describe('graphDataBuilder', () => {
 
 			const nodeIds = result.nodes.map((n) => n.id);
 			expect(nodeIds).toContain('doc-advanced/config.md');
+		});
+	});
+
+	describe('directory scanning', () => {
+		it('skips hidden markdown files and non-markdown files while collecting all markdown files', async () => {
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+			});
+
+			expect(result.allMarkdownFiles).toContain('readme.md');
+			expect(result.allMarkdownFiles).not.toContain('.hidden.md');
+			expect(result.allMarkdownFiles).not.toContain('notes.txt');
+			expect(result.allMarkdownFiles).not.toContain('node_modules/package.json');
+		});
+
+		it('throws a clear error when the root directory cannot be read', async () => {
+			mockReadDir.mockRejectedValue(new Error('Permission denied'));
+
+			await expect(
+				buildGraphData({
+					rootPath: '/test',
+					focusFile: 'readme.md',
+				})
+			).rejects.toThrow('Failed to read directory: /test. Permission denied');
+		});
+
+		it('uses the permission fallback message when the root scan throws a non-Error value', async () => {
+			mockReadDir.mockRejectedValue('denied');
+
+			await expect(
+				buildGraphData({
+					rootPath: '/test',
+					focusFile: 'readme.md',
+				})
+			).rejects.toThrow('Failed to read directory: /test. Check permissions and path validity.');
+		});
+
+		it('logs and continues when a nested directory cannot be read', async () => {
+			const readError = new Error('No access');
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockReadDir.mockImplementation((dirPath: string) => {
+				if (dirPath === '/test/advanced') {
+					return Promise.reject(readError);
+				}
+				return mockReadDirImpl(dirPath);
+			});
+
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 1,
+			});
+
+			expect(result.nodes.map((node) => node.id)).toContain('doc-readme.md');
+			expect(result.allMarkdownFiles).not.toContain('advanced/config.md');
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'Failed to scan directory /test/advanced:',
+				readError
+			);
 		});
 	});
 
@@ -356,6 +513,28 @@ describe('graphDataBuilder', () => {
 			// No edges since only one document is loaded
 			expect(result.edges.length).toBe(0);
 		});
+
+		it('does not queue a focus file link that resolves back to the focus file', async () => {
+			await withTemporaryFiles(
+				{
+					'self-linked.md': createFile('# Self\n\n[[self-linked]]'),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'self-linked.md',
+					});
+
+					expect(result.nodes.map((node) => node.id)).toEqual(['doc-self-linked.md']);
+					expect(result.edges).toContainEqual(
+						expect.objectContaining({
+							source: 'doc-self-linked.md',
+							target: 'doc-self-linked.md',
+						})
+					);
+				}
+			);
+		});
 	});
 
 	describe('external links', () => {
@@ -382,6 +561,44 @@ describe('graphDataBuilder', () => {
 				(n) => n.id === 'ext-github.com'
 			);
 			expect(githubNode).toBeDefined();
+		});
+
+		it('groups duplicate external links by domain without duplicating identical URLs', async () => {
+			await withTemporaryFiles(
+				{
+					'external-dupes.md': createFile(
+						[
+							'# External Dupes',
+							'[[external-dupes-child]]',
+							'[One](https://example.com/a)',
+							'[One again](https://example.com/a)',
+						].join('\n\n')
+					),
+					'external-dupes-child.md': createFile(
+						[
+							'# External Dupes Child',
+							'[Same](https://example.com/a)',
+							'[Two](https://example.com/b)',
+						].join('\n\n')
+					),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'external-dupes.md',
+						maxDepth: 1,
+					});
+
+					const exampleNode = result.cachedExternalData.externalNodes.find(
+						(node) => node.id === 'ext-example.com'
+					);
+					expect(exampleNode).toBeDefined();
+					const data = exampleNode!.data as ExternalLinkNodeData;
+					expect(data.linkCount).toBe(3);
+					expect(data.urls).toEqual(['https://example.com/a', 'https://example.com/b']);
+					expect(result.cachedExternalData.totalLinkCount).toBe(3);
+				}
+			);
 		});
 	});
 
@@ -418,20 +635,63 @@ describe('graphDataBuilder', () => {
 
 	describe('error handling', () => {
 		it('should return empty graph when focus file does not exist', async () => {
-			const result = await buildGraphData({
-				rootPath: '/test',
-				focusFile: 'nonexistent.md',
-			});
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-			expect(result.nodes).toHaveLength(0);
-			expect(result.edges).toHaveLength(0);
-			expect(result.totalDocuments).toBe(0);
+			try {
+				const result = await buildGraphData({
+					rootPath: '/test',
+					focusFile: 'nonexistent.md',
+				});
+
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[DocumentGraph] parseFileWithSsh: stat returned null for /test/nonexistent.md'
+				);
+				expect(consoleError).toHaveBeenCalledWith(
+					'[DocumentGraph] Failed to parse focus file: nonexistent.md'
+				);
+				expect(result.nodes).toHaveLength(0);
+				expect(result.edges).toHaveLength(0);
+				expect(result.totalDocuments).toBe(0);
+			} finally {
+				consoleWarn.mockRestore();
+				consoleError.mockRestore();
+			}
 		});
 
 		it('should handle file read errors gracefully', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const readError = new Error('File read error');
 			mockReadFile.mockImplementation((path: string) => {
 				if (path.includes('getting-started')) {
-					return Promise.reject(new Error('File read error'));
+					return Promise.reject(readError);
+				}
+				return mockReadFileImpl(path);
+			});
+
+			try {
+				const result = await buildGraphData({
+					rootPath: '/test',
+					focusFile: 'readme.md',
+					maxDepth: 2,
+				});
+
+				// Should still have readme.md even though getting-started failed
+				expect(result.nodes.find((n) => n.id === 'doc-readme.md')).toBeDefined();
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'Failed to parse file /test/getting-started.md:',
+					readError
+				);
+			} finally {
+				consoleWarn.mockRestore();
+			}
+		});
+
+		it('should skip linked files when readFile returns null', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockReadFile.mockImplementation((path: string) => {
+				if (path.includes('getting-started')) {
+					return Promise.resolve(null);
 				}
 				return mockReadFileImpl(path);
 			});
@@ -442,8 +702,35 @@ describe('graphDataBuilder', () => {
 				maxDepth: 2,
 			});
 
-			// Should still have readme.md even though getting-started failed
-			expect(result.nodes.find((n) => n.id === 'doc-readme.md')).toBeDefined();
+			expect(result.nodes.map((node) => node.id)).toEqual(['doc-readme.md']);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[DocumentGraph] parseFileWithSsh: readFile returned null for /test/getting-started.md'
+			);
+		});
+
+		it('should default missing file size and modified time while parsing', async () => {
+			await withTemporaryFiles(
+				{
+					'metadata-defaults.md': createFile('# Metadata defaults'),
+				},
+				async () => {
+					mockStat.mockImplementation((filePath: string) => {
+						if (filePath.endsWith('/metadata-defaults.md')) {
+							return Promise.resolve({});
+						}
+						return mockStatImpl(filePath);
+					});
+
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'metadata-defaults.md',
+					});
+
+					const metadataNode = result.nodes.find((node) => node.id === 'doc-metadata-defaults.md');
+					expect(metadataNode).toBeDefined();
+					expect((metadataNode!.data as DocumentNodeData).size).toBe('0 B');
+				}
+			);
 		});
 	});
 
@@ -481,6 +768,142 @@ describe('graphDataBuilder', () => {
 			});
 
 			expect(progressFiles).toContain('readme.md');
+		});
+
+		it('yields during larger parsing batches without dropping progress updates', async () => {
+			const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+				callback(1);
+				return 1;
+			});
+			vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
+
+			await withTemporaryFiles(
+				{
+					'batch-root.md': createFile(
+						Array.from(
+							{ length: BATCH_SIZE_BEFORE_YIELD },
+							(_, index) => `[[batch-${index + 1}]]`
+						).join('\n')
+					),
+					...Object.fromEntries(
+						Array.from({ length: BATCH_SIZE_BEFORE_YIELD }, (_, index) => [
+							`batch-${index + 1}.md`,
+							createFile(`# Batch ${index + 1}`),
+						])
+					),
+				},
+				async () => {
+					const onProgress = vi.fn();
+
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'batch-root.md',
+						maxDepth: 1,
+						onProgress,
+					});
+
+					expect(result.nodes).toHaveLength(BATCH_SIZE_BEFORE_YIELD + 1);
+					expect(requestAnimationFrame).toHaveBeenCalled();
+					expect(onProgress).toHaveBeenCalledWith(
+						expect.objectContaining({
+							phase: 'parsing',
+							current: BATCH_SIZE_BEFORE_YIELD,
+						})
+					);
+				}
+			);
+		});
+	});
+
+	describe('performance and large-file handling', () => {
+		it('warns when a small graph build exceeds the configured threshold', async () => {
+			const perfMetrics = getRendererPerfMetrics('DocumentGraph');
+			vi.spyOn(perfMetrics, 'end').mockReturnValue(1001);
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 1,
+			});
+
+			expect(consoleWarn).toHaveBeenCalledWith(
+				expect.stringContaining('[DocumentGraph] buildGraphData took 1001ms'),
+				expect.objectContaining({
+					nodeCount: expect.any(Number),
+					edgeCount: expect.any(Number),
+				})
+			);
+		});
+
+		it('uses the large-graph threshold when at least 100 documents are loaded', async () => {
+			const perfMetrics = getRendererPerfMetrics('DocumentGraph');
+			vi.spyOn(perfMetrics, 'end').mockReturnValue(3001);
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const linkedFiles = 99;
+
+			await withTemporaryFiles(
+				{
+					'large-threshold-root.md': createFile(
+						Array.from(
+							{ length: linkedFiles },
+							(_, index) => `[[large-threshold-${index + 1}]]`
+						).join('\n')
+					),
+					...Object.fromEntries(
+						Array.from({ length: linkedFiles }, (_, index) => [
+							`large-threshold-${index + 1}.md`,
+							createFile(`# Large Threshold ${index + 1}`),
+						])
+					),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'large-threshold-root.md',
+						maxDepth: 1,
+						maxNodes: 100,
+					});
+
+					expect(result.loadedDocuments).toBe(100);
+					expect(consoleWarn).toHaveBeenCalledWith(
+						expect.stringContaining('threshold: 3000ms'),
+						expect.objectContaining({
+							nodeCount: 100,
+						})
+					);
+				}
+			);
+		});
+
+		it('marks large files and truncates content before parsing', async () => {
+			const largeContent = `# Large File\n\n[[standalone]]\n\n${'word '.repeat(
+				Math.ceil(LARGE_FILE_THRESHOLD / 5)
+			)}`;
+
+			await withTemporaryFiles(
+				{
+					'large.md': createFile(largeContent, LARGE_FILE_THRESHOLD + 1),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'large.md',
+						maxDepth: 1,
+					});
+
+					const largeNode = result.nodes.find((node) => node.id === 'doc-large.md');
+					expect(largeNode).toBeDefined();
+					const data = largeNode!.data as DocumentNodeData;
+					expect(data.isLargeFile).toBe(true);
+					expect(result.edges).toContainEqual(
+						expect.objectContaining({
+							source: 'doc-large.md',
+							target: 'doc-standalone.md',
+						})
+					);
+				}
+			);
 		});
 	});
 
@@ -659,18 +1082,310 @@ describe('graphDataBuilder', () => {
 			});
 
 			const updates: BacklinkUpdateData[] = [];
+			let scanComplete = false;
 
 			await new Promise<void>((resolve) => {
 				result.startBacklinkScan!(
 					(update) => updates.push(update),
+					() => {
+						scanComplete = true;
+						resolve();
+					}
+				);
+			});
+
+			expect(scanComplete).toBe(true);
+			expect(Array.isArray(updates)).toBe(true);
+		});
+
+		it('sends a final backlink update when discoveries remain after the last batch', async () => {
+			await withTemporaryFiles(
+				{
+					'late-backlink.md': createFile('# Late\n\nSee [[standalone]].'),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+
+					const updates: BacklinkUpdateData[] = [];
+
+					await new Promise<void>((resolve) => {
+						result.startBacklinkScan!(
+							(update) => updates.push(update),
+							() => resolve()
+						);
+					});
+
+					expect(updates.at(-1)).toEqual(
+						expect.objectContaining({
+							newNodes: expect.arrayContaining([
+								expect.objectContaining({ id: 'doc-late-backlink.md' }),
+							]),
+							totalFiles: expect.any(Number),
+						})
+					);
+				}
+			);
+		});
+
+		it('continues backlink scanning when link-only parsing returns null', async () => {
+			await withTemporaryFiles(
+				{
+					'statless-backlink.md': createFile('# Statless\n\n[[standalone]]'),
+				},
+				async () => {
+					mockStat.mockImplementation((filePath: string) => {
+						if (filePath.endsWith('/statless-backlink.md')) {
+							return Promise.resolve(null);
+						}
+						return mockStatImpl(filePath);
+					});
+
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+
+					const updates: BacklinkUpdateData[] = [];
+
+					await new Promise<void>((resolve) => {
+						result.startBacklinkScan!(
+							(update) => updates.push(update),
+							() => resolve()
+						);
+					});
+
+					const discoveredIds = updates.flatMap((update) => update.newNodes.map((node) => node.id));
+					expect(discoveredIds).not.toContain('doc-statless-backlink.md');
+				}
+			);
+		});
+
+		it('continues backlink scanning when link-only reads return null or throw', async () => {
+			await withTemporaryFiles(
+				{
+					'metadata-default-backlink.md': createFile('# Metadata fallback\n\n[[standalone]]'),
+					'null-read-backlink.md': createFile('# Null read\n\n[[standalone]]'),
+					'throwing-read-backlink.md': createFile('# Throwing read\n\n[[standalone]]'),
+				},
+				async () => {
+					const readError = new Error('read failed');
+					mockStat.mockImplementation((filePath: string) => {
+						if (filePath.endsWith('/metadata-default-backlink.md')) {
+							return Promise.resolve({});
+						}
+						return mockStatImpl(filePath);
+					});
+					mockReadFile.mockImplementation((filePath: string) => {
+						if (filePath.endsWith('/null-read-backlink.md')) {
+							return Promise.resolve(null);
+						}
+						if (filePath.endsWith('/throwing-read-backlink.md')) {
+							return Promise.reject(readError);
+						}
+						return mockReadFileImpl(filePath);
+					});
+
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+
+					const updates: BacklinkUpdateData[] = [];
+
+					await new Promise<void>((resolve) => {
+						result.startBacklinkScan!(
+							(update) => updates.push(update),
+							() => resolve()
+						);
+					});
+
+					const discoveredIds = updates.flatMap((update) => update.newNodes.map((node) => node.id));
+					expect(discoveredIds).toContain('doc-metadata-default-backlink.md');
+					expect(discoveredIds).not.toContain('doc-null-read-backlink.md');
+					expect(discoveredIds).not.toContain('doc-throwing-read-backlink.md');
+				}
+			);
+		});
+
+		it('skips backlink nodes when full parsing fails after link-only parsing succeeds', async () => {
+			await withTemporaryFiles(
+				{
+					'vanishing-backlink.md': createFile('# Vanishing\n\n[[standalone]]'),
+				},
+				async () => {
+					const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+					let vanishingReads = 0;
+					mockReadFile.mockImplementation((filePath: string) => {
+						if (filePath.endsWith('/vanishing-backlink.md')) {
+							vanishingReads++;
+							return Promise.resolve(vanishingReads === 1 ? '# Vanishing\n\n[[standalone]]' : null);
+						}
+						return mockReadFileImpl(filePath);
+					});
+
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+
+					const updates: BacklinkUpdateData[] = [];
+
+					await new Promise<void>((resolve) => {
+						result.startBacklinkScan!(
+							(update) => updates.push(update),
+							() => resolve()
+						);
+					});
+
+					const discoveredIds = updates.flatMap((update) => update.newNodes.map((node) => node.id));
+					expect(discoveredIds).not.toContain('doc-vanishing-backlink.md');
+					expect(consoleWarn).toHaveBeenCalledWith(
+						'[DocumentGraph] parseFileWithSsh: readFile returned null for /test/vanishing-backlink.md'
+					);
+				}
+			);
+		});
+
+		it('does not call completion when aborted after a final backlink update', async () => {
+			await withTemporaryFiles(
+				{
+					'abort-after-update.md': createFile('# Abort after update\n\n[[standalone]]'),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+					let abort: (() => void) | undefined;
+					const onComplete = vi.fn();
+
+					await new Promise<void>((resolve) => {
+						abort = result.startBacklinkScan!(() => {
+							abort?.();
+							resolve();
+						}, onComplete);
+					});
+
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					expect(onComplete).not.toHaveBeenCalled();
+				}
+			);
+		});
+
+		it('uses cached parsed files for backlink link-only scans', async () => {
+			await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+				maxDepth: 1,
+			});
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'standalone.md',
+			});
+			mockReadFile.mockClear();
+
+			await new Promise<void>((resolve) => {
+				result.startBacklinkScan!(
+					() => {},
 					() => resolve()
 				);
 			});
 
-			// Even if no backlinks found, should have been called with progress info
-			// Since standalone.md has no links to it, updates might be empty or have progress-only updates
-			// The important thing is the scan completed
-			expect(true).toBe(true); // Scan completed without error
+			expect(mockReadFile).not.toHaveBeenCalledWith('/test/readme.md', undefined);
+		});
+
+		it('truncates large files during backlink link-only scans', async () => {
+			const largeBacklinkContent = `# Large Backlink\n\n[[standalone]]\n\n${'word '.repeat(
+				Math.ceil(LARGE_FILE_THRESHOLD / 5)
+			)}`;
+
+			await withTemporaryFiles(
+				{
+					'large-backlink.md': createFile(largeBacklinkContent, LARGE_FILE_THRESHOLD + 1),
+				},
+				async () => {
+					const result = await buildGraphData({
+						rootPath: '/test',
+						focusFile: 'standalone.md',
+					});
+
+					const updates: BacklinkUpdateData[] = [];
+
+					await new Promise<void>((resolve) => {
+						result.startBacklinkScan!(
+							(update) => updates.push(update),
+							() => resolve()
+						);
+					});
+
+					const largeNode = updates
+						.flatMap((update) => update.newNodes)
+						.find((node) => node.id === 'doc-large-backlink.md');
+					expect(largeNode).toBeDefined();
+					expect((largeNode!.data as DocumentNodeData).isLargeFile).toBe(true);
+				}
+			);
+		});
+
+		it('reports completion when backlink scanning fails', async () => {
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+			});
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const scanError = new Error('scan failed');
+			mockReadDir.mockRejectedValue(scanError);
+			let completed = false;
+
+			await new Promise<void>((resolve) => {
+				result.startBacklinkScan!(
+					() => {},
+					() => {
+						completed = true;
+						resolve();
+					}
+				);
+			});
+
+			expect(completed).toBe(true);
+			expect(consoleError).toHaveBeenCalledWith(
+				'[DocumentGraph] Backlink scan failed:',
+				expect.objectContaining({
+					message: 'Failed to read directory: /test. scan failed',
+				})
+			);
+		});
+
+		it('does not call completion when an aborted backlink scan later fails', async () => {
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'readme.md',
+			});
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			let rejectScan!: (error: Error) => void;
+			mockReadDir.mockImplementation(
+				() =>
+					new Promise((_resolve, reject) => {
+						rejectScan = reject;
+					})
+			);
+			const onComplete = vi.fn();
+
+			const abort = result.startBacklinkScan!(() => {}, onComplete);
+			abort();
+			rejectScan(new Error('late scan failure'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(consoleError).toHaveBeenCalledWith(
+				'[DocumentGraph] Backlink scan failed:',
+				expect.objectContaining({
+					message: 'Failed to read directory: /test. late scan failure',
+				})
+			);
+			expect(onComplete).not.toHaveBeenCalled();
 		});
 	});
 
@@ -863,15 +1578,28 @@ describe('graphDataBuilder', () => {
 		});
 
 		it('should handle non-existent file gracefully', async () => {
-			const result = await expandNode({
-				rootPath: '/test',
-				filePath: 'nonexistent.md',
-				loadedPaths: new Set(['readme.md']),
-				maxDepth: 1,
-			});
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-			expect(result.hasNewContent).toBe(false);
-			expect(result.newNodes.length).toBe(0);
+			try {
+				const result = await expandNode({
+					rootPath: '/test',
+					filePath: 'nonexistent.md',
+					loadedPaths: new Set(['readme.md']),
+					maxDepth: 1,
+				});
+
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[DocumentGraph] parseFileWithSsh: stat returned null for /test/nonexistent.md'
+				);
+				expect(consoleWarn).toHaveBeenCalledWith(
+					'[DocumentGraph] Failed to parse source node for expansion:',
+					'nonexistent.md'
+				);
+				expect(result.hasNewContent).toBe(false);
+				expect(result.newNodes.length).toBe(0);
+			} finally {
+				consoleWarn.mockRestore();
+			}
 		});
 
 		it('should respect maxDepth when expanding', async () => {
@@ -889,6 +1617,253 @@ describe('graphDataBuilder', () => {
 			const newNodeIds = result.newNodes.map((n) => n.id);
 			expect(newNodeIds).toContain('doc-getting-started.md');
 			expect(newNodeIds).not.toContain('doc-advanced/config.md');
+		});
+
+		it('skips queued nodes that exceed maxDepth', async () => {
+			const result = await expandNode({
+				rootPath: '/test',
+				filePath: 'readme.md',
+				loadedPaths: new Set(['readme.md']),
+				maxDepth: 0,
+			});
+
+			expect(result.hasNewContent).toBe(true);
+			expect(result.newNodes).toHaveLength(0);
+			expect(result.newExternalNodes.map((node) => node.id)).toEqual(['ext-github.com']);
+			expect(result.updatedLoadedPaths).toEqual(new Set(['readme.md']));
+		});
+
+		it('continues expansion when an outgoing link cannot be parsed', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			await withTemporaryFiles(
+				{
+					'missing-target-source.md': createFile('# Missing target\n\n[[ghost-target]]'),
+				},
+				async () => {
+					try {
+						const result = await expandNode({
+							rootPath: '/test',
+							filePath: 'missing-target-source.md',
+							loadedPaths: new Set(['missing-target-source.md']),
+							maxDepth: 1,
+						});
+
+						expect(consoleWarn).toHaveBeenCalledWith(
+							'[DocumentGraph] parseFileWithSsh: stat returned null for /test/ghost-target.md'
+						);
+						expect(result.hasNewContent).toBe(false);
+						expect(result.newNodes).toHaveLength(0);
+						expect(result.updatedLoadedPaths).toEqual(new Set(['missing-target-source.md']));
+					} finally {
+						consoleWarn.mockRestore();
+					}
+				}
+			);
+		});
+
+		it('discovers second-depth nodes without creating a source-to-grandchild edge', async () => {
+			await withTemporaryFiles(
+				{
+					'depth-source.md': createFile('# Source\n\n[[depth-child]]'),
+					'depth-child.md': createFile('# Child\n\n[[depth-source]]\n\n[[depth-grandchild]]'),
+					'depth-grandchild.md': createFile('# Grandchild'),
+				},
+				async () => {
+					const result = await expandNode({
+						rootPath: '/test',
+						filePath: 'depth-source.md',
+						loadedPaths: new Set(['depth-source.md']),
+						maxDepth: 2,
+						allMarkdownFiles: ['depth-source.md', 'depth-child.md', 'depth-grandchild.md'],
+					});
+
+					expect(result.newNodes.map((node) => node.id)).toEqual([
+						'doc-depth-child.md',
+						'doc-depth-grandchild.md',
+					]);
+					expect(result.newEdges).toContainEqual(
+						expect.objectContaining({
+							source: 'doc-depth-source.md',
+							target: 'doc-depth-child.md',
+						})
+					);
+					expect(result.newEdges).not.toContainEqual(
+						expect.objectContaining({ target: 'doc-depth-grandchild.md' })
+					);
+				}
+			);
+		});
+
+		it('deduplicates repeated edges from expanded nodes to loaded documents', async () => {
+			await withTemporaryFiles(
+				{
+					'duplicate-edge-source.md': createFile('# Source\n\n[[duplicate-edge-child]]'),
+					'duplicate-edge-child.md': createFile(
+						'# Child\n\n[[readme]]\n\n[[readme]]\n\n[[duplicate-edge-child]]'
+					),
+				},
+				async () => {
+					const result = await expandNode({
+						rootPath: '/test',
+						filePath: 'duplicate-edge-source.md',
+						loadedPaths: new Set(['duplicate-edge-source.md', 'readme.md']),
+						maxDepth: 1,
+					});
+
+					const duplicateEdges = result.newEdges.filter(
+						(edge) =>
+							edge.source === 'doc-duplicate-edge-child.md' && edge.target === 'doc-readme.md'
+					);
+					expect(duplicateEdges).toHaveLength(1);
+				}
+			);
+		});
+
+		it('defensively deduplicates duplicate parser output during expansion', async () => {
+			vi.resetModules();
+			vi.doMock('../../../../renderer/utils/markdownLinkParser', async (importOriginal) => {
+				const actual =
+					await importOriginal<typeof import('../../../../renderer/utils/markdownLinkParser')>();
+
+				return {
+					...actual,
+					parseMarkdownLinks: vi.fn((content: string, relativePath: string, options) => {
+						if (relativePath === 'duplicate-parser-source.md') {
+							return {
+								internalLinks: ['duplicate-parser-child.md'],
+								externalLinks: [
+									{ url: 'https://example.com/a', domain: 'example.com' },
+									{ url: 'https://example.com/a', domain: 'example.com' },
+								],
+								frontMatter: {},
+							};
+						}
+
+						if (relativePath === 'duplicate-parser-child.md') {
+							return {
+								internalLinks: ['readme.md', 'readme.md'],
+								externalLinks: [],
+								frontMatter: {},
+							};
+						}
+
+						return actual.parseMarkdownLinks(content, relativePath, options);
+					}),
+				};
+			});
+
+			try {
+				const { expandNode: expandNodeWithDuplicateParser } =
+					await import('../../../../renderer/components/DocumentGraph/graphDataBuilder');
+
+				await withTemporaryFiles(
+					{
+						'duplicate-parser-source.md': createFile('# Source'),
+						'duplicate-parser-child.md': createFile('# Child'),
+					},
+					async () => {
+						const result = await expandNodeWithDuplicateParser({
+							rootPath: '/test',
+							filePath: 'duplicate-parser-source.md',
+							loadedPaths: new Set(['duplicate-parser-source.md', 'readme.md']),
+							maxDepth: 1,
+						});
+
+						const exampleNode = result.newExternalNodes.find(
+							(node) => node.id === 'ext-example.com'
+						);
+						expect(exampleNode).toBeDefined();
+						expect((exampleNode!.data as ExternalLinkNodeData).urls).toEqual([
+							'https://example.com/a',
+						]);
+						const duplicateEdges = result.newEdges.filter(
+							(edge) =>
+								edge.source === 'doc-duplicate-parser-child.md' && edge.target === 'doc-readme.md'
+						);
+						expect(duplicateEdges).toHaveLength(1);
+					}
+				);
+			} finally {
+				vi.doUnmock('../../../../renderer/utils/markdownLinkParser');
+				vi.resetModules();
+			}
+		});
+
+		it('groups external links from the source and newly expanded nodes', async () => {
+			await withTemporaryFiles(
+				{
+					'external-source.md': createFile(
+						[
+							'# External Source',
+							'[[external-child]]',
+							'[One](https://example.com/a)',
+							'[One duplicate](https://example.com/a)',
+							'[Two](https://example.com/b)',
+						].join('\n\n')
+					),
+					'external-child.md': createFile(
+						[
+							'# External Child',
+							'[Same as source](https://example.com/a)',
+							'[Three duplicate](https://example.com/c)',
+							'[Four](https://example.com/d)',
+						].join('\n\n')
+					),
+				},
+				async () => {
+					const result = await expandNode({
+						rootPath: '/test',
+						filePath: 'external-source.md',
+						loadedPaths: new Set(['external-source.md']),
+						maxDepth: 1,
+					});
+
+					const exampleNode = result.newExternalNodes.find((node) => node.id === 'ext-example.com');
+					expect(exampleNode).toBeDefined();
+					const data = exampleNode!.data as ExternalLinkNodeData;
+					expect(data.linkCount).toBe(5);
+					expect(data.urls).toEqual([
+						'https://example.com/a',
+						'https://example.com/b',
+						'https://example.com/c',
+						'https://example.com/d',
+					]);
+				}
+			);
+		});
+
+		it('yields during larger expansion batches without losing loaded paths', async () => {
+			vi.stubGlobal('requestAnimationFrame', undefined);
+
+			await withTemporaryFiles(
+				{
+					'expand-batch-root.md': createFile(
+						Array.from(
+							{ length: BATCH_SIZE_BEFORE_YIELD },
+							(_, index) => `[[expand-batch-${index + 1}]]`
+						).join('\n')
+					),
+					...Object.fromEntries(
+						Array.from({ length: BATCH_SIZE_BEFORE_YIELD }, (_, index) => [
+							`expand-batch-${index + 1}.md`,
+							createFile(`# Expand Batch ${index + 1}`),
+						])
+					),
+				},
+				async () => {
+					const result = await expandNode({
+						rootPath: '/test',
+						filePath: 'expand-batch-root.md',
+						loadedPaths: new Set(['expand-batch-root.md']),
+						maxDepth: 1,
+					});
+
+					expect(result.newNodes).toHaveLength(BATCH_SIZE_BEFORE_YIELD);
+					for (let index = 1; index <= BATCH_SIZE_BEFORE_YIELD; index++) {
+						expect(result.updatedLoadedPaths.has(`expand-batch-${index}.md`)).toBe(true);
+					}
+				}
+			);
 		});
 
 		it('should update loadedPaths with new paths', async () => {
@@ -961,4 +1936,10 @@ describe('graphDataBuilder', () => {
 			expect(stats.parsedFileCount).toBe(0);
 		});
 	});
+});
+
+afterEach(() => {
+	expect(unexpectedConsoleLogs).toEqual([]);
+	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });

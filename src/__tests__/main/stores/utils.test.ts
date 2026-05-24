@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fsSync from 'fs';
+import path from 'path';
 
 // Mock electron-store with a class
 vi.mock('electron-store', () => {
@@ -194,6 +195,92 @@ describe('stores/utils', () => {
 				`Custom sync path contains null bytes: ${nullBytePath}`
 			);
 		});
+
+		it('should reject Windows reserved path segments', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const reservedPath = '/Users/test/CON/maestro';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(reservedPath),
+			} as unknown as Store<BootstrapSettings>;
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			try {
+				const result = getCustomSyncPath(mockStore);
+
+				expect(result).toBeUndefined();
+				expect(consoleSpy).toHaveBeenCalledWith(
+					`Custom sync path contains Windows reserved name: ${reservedPath}`
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('should reject Windows sensitive drive roots', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const sensitivePath = 'C:\\Windows\\Maestro';
+			const isAbsoluteSpy = vi.spyOn(path, 'isAbsolute').mockReturnValue(true);
+			const normalizeSpy = vi.spyOn(path, 'normalize').mockReturnValue(sensitivePath);
+			const mockStore = {
+				get: vi.fn().mockReturnValue(sensitivePath),
+			} as unknown as Store<BootstrapSettings>;
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			try {
+				const result = getCustomSyncPath(mockStore);
+
+				expect(result).toBeUndefined();
+				expect(consoleSpy).toHaveBeenCalledWith(
+					`Custom sync path cannot be in sensitive system directory: ${sensitivePath}`
+				);
+			} finally {
+				isAbsoluteSpy.mockRestore();
+				normalizeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('should allow valid Windows paths without a drive prefix', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const customPath = '/Users/test/Maestro';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(customPath),
+			} as unknown as Store<BootstrapSettings>;
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+
+			try {
+				const result = getCustomSyncPath(mockStore);
+
+				expect(result).toBe(customPath);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('should allow Windows drive paths outside sensitive roots', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const customPath = 'C:\\Users\\test\\Maestro';
+			const isAbsoluteSpy = vi.spyOn(path, 'isAbsolute').mockReturnValue(true);
+			const normalizeSpy = vi.spyOn(path, 'normalize').mockReturnValue(customPath);
+			const mockStore = {
+				get: vi.fn().mockReturnValue(customPath),
+			} as unknown as Store<BootstrapSettings>;
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+
+			try {
+				const result = getCustomSyncPath(mockStore);
+
+				expect(result).toBe(customPath);
+			} finally {
+				isAbsoluteSpy.mockRestore();
+				normalizeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
 	});
 
 	describe('getEarlySettings', () => {
@@ -259,6 +346,28 @@ describe('stores/utils', () => {
 				useNativeTitleBar: false,
 				autoHideMenuBar: false,
 			});
+		});
+
+		it('should not auto-disable GPU acceleration when /proc/version is missing', () => {
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+			vi.mocked(fsSync.existsSync).mockReturnValue(false);
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result.disableGpuAcceleration).toBe(false);
+			expect(fsSync.readFileSync).not.toHaveBeenCalled();
+		});
+
+		it('should ignore /proc/version read errors during WSL detection', () => {
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(fsSync.readFileSync).mockImplementation(() => {
+				throw new Error('read failed');
+			});
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result.disableGpuAcceleration).toBe(false);
 		});
 	});
 

@@ -735,11 +735,9 @@ class PhaseGenerator {
 						0
 					);
 					wizardDebugLogger.log('info', 'Task count from disk documents', { totalTasksFromDisk });
-					if (totalTasksFromDisk >= totalTasksFromParsed) {
-						documents = diskDocs;
-						documentsFromDisk = true;
-						wizardDebugLogger.log('info', 'Using documents from disk');
-					}
+					documents = diskDocs;
+					documentsFromDisk = true;
+					wizardDebugLogger.log('info', 'Using documents from disk');
 				} else {
 					wizardDebugLogger.log('warn', 'No documents found on disk');
 				}

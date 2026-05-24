@@ -449,12 +449,10 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setActiveSessionId(session.id);
 
 			// Find and activate the tab with this agent session ID
-			const tab = session.aiTabs?.find((t) => t.agentSessionId === moderatorSessionId);
-			if (tab) {
-				setSessions((prev) =>
-					prev.map((s) => (s.id === session.id ? { ...s, activeTabId: tab.id } : s))
-				);
-			}
+			const tab = session.aiTabs!.find((t) => t.agentSessionId === moderatorSessionId)!;
+			setSessions((prev) =>
+				prev.map((s) => (s.id === session.id ? { ...s, activeTabId: tab.id } : s))
+			);
 		}
 	}, []);
 

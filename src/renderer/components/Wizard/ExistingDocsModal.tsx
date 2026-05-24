@@ -39,7 +39,7 @@ export function ExistingDocsModal({
 	onCancel,
 }: ExistingDocsModalProps): JSX.Element {
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const layerIdRef = useRef('');
 	const continueButtonRef = useRef<HTMLButtonElement>(null);
 	const onCancelRef = useRef(onCancel);
 	onCancelRef.current = onCancel;
@@ -65,17 +65,13 @@ export function ExistingDocsModal({
 		});
 		layerIdRef.current = id;
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Update escape handler when onCancel changes
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCancelRef.current());
-		}
+		updateLayerHandler(layerIdRef.current, () => onCancelRef.current());
 	}, [onCancel, updateLayerHandler]);
 
 	// Handle keyboard navigation

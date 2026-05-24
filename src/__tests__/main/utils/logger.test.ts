@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const fsMock = vi.hoisted(() => ({
+	existsSync: vi.fn(),
+	mkdirSync: vi.fn(),
+	createWriteStream: vi.fn(),
+	write: vi.fn(),
+	end: vi.fn(),
+	createWriteStreamError: undefined as unknown,
+}));
+
+vi.mock('fs', () => ({
+	existsSync: fsMock.existsSync,
+	mkdirSync: fsMock.mkdirSync,
+	createWriteStream: fsMock.createWriteStream,
+}));
+
 // We need to test the Logger class, not the singleton
 // The module exports both the class structure and a singleton instance
 // We'll import and create fresh instances for testing
@@ -30,6 +45,8 @@ describe('Logger', () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(async () => {
+		mockFileLogging();
+
 		// Get a fresh logger instance
 		logger = await getLogger();
 
@@ -52,6 +69,30 @@ describe('Logger', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
+
+	function mockFileLogging(
+		options: { logsDirExists?: boolean; createWriteStreamThrows?: Error } = {}
+	) {
+		fsMock.write.mockReset();
+		fsMock.end.mockReset();
+		fsMock.mkdirSync.mockReset();
+		fsMock.existsSync.mockReset();
+		fsMock.createWriteStream.mockReset();
+		fsMock.createWriteStreamError = options.createWriteStreamThrows;
+
+		fsMock.write.mockImplementation((data: string) => {
+			return data.length > 0;
+		});
+		fsMock.existsSync.mockReturnValue(options.logsDirExists ?? true);
+		fsMock.createWriteStream.mockImplementation(() => {
+			if (fsMock.createWriteStreamError) {
+				throw fsMock.createWriteStreamError;
+			}
+			return { write: fsMock.write, end: fsMock.end };
+		});
+
+		return fsMock;
+	}
 
 	describe('Log Level Management', () => {
 		it('should have default log level of info', async () => {
@@ -105,6 +146,14 @@ describe('Logger', () => {
 
 			expect(logger.getLogs()).toHaveLength(1);
 			expect(logger.getLogs()[0].level).toBe('error');
+		});
+
+		it('should filter error logs when the configured level is invalid at runtime', async () => {
+			logger.setLogLevel('silent' as LogLevel);
+			logger.error('error message');
+
+			expect(logger.getLogs()).toHaveLength(0);
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
 		});
 	});
 
@@ -164,6 +213,150 @@ describe('Logger', () => {
 			logger.setMaxLogBuffer(10);
 
 			expect(logger.getLogs()).toHaveLength(5);
+		});
+	});
+
+	describe('File Logging', () => {
+		it('should use APPDATA and enable file logging by default on Windows', async () => {
+			const originalPlatform = process.platform;
+			const originalAppData = process.env.APPDATA;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.APPDATA = 'C:\\Users\\test\\AppData\\Roaming';
+			const { createWriteStream } = mockFileLogging({ logsDirExists: true });
+
+			try {
+				vi.resetModules();
+				let module = await import('../../../main/utils/logger');
+				const windowsLogger = module.logger;
+
+				expect(windowsLogger.getLogFilePath()).toContain(process.env.APPDATA);
+				expect(windowsLogger.getLogFilePath()).toContain('maestro-debug.log');
+				expect(windowsLogger.isFileLoggingEnabled()).toBe(true);
+				expect(createWriteStream).toHaveBeenCalledWith(windowsLogger.getLogFilePath(), {
+					flags: 'a',
+				});
+
+				delete process.env.APPDATA;
+				mockFileLogging({ logsDirExists: true });
+				vi.resetModules();
+				module = await import('../../../main/utils/logger');
+				expect(module.logger.getLogFilePath()).toContain('AppData');
+			} finally {
+				if (originalAppData === undefined) {
+					delete process.env.APPDATA;
+				} else {
+					process.env.APPDATA = originalAppData;
+				}
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('should use Linux XDG_CONFIG_HOME and fallback config paths', async () => {
+			const originalPlatform = process.platform;
+			const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+
+			try {
+				process.env.XDG_CONFIG_HOME = '/tmp/maestro-xdg-config';
+				mockFileLogging();
+				vi.resetModules();
+				let module = await import('../../../main/utils/logger');
+				expect(module.logger.getLogFilePath()).toContain('/tmp/maestro-xdg-config');
+
+				delete process.env.XDG_CONFIG_HOME;
+				mockFileLogging();
+				vi.resetModules();
+				module = await import('../../../main/utils/logger');
+				expect(module.logger.getLogFilePath()).toContain('.config');
+			} finally {
+				if (originalXdgConfigHome === undefined) {
+					delete process.env.XDG_CONFIG_HOME;
+				} else {
+					process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+				}
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('should enable file logging, create the log directory, and disable the stream', async () => {
+			const { write, end, mkdirSync, createWriteStream } = mockFileLogging({
+				logsDirExists: false,
+			});
+
+			logger.enableFileLogging();
+
+			expect(logger.isFileLoggingEnabled()).toBe(true);
+			expect(logger.getLogFilePath()).toContain('maestro-debug.log');
+			expect(mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+			expect(createWriteStream).toHaveBeenCalledWith(logger.getLogFilePath(), { flags: 'a' });
+			expect(write).toHaveBeenCalledWith(expect.stringContaining('Maestro started'));
+
+			logger.enableFileLogging();
+			expect(createWriteStream).toHaveBeenCalledTimes(1);
+
+			logger.disableFileLogging();
+			expect(end).toHaveBeenCalledTimes(1);
+			expect(logger.isFileLoggingEnabled()).toBe(false);
+
+			logger.disableFileLogging();
+			expect(end).toHaveBeenCalledTimes(1);
+		});
+
+		it('should disable file logging even if the stream is already absent', async () => {
+			logger.enableFileLogging();
+			(logger as unknown as { logFileStream: null }).logFileStream = null;
+
+			expect(() => logger.disableFileLogging()).not.toThrow();
+			expect(logger.isFileLoggingEnabled()).toBe(false);
+		});
+
+		it('should not recreate an existing log directory when enabling file logging', async () => {
+			const { mkdirSync } = mockFileLogging({ logsDirExists: true });
+
+			logger.enableFileLogging();
+
+			expect(logger.isFileLoggingEnabled()).toBe(true);
+			expect(mkdirSync).not.toHaveBeenCalled();
+		});
+
+		it('should log file setup failures without enabling file logging', async () => {
+			const error = new Error('stream denied');
+			mockFileLogging({
+				logsDirExists: true,
+				createWriteStreamThrows: error,
+			});
+
+			logger.enableFileLogging();
+
+			expect(logger.isFileLoggingEnabled()).toBe(false);
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'[Logger] Failed to enable file logging:',
+				error
+			);
+		});
+
+		it('should write log entries with and without data to the file stream', async () => {
+			const { write } = mockFileLogging();
+			logger.enableFileLogging();
+			write.mockClear();
+
+			logger.info('file info', 'FileContext', { ok: true });
+			logger.warn('file warning');
+
+			expect(write).toHaveBeenCalledWith(expect.stringContaining('[INFO] [FileContext] file info'));
+			expect(write).toHaveBeenCalledWith(expect.stringContaining('{"ok":true}'));
+			expect(write).toHaveBeenCalledWith(expect.stringContaining('[WARN] file warning\n'));
+		});
+
+		it('should keep logging in memory when file stream writes fail', async () => {
+			const { write } = mockFileLogging();
+			logger.enableFileLogging();
+			write.mockImplementation(() => {
+				throw new Error('write failed');
+			});
+
+			expect(() => logger.info('file write failure')).not.toThrow();
+			expect(logger.getLogs()[0].message).toBe('file write failure');
 		});
 	});
 

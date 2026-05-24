@@ -151,6 +151,7 @@ describe('Toast', () => {
 				{ duration: 5000, expected: '5s' },
 				{ duration: 125000, expected: '2m 5s' },
 				{ duration: 120000, expected: '2m' },
+				{ duration: 3605000, expected: '1h 5s' },
 			];
 
 			testCases.forEach(({ duration, expected }) => {
@@ -235,6 +236,23 @@ describe('Toast', () => {
 			});
 			expect(toastOuter).toHaveStyle({ transform: 'translateX(0)' });
 		});
+
+		it('starts the exit animation before a timed toast expires', () => {
+			setStoreToasts([createMockToast({ duration: 1000 })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const toastOuter = document.body.querySelector('.relative.overflow-hidden');
+
+			act(() => {
+				vi.advanceTimersByTime(50);
+			});
+			expect(toastOuter).toHaveStyle({ transform: 'translateX(0)' });
+
+			act(() => {
+				vi.advanceTimersByTime(650);
+			});
+			expect(toastOuter).toHaveStyle({ transform: 'translateX(100%)' });
+		});
 	});
 
 	describe('progress bar', () => {
@@ -317,6 +335,15 @@ describe('Toast', () => {
 			// (onSessionClick triggers from the toast body click)
 			expect(onSessionClick).not.toHaveBeenCalled();
 		});
+
+		it('ignores body clicks when no session click handler is provided', () => {
+			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			fireEvent.click(screen.getByText('Test Toast'));
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+		});
 	});
 
 	describe('no metadata row', () => {
@@ -377,9 +404,7 @@ describe('Toast', () => {
 			unmount();
 		});
 
-		it('shows 0s for exactly 0ms edge (not rendered due to guard)', () => {
-			// taskDuration of 0 is guarded — "does not display" already tested
-			// But let's verify sub-second with exact 1000ms boundary
+		it('formats the exact one-second boundary', () => {
 			setStoreToasts([createMockToast({ taskDuration: 1000 })]);
 
 			const { unmount } = render(<ToastContainer theme={mockTheme} />);

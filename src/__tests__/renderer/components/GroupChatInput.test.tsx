@@ -10,7 +10,7 @@
  * Regression test for: Group chat @mention tab completion
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import type { Theme, Session, Group, GroupChatParticipant } from '../../../renderer/types';
@@ -123,6 +123,11 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
 	describe('@mention autocomplete', () => {
 		it('shows mention dropdown when typing @', () => {
 			const sessions = [
@@ -321,6 +326,18 @@ describe('GroupChatInput', () => {
 			expect(screen.getByText('claude-code')).toBeInTheDocument();
 		});
 
+		it('shows the original agent name when it differs from the normalized mention', () => {
+			const sessions = [createMockSession('session-1', 'Run Maestro', 'claude-code')];
+
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@Run');
+
+			expect(screen.getByText('@Run-Maestro')).toBeInTheDocument();
+			expect(screen.getByText('(Run Maestro)')).toBeInTheDocument();
+		});
+
 		it('wraps arrow key navigation (down from last goes to first)', () => {
 			const sessions = [
 				createMockSession('session-1', 'Agent1', 'claude-code'),
@@ -360,6 +377,56 @@ describe('GroupChatInput', () => {
 			// Insert should get last item
 			fireEvent.keyDown(textarea, { key: 'Tab' });
 			expect(textarea.value).toBe('@Agent2 ');
+		});
+
+		it('scrolls the selected mention into view and navigates back up from the second item', () => {
+			const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollIntoView'
+			);
+			const scrollIntoView = vi.fn();
+			Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+				configurable: true,
+				value: scrollIntoView,
+			});
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 1;
+			});
+			const sessions = [
+				createMockSession('session-1', 'Agent1', 'claude-code'),
+				createMockSession('session-2', 'Agent2', 'claude-code'),
+			];
+
+			try {
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+				const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+				typeInTextarea(textarea, '@');
+				fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+				fireEvent.keyDown(textarea, { key: 'ArrowUp' });
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
+				expect(textarea.value).toBe('@Agent1 ');
+			} finally {
+				if (scrollIntoViewDescriptor) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollIntoViewDescriptor);
+				} else {
+					delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+				}
+			}
+		});
+
+		it('leaves the mention dropdown open for unhandled keys', () => {
+			const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+			fireEvent.keyDown(textarea, { key: 'a' });
+
+			expect(screen.getByText('@Maestro')).toBeInTheDocument();
 		});
 	});
 
@@ -549,6 +616,458 @@ describe('GroupChatInput', () => {
 
 			// Should still show individual agents
 			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+		});
+	});
+
+	describe('send controls and input behavior', () => {
+		it('sends trimmed text with staged images and local read-only mode, then clears draft state', () => {
+			const onSend = vi.fn();
+			const onDraftChange = vi.fn();
+			const setStagedImages = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						onSend,
+						onDraftChange,
+						stagedImages: ['data:image/png;base64,one'],
+						setStagedImages,
+					})}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, '  ship it  ');
+			fireEvent.click(screen.getByText('Read-Only'));
+			fireEvent.click(screen.getByTitle('Send message'));
+
+			expect(onSend).toHaveBeenCalledWith('ship it', ['data:image/png;base64,one'], true);
+			expect(setStagedImages).toHaveBeenCalledWith([]);
+			expect(onDraftChange).toHaveBeenLastCalledWith('');
+			expect(textarea.value).toBe('');
+		});
+
+		it('queues busy messages with the warning send button title', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ state: 'running', onSend })} />);
+			const textarea = screen.getByPlaceholderText(
+				'Type to queue message...'
+			) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, 'queue this');
+			fireEvent.click(screen.getByTitle('Queue message'));
+
+			expect(onSend).toHaveBeenCalledWith('queue this', undefined, false);
+		});
+
+		it('uses Cmd+R, Cmd+Y, Cmd+Enter, and Enter according to the configured send mode', () => {
+			const onSend = vi.fn();
+			const setReadOnlyMode = vi.fn();
+			const onOpenLightbox = vi.fn();
+			const { rerender } = render(
+				<GroupChatInput
+					{...createDefaultProps({
+						onSend,
+						setReadOnlyMode,
+						readOnlyMode: false,
+						stagedImages: ['image-a', 'image-b'],
+						onOpenLightbox,
+					})}
+				/>
+			);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, 'from shortcut');
+			fireEvent.keyDown(textarea, { key: 'r', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'y', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+
+			expect(setReadOnlyMode).toHaveBeenCalledWith(true);
+			expect(onOpenLightbox).toHaveBeenCalledWith(
+				['image-a', 'image-b'][0],
+				['image-a', 'image-b'],
+				'staged'
+			);
+			expect(onSend).toHaveBeenCalledWith('from shortcut', ['image-a', 'image-b'], false);
+
+			rerender(
+				<GroupChatInput
+					{...createDefaultProps({
+						onSend,
+						enterToSendAI: true,
+						stagedImages: [],
+					})}
+				/>
+			);
+			const enterTextarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(enterTextarea, 'plain enter');
+			fireEvent.keyDown(enterTextarea, { key: 'Enter', metaKey: true });
+			expect(onSend).toHaveBeenCalledTimes(1);
+
+			fireEvent.keyDown(enterTextarea, { key: 'Enter' });
+			expect(onSend).toHaveBeenLastCalledWith('plain enter', undefined, false);
+		});
+
+		it('does not intercept unrelated command shortcuts or plain Enter in command-enter mode', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, 'draft');
+			fireEvent.keyDown(textarea, { key: 'k', metaKey: true });
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(onSend).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('draft');
+		});
+
+		it('does not send blank command-enter submissions', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, '   ');
+			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+
+			expect(onSend).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('   ');
+		});
+
+		it('keeps Shift+Enter as a newline gesture when Enter-to-send is enabled', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend, enterToSendAI: true })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			typeInTextarea(textarea, 'not yet');
+			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		it('opens prompt composer and toggles Enter-to-send from the toolbar', () => {
+			const onOpenPromptComposer = vi.fn();
+			const setEnterToSendAI = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						onOpenPromptComposer,
+						setEnterToSendAI,
+						enterToSendAI: false,
+						shortcuts: {
+							openPromptComposer: {
+								id: 'openPromptComposer',
+								label: 'Prompt composer',
+								keys: ['Meta', 'p'],
+							},
+						},
+					})}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/Open Prompt Composer/));
+			fireEvent.click(screen.getByTitle('Switch to Enter to send'));
+
+			expect(onOpenPromptComposer).toHaveBeenCalled();
+			expect(setEnterToSendAI).toHaveBeenCalledWith(true);
+		});
+
+		it('syncs draft changes from external props and resets when switching group chats', () => {
+			const { rerender } = render(
+				<GroupChatInput {...createDefaultProps({ draftMessage: 'first draft' })} />
+			);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			expect(textarea.value).toBe('first draft');
+
+			rerender(<GroupChatInput {...createDefaultProps({ draftMessage: 'external update' })} />);
+			expect(textarea.value).toBe('external update');
+
+			rerender(
+				<GroupChatInput
+					{...createDefaultProps({
+						groupChatId: 'next-chat',
+						draftMessage: 'next draft',
+					})}
+				/>
+			);
+			expect(textarea.value).toBe('next draft');
+		});
+
+		it('clears the local draft when switching chats without a saved draft', () => {
+			const { rerender } = render(
+				<GroupChatInput {...createDefaultProps({ draftMessage: 'saved draft' })} />
+			);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			expect(textarea.value).toBe('saved draft');
+
+			rerender(<GroupChatInput {...createDefaultProps({ groupChatId: 'next-chat' })} />);
+
+			expect(textarea.value).toBe('');
+		});
+
+		it('opens the prompt composer without a shortcut hint and forwards the attach button click', () => {
+			const onOpenPromptComposer = vi.fn();
+			const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+			render(<GroupChatInput {...createDefaultProps({ onOpenPromptComposer })} />);
+
+			fireEvent.click(screen.getByTitle('Open Prompt Composer'));
+			fireEvent.click(screen.getByTitle('Attach Image'));
+
+			expect(onOpenPromptComposer).toHaveBeenCalled();
+			expect(inputClick).toHaveBeenCalled();
+		});
+	});
+
+	describe('paste, image, and queue behavior', () => {
+		it('trims pasted plain text and preserves cursor position', () => {
+			const onDraftChange = vi.fn();
+			const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 1;
+			});
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'Hello world');
+			textarea.selectionStart = 6;
+			textarea.selectionEnd = 11;
+			const preventDefault = vi.fn();
+
+			fireEvent.paste(textarea, {
+				preventDefault,
+				clipboardData: {
+					items: [],
+					getData: () => '  Maestro  ',
+				},
+			});
+
+			expect(onDraftChange).toHaveBeenLastCalledWith('Hello Maestro');
+			expect(textarea.value).toBe('Hello Maestro');
+			expect(textarea.selectionStart).toBe(13);
+			expect(raf).toHaveBeenCalled();
+		});
+
+		it('falls back to the beginning of the draft when paste selection offsets are unavailable', () => {
+			const onDraftChange = vi.fn();
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				cb(0);
+				return 1;
+			});
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'Hello world');
+			let selectionStart: number | null = null;
+			let selectionEnd: number | null = null;
+			Object.defineProperty(textarea, 'selectionStart', {
+				configurable: true,
+				get: () => selectionStart,
+				set: (value) => {
+					selectionStart = value;
+				},
+			});
+			Object.defineProperty(textarea, 'selectionEnd', {
+				configurable: true,
+				get: () => selectionEnd,
+				set: (value) => {
+					selectionEnd = value;
+				},
+			});
+
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: [],
+					getData: () => '  Maestro  ',
+				},
+			});
+
+			expect(onDraftChange).toHaveBeenLastCalledWith('MaestroHello world');
+			expect(textarea.value).toBe('MaestroHello world');
+		});
+
+		it('leaves exact plain text paste and empty clipboard text to the browser', () => {
+			const onDraftChange = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'Hello');
+			const preventDefault = vi.fn();
+
+			fireEvent.paste(textarea, {
+				preventDefault,
+				clipboardData: {
+					items: [],
+					getData: () => 'Maestro',
+				},
+			});
+			fireEvent.paste(textarea, {
+				preventDefault,
+				clipboardData: {
+					items: [],
+					getData: () => '',
+				},
+			});
+
+			expect(preventDefault).not.toHaveBeenCalled();
+			expect(onDraftChange).toHaveBeenLastCalledWith('Hello');
+			expect(textarea.value).toBe('Hello');
+		});
+
+		it('delegates image paste and drop events to app-level handlers', () => {
+			const handlePaste = vi.fn();
+			const handleDrop = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ handlePaste, handleDrop })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: [{ type: 'image/png' }],
+					getData: () => '',
+				},
+			});
+			fireEvent.drop(textarea, { dataTransfer: { files: [] } });
+
+			expect(handlePaste).toHaveBeenCalled();
+			expect(handleDrop).toHaveBeenCalled();
+		});
+
+		it('prevents default browser handling for dragover events', () => {
+			render(<GroupChatInput {...createDefaultProps()} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			const event = new Event('dragover', { bubbles: true, cancelable: true });
+
+			const notCanceled = textarea.dispatchEvent(event);
+
+			expect(notCanceled).toBe(false);
+			expect(event.defaultPrevented).toBe(true);
+		});
+
+		it('loads selected image files, rejects invalid selections, and clears the file input', async () => {
+			const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			class MockFileReader {
+				onload: ((event: { target: { result: string } }) => void) | null = null;
+				readAsDataURL() {
+					this.onload?.({ target: { result: 'data:image/png;base64,loaded' } });
+				}
+			}
+			vi.stubGlobal('FileReader', MockFileReader);
+			render(<GroupChatInput {...createDefaultProps()} />);
+			const input = document.getElementById('group-chat-image-input') as HTMLInputElement;
+			const validFile = new File(['ok'], 'ok.png', { type: 'image/png' });
+			const invalidFile = new File(['bad'], 'bad.txt', { type: 'text/plain' });
+			const hugeFile = new File(['x'], 'huge.png', { type: 'image/png' });
+			Object.defineProperty(hugeFile, 'size', { value: 11 * 1024 * 1024 });
+
+			fireEvent.change(input, {
+				target: {
+					files: [validFile, invalidFile, hugeFile],
+				},
+			});
+
+			expect(await screen.findByAltText('Staged image')).toHaveAttribute(
+				'src',
+				'data:image/png;base64,loaded'
+			);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[GroupChatInput] Invalid file type rejected: text/plain'
+			);
+			expect(consoleWarn).toHaveBeenCalledWith(
+				'[GroupChatInput] File too large rejected: 11.00MB (max: 10MB)'
+			);
+			expect(input.value).toBe('');
+		});
+
+		it('ignores duplicate image reads and failed reader results', async () => {
+			const showFlashNotification = vi.fn();
+			let readCount = 0;
+			class MockFileReader {
+				onload: ((event: { target?: { result?: string } }) => void) | null = null;
+				readAsDataURL() {
+					readCount += 1;
+					if (readCount <= 2) {
+						this.onload?.({ target: { result: 'data:image/png;base64,duplicate' } });
+					} else {
+						this.onload?.({ target: {} });
+					}
+				}
+			}
+			vi.stubGlobal('FileReader', MockFileReader);
+			render(<GroupChatInput {...createDefaultProps({ showFlashNotification })} />);
+			const input = document.getElementById('group-chat-image-input') as HTMLInputElement;
+			const first = new File(['one'], 'one.png', { type: 'image/png' });
+			const second = new File(['two'], 'two.png', { type: 'image/png' });
+			const failed = new File(['bad'], 'bad.png', { type: 'image/png' });
+
+			fireEvent.change(input, {
+				target: {
+					files: [first, second, failed],
+				},
+			});
+
+			const images = await screen.findAllByAltText('Staged image');
+			expect(images).toHaveLength(1);
+			expect(images[0]).toHaveAttribute('src', 'data:image/png;base64,duplicate');
+			expect(showFlashNotification).toHaveBeenCalledWith('Duplicate image ignored');
+		});
+
+		it('treats an empty file selection as a no-op', () => {
+			const showFlashNotification = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ showFlashNotification })} />);
+			const input = document.getElementById('group-chat-image-input') as HTMLInputElement;
+
+			fireEvent.change(input, {
+				target: {
+					files: null,
+				},
+			});
+
+			expect(screen.queryByAltText('Staged image')).not.toBeInTheDocument();
+			expect(showFlashNotification).not.toHaveBeenCalled();
+		});
+
+		it('opens staged images in the lightbox and removes them from staged state', () => {
+			const onOpenLightbox = vi.fn();
+			const setStagedImages = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						stagedImages: ['img-a', 'img-b'],
+						setStagedImages,
+						onOpenLightbox,
+					})}
+				/>
+			);
+
+			fireEvent.click(screen.getAllByAltText('Staged image')[0]);
+			fireEvent.click(screen.getAllByText('×')[0]);
+
+			expect(onOpenLightbox).toHaveBeenCalledWith('img-a', ['img-a', 'img-b'], 'staged');
+			const updater = setStagedImages.mock.calls[0][0] as (prev: string[]) => string[];
+			expect(updater(['img-a', 'img-b'])).toEqual(['img-b']);
+		});
+
+		it('renders queued items and forwards queue removal', () => {
+			const onRemoveQueuedItem = vi.fn();
+			const onReorderQueuedItems = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						executionQueue: [
+							{
+								id: 'queued-1',
+								timestamp: Date.now(),
+								tabId: 'tab-1',
+								type: 'message',
+								text: 'Queued message',
+							},
+						],
+						onRemoveQueuedItem,
+						onReorderQueuedItems,
+					})}
+				/>
+			);
+
+			expect(screen.getByText('Queued message')).toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Remove from queue'));
+			fireEvent.click(screen.getByText('Remove'));
+
+			expect(onRemoveQueuedItem).toHaveBeenCalledWith('queued-1');
 		});
 	});
 });

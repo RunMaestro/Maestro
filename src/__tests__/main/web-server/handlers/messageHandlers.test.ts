@@ -66,6 +66,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
 		closeTab: vi.fn().mockResolvedValue(true),
 		renameTab: vi.fn().mockResolvedValue(true),
+		starTab: vi.fn().mockResolvedValue(true),
+		reorderTab: vi.fn().mockResolvedValue(true),
+		toggleBookmark: vi.fn().mockResolvedValue(true),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -221,6 +224,23 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.message).toContain('Execution failed');
 			});
 		});
+
+		it('should report unsuccessful command execution result', async () => {
+			(callbacks.executeCommand as any).mockResolvedValue(false);
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('command_result');
+				expect(response.success).toBe(false);
+				expect(response.sessionId).toBe('session-1');
+			});
+		});
 	});
 
 	describe('Switch Mode (Web → Desktop)', () => {
@@ -273,6 +293,38 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 		});
+
+		it('should return failed mode switch result when desktop rejects it', async () => {
+			(callbacks.switchMode as any).mockResolvedValue(false);
+
+			handler.handleMessage(client, {
+				type: 'switch_mode',
+				sessionId: 'session-1',
+				mode: 'terminal',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('mode_switch_result');
+				expect(response.success).toBe(false);
+			});
+		});
+
+		it('should handle mode switch callback failure', async () => {
+			(callbacks.switchMode as any).mockRejectedValue(new Error('Mode switch failed'));
+
+			handler.handleMessage(client, {
+				type: 'switch_mode',
+				sessionId: 'session-1',
+				mode: 'terminal',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Mode switch failed');
+			});
+		});
 	});
 
 	describe('Select Session (Web → Desktop)', () => {
@@ -311,6 +363,37 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(callbacks.selectSession).not.toHaveBeenCalled();
+		});
+
+		it('should return failed session selection result when desktop rejects it', async () => {
+			(callbacks.selectSession as any).mockResolvedValue(false);
+
+			handler.handleMessage(client, {
+				type: 'select_session',
+				sessionId: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('select_session_result');
+				expect(response.success).toBe(false);
+			});
+			expect(client.subscribedSessionId).toBeUndefined();
+		});
+
+		it('should handle session selection callback failure', async () => {
+			(callbacks.selectSession as any).mockRejectedValue(new Error('Selection failed'));
+
+			handler.handleMessage(client, {
+				type: 'select_session',
+				sessionId: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Selection failed');
+			});
 		});
 	});
 
@@ -412,6 +495,34 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.success).toBe(false);
 			});
 		});
+
+		it('should report when tab creation is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Tab creation not configured');
+		});
+
+		it('should handle new tab callback failure', async () => {
+			(callbacks.newTab as any).mockRejectedValue(new Error('New tab failed'));
+
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('New tab failed');
+			});
+		});
 	});
 
 	describe('Close Tab (Web → Desktop)', () => {
@@ -449,6 +560,36 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
+		});
+
+		it('should report when tab closing is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'close_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Tab closing not configured');
+		});
+
+		it('should handle close tab callback failure', async () => {
+			(callbacks.closeTab as any).mockRejectedValue(new Error('Close failed'));
+
+			handler.handleMessage(client, {
+				type: 'close_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Close failed');
+			});
 		});
 	});
 
@@ -515,6 +656,239 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('Missing sessionId or tabId');
 		});
+
+		it('should report when tab renaming is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'rename_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				newName: 'New Name',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Tab renaming not configured');
+		});
+
+		it('should handle rename tab callback failure', async () => {
+			(callbacks.renameTab as any).mockRejectedValue(new Error('Rename failed'));
+
+			handler.handleMessage(client, {
+				type: 'rename_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				newName: 'New Name',
+			});
+
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Rename failed');
+			});
+		});
+	});
+
+	describe('Star Tab (Web → Desktop)', () => {
+		it('should star a tab on desktop', async () => {
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-to-star',
+				starred: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.starTab).toHaveBeenCalledWith('session-1', 'tab-to-star', true);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('star_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.starred).toBe(true);
+		});
+
+		it('should unstar a tab when starred is missing', async () => {
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-to-unstar',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.starTab).toHaveBeenCalledWith('session-1', 'tab-to-unstar', false);
+			});
+		});
+
+		it('should reject star tab with missing sessionId or tabId', () => {
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId or tabId');
+			expect(callbacks.starTab).not.toHaveBeenCalled();
+		});
+
+		it('should report when tab starring is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Tab starring not configured');
+		});
+
+		it('should handle star tab callback failure', async () => {
+			(callbacks.starTab as any).mockRejectedValue(new Error('Star failed'));
+
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				starred: true,
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Star failed');
+			});
+		});
+	});
+
+	describe('Reorder Tab (Web → Desktop)', () => {
+		it('should reorder a tab on desktop and allow zero indexes', async () => {
+			handler.handleMessage(client, {
+				type: 'reorder_tab',
+				sessionId: 'session-1',
+				fromIndex: 0,
+				toIndex: 2,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.reorderTab).toHaveBeenCalledWith('session-1', 0, 2);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('reorder_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.fromIndex).toBe(0);
+			expect(response.toIndex).toBe(2);
+		});
+
+		it('should reject reorder tab with missing indexes', () => {
+			handler.handleMessage(client, {
+				type: 'reorder_tab',
+				sessionId: 'session-1',
+				toIndex: 2,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId, fromIndex, or toIndex');
+			expect(callbacks.reorderTab).not.toHaveBeenCalled();
+		});
+
+		it('should report when tab reordering is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'reorder_tab',
+				sessionId: 'session-1',
+				fromIndex: 0,
+				toIndex: 1,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Tab reordering not configured');
+		});
+
+		it('should handle reorder tab callback failure', async () => {
+			(callbacks.reorderTab as any).mockRejectedValue(new Error('Reorder failed'));
+
+			handler.handleMessage(client, {
+				type: 'reorder_tab',
+				sessionId: 'session-1',
+				fromIndex: 1,
+				toIndex: 0,
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Reorder failed');
+			});
+		});
+	});
+
+	describe('Toggle Bookmark (Web → Desktop)', () => {
+		it('should toggle bookmark on desktop', async () => {
+			handler.handleMessage(client, {
+				type: 'toggle_bookmark',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.toggleBookmark).toHaveBeenCalledWith('session-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('toggle_bookmark_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should reject toggle bookmark with missing sessionId', () => {
+			handler.handleMessage(client, {
+				type: 'toggle_bookmark',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Missing sessionId');
+			expect(callbacks.toggleBookmark).not.toHaveBeenCalled();
+		});
+
+		it('should report when bookmark toggling is not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, {
+				type: 'toggle_bookmark',
+				sessionId: 'session-1',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Bookmark toggling not configured');
+		});
+
+		it('should handle toggle bookmark callback failure', async () => {
+			(callbacks.toggleBookmark as any).mockRejectedValue(new Error('Bookmark failed'));
+
+			handler.handleMessage(client, {
+				type: 'toggle_bookmark',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const response = JSON.parse(calls[calls.length - 1][0]);
+				expect(response.type).toBe('error');
+				expect(response.message).toContain('Bookmark failed');
+			});
+		});
 	});
 
 	describe('Get Sessions', () => {
@@ -533,6 +907,35 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.sessions).toHaveLength(1);
 			expect(response.sessions[0].agentSessionId).toBe('live-claude-456');
 			expect(response.sessions[0].isLive).toBe(true);
+		});
+
+		it('should fall back to existing session agent id when no live info exists', () => {
+			(callbacks.getSessions as any).mockReturnValue([
+				{
+					id: 'session-1',
+					name: 'Session 1',
+					toolType: 'claude-code',
+					state: 'idle',
+					inputMode: 'ai',
+					cwd: '/test',
+					agentSessionId: 'existing-agent-session',
+				},
+			]);
+
+			handler.handleMessage(client, { type: 'get_sessions' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('sessions_list');
+			expect(response.sessions[0].agentSessionId).toBe('existing-agent-session');
+			expect(response.sessions[0].isLive).toBe(false);
+		});
+
+		it('should ignore get_sessions when session callbacks are not configured', () => {
+			const handlerNoCallbacks = new WebSocketMessageHandler();
+
+			handlerNoCallbacks.handleMessage(client, { type: 'get_sessions' });
+
+			expect(client.socket.send).not.toHaveBeenCalled();
 		});
 	});
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useTabStore,
@@ -254,10 +254,98 @@ describe('tabStore', () => {
 			expect(result!.tab.starred).toBe(true);
 		});
 
+		it('should replace only the active session when creating a tab', () => {
+			const activeTab = createMockAITab({ id: 'active-tab' });
+			const inactiveTab = createMockAITab({ id: 'inactive-tab' });
+			const activeSession = createMockSession({
+				id: 'active-session',
+				aiTabs: [activeTab],
+				activeTabId: activeTab.id,
+				unifiedTabOrder: [{ type: 'ai', id: activeTab.id }],
+			});
+			const inactiveSession = createMockSession({
+				id: 'inactive-session',
+				aiTabs: [inactiveTab],
+				activeTabId: inactiveTab.id,
+				unifiedTabOrder: [{ type: 'ai', id: inactiveTab.id }],
+			});
+			useSessionStore.setState({
+				sessions: [activeSession, inactiveSession],
+				activeSessionId: activeSession.id,
+			});
+
+			const result = useTabStore.getState().createTab({ name: 'New Active Tab' });
+
+			expect(result).not.toBeNull();
+			const [updatedActive, updatedInactive] = useSessionStore.getState().sessions;
+			expect(updatedActive.aiTabs).toHaveLength(2);
+			expect(updatedActive.activeTabId).toBe(result!.tab.id);
+			expect(updatedInactive).toBe(inactiveSession);
+		});
+
+		it('should return null without updating sessions when tab creation helper returns null', async () => {
+			vi.resetModules();
+			const createTabMock = vi.fn(() => null);
+			vi.doMock('../../../renderer/utils/tabHelpers', async (importOriginal) => {
+				const actual = await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>();
+				return {
+					...actual,
+					createTab: createTabMock,
+				};
+			});
+
+			try {
+				const [{ useTabStore: mockedTabStore }, { useSessionStore: mockedSessionStore }] =
+					await Promise.all([
+						import('../../../renderer/stores/tabStore'),
+						import('../../../renderer/stores/sessionStore'),
+					]);
+				const tab = createMockAITab({ id: 'tab-1' });
+				const session = createMockSession({
+					id: 'session-1',
+					aiTabs: [tab],
+					activeTabId: tab.id,
+					unifiedTabOrder: [{ type: 'ai', id: tab.id }],
+				});
+				const options = { name: 'Refused Tab' };
+				mockedSessionStore.setState({
+					sessions: [session],
+					activeSessionId: session.id,
+				});
+
+				const result = mockedTabStore.getState().createTab(options);
+
+				expect(result).toBeNull();
+				expect(createTabMock).toHaveBeenCalledWith(session, options);
+				expect(mockedSessionStore.getState().sessions).toEqual([session]);
+			} finally {
+				vi.doUnmock('../../../renderer/utils/tabHelpers');
+				vi.resetModules();
+			}
+		});
+
 		it('should return null when no active session', () => {
 			// No session set up
 			const result = useTabStore.getState().createTab();
 			expect(result).toBeNull();
+		});
+
+		it('should return null or no-op for tab actions with no active session', () => {
+			const actions = useTabStore.getState();
+
+			expect(actions.closeTab('tab-1')).toBeNull();
+			expect(actions.closeFileTab('file-1')).toBeNull();
+			expect(actions.reopenClosedTab()).toBeNull();
+			expect(actions.selectTab('tab-1')).toBeNull();
+			expect(actions.selectFileTab('file-1')).toBeUndefined();
+			expect(actions.starTab('tab-1')).toBeUndefined();
+			expect(actions.toggleReadOnly('tab-1')).toBeUndefined();
+			expect(actions.toggleSaveToHistory('tab-1')).toBeUndefined();
+			expect(actions.cycleThinkingMode('tab-1')).toBeUndefined();
+			expect(actions.reorderTabs(0, 1)).toBeUndefined();
+			expect(actions.reorderUnifiedTabs(0, 1)).toBeUndefined();
+			expect(actions.toggleFileTabEditMode('file-1')).toBeUndefined();
+			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 
 		it('should close an AI tab', () => {
@@ -295,6 +383,14 @@ describe('tabStore', () => {
 			expect(session.filePreviewTabs[0].id).toBe('file-2');
 		});
 
+		it('should return null when closing a non-existent file tab', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			expect(useTabStore.getState().closeFileTab('missing-file')).toBeNull();
+		});
+
 		it('should reopen a closed tab', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
@@ -311,6 +407,13 @@ describe('tabStore', () => {
 
 			session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs).toHaveLength(2);
+		});
+
+		it('should return null when there is no closed tab to reopen', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			setupSessionWithTabs([tab1]);
+
+			expect(useTabStore.getState().reopenClosedTab()).toBeNull();
 		});
 	});
 
@@ -411,6 +514,18 @@ describe('tabStore', () => {
 			expect(useTabStore.getState().navigateToIndex(0)).toBeNull();
 			expect(useTabStore.getState().navigateToLast()).toBeNull();
 		});
+
+		it('should return null when active session has no navigable tabs', () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'empty-session' })],
+				activeSessionId: 'empty-session',
+			});
+
+			expect(useTabStore.getState().navigateToNext()).toBeNull();
+			expect(useTabStore.getState().navigateToPrev()).toBeNull();
+			expect(useTabStore.getState().navigateToIndex(0)).toBeNull();
+			expect(useTabStore.getState().navigateToLast()).toBeNull();
+		});
 	});
 
 	// ========================================================================
@@ -506,11 +621,62 @@ describe('tabStore', () => {
 			// These should not throw
 			useTabStore.getState().starTab('non-existent');
 			useTabStore.getState().toggleReadOnly('non-existent');
+			useTabStore.getState().toggleSaveToHistory('non-existent');
 			useTabStore.getState().cycleThinkingMode('non-existent');
 
 			// Tab-1 should be unchanged
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].starred).toBe(false);
+		});
+
+		it('should preserve inactive sessions and ignore direct updates for missing tabs', () => {
+			const activeTab = createMockAITab({ id: 'active-tab', hasUnread: false, name: null });
+			const inactiveTab = createMockAITab({
+				id: 'inactive-tab',
+				hasUnread: false,
+				name: 'Inactive',
+			});
+			const activeFileTab = createMockFileTab({ id: 'active-file', editContent: undefined });
+			const inactiveFileTab = createMockFileTab({ id: 'inactive-file', editContent: 'keep' });
+			const activeSession = createMockSession({
+				id: 'active-session',
+				aiTabs: [activeTab],
+				activeTabId: activeTab.id,
+				filePreviewTabs: [activeFileTab],
+				unifiedTabOrder: [{ type: 'ai', id: activeTab.id }],
+			});
+			const inactiveSession = createMockSession({
+				id: 'inactive-session',
+				aiTabs: [inactiveTab],
+				activeTabId: inactiveTab.id,
+				filePreviewTabs: [inactiveFileTab],
+				unifiedTabOrder: [{ type: 'ai', id: inactiveTab.id }],
+			});
+			useSessionStore.setState({
+				sessions: [activeSession, inactiveSession],
+				activeSessionId: activeSession.id,
+			});
+
+			useTabStore.getState().markUnread('active-tab');
+			useTabStore.getState().updateTabName('missing-tab', 'No change');
+			useTabStore.getState().updateFileTabEditContent('active-file', 'edited');
+			useTabStore.getState().updateFileTabScrollPosition('missing-file', 100);
+
+			const [updatedActive, updatedInactive] = useSessionStore.getState().sessions;
+			expect(updatedActive.aiTabs[0]).toMatchObject({ id: 'active-tab', hasUnread: true });
+			expect(updatedActive.filePreviewTabs[0]).toMatchObject({
+				id: 'active-file',
+				editContent: 'edited',
+			});
+			expect(updatedInactive.aiTabs[0]).toMatchObject({
+				id: 'inactive-tab',
+				hasUnread: false,
+				name: 'Inactive',
+			});
+			expect(updatedInactive.filePreviewTabs[0]).toMatchObject({
+				id: 'inactive-file',
+				editContent: 'keep',
+			});
 		});
 	});
 
@@ -555,6 +721,21 @@ describe('tabStore', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs).toHaveLength(1);
 			expect(session.aiTabs[0].id).toBe('tab-1');
+		});
+
+		it('should handle out-of-bounds unified reorder gracefully', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([tab1], [fileTab1]);
+
+			useTabStore.getState().reorderUnifiedTabs(0, 5);
+			useTabStore.getState().reorderUnifiedTabs(-1, 0);
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'file', id: 'file-1' },
+			]);
 		});
 	});
 
@@ -674,6 +855,10 @@ describe('tabStore', () => {
 				const result = selectActiveFileTab(useSessionStore.getState());
 				expect(result).toBeUndefined();
 			});
+
+			it('should return undefined with no active session', () => {
+				expect(selectActiveFileTab(useSessionStore.getState())).toBeUndefined();
+			});
 		});
 
 		describe('selectUnifiedTabs', () => {
@@ -753,6 +938,10 @@ describe('tabStore', () => {
 				const result = selectTabById('non-existent')(useSessionStore.getState());
 				expect(result).toBeUndefined();
 			});
+
+			it('should return undefined with no active session', () => {
+				expect(selectTabById('tab-1')(useSessionStore.getState())).toBeUndefined();
+			});
 		});
 
 		describe('selectFileTabById', () => {
@@ -764,6 +953,10 @@ describe('tabStore', () => {
 				const result = selectFileTabById('file-1')(useSessionStore.getState());
 				expect(result).toBeDefined();
 				expect(result!.name).toBe('app');
+			});
+
+			it('should return undefined with no active session', () => {
+				expect(selectFileTabById('file-1')(useSessionStore.getState())).toBeUndefined();
 			});
 		});
 
@@ -799,6 +992,11 @@ describe('tabStore', () => {
 
 				const result = selectAllFileTabs(useSessionStore.getState());
 				expect(result).toHaveLength(2);
+			});
+
+			it('should return empty arrays with no active session', () => {
+				expect(selectAllTabs(useSessionStore.getState())).toEqual([]);
+				expect(selectAllFileTabs(useSessionStore.getState())).toEqual([]);
 			});
 		});
 	});

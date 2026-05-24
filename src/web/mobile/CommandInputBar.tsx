@@ -282,8 +282,7 @@ export function CommandInputBar({
 	 * Expands up to MAX_LINES (4 lines) then enables scrolling
 	 */
 	useEffect(() => {
-		const textarea = textareaRef.current;
-		if (!textarea) return;
+		const textarea = textareaRef.current!;
 
 		// If value is empty, reset to minimum height immediately
 		if (!value) {
@@ -350,28 +349,19 @@ export function CommandInputBar({
 	/**
 	 * Handle key press events
 	 * AI mode: Enter adds newline, Cmd/Ctrl+Enter submits
-	 * Terminal mode: Enter submits (Shift+Enter adds newline)
 	 */
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (inputMode === 'ai') {
-				// AI mode: Cmd+Enter (Mac) or Ctrl+Enter (Windows/Linux) submits
-				if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-					e.preventDefault();
-					if (!isSendBlocked) {
-						handleSubmit(e);
-					}
-				}
-				// Plain Enter adds newline (default behavior)
-				return;
-			}
-			// Terminal mode: Submit on Enter (Shift+Enter adds newline)
-			if (e.key === 'Enter' && !e.shiftKey) {
+			// AI mode: Cmd+Enter (Mac) or Ctrl+Enter (Windows/Linux) submits
+			if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
-				handleSubmit(e);
+				if (!isSendBlocked) {
+					handleSubmit(e);
+				}
 			}
+			// Plain Enter adds newline (default behavior)
 		},
-		[handleSubmit, inputMode, isSendBlocked]
+		[handleSubmit, isSendBlocked]
 	);
 
 	/**
@@ -726,13 +716,11 @@ export function CommandInputBar({
 										width: '100%',
 									}}
 									onFocus={(e) => {
-										const container = e.currentTarget.parentElement;
-										if (container) container.style.borderColor = colors.accent;
+										e.currentTarget.parentElement!.style.borderColor = colors.accent;
 										onInputFocus?.();
 									}}
 									onBlur={(e) => {
-										const container = e.currentTarget.parentElement;
-										if (container) container.style.borderColor = colors.border;
+										e.currentTarget.parentElement!.style.borderColor = colors.border;
 										onInputBlur?.();
 									}}
 									aria-label="Shell command input"

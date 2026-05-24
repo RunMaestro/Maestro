@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Search, Star, FileText } from 'lucide-react';
 import type { AITab, FilePreviewTab, Theme, Shortcut, ToolType } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -103,6 +104,18 @@ function getTabDisplayName(tab: AITab): string {
 function getUuidPill(agentSessionId: string | undefined | null): string | null {
 	if (!agentSessionId) return null;
 	return agentSessionId.split('-')[0].toUpperCase();
+}
+
+function getListItemDisplayName(item: ListItem): string {
+	if (item.type === 'open') return getTabDisplayName(item.tab);
+	if (item.type === 'file') return item.tab.name;
+	return item.session.sessionName;
+}
+
+function getListItemSearchableId(item: ListItem): string {
+	if (item.type === 'open') return item.tab.agentSessionId ?? '';
+	if (item.type === 'file') return `${item.tab.extension} ${item.tab.path}`;
+	return item.session.agentSessionId;
 }
 
 /**
@@ -234,19 +247,15 @@ export function TabSwitcherModal({
 		});
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(layerIdRef.current!);
 		};
 	}, [registerLayer, unregisterLayer]);
 
 	// Update handler when onClose changes
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				onCloseRef.current();
-			});
-		}
+		updateLayerHandler(layerIdRef.current!, () => {
+			onCloseRef.current();
+		});
 	}, [updateLayerHandler]);
 
 	// Focus input on mount
@@ -261,7 +270,7 @@ export function TabSwitcherModal({
 		const syncAndLoad = async () => {
 			// First, sync any named open tabs to the store
 			const namedTabs = tabs.filter((t) => t.name && t.agentSessionId);
-			const effectiveAgentId = agentId || 'claude-code';
+			const effectiveAgentId = agentId;
 			await Promise.all(
 				namedTabs.map((tab) => {
 					if (effectiveAgentId === 'claude-code') {
@@ -288,12 +297,10 @@ export function TabSwitcherModal({
 
 	// Track scroll position to determine which items are visible
 	const handleScroll = () => {
-		if (scrollContainerRef.current) {
-			const scrollTop = scrollContainerRef.current.scrollTop;
-			const itemHeight = 52; // Approximate height of each item (py-3 = 12px top + 12px bottom + content)
-			const visibleIndex = Math.floor(scrollTop / itemHeight);
-			setFirstVisibleIndex(visibleIndex);
-		}
+		const scrollTop = scrollContainerRef.current!.scrollTop;
+		const itemHeight = 52; // Approximate height of each item (py-3 = 12px top + 12px bottom + content)
+		const visibleIndex = Math.floor(scrollTop / itemHeight);
+		setFirstVisibleIndex(visibleIndex);
 	};
 
 	// Get set of open tab claude session IDs for quick lookup
@@ -319,18 +326,8 @@ export function TabSwitcherModal({
 
 			// Sort alphabetically by display name
 			items.sort((a, b) => {
-				const nameA =
-					a.type === 'open'
-						? getTabDisplayName(a.tab).toLowerCase()
-						: a.type === 'file'
-							? a.tab.name.toLowerCase()
-							: '';
-				const nameB =
-					b.type === 'open'
-						? getTabDisplayName(b.tab).toLowerCase()
-						: b.type === 'file'
-							? b.tab.name.toLowerCase()
-							: '';
+				const nameA = getListItemDisplayName(a).toLowerCase();
+				const nameB = getListItemDisplayName(b).toLowerCase();
 				return nameA.localeCompare(nameB);
 			});
 
@@ -359,18 +356,8 @@ export function TabSwitcherModal({
 
 			// Sort by display name
 			items.sort((a, b) => {
-				const nameA =
-					a.type === 'open'
-						? getTabDisplayName(a.tab).toLowerCase()
-						: a.type === 'named'
-							? a.session.sessionName.toLowerCase()
-							: '';
-				const nameB =
-					b.type === 'open'
-						? getTabDisplayName(b.tab).toLowerCase()
-						: b.type === 'named'
-							? b.session.sessionName.toLowerCase()
-							: '';
+				const nameA = getListItemDisplayName(a).toLowerCase();
+				const nameB = getListItemDisplayName(b).toLowerCase();
 				return nameA.localeCompare(nameB);
 			});
 
@@ -404,18 +391,8 @@ export function TabSwitcherModal({
 
 			// Sort all by display name (uses name > UUID octet > "New Session" fallback)
 			items.sort((a, b) => {
-				const nameA =
-					a.type === 'open'
-						? getTabDisplayName(a.tab).toLowerCase()
-						: a.type === 'named'
-							? a.session.sessionName.toLowerCase()
-							: '';
-				const nameB =
-					b.type === 'open'
-						? getTabDisplayName(b.tab).toLowerCase()
-						: b.type === 'named'
-							? b.session.sessionName.toLowerCase()
-							: '';
+				const nameA = getListItemDisplayName(a).toLowerCase();
+				const nameB = getListItemDisplayName(b).toLowerCase();
 				return nameA.localeCompare(nameB);
 			});
 
@@ -431,20 +408,8 @@ export function TabSwitcherModal({
 
 		// Fuzzy search
 		const results = listItems.map((item) => {
-			let displayName: string;
-			let searchableId: string;
-
-			if (item.type === 'open') {
-				displayName = getTabDisplayName(item.tab);
-				searchableId = item.tab.agentSessionId || '';
-			} else if (item.type === 'file') {
-				// For file tabs, search by name and extension
-				displayName = item.tab.name;
-				searchableId = item.tab.extension + ' ' + item.tab.path;
-			} else {
-				displayName = item.session.sessionName;
-				searchableId = item.session.agentSessionId;
-			}
+			const displayName = getListItemDisplayName(item);
+			const searchableId = getListItemSearchableId(item);
 
 			const nameResult = fuzzyMatchWithScore(displayName, search);
 			const idResult = fuzzyMatchWithScore(searchableId, search);
@@ -464,22 +429,20 @@ export function TabSwitcherModal({
 	// Helper to select an item by index
 	const handleSelectByIndex = useCallback(
 		(index: number) => {
-			const item = filteredItems[index];
-			if (item) {
-				if (item.type === 'open') {
-					onTabSelect(item.tab.id);
-				} else if (item.type === 'file') {
-					onFileTabSelect?.(item.tab.id);
-				} else {
-					onNamedSessionSelect(
-						item.session.agentSessionId,
-						item.session.projectPath,
-						item.session.sessionName,
-						item.session.starred
-					);
-				}
-				onClose();
+			const item = filteredItems[index]!;
+			if (item.type === 'open') {
+				onTabSelect(item.tab.id);
+			} else if (item.type === 'file') {
+				onFileTabSelect?.(item.tab.id);
+			} else {
+				onNamedSessionSelect(
+					item.session.agentSessionId,
+					item.session.projectPath,
+					item.session.sessionName,
+					item.session.starred
+				);
 			}
+			onClose();
 		},
 		[filteredItems, onTabSelect, onFileTabSelect, onNamedSessionSelect, onClose]
 	);
@@ -519,7 +482,7 @@ export function TabSwitcherModal({
 
 	// Keyboard handler: Tab for view mode, delegate rest to list navigation
 	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent) => {
+		(e: KeyboardEvent) => {
 			if (e.key === 'Tab') {
 				e.preventDefault();
 				toggleViewMode(e.shiftKey);

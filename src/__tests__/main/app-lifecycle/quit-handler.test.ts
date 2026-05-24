@@ -97,6 +97,7 @@ describe('app-lifecycle/quit-handler', () => {
 		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
+		stopSettingsWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
 		stopSessionCleanup: ReturnType<typeof vi.fn>;
 	};
@@ -136,6 +137,7 @@ describe('app-lifecycle/quit-handler', () => {
 			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
 			stopCliWatcher: vi.fn(),
+			stopSettingsWatcher: vi.fn(),
 			powerManager: mockPowerManager,
 			stopSessionCleanup: vi.fn(),
 		};
@@ -298,6 +300,7 @@ describe('app-lifecycle/quit-handler', () => {
 			// Should perform cleanup
 			expect(mockHistoryManager.stopWatching).toHaveBeenCalled();
 			expect(deps.stopCliWatcher).toHaveBeenCalled();
+			expect(deps.stopSettingsWatcher).toHaveBeenCalled();
 			expect(deps.stopSessionCleanup).toHaveBeenCalled();
 			expect(mockProcessManager.killAll).toHaveBeenCalled();
 			// clearAllReasons must be called AFTER killAll to prevent late process
@@ -309,6 +312,26 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
+		});
+
+		it('should ignore duplicate quit attempts while confirmation is pending', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+
+			const firstEvent = { preventDefault: vi.fn() };
+			const secondEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(firstEvent);
+			beforeQuitHandler!(secondEvent);
+
+			expect(firstEvent.preventDefault).toHaveBeenCalled();
+			expect(secondEvent.preventDefault).toHaveBeenCalled();
+			expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
+			expect(mockLogger.debug).toHaveBeenCalledWith(
+				'Quit confirmation already in progress, ignoring duplicate request',
+				'Window'
+			);
 		});
 
 		it('should cleanup grooming sessions if any are active', async () => {
@@ -442,6 +465,37 @@ describe('app-lifecycle/quit-handler', () => {
 			vi.useRealTimers();
 		});
 
+		it('should ignore a stale safety timeout after renderer cancels quit', async () => {
+			vi.useFakeTimers();
+			const clearTimeoutSpy = vi
+				.spyOn(globalThis, 'clearTimeout')
+				.mockImplementation(() => undefined);
+
+			try {
+				const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+				const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+				quitHandler.setup();
+
+				const mockEvent = { preventDefault: vi.fn() };
+				beforeQuitHandler!(mockEvent);
+
+				const cancelHandler = ipcHandlers.get('app:quitCancelled')!;
+				cancelHandler();
+
+				vi.advanceTimersByTime(5000);
+
+				expect(mockQuit).not.toHaveBeenCalled();
+				expect(mockLogger.warn).not.toHaveBeenCalledWith(
+					'Quit confirmation timed out — renderer did not respond, forcing quit',
+					'Window'
+				);
+			} finally {
+				clearTimeoutSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
 		it('should work without stopCliWatcher dependency', async () => {
 			const depsWithoutCliWatcher = { ...deps };
 			delete depsWithoutCliWatcher.stopCliWatcher;
@@ -458,6 +512,57 @@ describe('app-lifecycle/quit-handler', () => {
 
 			// Should not throw
 			expect(() => beforeQuitHandler!(mockEvent)).not.toThrow();
+		});
+
+		it('should work without optional settings watcher and session cleanup dependencies', async () => {
+			const depsWithoutOptionalWatchers = { ...deps };
+			delete depsWithoutOptionalWatchers.stopSettingsWatcher;
+			delete depsWithoutOptionalWatchers.stopSessionCleanup;
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(
+				depsWithoutOptionalWatchers as Parameters<typeof createQuitHandler>[0]
+			);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+
+			expect(() => beforeQuitHandler!(mockEvent)).not.toThrow();
+			expect(mockProcessManager.killAll).toHaveBeenCalled();
+		});
+
+		it('should log asynchronous cleanup failures without blocking shutdown', async () => {
+			deps.getActiveGroomingSessionCount.mockReturnValue(1);
+			deps.cleanupAllGroomingSessions.mockRejectedValueOnce(new Error('grooming failed'));
+			mockTunnelManager.stop.mockRejectedValueOnce(new Error('tunnel failed'));
+			mockWebServer.stop.mockRejectedValueOnce(new Error('web failed'));
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			await Promise.resolve();
+
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Error cleaning up grooming sessions: Error: grooming failed'),
+				'Shutdown'
+			);
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Error stopping tunnel: Error: tunnel failed'),
+				'Shutdown'
+			);
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('Error stopping web server: Error: web failed'),
+				'Shutdown'
+			);
+			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 	});
 

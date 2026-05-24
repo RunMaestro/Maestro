@@ -307,9 +307,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		layerIdRef.current = id;
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(id);
 		};
 	}, [
 		registerLayer,
@@ -322,17 +320,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 	// Update handler when dependencies change
 	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (showDeleteConfirmModal) {
-					handleCancelDeletePlaybook();
-				} else if (showSavePlaybookModal) {
-					setShowSavePlaybookModal(false);
-				} else {
-					handleCloseWithConfirmation();
-				}
-			});
-		}
+		updateLayerHandler(layerIdRef.current!, () => {
+			if (showDeleteConfirmModal) {
+				handleCancelDeletePlaybook();
+			} else if (showSavePlaybookModal) {
+				setShowSavePlaybookModal(false);
+			} else {
+				handleCloseWithConfirmation();
+			}
+		});
 	}, [
 		handleCloseWithConfirmation,
 		updateLayerHandler,

@@ -33,6 +33,44 @@ const renderWithProviders = (ui: React.ReactElement) => {
 	};
 };
 
+const changeTextarea = async (textarea: HTMLElement, value: string) => {
+	await act(async () => {
+		fireEvent.change(textarea, { target: { value } });
+	});
+};
+
+const clickElement = async (element: HTMLElement) => {
+	await act(async () => {
+		fireEvent.click(element);
+	});
+};
+
+const keyDownElement = async (
+	element: HTMLElement,
+	event: Parameters<typeof fireEvent.keyDown>[1]
+) => {
+	await act(async () => {
+		fireEvent.keyDown(element, event);
+	});
+};
+
+const rerenderWithAct = async (
+	rerender: ReturnType<typeof renderWithProviders>['rerender'],
+	ui: React.ReactElement
+) => {
+	await act(async () => {
+		rerender(ui);
+	});
+};
+
+const renderWithAct = async (ui: React.ReactElement) => {
+	let result: ReturnType<typeof renderWithProviders> | undefined;
+	await act(async () => {
+		result = renderWithProviders(ui);
+	});
+	return result!;
+};
+
 // Mock the external dependencies
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -219,7 +257,7 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} ref={ref} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Modified content for alpha' } });
+			await changeTextarea(textarea, 'Modified content for alpha');
 
 			// Save via imperative handle
 			await act(async () => {
@@ -247,11 +285,11 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Updated tasks list' } });
+			await changeTextarea(textarea, 'Updated tasks list');
 
 			// Click save button
 			const saveButton = screen.getByText('Save');
-			fireEvent.click(saveButton);
+			await clickElement(saveButton);
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/projects/beta/auto-run',
@@ -272,10 +310,10 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Updated readme content' } });
+			await changeTextarea(textarea, 'Updated readme content');
 
 			// Press Cmd+S
-			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+			await keyDownElement(textarea, { key: 's', metaKey: true });
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/home/user/gamma-project/docs',
@@ -298,8 +336,8 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 
 			// First edit and save
-			fireEvent.change(textarea, { target: { value: 'Version 2' } });
-			fireEvent.click(screen.getByText('Save'));
+			await changeTextarea(textarea, 'Version 2');
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenLastCalledWith(
 				'/delta/path',
@@ -309,11 +347,14 @@ describe('AutoRun Save Path Correctness', () => {
 			);
 
 			// Simulate saved content update (file watcher triggers contentVersion change)
-			rerender(<AutoRun {...props} content="Version 2" contentVersion={1} />);
+			await rerenderWithAct(
+				rerender,
+				<AutoRun {...props} content="Version 2" contentVersion={1} />
+			);
 
 			// Second edit and save
-			fireEvent.change(textarea, { target: { value: 'Version 3' } });
-			fireEvent.click(screen.getByText('Save'));
+			await changeTextarea(textarea, 'Version 3');
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenLastCalledWith(
 				'/delta/path',
@@ -340,7 +381,7 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 
 			// Make edits in Session A (dirty state)
-			fireEvent.change(textarea, { target: { value: 'Dirty content in A' } });
+			await changeTextarea(textarea, 'Dirty content in A');
 
 			// Switch to Session B without saving
 			const propsB = createDefaultProps({
@@ -349,7 +390,7 @@ describe('AutoRun Save Path Correctness', () => {
 				selectedFile: 'doc-b',
 				content: 'Content B',
 			});
-			rerender(<AutoRun {...propsB} />);
+			await rerenderWithAct(rerender, <AutoRun {...propsB} />);
 
 			// Verify NO writeDoc was called
 			expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
@@ -368,10 +409,11 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 
 			// Dirty session A
-			fireEvent.change(textarea, { target: { value: 'Unsaved edits A' } });
+			await changeTextarea(textarea, 'Unsaved edits A');
 
 			// Switch to Session B
-			rerender(
+			await rerenderWithAct(
+				rerender,
 				<AutoRun
 					{...createDefaultProps({
 						sessionId: 'session-b',
@@ -383,7 +425,7 @@ describe('AutoRun Save Path Correctness', () => {
 			);
 
 			// Switch back to Session A
-			rerender(<AutoRun {...propsA} />);
+			await rerenderWithAct(rerender, <AutoRun {...propsA} />);
 
 			// Textarea should show Session A's original content, not dirty edits
 			expect(textarea).toHaveValue('Original A');
@@ -403,10 +445,13 @@ describe('AutoRun Save Path Correctness', () => {
 			const { rerender } = renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Dirty doc1 content' } });
+			await changeTextarea(textarea, 'Dirty doc1 content');
 
 			// Switch document
-			rerender(<AutoRun {...props} selectedFile="doc2" content="Doc 2 content" />);
+			await rerenderWithAct(
+				rerender,
+				<AutoRun {...props} selectedFile="doc2" content="Doc 2 content" />
+			);
 
 			// No save should occur
 			expect(mockMaestro.autorun.writeDoc).not.toHaveBeenCalled();
@@ -451,12 +496,12 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 
 			// Make changes - becomes dirty
-			fireEvent.change(textarea, { target: { value: 'Different content' } });
+			await changeTextarea(textarea, 'Different content');
 			expect(ref.current?.isDirty()).toBe(true);
 			expect(screen.getByText('Save')).toBeInTheDocument();
 
 			// Type back to original - no longer dirty
-			fireEvent.change(textarea, { target: { value: originalContent } });
+			await changeTextarea(textarea, originalContent);
 			expect(ref.current?.isDirty()).toBe(false);
 			expect(screen.queryByText('Save')).not.toBeInTheDocument();
 		});
@@ -472,7 +517,7 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} ref={ref} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Changed' } });
+			await changeTextarea(textarea, 'Changed');
 
 			expect(ref.current?.isDirty()).toBe(true);
 
@@ -502,7 +547,7 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} ref={ref} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'Dirty changes' } });
+			await changeTextarea(textarea, 'Dirty changes');
 
 			expect(ref.current?.isDirty()).toBe(true);
 
@@ -531,14 +576,14 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} ref={ref} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'New content' } });
+			await changeTextarea(textarea, 'New content');
 
 			expect(ref.current?.isDirty()).toBe(true);
 			expect(screen.getByText('Save')).toBeInTheDocument();
 			expect(screen.getByText('Revert')).toBeInTheDocument();
 
 			// Click Save
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			// Wait for async save to complete
 			await waitFor(() => {
@@ -560,12 +605,12 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} ref={ref} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: 'New content' } });
+			await changeTextarea(textarea, 'New content');
 
 			expect(ref.current?.isDirty()).toBe(true);
 
 			// Press Cmd+S
-			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+			await keyDownElement(textarea, { key: 's', metaKey: true });
 
 			await waitFor(() => {
 				expect(ref.current?.isDirty()).toBe(false);
@@ -585,17 +630,17 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 
 			// Edit to version 2
-			fireEvent.change(textarea, { target: { value: 'Version 2' } });
+			await changeTextarea(textarea, 'Version 2');
 			expect(ref.current?.isDirty()).toBe(true);
 
 			// Save
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 			await waitFor(() => {
 				expect(ref.current?.isDirty()).toBe(false);
 			});
 
 			// Now edit to version 3
-			fireEvent.change(textarea, { target: { value: 'Version 3' } });
+			await changeTextarea(textarea, 'Version 3');
 			expect(ref.current?.isDirty()).toBe(true);
 
 			// Revert should go back to version 2 (last saved), not version 1
@@ -623,11 +668,11 @@ describe('AutoRun Save Path Correctness', () => {
 			// Rapid typing simulation
 			const chars = 'Final typed content';
 			for (let i = 1; i <= chars.length; i++) {
-				fireEvent.change(textarea, { target: { value: chars.substring(0, i) } });
+				await changeTextarea(textarea, chars.substring(0, i));
 			}
 
 			// Save immediately after rapid edits
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			// Should save the final content
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
@@ -648,9 +693,9 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: '' } });
+			await changeTextarea(textarea, '');
 
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/empty/test',
@@ -670,9 +715,9 @@ describe('AutoRun Save Path Correctness', () => {
 			renderWithProviders(<AutoRun {...props} />);
 
 			const textarea = screen.getByRole('textbox');
-			fireEvent.change(textarea, { target: { value: '   \n\n   ' } });
+			await changeTextarea(textarea, '   \n\n   ');
 
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/whitespace/test',
@@ -693,9 +738,9 @@ describe('AutoRun Save Path Correctness', () => {
 
 			const textarea = screen.getByRole('textbox');
 			const specialContent = '# Hello 🌍\n```js\nconst x = "test";\n```\n<div>HTML</div>';
-			fireEvent.change(textarea, { target: { value: specialContent } });
+			await changeTextarea(textarea, specialContent);
 
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/special/test',
@@ -717,9 +762,9 @@ describe('AutoRun Save Path Correctness', () => {
 			const textarea = screen.getByRole('textbox');
 			// Reduced from 100,000 to 5,000 chars - still tests "long" content without excessive slowdown
 			const longContent = 'X'.repeat(5000);
-			fireEvent.change(textarea, { target: { value: longContent } });
+			await changeTextarea(textarea, longContent);
 
-			fireEvent.click(screen.getByText('Save'));
+			await clickElement(screen.getByText('Save'));
 
 			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 				'/long/test',
@@ -731,7 +776,7 @@ describe('AutoRun Save Path Correctness', () => {
 	});
 
 	describe('Save during batch run lock', () => {
-		it('save button is not visible when batch run is active', () => {
+		it('save button is not visible when batch run is active', async () => {
 			const props = createDefaultProps({
 				content: 'Content',
 				batchRunState: {
@@ -742,7 +787,7 @@ describe('AutoRun Save Path Correctness', () => {
 				},
 			});
 
-			renderWithProviders(<AutoRun {...props} />);
+			await renderWithAct(<AutoRun {...props} />);
 
 			// During batch run, mode switches to preview automatically
 			// Save/Revert buttons should not be visible
@@ -769,7 +814,7 @@ describe('AutoRun Save Path Correctness', () => {
 			// Even if we could send keyDown, it should not trigger save
 			const container = screen.getByRole('textbox').parentElement?.parentElement?.parentElement;
 			if (container) {
-				fireEvent.keyDown(container, { key: 's', metaKey: true });
+				await keyDownElement(container, { key: 's', metaKey: true });
 			}
 
 			// No save should occur
@@ -841,7 +886,7 @@ describe('AutoRun savedContent state reset behavior', () => {
 		const textarea = screen.getByRole('textbox');
 
 		// Dirty Session A
-		fireEvent.change(textarea, { target: { value: 'Dirty A' } });
+		await changeTextarea(textarea, 'Dirty A');
 		expect(ref.current?.isDirty()).toBe(true);
 
 		// Switch to Session B
@@ -849,14 +894,14 @@ describe('AutoRun savedContent state reset behavior', () => {
 			sessionId: 'session-b',
 			content: 'Session B content',
 		});
-		rerender(<AutoRun {...propsB} ref={ref} />);
+		await rerenderWithAct(rerender, <AutoRun {...propsB} ref={ref} />);
 
 		// In Session B, savedContent should be 'Session B content'
 		expect(ref.current?.isDirty()).toBe(false);
 		expect(textarea).toHaveValue('Session B content');
 
 		// Making dirty in B then reverting should go to B's savedContent
-		fireEvent.change(textarea, { target: { value: 'Dirty B' } });
+		await changeTextarea(textarea, 'Dirty B');
 		await act(async () => {
 			ref.current?.revert();
 		});
@@ -876,18 +921,21 @@ describe('AutoRun savedContent state reset behavior', () => {
 		const textarea = screen.getByRole('textbox');
 
 		// Dirty doc1
-		fireEvent.change(textarea, { target: { value: 'Dirty doc1' } });
+		await changeTextarea(textarea, 'Dirty doc1');
 		expect(ref.current?.isDirty()).toBe(true);
 
 		// Switch to doc2
-		rerender(<AutoRun {...props} ref={ref} selectedFile="doc2" content="Doc 2 content" />);
+		await rerenderWithAct(
+			rerender,
+			<AutoRun {...props} ref={ref} selectedFile="doc2" content="Doc 2 content" />
+		);
 
 		// savedContent should be 'Doc 2 content'
 		expect(ref.current?.isDirty()).toBe(false);
 		expect(textarea).toHaveValue('Doc 2 content');
 
 		// Revert in doc2 should stay at doc2's content
-		fireEvent.change(textarea, { target: { value: 'Dirty doc2' } });
+		await changeTextarea(textarea, 'Dirty doc2');
 		await act(async () => {
 			ref.current?.revert();
 		});
@@ -908,18 +956,21 @@ describe('AutoRun savedContent state reset behavior', () => {
 		const textarea = screen.getByRole('textbox');
 
 		// Local edits
-		fireEvent.change(textarea, { target: { value: 'Local edits' } });
+		await changeTextarea(textarea, 'Local edits');
 		expect(ref.current?.isDirty()).toBe(true);
 
 		// External change detected (file watcher)
-		rerender(<AutoRun {...props} ref={ref} content="Version 2 from disk" contentVersion={2} />);
+		await rerenderWithAct(
+			rerender,
+			<AutoRun {...props} ref={ref} content="Version 2 from disk" contentVersion={2} />
+		);
 
 		// savedContent should now be 'Version 2 from disk'
 		expect(ref.current?.isDirty()).toBe(false);
 		expect(textarea).toHaveValue('Version 2 from disk');
 
 		// Revert should go to version 2
-		fireEvent.change(textarea, { target: { value: 'More local edits' } });
+		await changeTextarea(textarea, 'More local edits');
 		await act(async () => {
 			ref.current?.revert();
 		});

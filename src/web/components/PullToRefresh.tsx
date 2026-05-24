@@ -24,35 +24,17 @@ export interface PullToRefreshIndicatorProps {
 /**
  * Spinning refresh icon component
  */
-function RefreshIcon({
-	size = 24,
-	color,
-	spinning = false,
-	progress = 1,
-}: {
-	size?: number;
-	color: string;
-	spinning?: boolean;
-	progress?: number;
-}) {
-	// Rotate based on progress or spin continuously when refreshing
-	const rotation = spinning ? 0 : progress * 360;
-	const animationStyle: React.CSSProperties = spinning
-		? { animation: 'spin 1s linear infinite' }
-		: { transform: `rotate(${rotation}deg)` };
-
+function RefreshIcon({ size = 24, color }: { size?: number; color: string }) {
 	return (
 		<>
-			{spinning && (
-				<style>
-					{`
+			<style>
+				{`
             @keyframes spin {
               from { transform: rotate(0deg); }
               to { transform: rotate(360deg); }
             }
           `}
-				</style>
-			)}
+			</style>
 			<svg
 				width={size}
 				height={size}
@@ -62,7 +44,7 @@ function RefreshIcon({
 				strokeWidth="2"
 				strokeLinecap="round"
 				strokeLinejoin="round"
-				style={animationStyle}
+				style={{ animation: 'spin 1s linear infinite' }}
 			>
 				<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 				<polyline points="21 3 21 9 15 9" />
@@ -173,7 +155,7 @@ export function PullToRefreshIndicator({
 				}}
 			>
 				{isRefreshing ? (
-					<RefreshIcon color={colors.accent} spinning={true} />
+					<RefreshIcon color={colors.accent} />
 				) : (
 					<ArrowDownIcon color={colors.accent} progress={progress} />
 				)}

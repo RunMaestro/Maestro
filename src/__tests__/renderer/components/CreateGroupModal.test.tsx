@@ -305,7 +305,9 @@ describe('CreateGroupModal', () => {
 
 			const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
 			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
-			input.dispatchEvent(event);
+			act(() => {
+				input.dispatchEvent(event);
+			});
 
 			expect(preventDefaultSpy).toHaveBeenCalled();
 		});
@@ -507,6 +509,17 @@ describe('CreateGroupModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls onGroupCreated with the new group ID', () => {
+			const onGroupCreated = vi.fn();
+			renderModal({ onGroupCreated });
+
+			const input = screen.getByPlaceholderText('Enter group name...');
+			fireEvent.change(input, { target: { value: 'Callback Group' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+			expect(onGroupCreated).toHaveBeenCalledWith('group-test-id');
 		});
 	});
 

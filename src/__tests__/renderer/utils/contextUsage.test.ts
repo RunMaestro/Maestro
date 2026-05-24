@@ -98,6 +98,12 @@ describe('estimateContextUsage', () => {
 			expect(result).toBeNull();
 		});
 
+		it('should return null for unknown non-terminal agents without a default context window', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'unknown-agent');
+			expect(result).toBeNull();
+		});
+
 		it('should return null when no agent specified', () => {
 			const stats = createStats({ contextWindow: 0 });
 			const result = estimateContextUsage(stats);
@@ -233,6 +239,16 @@ describe('calculateContextTokens', () => {
 			const result = calculateContextTokens(stats, 'codex');
 			// 10000 + 5000 + 1000 = 16000 (input + output + cacheCreation, excludes cacheRead)
 			expect(result).toBe(16000);
+		});
+
+		it('should default missing input and output tokens to zero for codex', () => {
+			const stats = createStats({
+				inputTokens: undefined as unknown as number,
+				outputTokens: undefined as unknown as number,
+				cacheCreationInputTokens: 1500,
+			});
+			const result = calculateContextTokens(stats, 'codex');
+			expect(result).toBe(1500);
 		});
 	});
 

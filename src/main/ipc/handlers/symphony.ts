@@ -84,6 +84,9 @@ function sanitizeRepoName(repoName: string): string {
  */
 function validateGitHubUrl(url: string): { valid: boolean; error?: string } {
 	try {
+		if (/(?:^|\/)\.\.(?:\/|$)/.test(url)) {
+			return { valid: false, error: 'Invalid repository path' };
+		}
 		const parsed = new URL(url);
 		if (parsed.protocol !== 'https:') {
 			return { valid: false, error: 'Only HTTPS URLs are allowed' };
@@ -174,6 +177,7 @@ function validateContributionParams(params: {
 					'www.github.com',
 					'raw.githubusercontent.com',
 					'user-images.githubusercontent.com',
+					'objects.githubusercontent.com',
 					'camo.githubusercontent.com',
 				];
 				if (!allowedHosts.includes(parsed.hostname)) {
@@ -280,12 +284,39 @@ async function readState(app: App): Promise<SymphonyState> {
 	}
 }
 
+let stateWriteQueue: Promise<void> = Promise.resolve();
+let stateMutationQueue: Promise<void> = Promise.resolve();
+
+async function withStateMutation<T>(mutation: () => Promise<T>): Promise<T> {
+	const previousMutation = stateMutationQueue;
+	let releaseMutation!: () => void;
+	stateMutationQueue = new Promise<void>((resolve) => {
+		releaseMutation = resolve;
+	});
+	await previousMutation;
+	try {
+		return await mutation();
+	} finally {
+		releaseMutation();
+	}
+}
+
 /**
  * Write symphony state to disk.
  */
 async function writeState(app: App, state: SymphonyState): Promise<void> {
 	await ensureSymphonyDir(app);
-	await fs.writeFile(getStatePath(app), JSON.stringify(state, null, 2), 'utf-8');
+	const previousWrite = stateWriteQueue;
+	let releaseWrite!: () => void;
+	stateWriteQueue = new Promise<void>((resolve) => {
+		releaseWrite = resolve;
+	});
+	await previousWrite;
+	try {
+		await fs.writeFile(getStatePath(app), JSON.stringify(state, null, 2), 'utf-8');
+	} finally {
+		releaseWrite();
+	}
 }
 
 /**
@@ -360,7 +391,7 @@ function parseDocumentPaths(body: string): DocumentReference[] {
 		while ((match = pattern.exec(body)) !== null) {
 			const docPath = match[1];
 			if (docPath && !docPath.startsWith('http')) {
-				const filename = docPath.split('/').pop() || docPath;
+				const filename = docPath.split('/').pop()!;
 				const key = filename.toLowerCase();
 				// Don't overwrite external links with same filename
 				if (!docs.has(key)) {
@@ -1642,56 +1673,58 @@ This PR will be updated automatically when the Auto Run completes.`;
 					draftPrUrl,
 				} = params;
 
-				const state = await readState(app);
+				return withStateMutation(async () => {
+					const state = await readState(app);
 
-				// Check if already registered
-				const existing = state.active.find((c) => c.id === contributionId);
-				if (existing) {
-					logger.debug('Contribution already registered', LOG_CONTEXT, { contributionId });
+					// Check if already registered
+					const existing = state.active.find((c) => c.id === contributionId);
+					if (existing) {
+						logger.debug('Contribution already registered', LOG_CONTEXT, { contributionId });
+						return { success: true };
+					}
+
+					// Create active contribution entry
+					const contribution: ActiveContribution = {
+						id: contributionId,
+						repoSlug,
+						repoName,
+						issueNumber,
+						issueTitle,
+						localPath,
+						branchName,
+						draftPrNumber,
+						draftPrUrl,
+						startedAt: new Date().toISOString(),
+						status: 'running',
+						progress: {
+							totalDocuments,
+							completedDocuments: 0,
+							totalTasks: 0,
+							completedTasks: 0,
+						},
+						tokenUsage: {
+							inputTokens: 0,
+							outputTokens: 0,
+							estimatedCost: 0,
+						},
+						timeSpent: 0,
+						sessionId,
+						agentType,
+					};
+
+					state.active.push(contribution);
+					await writeState(app, state);
+
+					logger.info('Active contribution registered', LOG_CONTEXT, {
+						contributionId,
+						sessionId,
+						repoSlug,
+						issueNumber,
+					});
+
+					broadcastSymphonyUpdate(getMainWindow);
 					return { success: true };
-				}
-
-				// Create active contribution entry
-				const contribution: ActiveContribution = {
-					id: contributionId,
-					repoSlug,
-					repoName,
-					issueNumber,
-					issueTitle,
-					localPath,
-					branchName,
-					draftPrNumber,
-					draftPrUrl,
-					startedAt: new Date().toISOString(),
-					status: 'running',
-					progress: {
-						totalDocuments,
-						completedDocuments: 0,
-						totalTasks: 0,
-						completedTasks: 0,
-					},
-					tokenUsage: {
-						inputTokens: 0,
-						outputTokens: 0,
-						estimatedCost: 0,
-					},
-					timeSpent: 0,
-					sessionId,
-					agentType,
-				};
-
-				state.active.push(contribution);
-				await writeState(app, state);
-
-				logger.info('Active contribution registered', LOG_CONTEXT, {
-					contributionId,
-					sessionId,
-					repoSlug,
-					issueNumber,
 				});
-
-				broadcastSymphonyUpdate(getMainWindow);
-				return { success: true };
 			}
 		)
 	);
@@ -2324,9 +2357,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 								LOG_CONTEXT,
 								{ contributionId }
 							);
-							if (!message) {
-								message = 'No PR exists yet - contribution may still be in progress';
-							}
+							message = 'No PR exists yet - contribution may still be in progress';
 						} catch {
 							// Local path doesn't exist
 							logger.warn('Local path not accessible for contribution', LOG_CONTEXT, {
@@ -2380,10 +2411,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 								};
 
 								// Remove from active, add to history
-								const index = state.active.findIndex((c) => c.id === contributionId);
-								if (index !== -1) {
-									state.active.splice(index, 1);
-								}
+								state.active = state.active.filter((c) => c.id !== contributionId);
 								state.history.push(completed);
 								state.stats.totalMerged += 1;
 								message = `PR #${contribution.draftPrNumber} was merged!`;
@@ -2411,10 +2439,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 									wasClosed: true,
 								};
 
-								const index = state.active.findIndex((c) => c.id === contributionId);
-								if (index !== -1) {
-									state.active.splice(index, 1);
-								}
+								state.active = state.active.filter((c) => c.id !== contributionId);
 								state.history.push(completed);
 								message = `PR #${contribution.draftPrNumber} was closed`;
 							} else if (!pr.draft && contribution.status === 'running') {
@@ -2576,6 +2601,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 								'www.github.com',
 								'raw.githubusercontent.com',
 								'user-images.githubusercontent.com',
+								'objects.githubusercontent.com',
 								'camo.githubusercontent.com',
 							];
 							if (!allowedHosts.includes(parsed.hostname)) {

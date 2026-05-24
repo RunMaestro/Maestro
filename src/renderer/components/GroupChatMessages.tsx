@@ -138,9 +138,8 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 
 		// Auto-scroll on new messages
 		useEffect(() => {
-			if (containerRef.current) {
-				containerRef.current.scrollTop = containerRef.current.scrollHeight;
-			}
+			const container = containerRef.current as HTMLDivElement;
+			container.scrollTop = container.scrollHeight;
 		}, [messages]);
 
 		// Use external colors if provided, otherwise generate locally
@@ -288,9 +287,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														onCopy={copyToClipboard}
 													/>
 												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? displayContent : stripMarkdown(displayContent)}
-													</div>
+													<div className="whitespace-pre-wrap">{stripMarkdown(displayContent)}</div>
 												)}
 											</div>
 											<button
@@ -329,9 +326,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 														onCopy={copyToClipboard}
 													/>
 												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? msg.content : stripMarkdown(msg.content)}
-													</div>
+													<div className="whitespace-pre-wrap">{stripMarkdown(msg.content)}</div>
 												)}
 											</div>
 											<button

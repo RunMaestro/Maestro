@@ -300,12 +300,10 @@ function stripFullFileContents(text: string): string {
 	// Handle Read tool output patterns
 	result = result.replace(READ_TOOL_PATTERN, (match, filePath) => {
 		// Extract line count from the original match
-		const codeBlockMatch = match.match(/```[\s\S]*?```/);
-		if (codeBlockMatch) {
-			const lineCount = codeBlockMatch[0].split('\n').length - 2; // Subtract ``` lines
-			if (lineCount >= MIN_FULL_FILE_LINES) {
-				return `[Read: ${filePath.trim()} - ${lineCount} lines, content available on disk]`;
-			}
+		const [codeBlock] = match.match(/```[\s\S]*?```/)!;
+		const lineCount = codeBlock.split('\n').length - 2; // Subtract ``` lines
+		if (lineCount >= MIN_FULL_FILE_LINES) {
+			return `[Read: ${filePath.trim()} - ${lineCount} lines, content available on disk]`;
 		}
 		return match;
 	});

@@ -7,6 +7,20 @@ import {
 import { SshRemoteConfig } from '../../shared/types';
 import { ExecResult } from '../../main/utils/execFile';
 import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const mockExecFileNoThrow = vi.hoisted(() => vi.fn());
+
+vi.mock('../../main/utils/execFile', async () => {
+	const actual = await vi.importActual<typeof import('../../main/utils/execFile')>(
+		'../../main/utils/execFile'
+	);
+	return {
+		...actual,
+		execFileNoThrow: mockExecFileNoThrow,
+	};
+});
 
 // Mock os.homedir for consistent test behavior
 vi.mock('os', async () => {
@@ -37,6 +51,7 @@ describe('SshRemoteManager', () => {
 
 	beforeEach(() => {
 		// Create fresh mocks for each test
+		mockExecFileNoThrow.mockReset();
 		mockCheckFileAccess = vi.fn().mockReturnValue(true);
 		mockExecSsh = vi.fn();
 		mockDeps = {
@@ -195,12 +210,28 @@ describe('SshRemoteManager', () => {
 			expect(args[portIndex]).toBe('2222');
 		});
 
+		it('omits default port when SSH config mode supplies connection details', () => {
+			const config = { ...validConfig, useSshConfig: true };
+			const args = manager.buildSshArgs(config);
+
+			expect(args).not.toContain('-p');
+			expect(args).not.toContain('22');
+		});
+
 		it('handles absolute paths without expansion', () => {
 			const config = { ...validConfig, privateKeyPath: '/etc/ssh/custom_key' };
 			const args = manager.buildSshArgs(config);
 			const keyIndex = args.indexOf('-i') + 1;
 
 			expect(args[keyIndex]).toBe('/etc/ssh/custom_key');
+		});
+
+		it('uses host without username when username is omitted', () => {
+			const config = { ...validConfig, username: '' };
+			const args = manager.buildSshArgs(config);
+
+			expect(args).toContain('example.com');
+			expect(args).not.toContain('@example.com');
 		});
 	});
 
@@ -224,6 +255,19 @@ describe('SshRemoteManager', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.remoteInfo?.hostname).toBe('remote-hostname');
+		});
+
+		it('uses unknown hostname when successful response omits hostname line', async () => {
+			mockExecSsh.mockResolvedValue({
+				stdout: 'SSH_OK\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(true);
+			expect(result.remoteInfo?.hostname).toBe('unknown');
 		});
 
 		it('detects agent installation when checking with agentCommand', async () => {
@@ -329,6 +373,19 @@ describe('SshRemoteManager', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('passphrase');
+		});
+
+		it('handles missing private key file error from SSH', async () => {
+			mockExecSsh.mockResolvedValue({
+				stdout: '',
+				stderr: 'Warning: Identity file /missing/key not accessible: No such file or directory.',
+				exitCode: 255,
+			});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Private key file not found.');
 		});
 
 		it('handles unexpected SSH response', async () => {
@@ -457,6 +514,51 @@ describe('SshRemoteManager', () => {
 			// Should still work for validation
 			const result = partialManager.validateConfig(validConfig);
 			expect(result.valid).toBe(true);
+		});
+
+		it('uses default file access dependency for readable and missing key files', () => {
+			const tempDir = fs.mkdtempSync(path.join('/tmp', 'maestro-ssh-'));
+			const keyPath = path.join(tempDir, 'id_test');
+			const missingPath = path.join(tempDir, 'missing_key');
+			fs.writeFileSync(keyPath, 'test-key', 'utf-8');
+
+			try {
+				const defaultManager = new SshRemoteManager();
+
+				expect(defaultManager.validateConfig({ ...validConfig, privateKeyPath: keyPath })).toEqual({
+					valid: true,
+					errors: [],
+				});
+
+				const missingResult = defaultManager.validateConfig({
+					...validConfig,
+					privateKeyPath: missingPath,
+				});
+				expect(missingResult.valid).toBe(false);
+				expect(missingResult.errors).toContain(`Private key not readable: ${missingPath}`);
+			} finally {
+				fs.rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		it('uses default SSH executor when exec dependency is not provided', async () => {
+			mockExecFileNoThrow.mockResolvedValue({
+				stdout: 'SSH_OK\nremote-hostname\n',
+				stderr: '',
+				exitCode: 0,
+			});
+			const partialManager = new SshRemoteManager({
+				checkFileAccess: () => true,
+			});
+
+			const result = await partialManager.testConnection({
+				...validConfig,
+				privateKeyPath: '',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.remoteInfo?.hostname).toBe('remote-hostname');
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith('ssh', expect.any(Array));
 		});
 	});
 });

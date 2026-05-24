@@ -155,9 +155,10 @@ export interface AutoRunHandle {
 	getCompletedTaskCount: () => number;
 }
 
-// Helper to compute initial image state synchronously from cache
-// This prevents flickering when ReactMarkdown rebuilds the component tree
-function getInitialImageState(src: string | undefined, folderPath: string | null) {
+// Helper to compute initial image state synchronously from cache.
+// Markdown preview only renders after a folder is selected, so relative image
+// paths can rely on folderPath being available.
+function getInitialImageState(src: string | undefined, folderPath: string) {
 	if (!src) {
 		return { dataUrl: null, loading: false, filename: null };
 	}
@@ -165,7 +166,7 @@ function getInitialImageState(src: string | undefined, folderPath: string | null
 	const decodedSrc = decodeURIComponent(src);
 
 	// Check cache for relative paths
-	if (decodedSrc.startsWith('images/') && folderPath) {
+	if (decodedSrc.startsWith('images/')) {
 		const cacheKey = `${folderPath}:${decodedSrc}`;
 		if (imageCache.has(cacheKey)) {
 			return {
@@ -187,15 +188,13 @@ function getInitialImageState(src: string | undefined, folderPath: string | null
 	}
 
 	// Check cache for other relative paths
-	if (folderPath) {
-		const cacheKey = `${folderPath}:${src}`;
-		if (imageCache.has(cacheKey)) {
-			return {
-				dataUrl: imageCache.get(cacheKey)!,
-				loading: false,
-				filename: src.split('/').pop() || null,
-			};
-		}
+	const cacheKey = `${folderPath}:${src}`;
+	if (imageCache.has(cacheKey)) {
+		return {
+			dataUrl: imageCache.get(cacheKey)!,
+			loading: false,
+			filename: src.split('/').pop() || null,
+		};
 	}
 
 	// Need to load - return loading state
@@ -214,7 +213,7 @@ const AttachmentImage = memo(function AttachmentImage({
 }: {
 	src?: string;
 	alt?: string;
-	folderPath: string | null;
+	folderPath: string;
 	sshRemoteId?: string; // SSH remote ID for loading images from remote sessions
 	theme: any;
 	onImageClick?: (filename: string) => void;
@@ -249,7 +248,7 @@ const AttachmentImage = memo(function AttachmentImage({
 		const decodedSrc = decodeURIComponent(src);
 
 		// Check if this is a relative path (e.g., images/{docName}-{timestamp}.{ext})
-		if (decodedSrc.startsWith('images/') && folderPath) {
+		if (decodedSrc.startsWith('images/')) {
 			const fname = decodedSrc.split('/').pop() || decodedSrc;
 			setFilename(fname);
 			const cacheKey = `${folderPath}:${decodedSrc}`;
@@ -302,7 +301,7 @@ const AttachmentImage = memo(function AttachmentImage({
 		} else {
 			// Other relative path - try to load as file from folderPath if available
 			setFilename(src.split('/').pop() || null);
-			const cacheKey = folderPath ? `${folderPath}:${src}` : src;
+			const cacheKey = `${folderPath}:${src}`;
 
 			// Double-check cache
 			if (imageCache.has(cacheKey)) {
@@ -311,15 +310,13 @@ const AttachmentImage = memo(function AttachmentImage({
 				return;
 			}
 
-			const pathToLoad = folderPath ? `${folderPath}/${src}` : src;
+			const pathToLoad = `${folderPath}/${src}`;
 			window.maestro.fs
 				.readFile(pathToLoad, sshRemoteId)
 				.then((result) => {
 					if (isStale) return;
 					if (result && result.startsWith('data:')) {
-						if (folderPath) {
-							imageCache.set(cacheKey, result);
-						}
+						imageCache.set(cacheKey, result);
 						setDataUrl(result);
 					} else {
 						setError('Invalid image data');
@@ -376,7 +373,7 @@ const AttachmentImage = memo(function AttachmentImage({
 
 	// For lightbox, pass the decoded path (which matches attachmentsList)
 	// rather than the URL-encoded src from markdown
-	const decodedSrcForClick = src ? decodeURIComponent(src) : '';
+	const decodedSrcForClick = decodeURIComponent(src!);
 	return (
 		<span
 			className="inline-block align-middle mx-1 my-1 cursor-pointer group relative"
@@ -546,8 +543,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		[onModeChange]
 	);
 
-	// Use onContentChange if provided, otherwise no-op
-	const handleContentChange = onContentChange || (() => {});
+	const handleContentChange = onContentChange;
 
 	// Local content state for responsive typing
 	// Always use internal state for immediate feedback, but sync with external state when provided
@@ -988,25 +984,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// We only save scroll position to ref immediately (for local use), but delay parent notification
 	const previewScrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const handlePreviewScroll = useCallback(() => {
-		if (previewRef.current) {
-			// Save to ref immediately for local persistence
-			previewScrollPosRef.current = previewRef.current.scrollTop;
+		// This handler is only attached to the preview element.
+		const preview = previewRef.current!;
+		// Save to ref immediately for local persistence
+		previewScrollPosRef.current = preview.scrollTop;
 
-			// Debounce the parent state update to avoid cascading re-renders
-			if (previewScrollDebounceRef.current) {
-				clearTimeout(previewScrollDebounceRef.current);
-			}
-			previewScrollDebounceRef.current = setTimeout(() => {
-				if (onStateChange && previewRef.current) {
-					onStateChange({
-						mode,
-						cursorPosition: textareaRef.current?.selectionStart || 0,
-						editScrollPos: textareaRef.current?.scrollTop || 0,
-						previewScrollPos: previewRef.current.scrollTop,
-					});
-				}
-			}, 500); // Only notify parent after 500ms of no scrolling
+		// Debounce the parent state update to avoid cascading re-renders
+		if (previewScrollDebounceRef.current) {
+			clearTimeout(previewScrollDebounceRef.current);
 		}
+		previewScrollDebounceRef.current = setTimeout(() => {
+			if (onStateChange && previewRef.current) {
+				onStateChange({
+					mode,
+					cursorPosition: textareaRef.current?.selectionStart || 0,
+					editScrollPos: textareaRef.current?.scrollTop || 0,
+					previewScrollPos: previewRef.current.scrollTop,
+				});
+			}
+		}, 500); // Only notify parent after 500ms of no scrolling
 	}, [mode, onStateChange]);
 
 	// Cleanup debounce timer on unmount
@@ -1243,9 +1239,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 			e.preventDefault();
 			e.stopPropagation();
-			if (!isLocked) {
-				toggleMode();
-			}
+			toggleMode();
 			return;
 		}
 
@@ -1406,14 +1400,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	}, [savedContent]);
 
 	// Callback for when a search match is rendered (used for scrolling to current match)
-	const handleMatchRendered = useCallback(
-		(index: number, element: HTMLElement) => {
-			if (index === currentMatchIndex) {
-				element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			}
-		},
-		[currentMatchIndex]
-	);
+	const handleMatchRendered = useCallback((_index: number, element: HTMLElement) => {
+		element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}, []);
 
 	// Convert documentTree to FileNode format for remarkFileLinks
 	const fileTree = useMemo((): FileNode[] => {
@@ -1454,7 +1443,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		const plugins: any[] = [...REMARK_GFM_PLUGINS];
 		if (fileTree.length > 0) {
 			// cwd is empty since we're at the root of the Auto Run folder
-			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '' }]);
+			plugins.push([remarkFileLinks, { indices: fileTreeIndices, cwd: '' }]);
 		}
 		return plugins;
 	}, [fileTree, fileTreeIndices]);
@@ -1490,7 +1479,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				<AttachmentImage
 					src={src}
 					alt={alt}
-					folderPath={folderPath}
+					folderPath={folderPath!}
 					sshRemoteId={sshRemoteId}
 					theme={theme}
 					onImageClick={openLightboxByFilename}
@@ -1545,7 +1534,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				<AttachmentImage
 					src={src}
 					alt={alt}
-					folderPath={folderPath}
+					folderPath={folderPath!}
 					sshRemoteId={sshRemoteId}
 					theme={theme}
 					onImageClick={openLightboxByFilename}
@@ -1713,6 +1702,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					<button
 						onClick={() => !isLocked && switchMode('edit')}
 						disabled={isLocked}
+						aria-pressed={mode === 'edit' && !isLocked}
 						className={`flex items-center justify-center w-8 h-8 rounded transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
 						style={{
 							backgroundColor:
@@ -1730,6 +1720,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					</button>
 					<button
 						onClick={() => switchMode('preview')}
+						aria-pressed={mode === 'preview' || isLocked}
 						className="flex items-center justify-center w-8 h-8 rounded transition-colors"
 						style={{
 							backgroundColor:

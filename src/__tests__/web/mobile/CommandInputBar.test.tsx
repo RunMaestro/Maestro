@@ -27,6 +27,7 @@ import {
 	type CommandInputBarProps,
 	type InputMode,
 } from '../../../web/mobile/CommandInputBar';
+import { useSwipeUp } from '../../../web/hooks/useSwipeUp';
 
 // Mock dependencies
 vi.mock('../../../web/components/ThemeProvider', () => ({
@@ -315,6 +316,16 @@ describe('CommandInputBar', () => {
 			expect(onChange).toHaveBeenCalledWith('a');
 		});
 
+		it('reports controlled value changes through onChange', () => {
+			const onChange = vi.fn();
+			renderComponent({ value: 'controlled', onChange });
+			const input = screen.getByRole('textbox');
+
+			fireEvent.change(input, { target: { value: 'next value' } });
+
+			expect(onChange).toHaveBeenCalledWith('next value');
+		});
+
 		it('clears internal state after submit in uncontrolled mode', async () => {
 			const onSubmit = vi.fn();
 			renderComponent({ onSubmit });
@@ -330,6 +341,20 @@ describe('CommandInputBar', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
+			expect(input).toHaveValue('');
+		});
+
+		it('updates terminal input in uncontrolled mode and submits with Enter', () => {
+			const onSubmit = vi.fn();
+			const onChange = vi.fn();
+			renderComponent({ inputMode: 'terminal', onSubmit, onChange });
+
+			const input = screen.getByRole('textbox');
+			fireEvent.change(input, { target: { value: 'pwd' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onChange).toHaveBeenCalledWith('pwd');
+			expect(onSubmit).toHaveBeenCalledWith('pwd');
 			expect(input).toHaveValue('');
 		});
 	});
@@ -375,6 +400,24 @@ describe('CommandInputBar', () => {
 			expect(onSubmit).not.toHaveBeenCalled();
 		});
 
+		it('does not submit from terminal Enter when value is empty or disabled', () => {
+			const onSubmit = vi.fn();
+			const { rerender } = render(
+				<CommandInputBar {...createProps({ inputMode: 'terminal', onSubmit })} />
+			);
+
+			fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+			expect(onSubmit).not.toHaveBeenCalled();
+
+			rerender(
+				<CommandInputBar
+					{...createProps({ inputMode: 'terminal', value: 'blocked', disabled: true, onSubmit })}
+				/>
+			);
+			fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+			expect(onSubmit).not.toHaveBeenCalled();
+		});
+
 		it('triggers haptic feedback on successful submit', () => {
 			const onSubmit = vi.fn();
 			renderComponent({ value: 'test', onSubmit });
@@ -398,6 +441,26 @@ describe('CommandInputBar', () => {
 			expect(onSubmit).not.toHaveBeenCalled();
 		});
 
+		it('Cmd+Enter submits in AI mode when send is not blocked', () => {
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'ai', value: 'test', onSubmit });
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+
+			expect(onSubmit).toHaveBeenCalledWith('test');
+		});
+
+		it('Ctrl+Enter does not submit in AI mode while the session is busy', () => {
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'ai', value: 'test', isSessionBusy: true, onSubmit });
+
+			const textarea = screen.getByRole('textbox');
+			fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+
+			expect(onSubmit).not.toHaveBeenCalled();
+		});
+
 		it('Enter submits in terminal mode', () => {
 			const onSubmit = vi.fn();
 			renderComponent({ inputMode: 'terminal', value: 'test', onSubmit });
@@ -406,6 +469,16 @@ describe('CommandInputBar', () => {
 			fireEvent.keyDown(input, { key: 'Enter' });
 
 			expect(onSubmit).toHaveBeenCalledWith('test');
+		});
+
+		it('ignores non-Enter keys in terminal mode', () => {
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'terminal', value: 'test', onSubmit });
+
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'a' });
+
+			expect(onSubmit).not.toHaveBeenCalled();
 		});
 
 		it('Shift+Enter ALSO submits in terminal mode (single line input)', () => {
@@ -597,6 +670,23 @@ describe('CommandInputBar', () => {
 			expect(screen.getByTestId('slash-autocomplete')).toBeInTheDocument();
 		});
 
+		it('selects slash commands in controlled mode through onChange', async () => {
+			const onChange = vi.fn();
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'ai', value: '', onChange, onSubmit });
+
+			fireEvent.click(screen.getByRole('button', { name: /open slash commands/i }));
+			fireEvent.click(screen.getByTestId('select-slash-cmd'));
+
+			expect(onChange).toHaveBeenCalledWith('/test');
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(onSubmit).toHaveBeenCalledWith('/test');
+		});
+
 		it('stacks phone AI drafts into a full-width preview when they exceed the compact height', () => {
 			Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
 
@@ -645,6 +735,17 @@ describe('CommandInputBar', () => {
 			fireEvent.click(handle);
 
 			expect(onHistoryOpen).toHaveBeenCalled();
+		});
+
+		it('passes onHistoryOpen to the swipe-up gesture hook', () => {
+			const onHistoryOpen = vi.fn();
+			renderComponent({ onHistoryOpen });
+
+			const swipeConfig = vi.mocked(useSwipeUp).mock.calls.at(-1)?.[0];
+			swipeConfig?.onSwipeUp();
+
+			expect(swipeConfig?.enabled).toBe(true);
+			expect(onHistoryOpen).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -837,6 +938,20 @@ describe('CommandInputBar', () => {
 			fireEvent.focus(input);
 			fireEvent.blur(input);
 
+			expect(onInputBlur).toHaveBeenCalled();
+		});
+
+		it('removes focus ring and calls onInputBlur when AI input blurs', () => {
+			const onInputBlur = vi.fn();
+			Object.defineProperty(window, 'innerWidth', { value: 800, writable: true });
+			renderComponent({ inputMode: 'ai', onInputBlur });
+			const textarea = screen.getByRole('textbox');
+
+			fireEvent.focus(textarea);
+			fireEvent.blur(textarea);
+
+			expect(textarea.style.borderColor).toBe('rgb(68, 68, 68)');
+			expect(textarea.style.boxShadow).toBe('none');
 			expect(onInputBlur).toHaveBeenCalled();
 		});
 
@@ -1130,6 +1245,132 @@ describe('useIsMobilePhone hook', () => {
 
 		scrollHeightSpy.mockRestore();
 	});
+
+	it('expands AI input on phone focus and collapses on outside pointer events', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+
+		try {
+			renderComponent({ inputMode: 'ai', value: 'draft message' });
+			const textarea = screen.getByRole('textbox');
+
+			fireEvent.focus(textarea);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60);
+			});
+
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '150px' });
+
+			fireEvent.mouseDown(document.body);
+
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '48px' });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps expanded AI input open when pointer events stay inside the composer', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+
+		try {
+			renderComponent({ inputMode: 'ai', value: 'draft message' });
+			const textarea = screen.getByRole('textbox');
+
+			fireEvent.focus(textarea);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60);
+			});
+
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '150px' });
+
+			fireEvent.mouseDown(screen.getByRole('textbox'));
+
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '150px' });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('expanded AI input blur collapses after delay when focus leaves the composer', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const onInputBlur = vi.fn();
+		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+		let outsideButton: HTMLButtonElement | undefined;
+
+		try {
+			outsideButton = document.createElement('button');
+			document.body.appendChild(outsideButton);
+			renderComponent({ inputMode: 'ai', value: 'draft message', onInputBlur });
+			const textarea = screen.getByRole('textbox');
+
+			fireEvent.focus(textarea);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60);
+			});
+			fireEvent.blur(screen.getByRole('textbox'));
+			outsideButton.focus();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(160);
+			});
+
+			expect(onInputBlur).toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '48px' });
+		} finally {
+			outsideButton?.remove();
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps expanded AI input open when blur moves focus inside the composer', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const onInputBlur = vi.fn();
+		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+
+		try {
+			renderComponent({ inputMode: 'ai', value: 'draft message', onInputBlur });
+			const textarea = screen.getByRole('textbox');
+
+			fireEvent.focus(textarea);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60);
+			});
+
+			fireEvent.blur(textarea);
+			screen.getByRole('button', { name: /send message/i }).focus();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(160);
+			});
+
+			expect(onInputBlur).toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveStyle({ minHeight: '150px' });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('Desktop submit focus behavior', () => {
+	it('keeps focus on AI textarea after submit on non-phone layouts', () => {
+		const originalInnerWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { value: 800, writable: true });
+		try {
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'ai', value: 'send this', onSubmit });
+
+			const textarea = screen.getByRole('textbox');
+			const form = textarea.closest('form');
+			fireEvent.submit(form!);
+
+			expect(onSubmit).toHaveBeenCalledWith('send this');
+			expect(document.activeElement).toBe(textarea);
+		} finally {
+			Object.defineProperty(window, 'innerWidth', {
+				value: originalInnerWidth,
+				writable: true,
+			});
+		}
+	});
 });
 
 describe('Visual Viewport API', () => {
@@ -1334,6 +1575,40 @@ describe('Voice Input', () => {
 		});
 
 		expect(onChange).toHaveBeenCalledWith('hello world');
+	});
+
+	it('reports controlled voice transcription through onChange', () => {
+		const onChange = vi.fn();
+		renderComponent({ value: '', onChange });
+
+		const voiceButton = screen.getByRole('button', { name: /start voice input/i });
+		fireEvent.click(voiceButton);
+
+		act(() => {
+			mockRecognitionInstance.onstart?.(new Event('start'));
+		});
+
+		act(() => {
+			const resultEvent = new Event('result') as Event & {
+				resultIndex: number;
+				results: Array<Array<{ transcript: string }> & { isFinal: boolean }>;
+			};
+			// @ts-expect-error - adding properties to event
+			resultEvent.resultIndex = 0;
+			// @ts-expect-error - adding properties to event
+			resultEvent.results = [
+				{
+					0: { transcript: 'controlled voice' },
+					isFinal: true,
+					length: 1,
+				},
+			];
+			// @ts-expect-error - adding properties to event
+			resultEvent.results.length = 1;
+			mockRecognitionInstance.onresult?.(resultEvent);
+		});
+
+		expect(onChange).toHaveBeenCalledWith('controlled voice');
 	});
 
 	it('handles voice recognition error', () => {

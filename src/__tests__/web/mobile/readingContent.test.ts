@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	normalizeReaderLanguage,
 	normalizeWebReaderContent,
 	parseTextWithCodeBlocks,
 	type WebReaderTextSegment,
@@ -47,6 +48,16 @@ describe('normalizeWebReaderContent', () => {
 			{ type: 'text', content: 'intro\n' },
 			{ type: 'code', content: 'const value = `code`;', language: 'typescript' },
 			{ type: 'text', content: '\noutro' },
+		]);
+	});
+
+	it('falls back to text for blank languages and parses inline code from the fence header', () => {
+		expect(normalizeReaderLanguage('   ')).toBe('text');
+		expect(parseTextWithCodeBlocks('```\nplain\n```')).toEqual([
+			{ type: 'code', content: 'plain', language: 'text' },
+		]);
+		expect(parseTextWithCodeBlocks('```ts const value = 1;\n```')).toEqual([
+			{ type: 'code', content: 'const value = 1;', language: 'typescript' },
 		]);
 	});
 });

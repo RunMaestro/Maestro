@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
+import { COLORBLIND_LINE_COLORS } from '../../../../renderer/constants/colorblindPalettes';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
 
@@ -97,6 +98,32 @@ const singlePointData: StatsAggregation = {
 	},
 	bySource: { user: 5, auto: 0 },
 	byDay: [{ date: '2024-12-27', count: 5, duration: 300000 }],
+};
+
+const longRangeData: StatsAggregation = {
+	totalQueries: 21,
+	totalDuration: 1260000,
+	avgDuration: 60000,
+	byAgent: {
+		'claude-code': { count: 21, duration: 1260000 },
+	},
+	bySource: { user: 21, auto: 0 },
+	byDay: Array.from({ length: 21 }, (_, index) => ({
+		date: `2024-01-${String(index + 1).padStart(2, '0')}`,
+		count: 1,
+		duration: 60000,
+	})),
+};
+
+const highDurationData: StatsAggregation = {
+	totalQueries: 1,
+	totalDuration: 7200000,
+	avgDuration: 7200000,
+	byAgent: {
+		'claude-code': { count: 1, duration: 7200000 },
+	},
+	bySource: { user: 1, auto: 0 },
+	byDay: [{ date: '2024-12-27', count: 1, duration: 7200000 }],
 };
 
 describe('DurationTrendsChart', () => {
@@ -244,6 +271,24 @@ describe('DurationTrendsChart', () => {
 
 			expect(screen.getByText('Duration Trends')).toBeInTheDocument();
 		});
+
+		it('uses the quarter smoothing window and quarter date labels', () => {
+			render(<DurationTrendsChart data={mockData} timeRange="quarter" theme={theme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /enable smoothing/i }));
+
+			expect(screen.getByText('Window: 7 periods')).toBeInTheDocument();
+			expect(screen.getByText('Dec 20')).toBeInTheDocument();
+		});
+
+		it('falls back to month-day labels and a five-period window for unknown ranges', () => {
+			render(<DurationTrendsChart data={mockData} timeRange={'custom' as never} theme={theme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /enable smoothing/i }));
+
+			expect(screen.getByText('Window: 5 periods')).toBeInTheDocument();
+			expect(screen.getByText('Dec 20')).toBeInTheDocument();
+		});
 	});
 
 	describe('Theme Support', () => {
@@ -296,6 +341,62 @@ describe('DurationTrendsChart', () => {
 			expect(toggleButton).toHaveStyle({
 				backgroundColor: expect.stringMatching(/^(rgb|#)/),
 			});
+		});
+
+		it('uses the colorblind-safe line color when enabled', () => {
+			const { container } = render(
+				<DurationTrendsChart data={mockData} timeRange="week" theme={theme} colorBlindMode />
+			);
+			const linePath = Array.from(container.querySelectorAll('path')).find(
+				(path) => path.getAttribute('fill') === 'none' && path.getAttribute('stroke')
+			);
+
+			expect(linePath).toHaveAttribute('stroke', COLORBLIND_LINE_COLORS.primary);
+		});
+
+		it('parses rgb accent colors for the chart gradient', () => {
+			const rgbTheme = {
+				...theme,
+				colors: { ...theme.colors, accent: 'rgb(10, 20, 30)' },
+			};
+			const { container } = render(
+				<DurationTrendsChart data={mockData} timeRange="week" theme={rgbTheme} />
+			);
+
+			expect(container.querySelector('stop')).toHaveAttribute(
+				'stop-color',
+				'rgba(10, 20, 30, 0.3)'
+			);
+		});
+
+		it('falls back to the default gradient color for unparseable accent values', () => {
+			const fallbackTheme = {
+				...theme,
+				colors: { ...theme.colors, accent: 'var(--accent)' },
+			};
+			const { container } = render(
+				<DurationTrendsChart data={mockData} timeRange="week" theme={fallbackTheme} />
+			);
+
+			expect(container.querySelector('stop')).toHaveAttribute(
+				'stop-color',
+				'rgba(100, 149, 237, 0.3)'
+			);
+		});
+
+		it('falls back to the default gradient color for incomplete rgb accent values', () => {
+			const fallbackTheme = {
+				...theme,
+				colors: { ...theme.colors, accent: 'rgb(10)' },
+			};
+			const { container } = render(
+				<DurationTrendsChart data={mockData} timeRange="week" theme={fallbackTheme} />
+			);
+
+			expect(container.querySelector('stop')).toHaveAttribute(
+				'stop-color',
+				'rgba(100, 149, 237, 0.3)'
+			);
 		});
 	});
 
@@ -359,6 +460,19 @@ describe('DurationTrendsChart', () => {
 				expect(screen.getByText('Avg Duration:')).toBeInTheDocument();
 			}
 		});
+
+		it('shows raw duration when hovering a smoothed point whose raw value changed', () => {
+			const { container } = render(
+				<DurationTrendsChart data={varyingData} timeRange="week" theme={theme} />
+			);
+			const firstPoint = container.querySelector('circle');
+
+			fireEvent.click(screen.getByRole('button', { name: /enable smoothing/i }));
+			expect(firstPoint).toBeInTheDocument();
+			fireEvent.mouseEnter(firstPoint as SVGCircleElement);
+
+			expect(screen.getByText('Raw:')).toBeInTheDocument();
+		});
 	});
 
 	describe('Edge Cases', () => {
@@ -392,6 +506,17 @@ describe('DurationTrendsChart', () => {
 			// Should render all data points
 			const circles = container.querySelectorAll('circle');
 			expect(circles.length).toBe(varyingData.byDay.length);
+		});
+
+		it('formats hour-scale durations and singular query labels', () => {
+			const { container } = render(
+				<DurationTrendsChart data={highDurationData} timeRange="week" theme={theme} />
+			);
+
+			expect(screen.getByLabelText(/Average duration 2h 0m, 1 query/)).toBeInTheDocument();
+			expect(
+				Array.from(container.querySelectorAll('text')).some((el) => el.textContent === '2h')
+			).toBe(true);
 		});
 	});
 
@@ -429,6 +554,18 @@ describe('DurationTrendsChart', () => {
 				el.textContent?.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/)
 			);
 			expect(hasDateLabels).toBe(true);
+		});
+
+		it('reduces X-axis labels for long date ranges while preserving the final label', () => {
+			const { container } = render(
+				<DurationTrendsChart data={longRangeData} timeRange="month" theme={theme} />
+			);
+			const dateLabels = Array.from(container.querySelectorAll('text'))
+				.map((el) => el.textContent)
+				.filter((text): text is string => /^Jan \d+$/.test(text ?? ''));
+
+			expect(dateLabels.length).toBeLessThan(longRangeData.byDay.length);
+			expect(dateLabels).toContain('Jan 21');
 		});
 	});
 

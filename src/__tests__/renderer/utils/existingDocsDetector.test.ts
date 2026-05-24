@@ -27,8 +27,11 @@ const mockAutorunApi = {
 const originalMaestro = (global as any).window?.maestro;
 
 describe('existingDocsDetector', () => {
+	let consoleDebugSpy: ReturnType<typeof vi.spyOn>;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
 		// Setup window.maestro mock
 		(global as any).window = {
@@ -39,6 +42,8 @@ describe('existingDocsDetector', () => {
 	});
 
 	afterEach(() => {
+		consoleDebugSpy.mockRestore();
+
 		// Restore original window.maestro if it existed
 		if (originalMaestro) {
 			(global as any).window = { maestro: originalMaestro };
@@ -121,6 +126,10 @@ describe('existingDocsDetector', () => {
 			const result = await hasExistingAutoRunDocs('/path/to/project');
 
 			expect(result).toBe(false);
+			expect(consoleDebugSpy).toHaveBeenCalledWith(
+				'[existingDocsDetector] hasExistingAutoRunDocs error:',
+				expect.any(Error)
+			);
 		});
 
 		it('returns true for single document', async () => {
@@ -197,6 +206,10 @@ describe('existingDocsDetector', () => {
 			const result = await getExistingAutoRunDocs('/path/to/project');
 
 			expect(result).toEqual([]);
+			expect(consoleDebugSpy).toHaveBeenCalledWith(
+				'[existingDocsDetector] getExistingAutoRunDocs error:',
+				expect.any(Error)
+			);
 		});
 
 		it('handles single document', async () => {
@@ -277,6 +290,10 @@ describe('existingDocsDetector', () => {
 			const result = await getExistingAutoRunDocsCount('/path/to/project');
 
 			expect(result).toBe(0);
+			expect(consoleDebugSpy).toHaveBeenCalledWith(
+				'[existingDocsDetector] getExistingAutoRunDocsCount error:',
+				expect.any(Error)
+			);
 		});
 
 		it('returns 1 for single document', async () => {

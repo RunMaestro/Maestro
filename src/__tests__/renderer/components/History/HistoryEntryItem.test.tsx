@@ -413,4 +413,21 @@ describe('HistoryEntryItem', () => {
 		const timestampEl = screen.getByText(/^\d{1,2}:\d{2}\s*(AM|PM)$/i);
 		expect(timestampEl).toBeInTheDocument();
 	});
+
+	it('formats older timestamps with date and time', () => {
+		const yesterday = new Date('2025-06-14T12:00:00Z');
+		const entry = createMockEntry({ timestamp: yesterday.getTime() });
+
+		render(
+			<HistoryEntryItem
+				entry={entry}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText(/Jun 14,?\s+\d{1,2}:\d{2}\s*(AM|PM)/i)).toBeInTheDocument();
+	});
 });

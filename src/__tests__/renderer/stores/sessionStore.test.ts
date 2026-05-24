@@ -360,6 +360,19 @@ describe('sessionStore', () => {
 			useSessionStore.getState().toggleGroupCollapsed('g1');
 			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 		});
+
+		it('leaves non-target groups unchanged when toggling collapsed state', () => {
+			const group1 = createMockGroup({ id: 'g1', collapsed: false });
+			const group2 = createMockGroup({ id: 'g2', collapsed: false });
+			useSessionStore.getState().setGroups([group1, group2]);
+
+			useSessionStore.getState().toggleGroupCollapsed('g1');
+
+			const groups = useSessionStore.getState().groups;
+			expect(groups[0].collapsed).toBe(true);
+			expect(groups[1]).toBe(group2);
+			expect(groups[1].collapsed).toBe(false);
+		});
 	});
 
 	// ========================================================================

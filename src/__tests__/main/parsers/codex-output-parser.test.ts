@@ -1,12 +1,79 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
+	const originalCodexHome = process.env.CODEX_HOME;
+	const tempDirs: string[] = [];
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		if (originalCodexHome === undefined) {
+			delete process.env.CODEX_HOME;
+		} else {
+			process.env.CODEX_HOME = originalCodexHome;
+		}
+		for (const tempDir of tempDirs.splice(0)) {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	function createCodexHome(configContent?: string): string {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-codex-parser-'));
+		tempDirs.push(dir);
+		process.env.CODEX_HOME = dir;
+		if (configContent !== undefined) {
+			fs.writeFileSync(path.join(dir, 'config.toml'), configContent);
+		}
+		return dir;
+	}
+
+	function usageContextWindow(p: CodexOutputParser): number | undefined {
+		return p.parseJsonLine(JSON.stringify({ type: 'turn.completed', usage: {} }))?.usage
+			?.contextWindow;
+	}
 
 	describe('agentId', () => {
 		it('should be codex', () => {
 			expect(parser.agentId).toBe('codex');
+		});
+	});
+
+	describe('configuration context window', () => {
+		it('should use explicit model_context_window from CODEX_HOME config', () => {
+			createCodexHome('model = "gpt-4"\nmodel_context_window = 12345\n');
+
+			expect(usageContextWindow(new CodexOutputParser())).toBe(12345);
+		});
+
+		it('should use exact model context window from config', () => {
+			createCodexHome('model = "gpt-4"\n');
+
+			expect(usageContextWindow(new CodexOutputParser())).toBe(8192);
+		});
+
+		it('should use prefix model context window from config', () => {
+			createCodexHome('model = "gpt-4o-custom"\n');
+
+			expect(usageContextWindow(new CodexOutputParser())).toBe(128000);
+		});
+
+		it('should use default context window for unknown models', () => {
+			createCodexHome('model = "unknown-model"\n');
+
+			expect(usageContextWindow(new CodexOutputParser())).toBe(400000);
+		});
+
+		it('should use defaults when config is missing or unreadable', () => {
+			createCodexHome();
+			expect(usageContextWindow(new CodexOutputParser())).toBe(400000);
+
+			const unreadableHome = createCodexHome();
+			fs.mkdirSync(path.join(unreadableHome, 'config.toml'));
+			expect(usageContextWindow(new CodexOutputParser())).toBe(400000);
 		});
 	});
 
@@ -61,6 +128,21 @@ describe('CodexOutputParser', () => {
 				expect(event?.text).toBe('\n\n**Thinking about the task**\n\nI need to analyze...');
 				expect(event?.isPartial).toBe(true);
 			});
+
+			it('should preserve empty reasoning text', () => {
+				const event = parser.parseJsonObject({
+					type: 'item.completed',
+					item: {
+						type: 'reasoning',
+					},
+				});
+
+				expect(event).toMatchObject({
+					type: 'text',
+					text: '',
+					isPartial: true,
+				});
+			});
 		});
 
 		describe('item.completed events - agent_message', () => {
@@ -101,6 +183,25 @@ describe('CodexOutputParser', () => {
 				expect(event?.toolState).toEqual({
 					status: 'running',
 					input: { command: ['ls', '-la'] },
+				});
+			});
+
+			it('should handle tool_call items without tool names', () => {
+				const event = parser.parseJsonObject({
+					type: 'item.completed',
+					item: {
+						type: 'tool_call',
+						args: { command: ['pwd'] },
+					},
+				});
+
+				expect(event).toMatchObject({
+					type: 'tool_use',
+					toolName: undefined,
+					toolState: {
+						status: 'running',
+						input: { command: ['pwd'] },
+					},
 				});
 			});
 		});
@@ -144,6 +245,37 @@ describe('CodexOutputParser', () => {
 					status: 'completed',
 					output: 'Hello',
 				});
+			});
+
+			it('should fall back when byte array decoding throws', () => {
+				const bufferFrom = vi.spyOn(Buffer, 'from').mockImplementationOnce(() => {
+					throw new Error('bad bytes');
+				});
+				try {
+					const event = parser.parseJsonObject({
+						type: 'item.completed',
+						item: {
+							type: 'tool_result',
+							output: [65, 66],
+						},
+					});
+
+					expect(event?.toolState?.output).toBe('65,66');
+				} finally {
+					bufferFrom.mockRestore();
+				}
+			});
+
+			it('should stringify malformed non-array tool output', () => {
+				const event = parser.parseJsonObject({
+					type: 'item.completed',
+					item: {
+						type: 'tool_result',
+						output: 42,
+					},
+				});
+
+				expect(event?.toolState?.output).toBe('42');
 			});
 		});
 
@@ -285,6 +417,26 @@ describe('CodexOutputParser', () => {
 
 			const event = parser.parseJsonLine(line);
 			expect(event?.raw).toEqual(original);
+		});
+	});
+
+	describe('parseJsonObject', () => {
+		it('should return null for nullish and non-object values', () => {
+			expect(parser.parseJsonObject(null)).toBeNull();
+			expect(parser.parseJsonObject(undefined)).toBeNull();
+			expect(parser.parseJsonObject('text')).toBeNull();
+		});
+
+		it('should parse pre-parsed objects', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'thread.started',
+					thread_id: 'preparsed-thread',
+				})
+			).toMatchObject({
+				type: 'init',
+				sessionId: 'preparsed-thread',
+			});
 		});
 	});
 
@@ -597,6 +749,23 @@ describe('CodexOutputParser', () => {
 			const line = JSON.stringify({ type: 'error', error: 'rate limit exceeded' });
 			const error = parser.detectErrorFromLine(line);
 			expect(error?.parsedJson).toBeDefined();
+		});
+
+		it('should return null for parsed values without error text', () => {
+			expect(parser.detectErrorFromParsed(null)).toBeNull();
+			expect(parser.detectErrorFromParsed('error')).toBeNull();
+			expect(parser.detectErrorFromParsed({ type: 'turn.failed' })).toBeNull();
+			expect(parser.detectErrorFromParsed({ type: 'item.completed' })).toBeNull();
+		});
+
+		it('should return unknown for unmatched parsed error text', () => {
+			expect(
+				parser.detectErrorFromParsed({ type: 'error', error: 'custom codex failure' })
+			).toMatchObject({
+				type: 'unknown',
+				message: 'custom codex failure',
+				recoverable: true,
+			});
 		});
 	});
 

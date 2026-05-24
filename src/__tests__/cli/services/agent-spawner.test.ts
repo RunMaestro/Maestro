@@ -103,6 +103,9 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 	getClaudeCommand,
+	getCodexCommand,
+	getOpenCodeCommand,
+	getDroidCommand,
 	detectClaude,
 	detectAgent,
 	getAgentCommand,
@@ -546,6 +549,8 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('should fall back to PATH detection when custom path is invalid', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
 			// Mock custom path from settings
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path/to/claude');
 
@@ -572,6 +577,9 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/claude');
 			expect(result.source).toBe('path');
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining('Custom Claude Code path "/invalid/path/to/claude"')
+			);
 		});
 
 		it('should return unavailable when Claude is not found', async () => {
@@ -645,6 +653,8 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('should reject non-file paths', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
 			mockGetAgentCustomPath.mockReturnValue('/path/to/directory');
 
 			// Mock stat returning directory
@@ -668,9 +678,14 @@ Some text with [x] in it that's not a checkbox
 			const result = await resultPromise;
 
 			expect(result.available).toBe(false);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining('Custom Claude Code path "/path/to/directory"')
+			);
 		});
 
 		it('should reject non-executable files on Unix', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
 			// Save original platform
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
@@ -701,12 +716,45 @@ Some text with [x] in it that's not a checkbox
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 
 			expect(result.available).toBe(false);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining('Custom Claude Code path "/path/to/claude"')
+			);
 		});
 	});
 
 	describe('detectAgent', () => {
 		beforeEach(() => {
 			vi.resetModules();
+		});
+
+		it('should expose detection wrappers for non-Claude agents', async () => {
+			mockGetAgentCustomPath.mockImplementation((toolType: string) => `/custom/${toolType}`);
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+
+			const {
+				detectCodex: freshDetectCodex,
+				detectOpenCode: freshDetectOpenCode,
+				detectDroid: freshDetectDroid,
+			} = await import('../../../cli/services/agent-spawner');
+
+			await expect(freshDetectCodex()).resolves.toEqual({
+				available: true,
+				path: '/custom/codex',
+				source: 'settings',
+			});
+			await expect(freshDetectOpenCode()).resolves.toEqual({
+				available: true,
+				path: '/custom/opencode',
+				source: 'settings',
+			});
+			await expect(freshDetectDroid()).resolves.toEqual({
+				available: true,
+				path: '/custom/factory-droid',
+				source: 'settings',
+			});
 		});
 
 		it('should detect agent with custom path from settings', async () => {
@@ -725,6 +773,8 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('should fall back to PATH detection when custom path is invalid', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
 			mockSpawn.mockReturnValue(mockChild);
@@ -741,6 +791,9 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/codex');
 			expect(result.source).toBe('path');
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining('Custom Codex path "/invalid/path"')
+			);
 		});
 
 		it('should return unavailable when agent is not found', async () => {
@@ -764,10 +817,12 @@ Some text with [x] in it that's not a checkbox
 			} as fs.Stats);
 			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
 
-			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
+			const { detectAgent: freshDetectAgent, getAgentCommand: freshGetAgentCommand } =
+				await import('../../../cli/services/agent-spawner');
 
 			const result1 = await freshDetectAgent('factory-droid');
 			expect(result1.available).toBe(true);
+			expect(freshGetAgentCommand('factory-droid')).toBe('/custom/droid');
 
 			vi.mocked(fs.promises.stat).mockClear();
 
@@ -775,9 +830,38 @@ Some text with [x] in it that's not a checkbox
 			expect(result2.available).toBe(true);
 			expect(result2.source).toBe('settings');
 		});
+
+		it('should fall back to the raw tool type for unknown agent detection warnings', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+			mockGetAgentCustomPath.mockReturnValue('/invalid/custom');
+			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+			mockSpawn.mockReturnValue(mockChild);
+
+			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
+
+			const resultPromise = freshDetectAgent('mystery-agent' as any);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			await expect(resultPromise).resolves.toEqual({ available: false });
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.any(String),
+				['mystery-agent'],
+				expect.objectContaining({ env: expect.any(Object) })
+			);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining('Custom mystery-agent path "/invalid/custom"')
+			);
+		});
 	});
 
 	describe('getAgentCommand', () => {
+		it('should expose command wrappers for non-Claude agents', () => {
+			expect(getCodexCommand()).toBe('codex');
+			expect(getOpenCodeCommand()).toBe('opencode');
+			expect(getDroidCommand()).toBe('droid');
+		});
+
 		it('should return default command for unknown agent', async () => {
 			vi.resetModules();
 			const { getAgentCommand: freshGetAgentCommand } =
@@ -787,6 +871,14 @@ Some text with [x] in it that's not a checkbox
 			const command = freshGetAgentCommand('claude-code');
 			expect(command).toBeTruthy();
 			expect(typeof command).toBe('string');
+		});
+
+		it('should return the raw tool type when no agent definition exists', async () => {
+			vi.resetModules();
+			const { getAgentCommand: freshGetAgentCommand } =
+				await import('../../../cli/services/agent-spawner');
+
+			expect(freshGetAgentCommand('mystery-agent' as any)).toBe('mystery-agent');
 		});
 	});
 
@@ -956,6 +1048,22 @@ Some text with [x] in it that's not a checkbox
 
 			expect(result.usageStats?.inputTokens).toBe(200);
 			expect(result.usageStats?.outputTokens).toBe(100);
+		});
+
+		it('should parse zero Claude cost without a usage object', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit('data', Buffer.from('{"total_cost_usd":0}\n'));
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.usageStats?.totalCostUsd).toBe(0);
 		});
 
 		it('should aggregate usage from multiple models', async () => {
@@ -1232,6 +1340,390 @@ Some text with [x] in it that's not a checkbox
 				);
 			}
 		});
+
+		it('should spawn Codex in JSON-line batch mode and merge usage', async () => {
+			const resultPromise = spawnAgent('codex', '/repo', 'Codex prompt', 'thread-1');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args, options] = mockSpawn.mock.calls[0];
+			expect(cmd).toBe('codex');
+			expect(args).toEqual([
+				'-C',
+				'/repo',
+				'exec',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--skip-git-repo-check',
+				'--json',
+				'resume',
+				'thread-1',
+				'--',
+				'Codex prompt',
+			]);
+			expect(options.cwd).toBe('/repo');
+			expect(mockStdin.end).toHaveBeenCalled();
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					[
+						{ type: 'thread.started', thread_id: 'thread-xyz' },
+						{ type: 'item.completed', item: { type: 'agent_message', text: 'First' } },
+						'',
+						null,
+						{ type: 'item.completed', item: { type: 'agent_message', text: 'Second' } },
+						{
+							type: 'turn.completed',
+							usage: {
+								input_tokens: 10,
+								output_tokens: 5,
+								cached_input_tokens: 2,
+								reasoning_output_tokens: 3,
+							},
+						},
+					]
+						.map((event) => (event === '' ? '' : JSON.stringify(event)))
+						.join('\n') + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result).toMatchObject({
+				success: true,
+				response: 'First\nSecond',
+				agentSessionId: 'thread-xyz',
+				usageStats: {
+					inputTokens: 10,
+					outputTokens: 8,
+					cacheReadInputTokens: 2,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0,
+					contextWindow: 400000,
+					reasoningTokens: 3,
+				},
+			});
+		});
+
+		it('should spawn OpenCode with default batch env and parse JSON-line output', async () => {
+			const originalOpenCodeConfig = process.env.OPENCODE_CONFIG_CONTENT;
+			delete process.env.OPENCODE_CONFIG_CONTENT;
+
+			try {
+				const resultPromise = spawnAgent('opencode', '/repo', 'Open prompt', 'open-session');
+
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				const [cmd, args, options] = mockSpawn.mock.calls[0];
+				expect(cmd).toBe('opencode');
+				expect(args).toEqual([
+					'run',
+					'--format',
+					'json',
+					'--session',
+					'open-session',
+					'--',
+					'Open prompt',
+				]);
+				expect(options.cwd).toBe('/repo');
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"question":false');
+
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						[
+							{ type: 'step_start', sessionID: 'open-session' },
+							{
+								type: 'text',
+								sessionID: 'open-session',
+								part: { type: 'text', text: 'Open response' },
+							},
+							{
+								type: 'step_finish',
+								sessionID: 'open-session',
+								part: {
+									type: 'step-finish',
+									tokens: { input: 4, output: 6, cache: { read: 1, write: 3 } },
+									cost: 0.02,
+								},
+							},
+						]
+							.map((event) => JSON.stringify(event))
+							.join('\n') + '\n'
+					)
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+
+				expect(result).toMatchObject({
+					success: true,
+					response: 'Open response',
+					agentSessionId: 'open-session',
+					usageStats: {
+						inputTokens: 4,
+						outputTokens: 6,
+						cacheReadInputTokens: 1,
+						cacheCreationInputTokens: 3,
+						totalCostUsd: 0.02,
+						contextWindow: 0,
+					},
+				});
+				expect(result.usageStats).not.toHaveProperty('reasoningTokens');
+			} finally {
+				if (originalOpenCodeConfig === undefined) {
+					delete process.env.OPENCODE_CONFIG_CONTENT;
+				} else {
+					process.env.OPENCODE_CONFIG_CONTENT = originalOpenCodeConfig;
+				}
+			}
+		});
+
+		it('should preserve existing OpenCode batch env and merge zero-valued usage', async () => {
+			const originalOpenCodeConfig = process.env.OPENCODE_CONFIG_CONTENT;
+			process.env.OPENCODE_CONFIG_CONTENT = '{"custom":true}';
+
+			try {
+				const resultPromise = spawnAgent('opencode', '/repo', 'Open prompt');
+
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				const [, , options] = mockSpawn.mock.calls[0];
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('{"custom":true}');
+
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						[
+							{
+								type: 'text',
+								sessionID: 'open-session',
+								part: { type: 'text', text: 'Open response' },
+							},
+							{
+								type: 'step_finish',
+								sessionID: 'open-session',
+								part: { type: 'step-finish', tokens: {} },
+							},
+						]
+							.map((event) => JSON.stringify(event))
+							.join('\n') + '\n'
+					)
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+
+				expect(result).toMatchObject({
+					success: true,
+					response: 'Open response',
+					usageStats: {
+						inputTokens: 0,
+						outputTokens: 0,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0,
+					},
+				});
+			} finally {
+				if (originalOpenCodeConfig === undefined) {
+					delete process.env.OPENCODE_CONFIG_CONTENT;
+				} else {
+					process.env.OPENCODE_CONFIG_CONTENT = originalOpenCodeConfig;
+				}
+			}
+		});
+
+		it('should spawn Factory Droid without a prompt separator and parse completion usage', async () => {
+			const resultPromise = spawnAgent(
+				'factory-droid',
+				'/repo',
+				'Factory prompt',
+				'factory-session'
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args, options] = mockSpawn.mock.calls[0];
+			expect(cmd).toBe('droid');
+			expect(args).toEqual([
+				'exec',
+				'--skip-permissions-unsafe',
+				'-o',
+				'stream-json',
+				'-s',
+				'factory-session',
+				'Factory prompt',
+			]);
+			expect(args).not.toContain('--');
+			expect(options.cwd).toBe('/repo');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					[
+						{ type: 'system', subtype: 'init', session_id: 'factory-session' },
+						{
+							type: 'completion',
+							session_id: 'factory-session',
+							finalText: 'Factory done',
+							usage: {
+								input_tokens: 7,
+								output_tokens: 8,
+								cache_read_input_tokens: 1,
+								cache_creation_input_tokens: 2,
+								thinking_tokens: 4,
+							},
+						},
+					]
+						.map((event) => JSON.stringify(event))
+						.join('\n') + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result).toMatchObject({
+				success: true,
+				response: 'Factory done',
+				agentSessionId: 'factory-session',
+				usageStats: {
+					inputTokens: 7,
+					outputTokens: 8,
+					cacheReadInputTokens: 1,
+					cacheCreationInputTokens: 2,
+					totalCostUsd: 0,
+					contextWindow: 0,
+					reasoningTokens: 4,
+				},
+			});
+		});
+
+		it('should prefer JSON-line error text over successful process exit', async () => {
+			const resultPromise = spawnAgent('codex', '/repo', 'Codex prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'turn.failed',
+						error: { message: 'quota exceeded' },
+					}) + '\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('quota exceeded');
+		});
+
+		it('should return stderr or process exit errors from JSON-line agents', async () => {
+			const resultPromise = spawnAgent('opencode', '/repo', 'Open prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockStderr.emit('data', Buffer.from('OpenCode failed\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 2);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('OpenCode failed\n');
+		});
+
+		it('should return process exit fallback errors from JSON-line agents', async () => {
+			const resultPromise = spawnAgent('opencode', '/repo', 'Open prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 7);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Process exited with code 7');
+		});
+
+		it('should return spawn errors from JSON-line agents', async () => {
+			const resultPromise = spawnAgent('factory-droid', '/repo', 'Factory prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('error', new Error('spawn ENOENT'));
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Failed to spawn Factory Droid: spawn ENOENT');
+		});
+
+		it('should use raw tool type in JSON-line spawn errors when the definition is absent', async () => {
+			vi.resetModules();
+			vi.doMock('../../../main/agents/definitions', () => ({
+				getAgentDefinition: () => undefined,
+			}));
+			vi.doMock('../../../main/agents/capabilities', () => ({
+				hasCapability: (toolType: string, capability: string) =>
+					toolType === 'codex' && capability === 'usesJsonLineOutput',
+			}));
+
+			try {
+				const { spawnAgent: freshSpawnAgent } = await import('../../../cli/services/agent-spawner');
+
+				mockSpawn.mockReturnValue(mockChild);
+				const resultPromise = freshSpawnAgent('codex', '/repo', 'prompt');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('error', new Error('spawn ENOENT'));
+
+				const result = await resultPromise;
+
+				expect(result).toEqual({
+					success: false,
+					error: 'Failed to spawn codex: spawn ENOENT',
+				});
+			} finally {
+				vi.doUnmock('../../../main/agents/definitions');
+				vi.doUnmock('../../../main/agents/capabilities');
+				vi.resetModules();
+			}
+		});
+
+		it('should reject unsupported batch-mode agents', async () => {
+			const result = await spawnAgent('terminal' as any, '/repo', 'prompt');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Unsupported agent type for batch mode: terminal',
+			});
+		});
+
+		it('should reject JSON-line capable agents without a parser', async () => {
+			vi.resetModules();
+			vi.doMock('../../../main/agents/capabilities', () => ({
+				hasCapability: (toolType: string, capability: string) =>
+					toolType === 'terminal' && capability === 'usesJsonLineOutput',
+			}));
+
+			try {
+				const { spawnAgent: freshSpawnAgent } = await import('../../../cli/services/agent-spawner');
+
+				await expect(freshSpawnAgent('terminal' as any, '/repo', 'prompt')).rejects.toThrow(
+					'No parser available for agent type: terminal'
+				);
+			} finally {
+				vi.doUnmock('../../../main/agents/capabilities');
+				vi.resetModules();
+			}
+		});
 	});
 
 	describe('PATH expansion (via spawnAgent)', () => {
@@ -1333,27 +1825,35 @@ Some text with [x] in it that's not a checkbox
 	describe('platform-specific behavior', () => {
 		it('should use where command on Windows for findClaudeInPath', async () => {
 			const originalPlatform = process.platform;
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
+			try {
+				mockGetAgentCustomPath.mockReturnValue(undefined);
+				mockSpawn.mockReturnValue(mockChild);
 
-			vi.resetModules();
-			const { detectClaude: freshDetectClaude } =
-				await import('../../../cli/services/agent-spawner');
+				vi.resetModules();
+				const { detectClaude: freshDetectClaude } =
+					await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectClaude();
+				const resultPromise = freshDetectClaude();
 
-			await new Promise((resolve) => setTimeout(resolve, 0));
+				await new Promise((resolve) => setTimeout(resolve, 0));
 
-			// On Windows, 'where' should be used
-			const command = mockSpawn.mock.calls[0][0];
-			expect(command).toBe('where');
+				// On Windows, 'where' should be used
+				const command = mockSpawn.mock.calls[0][0];
+				expect(command).toBe('where');
 
-			mockChild.emit('close', 1);
-			await resultPromise;
+				mockChild.emit('close', 1);
+				await resultPromise;
 
-			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+				expect(consoleLog).toHaveBeenCalledWith(
+					expect.stringContaining('[Logger] File logging enabled:')
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+				consoleLog.mockRestore();
+			}
 		});
 
 		it('should use which command on Unix', async () => {
@@ -1382,25 +1882,34 @@ Some text with [x] in it that's not a checkbox
 
 		it('should skip X_OK check on Windows', async () => {
 			const originalPlatform = process.platform;
+			const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-			mockGetAgentCustomPath.mockReturnValue('C:\\Program Files\\claude\\claude.exe');
-			vi.mocked(fs.promises.stat).mockResolvedValue({
-				isFile: () => true,
-			} as fs.Stats);
-			// Don't mock access - it shouldn't be called on Windows
+			try {
+				mockGetAgentCustomPath.mockReturnValue('C:\\Program Files\\claude\\claude.exe');
+				vi.mocked(fs.promises.stat).mockResolvedValue({
+					isFile: () => true,
+				} as fs.Stats);
+				// Don't mock access - it shouldn't be called on Windows
 
-			vi.resetModules();
-			const { detectClaude: freshDetectClaude } =
-				await import('../../../cli/services/agent-spawner');
+				vi.resetModules();
+				const { detectClaude: freshDetectClaude } =
+					await import('../../../cli/services/agent-spawner');
 
-			const result = await freshDetectClaude();
+				const result = await freshDetectClaude();
 
-			// On Windows, just checking if it's a file is enough
-			expect(result.available).toBe(true);
-			expect(fs.promises.access).not.toHaveBeenCalled();
+				// On Windows, just checking if it's a file is enough
+				expect(result.available).toBe(true);
+				expect(fs.promises.access).not.toHaveBeenCalled();
+				expect(consoleLog).toHaveBeenCalledWith(
+					expect.stringContaining('[Logger] File logging enabled:')
+				);
 
-			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+				consoleLog.mockRestore();
+			}
 		});
 	});
 });

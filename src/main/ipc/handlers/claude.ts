@@ -1415,15 +1415,6 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 
 								if (entry.type === 'user' && textLower.includes(searchLower)) {
 									userMatches++;
-									if (!matchPreview && (searchMode === 'user' || searchMode === 'all')) {
-										const idx = textLower.indexOf(searchLower);
-										const start = Math.max(0, idx - 60);
-										const end = Math.min(textContent.length, idx + query.length + 60);
-										matchPreview =
-											(start > 0 ? '...' : '') +
-											textContent.slice(start, end) +
-											(end < textContent.length ? '...' : '');
-									}
 								}
 
 								if (entry.type === 'assistant' && textLower.includes(searchLower)) {
@@ -1464,8 +1455,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								matchCount = assistantMatches;
 								break;
 							case 'all':
-								matches = titleMatch || userMatches > 0 || assistantMatches > 0;
-								matchType = titleMatch ? 'title' : userMatches > 0 ? 'user' : 'assistant';
+								matches = titleMatch || assistantMatches > 0;
+								matchType = titleMatch ? 'title' : 'assistant';
 								matchCount = userMatches + assistantMatches;
 								break;
 						}

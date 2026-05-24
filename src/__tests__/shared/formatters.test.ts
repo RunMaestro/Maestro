@@ -15,6 +15,7 @@ import {
 	formatCost,
 	estimateTokenCount,
 	truncatePath,
+	getParentDir,
 	truncateCommand,
 } from '../../shared/formatters';
 
@@ -127,6 +128,11 @@ describe('shared/formatters', () => {
 		it('should format millions with M suffix and decimal', () => {
 			expect(formatTokensCompact(1000000)).toBe('1.0M');
 			expect(formatTokensCompact(2500000)).toBe('2.5M');
+		});
+
+		it('should format billions with B suffix and decimal', () => {
+			expect(formatTokensCompact(1000000000)).toBe('1.0B');
+			expect(formatTokensCompact(5800000000)).toBe('5.8B');
 		});
 	});
 
@@ -364,6 +370,33 @@ describe('shared/formatters', () => {
 
 		it('should handle paths with two parts', () => {
 			expect(truncatePath('/parent/child', 50)).toBe('/parent/child');
+		});
+
+		it('should return separator-only paths unchanged when truncation cannot find parts', () => {
+			expect(truncatePath('//////', 3)).toBe('//////');
+			expect(truncatePath('\\\\\\\\', 3)).toBe('\\\\\\\\');
+		});
+	});
+
+	// ==========================================================================
+	// getParentDir tests
+	// ==========================================================================
+	describe('getParentDir', () => {
+		it('should return the parent directory for Unix paths', () => {
+			expect(getParentDir('/Users/name/project/file.ts')).toBe('/Users/name/project');
+		});
+
+		it('should return the parent directory for Windows paths', () => {
+			expect(getParentDir('C:\\Users\\name\\project\\file.ts')).toBe('C:\\Users\\name\\project');
+		});
+
+		it('should return the original path when already at root or a single segment', () => {
+			expect(getParentDir('/')).toBe('/');
+			expect(getParentDir('file.ts')).toBe('file.ts');
+		});
+
+		it('should return an empty string for empty input', () => {
+			expect(getParentDir('')).toBe('');
 		});
 	});
 

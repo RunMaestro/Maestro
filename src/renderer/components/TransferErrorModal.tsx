@@ -404,9 +404,7 @@ export function TransferErrorModal({
 					>
 						<Zap className="w-4 h-4 shrink-0" style={{ color: theme.colors.warning }} />
 						<div className="flex-1 min-w-0 text-left">
-							<div className="text-sm font-medium">
-								{actions.skipGroomingLabel || 'Skip Grooming'}
-							</div>
+							<div className="text-sm font-medium">{actions.skipGroomingLabel!}</div>
 							{actions.skipGroomingDescription && (
 								<div className="text-xs mt-0.5 truncate" style={{ color: theme.colors.textDim }}>
 									{actions.skipGroomingDescription}
@@ -467,9 +465,7 @@ export function TransferErrorModal({
 					>
 						<Zap className="w-4 h-4 shrink-0" />
 						<div className="flex-1 min-w-0 text-left">
-							<div className="text-sm font-medium">
-								{actions.skipGroomingLabel || 'Summarize Context'}
-							</div>
+							<div className="text-sm font-medium">{actions.skipGroomingLabel!}</div>
 							{actions.skipGroomingDescription && (
 								<div
 									className="text-xs mt-0.5 truncate"

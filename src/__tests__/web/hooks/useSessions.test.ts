@@ -793,6 +793,29 @@ describe('useSessions', () => {
 			expect(onError).toHaveBeenCalledWith('Network error');
 		});
 
+		it('uses an unknown error message for non-Error send failures', async () => {
+			const onError = vi.fn();
+			const { result } = renderHook(() => useSessions({ onError }));
+
+			act(() => {
+				capturedHandlers.onSessionsUpdate?.([
+					{ id: 'session-1', name: 'Session 1', state: 'idle' } as SessionData,
+				]);
+			});
+
+			(global.fetch as vi.Mock).mockRejectedValue('network failed');
+
+			let success: boolean;
+			await act(async () => {
+				success = await result.current.sendCommand('session-1', 'test');
+			});
+
+			expect(success!).toBe(false);
+			expect(result.current.sessions[0].isSending).toBe(false);
+			expect(result.current.sessions[0].lastError).toBe('Unknown error');
+			expect(onError).toHaveBeenCalledWith('Unknown error');
+		});
+
 		it('returns false on failure', async () => {
 			const { result } = renderHook(() => useSessions());
 

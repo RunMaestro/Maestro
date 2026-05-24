@@ -59,11 +59,10 @@ export function RecentCommandChips({
 	 */
 	const handleChipTap = useCallback(
 		(command: string) => {
-			if (disabled) return;
 			triggerHaptic(HAPTIC_PATTERNS.tap);
 			onSelectCommand(command);
 		},
-		[disabled, onSelectCommand]
+		[onSelectCommand]
 	);
 
 	// Don't render if no commands

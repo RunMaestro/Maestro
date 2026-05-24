@@ -142,12 +142,14 @@ describe('EmojiPickerField', () => {
 
 		it('should not open picker when disabled', () => {
 			const onChange = vi.fn();
+			const onOpen = vi.fn();
 
 			render(
 				<EmojiPickerField
 					theme={mockTheme}
 					value="📂"
 					onChange={onChange}
+					onOpen={onOpen}
 					disabled
 					data-testid="emoji-field"
 				/>
@@ -157,6 +159,8 @@ describe('EmojiPickerField', () => {
 			fireEvent.click(button);
 
 			expect(screen.queryByTestId('emoji-field-overlay')).not.toBeInTheDocument();
+			expect(onOpen).not.toHaveBeenCalled();
+			expect(button).toHaveAttribute('aria-expanded', 'false');
 		});
 
 		it('should apply opacity styling when disabled', () => {
@@ -608,6 +612,17 @@ describe('EmojiPickerField', () => {
 			const closeButton = screen.getByRole('button', { name: /close emoji picker/i });
 			expect(closeButton).toBeInTheDocument();
 		});
+
+		it('should render the overlay and close button without test id props', () => {
+			const onChange = vi.fn();
+
+			render(<EmojiPickerField theme={mockTheme} value="📂" onChange={onChange} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /select emoji/i }));
+
+			expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /close emoji picker/i })).toBeInTheDocument();
+		});
 	});
 
 	describe('theming', () => {
@@ -703,6 +718,27 @@ describe('EmojiPickerField', () => {
 
 			// Parent should not receive event
 			expect(parentEscapeHandler).not.toHaveBeenCalled();
+		});
+
+		it('should keep picker open for non-Escape keys', () => {
+			const onChange = vi.fn();
+			const onClose = vi.fn();
+
+			render(
+				<EmojiPickerField
+					theme={mockTheme}
+					value="📂"
+					onChange={onChange}
+					onClose={onClose}
+					data-testid="emoji-field"
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('emoji-field-button'));
+			fireEvent.keyDown(screen.getByTestId('emoji-field-overlay'), { key: 'Enter' });
+
+			expect(screen.getByTestId('emoji-field-overlay')).toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 

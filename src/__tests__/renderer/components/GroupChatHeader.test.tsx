@@ -85,9 +85,30 @@ describe('GroupChatHeader', () => {
 		expect(defaultProps.onRename).toHaveBeenCalled();
 	});
 
+	it('calls onRename from keyboard activation on the title', () => {
+		const onRename = vi.fn();
+		render(<GroupChatHeader {...defaultProps} onRename={onRename} />);
+
+		const title = screen.getByText('Group Chat: Test Chat');
+		fireEvent.keyDown(title, { key: 'Enter' });
+		fireEvent.keyDown(title, { key: ' ' });
+		fireEvent.keyDown(title, { key: 'Escape' });
+
+		expect(onRename).toHaveBeenCalledTimes(2);
+	});
+
 	it('shows cost pill when totalCost is provided', () => {
 		render(<GroupChatHeader {...defaultProps} totalCost={6.98} />);
 		expect(screen.getByText('6.98')).toBeTruthy();
+	});
+
+	it('marks the cost pill when the total is incomplete', () => {
+		render(<GroupChatHeader {...defaultProps} totalCost={6.98} costIncomplete />);
+
+		const costPill = screen.getByTitle(
+			'Total accumulated cost (incomplete: not all agents report cost data)'
+		);
+		expect(costPill).toHaveTextContent('6.98*');
 	});
 
 	it('shows right panel toggle when panel is closed', () => {

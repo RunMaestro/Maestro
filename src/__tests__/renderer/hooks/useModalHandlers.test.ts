@@ -25,7 +25,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
-import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
+import {
+	useAgentErrorRecovery,
+	type UseAgentErrorRecoveryOptions,
+} from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
 
@@ -855,6 +858,94 @@ describe('useModalHandlers', () => {
 			});
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
+
+		it('wires live error recovery callbacks to session recovery handlers', async () => {
+			let recoveryOptions: UseAgentErrorRecoveryOptions | undefined;
+			(useAgentErrorRecovery as ReturnType<typeof vi.fn>).mockImplementation(
+				(options: UseAgentErrorRecoveryOptions) => {
+					recoveryOptions = options;
+					return { recoveryActions: [] };
+				}
+			);
+
+			const mockStartNew = vi.fn();
+			const mockRetry = vi.fn();
+			const mockClearError = vi.fn();
+			const mockRestart = vi.fn().mockResolvedValue(undefined);
+			const mockAuthenticate = vi.fn();
+			vi.spyOn(useAgentStore, 'getState').mockReturnValue({
+				...useAgentStore.getState(),
+				startNewSessionAfterError: mockStartNew,
+				retryAfterError: mockRetry,
+				clearAgentError: mockClearError,
+				restartAgentAfterError: mockRestart,
+				authenticateAfterError: mockAuthenticate,
+			});
+			vi.spyOn(useSettingsStore, 'getState').mockReturnValue({
+				...useSettingsStore.getState(),
+				defaultSaveToHistory: false,
+				defaultShowThinking: 'on',
+			});
+
+			const agentError = {
+				message: 'agent crashed',
+				type: 'agent_crashed' as const,
+				recoverable: true,
+				agentId: 'codex',
+				timestamp: Date.now(),
+			};
+			const session = createMockSession({
+				id: 'err-session',
+				toolType: 'codex',
+				agentError,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'err-session' });
+			getModalActions().setAgentErrorModalSessionId('err-session');
+
+			const inputRef = createInputRef();
+			renderHook(() => useModalHandlers(inputRef, createTerminalOutputRef()));
+
+			expect(recoveryOptions).toMatchObject({
+				error: agentError,
+				agentId: 'codex',
+				sessionId: 'err-session',
+			});
+			const liveRecoveryOptions = recoveryOptions!;
+
+			act(() => {
+				liveRecoveryOptions.onNewSession!();
+			});
+			expect(mockStartNew).toHaveBeenCalledWith('err-session', {
+				saveToHistory: false,
+				showThinking: 'on',
+			});
+
+			act(() => {
+				liveRecoveryOptions.onRetry!();
+			});
+			expect(mockRetry).toHaveBeenCalledWith('err-session');
+
+			act(() => {
+				liveRecoveryOptions.onClearError!();
+			});
+			expect(mockClearError).toHaveBeenCalledWith('err-session', undefined);
+
+			await act(async () => {
+				await liveRecoveryOptions.onRestartAgent!();
+			});
+			expect(mockRestart).toHaveBeenCalledWith('err-session');
+
+			act(() => {
+				liveRecoveryOptions.onAuthenticate!();
+			});
+			expect(mockAuthenticate).toHaveBeenCalledWith('err-session');
+
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+			act(() => {
+				vi.advanceTimersByTime(10);
+			});
+			expect(inputRef.current!.focus).toHaveBeenCalled();
+		});
 	});
 
 	// ======================================================================
@@ -1004,12 +1095,13 @@ describe('useModalHandlers', () => {
 				useModalHandlers(createInputRef(), createTerminalOutputRef())
 			);
 			act(() => {
-				result.current.handleSetLightboxImage('img.png', ['img.png']);
+				result.current.handleSetLightboxImage('img.png');
 			});
 
 			const lightboxData = useModalStore.getState().getData('lightbox');
 			expect(lightboxData?.source).toBe('history');
 			expect(lightboxData?.allowDelete).toBe(false);
+			expect(lightboxData?.images).toEqual([]);
 		});
 
 		it('handleCloseLightbox clears all lightbox state and focuses input', () => {
@@ -1109,6 +1201,103 @@ describe('useModalHandlers', () => {
 			// Lightbox images should also be updated
 			const lightboxData = useModalStore.getState().getData('lightbox');
 			expect(lightboxData?.images).toEqual(['img2.png']);
+		});
+
+		it('handleDeleteLightboxImage only mutates the active tab in the active session', () => {
+			const inactiveTab = createMockAITab({
+				id: 'inactive-tab',
+				stagedImages: ['img1.png', 'inactive-keep.png'],
+			});
+			const activeTab = createMockAITab({
+				id: 'active-tab',
+				stagedImages: ['img1.png', 'active-keep.png'],
+			});
+			const otherSessionTab = createMockAITab({
+				id: 'other-tab',
+				stagedImages: ['img1.png', 'other-keep.png'],
+			});
+			const activeSession = createMockSession({
+				id: 'session-1',
+				activeTabId: 'active-tab',
+				aiTabs: [inactiveTab, activeTab],
+			});
+			const otherSession = createMockSession({
+				id: 'session-2',
+				activeTabId: 'other-tab',
+				aiTabs: [otherSessionTab],
+			});
+			useSessionStore.setState({
+				sessions: [activeSession, otherSession],
+				activeSessionId: 'session-1',
+			});
+
+			const actions = getModalActions();
+			actions.setLightboxImage('img1.png');
+			actions.setLightboxImages(['img1.png', 'active-keep.png']);
+			actions.setLightboxIsGroupChat(false);
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleDeleteLightboxImage('img1.png');
+			});
+
+			const updatedSessions = useSessionStore.getState().sessions;
+			const updatedActiveSession = updatedSessions.find((session) => session.id === 'session-1')!;
+			const updatedOtherSession = updatedSessions.find((session) => session.id === 'session-2')!;
+
+			expect(
+				updatedActiveSession.aiTabs.find((tab) => tab.id === 'active-tab')?.stagedImages
+			).toEqual(['active-keep.png']);
+			expect(
+				updatedActiveSession.aiTabs.find((tab) => tab.id === 'inactive-tab')?.stagedImages
+			).toEqual(['img1.png', 'inactive-keep.png']);
+			expect(updatedOtherSession.aiTabs[0].stagedImages).toEqual(['img1.png', 'other-keep.png']);
+			expect(useModalStore.getState().getData('lightbox')?.images).toEqual(['active-keep.png']);
+		});
+
+		it('handleDeleteLightboxImage tolerates missing lightbox data and no active session', () => {
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			act(() => {
+				result.current.handleDeleteLightboxImage('missing.png');
+			});
+
+			expect(useSessionStore.getState().sessions).toEqual([]);
+			expect(useModalStore.getState().getData('lightbox')).toBeUndefined();
+		});
+
+		it('handleDeleteLightboxImage treats missing tab staged images as empty', () => {
+			const activeTab = createMockAITab({
+				id: 'active-tab',
+				stagedImages: undefined as unknown as string[],
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				activeTabId: 'active-tab',
+				aiTabs: [activeTab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const actions = getModalActions();
+			actions.setLightboxImage('img1.png');
+			actions.setLightboxImages(['img1.png']);
+			actions.setLightboxIsGroupChat(false);
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			act(() => {
+				result.current.handleDeleteLightboxImage('img1.png');
+			});
+
+			const updatedTab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(updatedTab.stagedImages).toEqual([]);
+			expect(useModalStore.getState().getData('lightbox')?.images).toEqual([]);
 		});
 	});
 
@@ -1629,6 +1818,32 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
 		});
 
+		it('does NOT show ovation when the startup badge level is unknown', () => {
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel: () => 999,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 999,
+					lastBadgeUnlockLevel: 999,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+		});
+
 		it('does NOT run startup badge check when settings/sessions not loaded', () => {
 			// settingsLoaded: false and sessionsLoaded: false (left at defaults from beforeEach)
 			// We make the badge level non-null so that IF the effect ran, it would show the ovation
@@ -1702,6 +1917,145 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
 		});
 
+		it('does not check missed badges when visibility changes while still hidden', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => 1);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 1,
+					lastBadgeUnlockLevel: 1,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			getModalActions().setStandingOvationData(null);
+			getUnacknowledgedBadgeLevel.mockClear();
+
+			Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+			act(() => {
+				document.dispatchEvent(new Event('visibilitychange'));
+			});
+
+			expect(getUnacknowledgedBadgeLevel).not.toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+		});
+
+		it('does not show missed badge ovation on focus when there is no unacknowledged level', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => null);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 0,
+					totalRuns: 0,
+					cumulativeTimeMs: 0,
+					currentBadgeLevel: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				window.dispatchEvent(new Event('focus'));
+				vi.advanceTimersByTime(600);
+			});
+
+			expect(getUnacknowledgedBadgeLevel).toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+		});
+
+		it('does not show missed badge ovation on focus when the badge level is unknown', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => 999);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 999,
+					lastBadgeUnlockLevel: 999,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			getUnacknowledgedBadgeLevel.mockClear();
+
+			act(() => {
+				window.dispatchEvent(new Event('focus'));
+				vi.advanceTimersByTime(600);
+			});
+
+			expect(getUnacknowledgedBadgeLevel).toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+		});
+
+		it('skips delayed missed badge ovation if one appears before the timer fires', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => 1);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 1,
+					lastBadgeUnlockLevel: 1,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			getModalActions().setStandingOvationData(null);
+
+			act(() => {
+				window.dispatchEvent(new Event('focus'));
+			});
+			getModalActions().setStandingOvationData({
+				badge: { level: 5 } as any,
+				isNewRecord: true,
+				recordTimeMs: 123,
+			});
+
+			act(() => {
+				vi.advanceTimersByTime(600);
+			});
+
+			expect(useModalStore.getState().getData('standingOvation')?.badge.level).toBe(5);
+		});
+
 		it('does NOT show ovation on visibility change if ovation is already displayed', () => {
 			useSettingsStore.setState({
 				settingsLoaded: true,
@@ -1743,6 +2097,93 @@ describe('useModalHandlers', () => {
 			// Ovation modal should still be open and data unchanged
 			expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
 			expect(useModalStore.getState().getData('standingOvation')).toEqual(ovationDataBefore);
+		});
+
+		it('checks missed badge state on window focus and ignores duplicate focus while pending', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => 1);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 1,
+					lastBadgeUnlockLevel: 1,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			getModalActions().setStandingOvationData(null);
+			getUnacknowledgedBadgeLevel.mockClear();
+
+			act(() => {
+				window.dispatchEvent(new Event('focus'));
+				window.dispatchEvent(new Event('focus'));
+			});
+
+			expect(getUnacknowledgedBadgeLevel).toHaveBeenCalledTimes(1);
+
+			act(() => {
+				vi.advanceTimersByTime(600);
+			});
+
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
+		});
+
+		it('checks missed badge state on mouse movement with a 30 second debounce', () => {
+			const getUnacknowledgedBadgeLevel = vi.fn(() => 1);
+			useSettingsStore.setState({
+				settingsLoaded: true,
+				getUnacknowledgedBadgeLevel,
+				autoRunStats: {
+					longestRunMs: 50000,
+					totalRuns: 10,
+					cumulativeTimeMs: 100000,
+					currentBadgeLevel: 1,
+					lastBadgeUnlockLevel: 1,
+					lastAcknowledgedBadgeLevel: 0,
+					longestRunTimestamp: 0,
+					badgeHistory: [],
+				},
+			});
+			useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+
+			act(() => {
+				vi.advanceTimersByTime(1100);
+			});
+			getModalActions().setStandingOvationData(null);
+			getUnacknowledgedBadgeLevel.mockClear();
+
+			act(() => {
+				document.dispatchEvent(new MouseEvent('mousemove'));
+				document.dispatchEvent(new MouseEvent('mousemove'));
+			});
+
+			expect(getUnacknowledgedBadgeLevel).toHaveBeenCalledTimes(1);
+
+			act(() => {
+				vi.advanceTimersByTime(600);
+			});
+			expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
+
+			getModalActions().setStandingOvationData(null);
+			act(() => {
+				vi.advanceTimersByTime(30001);
+				document.dispatchEvent(new MouseEvent('mousemove'));
+			});
+
+			expect(getUnacknowledgedBadgeLevel).toHaveBeenCalledTimes(2);
 		});
 
 		// ====================================================================
@@ -1870,6 +2311,51 @@ describe('useModalHandlers', () => {
 				undefined,
 				undefined
 			);
+		});
+
+		it('falls back to cwd when terminal mode has no shellCwd', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				shellCwd: undefined,
+				inputMode: 'terminal',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({
+				diff: 'terminal cwd diff',
+			});
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).toHaveBeenCalledWith('/projects/my-repo', undefined, undefined);
+			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('terminal cwd diff');
+		});
+
+		it('does not open preview when git diff is empty', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				inputMode: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({ diff: '' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).toHaveBeenCalledWith('/projects/my-repo', undefined, undefined);
+			expect(useModalStore.getState().isOpen('gitDiff')).toBe(false);
 		});
 	});
 

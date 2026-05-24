@@ -291,6 +291,17 @@ describe('GitStatusWidget', () => {
 			render(<GitStatusWidget {...defaultProps} />);
 			expect(screen.getByRole('button')).toBeInTheDocument();
 		});
+
+		it('should render basic file count when detailed git data is unavailable', () => {
+			mockGetFileCount.mockReturnValue(2);
+			mockGetFileDetails.mockReturnValue(undefined);
+
+			render(<GitStatusWidget {...defaultProps} />);
+
+			expect(screen.getByRole('button')).toHaveAttribute('title', '+0 −0 ~0');
+			const compact = document.querySelector('.header-git-status-compact')!;
+			expect(within(compact).getByText('2')).toBeInTheDocument();
+		});
 	});
 
 	describe('Click Handlers', () => {
@@ -416,6 +427,49 @@ describe('GitStatusWidget', () => {
 			vi.advanceTimersByTime(50);
 			fireEvent.mouseEnter(container);
 			vi.advanceTimersByTime(150);
+			expect(screen.getByText('View Full Diff')).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('should keep tooltip open when entering the hover bridge during close delay', () => {
+			vi.useFakeTimers();
+			mockGetStatus.mockReturnValue(createGitStatusData());
+			const { container } = render(<GitStatusWidget {...defaultProps} />);
+
+			const wrapper = screen.getByRole('button').parentElement!;
+			fireEvent.mouseEnter(wrapper);
+			fireEvent.mouseLeave(wrapper);
+			vi.advanceTimersByTime(50);
+
+			const bridge = container.querySelector('.absolute.left-0.right-0.h-3');
+			expect(bridge).not.toBeNull();
+			fireEvent.mouseEnter(bridge!);
+
+			act(() => {
+				vi.advanceTimersByTime(150);
+			});
+			expect(screen.getByText('View Full Diff')).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('should keep tooltip open when re-entering tooltip panel during close delay', () => {
+			vi.useFakeTimers();
+			mockGetStatus.mockReturnValue(createGitStatusData());
+			const { container } = render(<GitStatusWidget {...defaultProps} />);
+
+			const wrapper = screen.getByRole('button').parentElement!;
+			fireEvent.mouseEnter(wrapper);
+			fireEvent.mouseLeave(wrapper);
+			vi.advanceTimersByTime(50);
+			const tooltipPanel = container.querySelector('.absolute.top-full.left-0');
+			expect(tooltipPanel).not.toBeNull();
+			fireEvent.mouseEnter(tooltipPanel!);
+
+			act(() => {
+				vi.advanceTimersByTime(150);
+			});
 			expect(screen.getByText('View Full Diff')).toBeInTheDocument();
 
 			vi.useRealTimers();

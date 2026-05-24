@@ -163,6 +163,79 @@ describe('OpenCodeOutputParser', () => {
 		});
 	});
 
+	describe('parseJsonObject', () => {
+		it('should return null for nullish and non-object values', () => {
+			expect(parser.parseJsonObject(null)).toBeNull();
+			expect(parser.parseJsonObject(undefined)).toBeNull();
+			expect(parser.parseJsonObject('text')).toBeNull();
+		});
+
+		it('should parse pre-parsed OpenCode messages', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'text',
+					sessionID: 'oc-preparsed',
+					part: { text: 'Pre-parsed result' },
+				})
+			).toMatchObject({
+				type: 'result',
+				text: 'Pre-parsed result',
+				sessionId: 'oc-preparsed',
+			});
+		});
+
+		it('should parse structured error event text from data message', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'error',
+					sessionID: 'oc-error',
+					error: { data: { message: 'Provider not found' } },
+				})
+			).toMatchObject({
+				type: 'error',
+				text: 'Provider not found',
+				sessionId: 'oc-error',
+			});
+		});
+
+		it('should parse structured error event text from direct message', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'error',
+					error: { message: 'Authentication failed' },
+				})
+			).toMatchObject({
+				type: 'error',
+				text: 'Authentication failed',
+			});
+		});
+
+		it('should return an empty error text when structured error has no message', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'error',
+					error: { name: 'APIError' },
+				})
+			).toMatchObject({
+				type: 'error',
+				text: '',
+			});
+		});
+
+		it('should return an empty error text for type-only error events', () => {
+			expect(
+				parser.parseJsonObject({
+					type: 'error',
+					sessionID: 'oc-type-only-error',
+				})
+			).toMatchObject({
+				type: 'error',
+				text: '',
+				sessionId: 'oc-type-only-error',
+			});
+		});
+	});
+
 	describe('isResultMessage', () => {
 		it('should return true for text events (final response)', () => {
 			const textEvent = parser.parseJsonLine(
@@ -268,6 +341,25 @@ describe('OpenCodeOutputParser', () => {
 			expect(usage?.inputTokens).toBe(0);
 			expect(usage?.outputTokens).toBe(0);
 		});
+
+		it('should default missing usage fields to zero', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'step_finish',
+					part: {
+						tokens: {},
+					},
+				})
+			);
+
+			expect(parser.extractUsage(event!)).toEqual({
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+			});
+		});
 	});
 
 	describe('extractSlashCommands', () => {
@@ -276,6 +368,178 @@ describe('OpenCodeOutputParser', () => {
 				JSON.stringify({ type: 'step_start', sessionID: 'sess-123' })
 			);
 			expect(parser.extractSlashCommands(event!)).toBeNull();
+		});
+
+		it('should return slash commands already attached to an event', () => {
+			expect(
+				parser.extractSlashCommands({
+					type: 'system',
+					slashCommands: ['/help', '/clear'],
+				})
+			).toEqual(['/help', '/clear']);
+		});
+	});
+
+	describe('detectErrorFromLine and detectErrorFromParsed', () => {
+		it('should return null for empty, invalid JSON, and non-object inputs', () => {
+			expect(parser.detectErrorFromLine('')).toBeNull();
+			expect(parser.detectErrorFromLine('not json')).toBeNull();
+			expect(parser.detectErrorFromParsed(null)).toBeNull();
+			expect(parser.detectErrorFromParsed('error')).toBeNull();
+		});
+
+		it('should detect known errors from structured data messages and attach raw line', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				error: { data: { message: 'invalid api key' } },
+			});
+
+			const error = parser.detectErrorFromLine(line);
+
+			expect(error).toMatchObject({
+				type: 'auth_expired',
+				message: 'Invalid API key. Please check your configuration.',
+				recoverable: true,
+				agentId: 'opencode',
+			});
+			expect(error?.raw).toMatchObject({ errorLine: line });
+		});
+
+		it('should detect known errors from direct error messages', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'error',
+					error: { message: 'rate limit exceeded' },
+				})
+			).toMatchObject({
+				type: 'rate_limited',
+				message: 'Rate limit exceeded. Please wait.',
+			});
+		});
+
+		it('should extract response body messages and return unknown when no pattern matches', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'error',
+					error: {
+						responseBody: {
+							error: { message: 'unknown provider selected' },
+						},
+					},
+				})
+			).toMatchObject({
+				type: 'unknown',
+				message: 'unknown provider selected',
+				recoverable: true,
+			});
+		});
+
+		it('should detect simple string errors and unknown parsed errors', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'error',
+					error: 'context length exceeded',
+				})
+			).toMatchObject({
+				type: 'token_exhaustion',
+			});
+
+			expect(parser.detectErrorFromParsed({ error: 'custom provider exploded' })).toMatchObject({
+				type: 'unknown',
+				message: 'custom provider exploded',
+				recoverable: true,
+			});
+		});
+
+		it('should detect alternative type error message format', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'error',
+					message: 'network unavailable',
+				})
+			).toMatchObject({
+				type: 'network_error',
+				message: 'Network error occurred. Please check your connection.',
+			});
+		});
+
+		it('should return null when parsed JSON does not contain error text', () => {
+			expect(parser.detectErrorFromParsed({ type: 'text', part: { text: 'ok' } })).toBeNull();
+			expect(
+				parser.detectErrorFromParsed({ type: 'error', error: { name: 'APIError' } })
+			).toBeNull();
+		});
+	});
+
+	describe('detectErrorFromExit', () => {
+		it('should detect known patterns when OpenCode exits zero with only stderr', () => {
+			expect(parser.detectErrorFromExit(0, 'rate limit exceeded', '')).toMatchObject({
+				type: 'rate_limited',
+				message: 'Rate limit exceeded. Please wait.',
+				raw: {
+					exitCode: 0,
+					stderr: 'rate limit exceeded',
+					stdout: '',
+				},
+			});
+		});
+
+		it('should extract a meaningful stderr line when zero exit has only unknown stderr', () => {
+			const stderr = [
+				'\u001b[31m847 | const provider = getProvider()',
+				'const provider = config.provider',
+				'provider.name = value',
+				'{}',
+				'Invalid provider selected for this workspace\u001b[0m',
+			].join('\n');
+
+			const error = parser.detectErrorFromExit(0, stderr, '');
+
+			expect(error).toMatchObject({
+				type: 'agent_crashed',
+				message: 'OpenCode failed: Invalid provider selected for this workspace',
+				recoverable: true,
+			});
+		});
+
+		it('should use fallback stderr text when no error-like line exists', () => {
+			const error = parser.detectErrorFromExit(0, 'plain explanatory message', '');
+
+			expect(error?.message).toBe('OpenCode failed: plain explanatory message');
+		});
+
+		it('should use the secondary fallback for code-like stderr lines', () => {
+			const error = parser.detectErrorFromExit(0, 'const provider = config.provider', '');
+
+			expect(error?.message).toBe('OpenCode failed: const provider = config.provider');
+		});
+
+		it('should use the unknown fallback when stderr has no meaningful lines', () => {
+			const error = parser.detectErrorFromExit(0, '1 | code\n{}\n;', '');
+
+			expect(error?.message).toBe('OpenCode failed: Unknown error (check stderr)');
+		});
+
+		it('should return null for zero exit when stdout is present', () => {
+			expect(parser.detectErrorFromExit(0, 'warning on stderr', 'normal output')).toBeNull();
+		});
+
+		it('should detect known patterns for non-zero exits', () => {
+			expect(parser.detectErrorFromExit(1, 'fatal error: crashed', '')).toMatchObject({
+				type: 'agent_crashed',
+				message: 'An error occurred in the agent.',
+			});
+		});
+
+		it('should report non-zero unknown exits with and without stderr previews', () => {
+			expect(parser.detectErrorFromExit(2, 'first stderr line\nsecond', '')).toMatchObject({
+				type: 'agent_crashed',
+				message: 'Agent exited with code 2: first stderr line',
+			});
+			expect(parser.detectErrorFromExit(3, '', '')).toMatchObject({
+				type: 'agent_crashed',
+				message: 'Agent exited with code 3',
+			});
 		});
 	});
 

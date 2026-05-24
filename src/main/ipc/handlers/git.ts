@@ -77,6 +77,16 @@ const handlerOpts = (operation: string, logSuccess = false): CreateHandlerOption
 	logSuccess,
 });
 
+const resolveRemoteGitContext = (
+	cwd: string,
+	sshRemoteId?: string,
+	remoteCwd?: string
+): { sshRemote: SshRemoteConfig | undefined; effectiveRemoteCwd: string | undefined } => {
+	const sshRemote = getSshRemoteById(sshRemoteId) ?? undefined;
+	const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+	return { sshRemote, effectiveRemoteCwd };
+};
+
 /**
  * Register all Git-related IPC handlers.
  *
@@ -101,8 +111,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('status'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd);
 				return { stdout: result.stdout, stderr: result.stderr };
 			}
@@ -115,8 +128,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			handlerOpts('diff'),
 			async (cwd: string, file?: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const args = file ? ['diff', file] : ['diff'];
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
 				return { stdout: result.stdout, stderr: result.stderr };
 			}
@@ -128,8 +144,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('isRepo'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(
 					['rev-parse', '--is-inside-work-tree'],
 					cwd,
@@ -146,8 +165,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('numstat'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(['diff', '--numstat'], cwd, sshRemote, effectiveRemoteCwd);
 				return { stdout: result.stdout, stderr: result.stderr };
 			}
@@ -159,8 +181,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('branch'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(
 					['rev-parse', '--abbrev-ref', 'HEAD'],
 					cwd,
@@ -177,8 +202,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('remote'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(
 					['remote', 'get-url', 'origin'],
 					cwd,
@@ -195,8 +223,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('branches'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(
 					['branch', '-a', '--format=%(refname:short)'],
 					cwd,
@@ -218,8 +249,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('tags'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				const result = await execGit(['tag', '--list'], cwd, sshRemote, effectiveRemoteCwd);
 				if (result.exitCode !== 0) {
 					return { tags: [], stderr: result.stderr };
@@ -236,8 +270,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('info'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				// Get comprehensive git info in a single call
 				const [branchResult, remoteResult, statusResult, behindAheadResult] = await Promise.all([
 					execGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd, sshRemote, effectiveRemoteCwd),
@@ -279,8 +316,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				sshRemoteId?: string,
 				remoteCwd?: string
 			) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				// Get git log with formatted output for parsing
 				// Format: hash|author|date|refs|subject followed by shortstat
 				// Using a unique separator to split commits
@@ -344,8 +384,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('commitCount'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				// Get total commit count using rev-list
 				const result = await execGit(
 					['rev-list', '--count', 'HEAD'],
@@ -366,8 +409,11 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('show'),
 			async (cwd: string, hash: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = getSshRemoteById(sshRemoteId);
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const { sshRemote, effectiveRemoteCwd } = resolveRemoteGitContext(
+					cwd,
+					sshRemoteId,
+					remoteCwd
+				);
 				// Get the full diff for a specific commit
 				const result = await execGit(
 					['show', '--stat', '--patch', hash],
@@ -389,7 +435,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, ref: string, filePath: string) => {
 				// Use git show to get file content at specific ref
 				// We need to handle binary files differently
-				const ext = filePath.split('.').pop()?.toLowerCase() || '';
+				const ext = filePath.split('.').pop()!.toLowerCase();
 
 				if (isImageFile(filePath)) {
 					// For images, we need to get raw binary content
@@ -1139,7 +1185,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								if (sshRemote) {
 									const commonDirAbs = gitCommonDir.startsWith('/')
 										? gitCommonDir
-										: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
+										: path.posix.normalize(`${subdirPath}/${gitCommonDir}`);
 									// Get parent directory (remove last path component)
 									repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
 								} else {

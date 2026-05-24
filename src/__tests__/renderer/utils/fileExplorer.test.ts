@@ -7,6 +7,11 @@ import {
 	compareFileTrees,
 	matchGlobPattern,
 	shouldIgnore,
+	parseGitignoreContent,
+	removeNodeFromTree,
+	renameNodeInTree,
+	countNodesInTree,
+	findNodeInTree,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
 
@@ -537,6 +542,175 @@ describe('fileExplorer utils', () => {
 			expect(result).toHaveLength(1);
 			expect(result[0].children).toHaveLength(1);
 			expect(result[0].children![0].name.normalize('NFC')).toBe(nfcName);
+		});
+
+		it('honors local .gitignore patterns when enabled', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue(`
+# ignored comment
+/dist/
+*.log
+!keep.log
+
+`);
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([
+					{ name: 'dist', isFile: false, isDirectory: true },
+					{ name: 'debug.log', isFile: true, isDirectory: false },
+					{ name: 'src', isFile: false, isDirectory: true },
+				])
+				.mockResolvedValue([]);
+
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				honorGitignore: true,
+				ignorePatterns: [],
+			});
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/project/.gitignore');
+			expect(result.map((node) => node.name)).toEqual(['src']);
+		});
+
+		it('continues local scans when .gitignore cannot be read', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockRejectedValue(new Error('missing'));
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+				{ name: 'src', isFile: false, isDirectory: true },
+			]);
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]);
+
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				honorGitignore: true,
+				ignorePatterns: [],
+			});
+
+			expect(result).toEqual([{ name: 'src', type: 'folder', children: [] }]);
+		});
+
+		it('continues local scans when .gitignore is empty', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('');
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+				{ name: 'debug.log', isFile: true, isDirectory: false },
+			]);
+
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				honorGitignore: true,
+				ignorePatterns: [],
+			});
+
+			expect(result).toEqual([{ name: 'debug.log', type: 'file' }]);
+		});
+
+		it('honors remote ignore patterns and remote .gitignore content', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('dist/\n*.tmp\n');
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([
+					{ name: 'dist', isFile: false, isDirectory: true },
+					{ name: 'cache', isFile: false, isDirectory: true },
+					{ name: 'scratch.tmp', isFile: true, isDirectory: false },
+					{ name: 'src', isFile: false, isDirectory: true },
+				])
+				.mockResolvedValue([]);
+
+			const result = await loadFileTree('/remote/project', 10, 0, {
+				sshRemoteId: 'remote-1',
+				ignorePatterns: ['cache'],
+				honorGitignore: true,
+			});
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/remote/project/.gitignore',
+				'remote-1'
+			);
+			expect(result.map((node) => node.name)).toEqual(['src']);
+		});
+
+		it('continues remote scans when remote .gitignore is empty or unreadable', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('');
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([{ name: 'src', isFile: false, isDirectory: true }])
+				.mockResolvedValueOnce([]);
+
+			const emptyGitignoreResult = await loadFileTree('/remote/project', 10, 0, {
+				sshRemoteId: 'remote-1',
+				honorGitignore: true,
+			});
+
+			expect(emptyGitignoreResult).toEqual([{ name: 'src', type: 'folder', children: [] }]);
+
+			vi.mocked(window.maestro.fs.readFile).mockRejectedValueOnce(new Error('missing'));
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+				{ name: 'README.md', isFile: true, isDirectory: false },
+			]);
+
+			const unreadableGitignoreResult = await loadFileTree('/remote/project', 10, 0, {
+				sshRemoteId: 'remote-1',
+				honorGitignore: true,
+			});
+
+			expect(unreadableGitignoreResult).toEqual([{ name: 'README.md', type: 'file' }]);
+		});
+
+		it('reports progress for scanned directories and every ten files', async () => {
+			const files = Array.from({ length: 10 }, (_, index) => ({
+				name: `file-${index}.txt`,
+				isFile: true,
+				isDirectory: false,
+			}));
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce(files);
+			const onProgress = vi.fn();
+
+			const result = await loadFileTree('/project', 10, 0, undefined, onProgress, {
+				ignorePatterns: [],
+			});
+
+			expect(result).toHaveLength(10);
+			expect(onProgress).toHaveBeenNthCalledWith(1, {
+				directoriesScanned: 1,
+				filesFound: 0,
+				currentDirectory: '/project',
+			});
+			expect(onProgress).toHaveBeenNthCalledWith(2, {
+				directoriesScanned: 1,
+				filesFound: 10,
+				currentDirectory: '/project',
+			});
+		});
+
+		it('keeps unreadable child directories as empty folders', async () => {
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([{ name: 'locked', isFile: false, isDirectory: true }])
+				.mockRejectedValueOnce(new Error('permission denied'));
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				ignorePatterns: [],
+			});
+
+			expect(result).toEqual([{ name: 'locked', type: 'folder', children: [] }]);
+			expect(consoleError).toHaveBeenCalledWith('Error loading file tree:', expect.any(Error));
+			consoleError.mockRestore();
+		});
+	});
+
+	// ============================================================================
+	// parseGitignoreContent
+	// ============================================================================
+	describe('parseGitignoreContent', () => {
+		it('removes comments, empty lines, negations, leading slashes, and trailing slashes', () => {
+			expect(
+				parseGitignoreContent(`
+# comment
+
+/dist/
+build
+*.log
+!keep.log
+/coverage
+`)
+			).toEqual(['dist', 'build', '*.log', 'coverage']);
+		});
+
+		it('drops patterns that become empty after slash normalization', () => {
+			expect(parseGitignoreContent('/\n')).toEqual([]);
+			expect(parseGitignoreContent('///\n')).toEqual(['/']);
 		});
 	});
 
@@ -1211,6 +1385,109 @@ describe('fileExplorer utils', () => {
 			expect(shouldIgnore('first', patterns)).toBe(true);
 			expect(shouldIgnore('second', patterns)).toBe(true);
 			expect(shouldIgnore('third', patterns)).toBe(true);
+		});
+	});
+
+	// ============================================================================
+	// tree mutation and lookup helpers
+	// ============================================================================
+	describe('tree mutation and lookup helpers', () => {
+		const tree: FileTreeNode[] = [
+			{
+				name: 'src',
+				type: 'folder',
+				children: [
+					{ name: 'app.ts', type: 'file' },
+					{
+						name: 'components',
+						type: 'folder',
+						children: [{ name: 'Button.tsx', type: 'file' }],
+					},
+				],
+			},
+			{ name: 'README.md', type: 'file' },
+		];
+
+		it('removes root, direct child, and nested child nodes without mutating siblings', () => {
+			expect(removeNodeFromTree(tree, '')).toBe(tree);
+			expect(removeNodeFromTree(tree, 'README.md').map((node) => node.name)).toEqual(['src']);
+
+			const withoutDirectChild = removeNodeFromTree(tree, 'src/app.ts');
+			expect(withoutDirectChild[0].children?.map((node) => node.name)).toEqual(['components']);
+
+			const withoutNestedChild = removeNodeFromTree(tree, 'src/components/Button.tsx');
+			expect(withoutNestedChild[0].children?.[1].children).toEqual([]);
+		});
+
+		it('preserves folders without children when removing nested paths through them', () => {
+			const shallowTree: FileTreeNode[] = [{ name: 'src', type: 'folder' }];
+
+			expect(removeNodeFromTree(shallowTree, 'src/missing.ts')).toEqual([
+				{ name: 'src', type: 'folder', children: undefined },
+			]);
+			expect(removeNodeFromTree(shallowTree, 'src/deeper/missing.ts')).toEqual([
+				{ name: 'src', type: 'folder', children: undefined },
+			]);
+		});
+
+		it('renames root, direct child, and nested child nodes and keeps folders sorted first', () => {
+			expect(renameNodeInTree(tree, '', 'ignored')).toBe(tree);
+
+			const renamedRoot = renameNodeInTree(tree, 'README.md', 'CHANGELOG.md');
+			expect(renamedRoot.map((node) => node.name)).toEqual(['src', 'CHANGELOG.md']);
+
+			const renamedDirectChild = renameNodeInTree(tree, 'src/app.ts', 'z-app.ts');
+			expect(renamedDirectChild[0].children?.map((node) => node.name)).toEqual([
+				'components',
+				'z-app.ts',
+			]);
+
+			const renamedNestedChild = renameNodeInTree(
+				tree,
+				'src/components/Button.tsx',
+				'ActionButton.tsx'
+			);
+			expect(renamedNestedChild[0].children?.[1].children?.[0].name).toBe('ActionButton.tsx');
+
+			const filesOnlyTree: FileTreeNode[] = [
+				{ name: 'b.txt', type: 'file' },
+				{ name: 'a.txt', type: 'file' },
+			];
+			expect(renameNodeInTree(filesOnlyTree, 'b.txt', 'c.txt').map((node) => node.name)).toEqual([
+				'a.txt',
+				'c.txt',
+			]);
+		});
+
+		it('preserves folders without children when renaming nested paths through them', () => {
+			const shallowTree: FileTreeNode[] = [{ name: 'src', type: 'folder' }];
+
+			expect(renameNodeInTree(shallowTree, 'src/missing.ts', 'new.ts')).toEqual([
+				{ name: 'src', type: 'folder', children: undefined },
+			]);
+			expect(renameNodeInTree(shallowTree, 'src/deeper/missing.ts', 'new.ts')).toEqual([
+				{ name: 'src', type: 'folder', children: undefined },
+			]);
+		});
+
+		it('counts files and folders recursively', () => {
+			expect(countNodesInTree(tree)).toEqual({ fileCount: 3, folderCount: 2 });
+			expect(countNodesInTree([{ name: 'empty', type: 'folder' }])).toEqual({
+				fileCount: 0,
+				folderCount: 1,
+			});
+			expect(countNodesInTree([])).toEqual({ fileCount: 0, folderCount: 0 });
+		});
+
+		it('finds nodes by path and returns undefined for missing or invalid paths', () => {
+			expect(findNodeInTree(tree, '')).toBeUndefined();
+			expect(findNodeInTree(tree, 'missing')).toBeUndefined();
+			expect(findNodeInTree(tree, 'README.md')).toEqual({ name: 'README.md', type: 'file' });
+			expect(findNodeInTree(tree, 'src/components/Button.tsx')).toEqual({
+				name: 'Button.tsx',
+				type: 'file',
+			});
+			expect(findNodeInTree(tree, 'src/app.ts/deeper')).toBeUndefined();
 		});
 	});
 });

@@ -175,6 +175,18 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
 	LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
 };
 
+const SSH_SCRIPT_PREVIEW_LENGTH = 500;
+
+export function getRemoteImageExtension(mediaType: string): string {
+	return mediaType.split('/')[1] || 'png';
+}
+
+export function buildSshScriptPreview(stdinScript: string): string {
+	return stdinScript.length > SSH_SCRIPT_PREVIEW_LENGTH
+		? stdinScript.substring(0, SSH_SCRIPT_PREVIEW_LENGTH) + '...'
+		: stdinScript;
+}
+
 /**
  * Build the remote shell command string from command, args, cwd, and env.
  *
@@ -379,7 +391,7 @@ export async function buildSshCommandWithStdin(
 		for (let i = 0; i < remoteOptions.images.length; i++) {
 			const parsed = parseDataUrl(remoteOptions.images[i]);
 			if (!parsed) continue;
-			const ext = parsed.mediaType.split('/')[1] || 'png';
+			const ext = getRemoteImageExtension(parsed.mediaType);
 			const remoteTempPath = `/tmp/maestro-image-${timestamp}-${i}.${ext}`;
 			allRemoteTempPaths.push(remoteTempPath);
 			// Use heredoc + base64 decode to create the file on the remote host
@@ -466,7 +478,7 @@ export async function buildSshCommandWithStdin(
 		hasStdinInput,
 		stdinInputLength: remoteOptions.stdinInput?.length,
 		// Show first part of script for debugging (truncate if long)
-		scriptPreview: stdinScript.length > 500 ? stdinScript.substring(0, 500) + '...' : stdinScript,
+		scriptPreview: buildSshScriptPreview(stdinScript),
 	});
 
 	return {
@@ -543,7 +555,7 @@ export async function buildSshCommand(
 	// However, for stream-json input (sending JSON via stdin) a TTY injects terminal
 	// control sequences that corrupt the stream. Only enable forced TTY for cases
 	// that explicitly require it (e.g., `--print` without `--input-format stream-json`).
-	const remoteArgs = remoteOptions.args || [];
+	const remoteArgs = remoteOptions.args ?? [];
 	const hasPrintFlag = remoteArgs.includes('--print');
 	const hasStreamJsonInput = remoteOptions.useStdin
 		? true
@@ -610,7 +622,7 @@ export async function buildSshCommand(
 	// Build the remote command string
 	const remoteCommand = buildRemoteCommand({
 		command: remoteOptions.command,
-		args: remoteOptions.args,
+		args: remoteArgs,
 		cwd: effectiveCwd,
 		env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
 	});

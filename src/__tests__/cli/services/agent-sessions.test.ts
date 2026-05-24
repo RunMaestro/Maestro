@@ -80,6 +80,14 @@ describe('listClaudeSessions', () => {
 		vi.clearAllMocks();
 	});
 
+	const restoreEnv = (key: string, originalValue: string | undefined) => {
+		if (originalValue === undefined) {
+			delete process.env[key];
+			return;
+		}
+		process.env[key] = originalValue;
+	};
+
 	it('should return empty result when project directory does not exist', () => {
 		vi.mocked(fs.existsSync).mockReturnValue(false);
 
@@ -475,5 +483,288 @@ describe('listClaudeSessions', () => {
 		expect(session.cacheCreationTokens).toBe(100);
 		expect(session.costUsd).toBeGreaterThan(0);
 		expect(session.durationSeconds).toBe(5);
+	});
+
+	it('should read legacy string origins from the Windows app data store', () => {
+		const originalAppData = process.env.APPDATA;
+		process.env.APPDATA = 'C:\\Users\\tester\\AppData\\Roaming';
+		vi.mocked(os.platform).mockReturnValueOnce('win32');
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-win.jsonl' as unknown as fs.Dirent]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.endsWith('claude-session-origins.json')) {
+				return JSON.stringify({
+					origins: {
+						[projectPath]: {
+							'session-win': 'cli-import',
+						},
+					},
+				});
+			}
+			return makeJsonlContent({
+				userMessage: 'Windows session',
+				assistantMessage: 'Windows response',
+			});
+		});
+
+		try {
+			const result = listClaudeSessions(projectPath);
+
+			expect(fs.readFileSync).toHaveBeenCalledWith(
+				path.join('C:\\Users\\tester\\AppData\\Roaming', 'Maestro', 'claude-session-origins.json'),
+				'utf-8'
+			);
+			expect(result.sessions[0].origin).toBe('cli-import');
+		} finally {
+			restoreEnv('APPDATA', originalAppData);
+		}
+	});
+
+	it('should fall back to the Windows roaming app data path when APPDATA is unset', () => {
+		const originalAppData = process.env.APPDATA;
+		delete process.env.APPDATA;
+		vi.mocked(os.platform).mockReturnValueOnce('win32');
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue([
+			'session-missing-origin.jsonl' as unknown as fs.Dirent,
+		]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.endsWith('claude-session-origins.json')) {
+				return JSON.stringify({
+					origins: {
+						[projectPath]: {},
+					},
+				});
+			}
+			return makeJsonlContent({
+				userMessage: 'Windows default session',
+				assistantMessage: 'Windows default response',
+			});
+		});
+
+		try {
+			const result = listClaudeSessions(projectPath);
+
+			expect(fs.readFileSync).toHaveBeenCalledWith(
+				path.join('/home/testuser', 'AppData', 'Roaming', 'Maestro', 'claude-session-origins.json'),
+				'utf-8'
+			);
+			expect(result.sessions[0]).toMatchObject({
+				sessionId: 'session-missing-origin',
+				origin: undefined,
+				sessionName: undefined,
+				starred: undefined,
+			});
+		} finally {
+			restoreEnv('APPDATA', originalAppData);
+		}
+	});
+
+	it('should read Linux XDG origins and extract text from array message content', () => {
+		const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+		process.env.XDG_CONFIG_HOME = '/xdg/config';
+		vi.mocked(os.platform).mockReturnValueOnce('linux');
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-linux.jsonl' as unknown as fs.Dirent]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 600,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.endsWith('claude-session-origins.json')) {
+				return JSON.stringify({
+					origins: {
+						[projectPath]: {
+							'session-linux': {
+								origin: 'linux-origin',
+								sessionName: 'Linux named session',
+								starred: true,
+							},
+						},
+					},
+				});
+			}
+			return [
+				JSON.stringify({
+					type: 'user',
+					timestamp: '2026-02-08T10:00:00.000Z',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'text', text: 'First part' },
+							{ type: 'image', source: 'ignored' },
+							{ type: 'text', text: 'second part' },
+							{ type: 'text', text: '   ' },
+						],
+					},
+				}),
+			].join('\n');
+		});
+
+		try {
+			const result = listClaudeSessions(projectPath);
+
+			expect(fs.readFileSync).toHaveBeenCalledWith(
+				path.join('/xdg/config', 'Maestro', 'claude-session-origins.json'),
+				'utf-8'
+			);
+			expect(result.sessions[0]).toMatchObject({
+				firstMessage: 'First part second part',
+				origin: 'linux-origin',
+				sessionName: 'Linux named session',
+				starred: true,
+			});
+		} finally {
+			restoreEnv('XDG_CONFIG_HOME', originalXdgConfigHome);
+		}
+	});
+
+	it('should fall back to Linux config home and ignore blank assistant arrays', () => {
+		const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+		delete process.env.XDG_CONFIG_HOME;
+		vi.mocked(os.platform).mockReturnValueOnce('linux');
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue([
+			'session-assistant-only.jsonl' as unknown as fs.Dirent,
+		]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 600,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.endsWith('claude-session-origins.json')) {
+				return JSON.stringify({ origins: {} });
+			}
+			return [
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text' }, { type: 'text', text: '   ' }],
+					},
+				}),
+			].join('\n');
+		});
+
+		try {
+			const result = listClaudeSessions(projectPath);
+
+			expect(fs.readFileSync).toHaveBeenCalledWith(
+				path.join('/home/testuser', '.config', 'Maestro', 'claude-session-origins.json'),
+				'utf-8'
+			);
+			expect(result.sessions[0]).toMatchObject({
+				firstMessage: '',
+				messageCount: 1,
+				durationSeconds: 0,
+			});
+		} finally {
+			restoreEnv('XDG_CONFIG_HOME', originalXdgConfigHome);
+		}
+	});
+
+	it('should use the file timestamp when the first user message has no timestamp', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue([
+			'session-no-message-time.jsonl' as unknown as fs.Dirent,
+		]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('session-no-message-time')) {
+				return [
+					JSON.stringify({
+						type: 'user',
+						message: { role: 'user', content: 'Untimed message' },
+					}),
+					JSON.stringify({
+						type: 'result',
+					}),
+				].join('\n');
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listClaudeSessions(projectPath);
+
+		expect(result.sessions[0]).toMatchObject({
+			firstMessage: 'Untimed message',
+			timestamp: '2026-02-08T00:00:00.000Z',
+			durationSeconds: 0,
+		});
+	});
+
+	it('should tolerate non-text message content without inventing a preview', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue([
+			'session-object-content.jsonl' as unknown as fs.Dirent,
+		]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('session-object-content')) {
+				return [
+					JSON.stringify({
+						type: 'user',
+						timestamp: '2026-02-08T10:00:00.000Z',
+						message: {
+							role: 'user',
+							content: { type: 'tool_result', content: 'ignored object payload' },
+						},
+					}),
+				].join('\n');
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listClaudeSessions(projectPath);
+
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0]).toMatchObject({
+			sessionId: 'session-object-content',
+			firstMessage: '',
+			messageCount: 1,
+		});
+	});
+
+	it('should skip sessions whose metadata cannot be serialized', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue([
+			'session-invalid-date.jsonl' as unknown as fs.Dirent,
+		]);
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Number.NaN,
+		} as fs.Stats);
+		vi.mocked(fs.readFileSync).mockReturnValue(
+			makeJsonlContent({
+				userMessage: 'Unserializable date',
+				assistantMessage: 'Should be skipped',
+			})
+		);
+
+		const result = listClaudeSessions(projectPath);
+
+		expect(result.sessions).toEqual([]);
+		expect(result.totalCount).toBe(0);
+		expect(result.filteredCount).toBe(0);
 	});
 });

@@ -262,6 +262,18 @@ describe('MobileHistoryPanel', () => {
 			expect(screen.getByText('Network error')).toBeInTheDocument();
 		});
 
+		it('uses the generic error fallback when a thrown value has no message', async () => {
+			global.fetch = vi.fn().mockRejectedValue({});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('Failed to load history')).toBeInTheDocument();
+		});
+
 		it('displays error for non-ok response', async () => {
 			global.fetch = vi.fn().mockResolvedValue({
 				ok: false,
@@ -654,6 +666,121 @@ describe('MobileHistoryPanel', () => {
 		});
 	});
 
+	describe('Search functionality', () => {
+		it('opens, filters by summary and full response, clears, and closes search', async () => {
+			const onSearchChange = vi.fn();
+			const entries = [
+				createMockEntry({
+					id: 'entry-1',
+					summary: 'Deploy alpha summary',
+					fullResponse: 'No matching hidden text',
+				}),
+				createMockEntry({
+					id: 'entry-2',
+					summary: 'Release notes',
+					fullResponse: 'Hidden bravo response body',
+				}),
+				createMockEntry({
+					id: 'entry-3',
+					summary: 'Charlie update',
+					fullResponse: 'Other content',
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} onSearchChange={onSearchChange} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: 'Search history' }));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const searchInput = screen.getByPlaceholderText('Search history...');
+			expect(searchInput).toHaveFocus();
+			expect(onSearchChange).toHaveBeenCalledWith('', true);
+
+			fireEvent.change(searchInput, { target: { value: 'bravo' } });
+
+			expect(screen.getByText('Release notes')).toBeInTheDocument();
+			expect(screen.queryByText('Deploy alpha summary')).not.toBeInTheDocument();
+			expect(screen.queryByText('Charlie update')).not.toBeInTheDocument();
+			expect(screen.getByText('1 found')).toBeInTheDocument();
+			expect(onSearchChange).toHaveBeenCalledWith('bravo', true);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+
+			expect(screen.getByText('Deploy alpha summary')).toBeInTheDocument();
+			expect(screen.getByText('Charlie update')).toBeInTheDocument();
+			expect(searchInput).toHaveFocus();
+			expect(onSearchChange).toHaveBeenCalledWith('', true);
+
+			fireEvent.change(searchInput, { target: { value: 'alpha' } });
+			expect(screen.getByText('Deploy alpha summary')).toBeInTheDocument();
+			expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Search history' }));
+
+			expect(screen.queryByPlaceholderText('Search history...')).not.toBeInTheDocument();
+			expect(screen.getByText('Release notes')).toBeInTheDocument();
+			expect(onSearchChange).toHaveBeenCalledWith('', false);
+			expect(onSearchChange).toHaveBeenCalledWith('alpha', false);
+			expect(triggerHaptic).toHaveBeenCalledWith(HAPTIC_PATTERNS.tap);
+		});
+
+		it('shows an empty search result message for unmatched queries', async () => {
+			const entries = [createMockEntry({ id: 'entry-1', summary: 'Visible summary' })];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(
+				<MobileHistoryPanel onClose={vi.fn()} initialSearchOpen initialSearchQuery="missing" />
+			);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('No matching entries')).toBeInTheDocument();
+			expect(screen.getByText('No entries found matching "missing".')).toBeInTheDocument();
+			expect(screen.getByText('0 found')).toBeInTheDocument();
+		});
+
+		it('matches full responses when an entry summary is missing', async () => {
+			const entries = [
+				createMockEntry({
+					id: 'entry-1',
+					summary: undefined as any,
+					fullResponse: 'Hidden fallback match body',
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(
+				<MobileHistoryPanel onClose={vi.fn()} initialSearchOpen initialSearchQuery="fallback" />
+			);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(screen.getByText('No summary available')).toBeInTheDocument();
+			expect(screen.getByText('1 found')).toBeInTheDocument();
+		});
+	});
+
 	describe('Entry selection and detail view', () => {
 		it('opens detail view when entry is clicked', async () => {
 			const entries = [
@@ -785,6 +912,105 @@ describe('MobileHistoryPanel', () => {
 
 			expect(screen.queryByText('Full content')).not.toBeInTheDocument();
 		});
+
+		it('navigates detail entries with footer buttons and arrow keys', async () => {
+			const entries = [
+				createMockEntry({ id: 'entry-1', summary: 'First', fullResponse: 'First response' }),
+				createMockEntry({ id: 'entry-2', summary: 'Second', fullResponse: 'Second response' }),
+				createMockEntry({ id: 'entry-3', summary: 'Third', fullResponse: 'Third response' }),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByText('Second'));
+
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+			expect(screen.getByText('2 / 3')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Previous entry' }));
+			expect(screen.getByText('First response')).toBeInTheDocument();
+			expect(screen.getByText('1 / 3')).toBeInTheDocument();
+
+			fireEvent.keyDown(document, { key: 'ArrowRight' });
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+
+			fireEvent.keyDown(document, { key: 'ArrowLeft' });
+			expect(screen.getByText('First response')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Next entry' }));
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+			expect(triggerHaptic).toHaveBeenCalledWith(HAPTIC_PATTERNS.tap);
+		});
+
+		it('ignores arrow-key navigation at detail boundaries', async () => {
+			const entries = [
+				createMockEntry({ id: 'entry-1', summary: 'First', fullResponse: 'First response' }),
+				createMockEntry({ id: 'entry-2', summary: 'Second', fullResponse: 'Second response' }),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByText('First'));
+
+			fireEvent.keyDown(document, { key: 'ArrowLeft' });
+			expect(screen.getByText('First response')).toBeInTheDocument();
+
+			fireEvent.keyDown(document, { key: 'ArrowRight' });
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+
+			fireEvent.keyDown(document, { key: 'ArrowRight' });
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+		});
+
+		it('navigates detail entries with horizontal swipes', async () => {
+			const entries = [
+				createMockEntry({ id: 'entry-1', summary: 'First', fullResponse: 'First response' }),
+				createMockEntry({ id: 'entry-2', summary: 'Second', fullResponse: 'Second response' }),
+				createMockEntry({ id: 'entry-3', summary: 'Third', fullResponse: 'Third response' }),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByText('Second'));
+
+			const secondContent = screen.getByText('Second response').parentElement!;
+			fireEvent.touchStart(secondContent, { touches: [{ clientX: 120, clientY: 0 }] });
+			fireEvent.touchMove(secondContent, { touches: [{ clientX: 20, clientY: 0 }] });
+			fireEvent.touchEnd(secondContent, { changedTouches: [{ clientX: 20, clientY: 0 }] });
+
+			expect(screen.getByText('Third response')).toBeInTheDocument();
+
+			const thirdContent = screen.getByText('Third response').parentElement!;
+			fireEvent.touchStart(thirdContent, { touches: [{ clientX: 20, clientY: 0 }] });
+			fireEvent.touchMove(thirdContent, { touches: [{ clientX: 120, clientY: 0 }] });
+			fireEvent.touchEnd(thirdContent, { changedTouches: [{ clientX: 120, clientY: 0 }] });
+
+			expect(screen.getByText('Second response')).toBeInTheDocument();
+		});
 	});
 
 	describe('Detail view content', () => {
@@ -836,6 +1062,29 @@ describe('MobileHistoryPanel', () => {
 				pre.textContent?.includes('Summary as content')
 			);
 			expect(found).toBe(true);
+		});
+
+		it('renders an empty detail body when both full response and summary are missing', async () => {
+			const entries = [
+				createMockEntry({
+					summary: undefined as any,
+					fullResponse: undefined,
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /USER entry from/i }));
+
+			expect(document.querySelector('pre')?.textContent).toBe('');
 		});
 
 		it('shows context usage percentage', async () => {
@@ -1460,6 +1709,7 @@ describe('MobileHistoryPanel', () => {
 		});
 
 		it('handles multiple entries with same ID gracefully', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			const entries = [
 				createMockEntry({ id: 'same-id', summary: 'First' }),
 				createMockEntry({ id: 'same-id', summary: 'Second' }),
@@ -1479,6 +1729,11 @@ describe('MobileHistoryPanel', () => {
 			// Both entries render (React keys may warn but shouldn't crash)
 			expect(screen.getByText('First')).toBeInTheDocument();
 			expect(screen.getByText('Second')).toBeInTheDocument();
+			expect(
+				consoleError.mock.calls.some((call) =>
+					String(call[0]).includes('Encountered two children with the same key')
+				)
+			).toBe(true);
 		});
 	});
 

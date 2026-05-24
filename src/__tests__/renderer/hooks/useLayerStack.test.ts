@@ -1050,6 +1050,28 @@ describe('useLayerStack', () => {
 				consoleSpy.mockRestore();
 			});
 
+			it('list() should show N/A for layers without an aria label', () => {
+				process.env.NODE_ENV = 'development';
+				const consoleSpy = vi.spyOn(console, 'table').mockImplementation(() => {});
+
+				const { result } = renderHook(() => useLayerStack());
+
+				act(() => {
+					result.current.registerLayer(createModalLayer());
+				});
+
+				window.__MAESTRO_DEBUG__?.layers?.list();
+
+				expect(consoleSpy).toHaveBeenCalledWith([
+					expect.objectContaining({
+						type: 'modal',
+						ariaLabel: 'N/A',
+					}),
+				]);
+
+				consoleSpy.mockRestore();
+			});
+
 			it('top() should log the top layer', () => {
 				process.env.NODE_ENV = 'development';
 				const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -1240,6 +1262,27 @@ describe('useLayerStack', () => {
 
 			expect(closed!).toBe(true);
 			expect(handler).toHaveBeenCalledTimes(1);
+		});
+
+		it('should treat malformed layers without handlers as closable', async () => {
+			const { result } = renderHook(() => useLayerStack());
+
+			act(() => {
+				result.current.registerLayer({
+					type: 'modal',
+					priority: 100,
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					focusTrap: 'strict',
+				} as Omit<ModalLayer, 'id'>);
+			});
+
+			let closed: boolean;
+			await act(async () => {
+				closed = await result.current.closeTopLayer();
+			});
+
+			expect(closed!).toBe(true);
 		});
 	});
 

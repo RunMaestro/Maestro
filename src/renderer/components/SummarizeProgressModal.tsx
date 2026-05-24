@@ -223,8 +223,7 @@ export function SummarizeProgressModal({
 	const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
 	// Layer stack registration
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCancelRef = useRef(onCancel);
 	const onCompleteRef = useRef(onComplete);
 
@@ -247,9 +246,9 @@ export function SummarizeProgressModal({
 	useEffect(() => {
 		if (!isOpen) return;
 
-		layerIdRef.current = registerLayer({
+		const layerId = registerLayer({
 			type: 'modal',
-			priority: MODAL_PRIORITIES.SUMMARIZE_PROGRESS || 683, // Fallback if not defined
+			priority: MODAL_PRIORITIES.SUMMARIZE_PROGRESS,
 			blocksLowerLayers: true,
 			capturesFocus: true,
 			focusTrap: 'strict',
@@ -258,18 +257,9 @@ export function SummarizeProgressModal({
 		});
 
 		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
+			unregisterLayer(layerId);
 		};
 	}, [isOpen, registerLayer, unregisterLayer, handleEscape]);
-
-	// Update handler when callbacks change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleEscape);
-		}
-	}, [updateLayerHandler, handleEscape]);
 
 	// Get the current stage index
 	const currentStageIndex = useMemo(() => {

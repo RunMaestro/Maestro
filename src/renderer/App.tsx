@@ -1512,7 +1512,7 @@ function MaestroConsoleInner() {
 			if (currentSession.id !== activeSessionIdRef.current || currentTab?.id !== targetTabId)
 				return;
 
-			processInput();
+			processInput(currentTab.inputValue);
 		}, 100);
 
 		return () => clearTimeout(timeoutId);
@@ -1578,16 +1578,14 @@ function MaestroConsoleInner() {
 	const handleMarketplaceImportComplete = useCallback(
 		async (folderName: string) => {
 			// Refresh the Auto Run document list to show newly imported documents
-			if (activeSession?.autoRunFolderPath) {
-				handleAutoRunRefresh();
-			}
+			handleAutoRunRefresh();
 			notifyToast({
 				type: 'success',
 				title: 'Playbook Imported',
 				message: `Successfully imported playbook to ${folderName}`,
 			});
 		},
-		[activeSession?.autoRunFolderPath, handleAutoRunRefresh]
+		[handleAutoRunRefresh]
 	);
 
 	// File tree auto-refresh interval change handler (kept in App.tsx as it's not Auto Run specific)
@@ -2475,6 +2473,11 @@ function MaestroConsoleInner() {
 		handleOpenLastDocumentGraph,
 	});
 
+	const activeGroupChat = activeGroupChatId
+		? groupChats.find((chat) => chat.id === activeGroupChatId)
+		: undefined;
+	const activeGroupChatParticipants = activeGroupChat ? activeGroupChat.participants : [];
+
 	return (
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
 			<div
@@ -2541,8 +2544,7 @@ function MaestroConsoleInner() {
 								className="text-xs select-none opacity-50"
 								style={{ color: theme.colors.textDim }}
 							>
-								Maestro Group Chat:{' '}
-								{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
+								Maestro Group Chat: {activeGroupChat?.name || 'Unknown'}
 							</span>
 						) : (
 							activeSession && (
@@ -2942,7 +2944,7 @@ function MaestroConsoleInner() {
 							onResumeSession={handleDirectorNotesResumeSession}
 							fileTree={activeSession?.fileTree}
 							onFileClick={(path: string) =>
-								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
+								handleFileClick({ name: path.split('/').pop()!, type: 'file' }, path)
 							}
 						/>
 					</Suspense>
@@ -3010,7 +3012,7 @@ function MaestroConsoleInner() {
 								// Open the document in a file tab (migrated from legacy setPreviewFile overlay)
 								const treeRoot = activeSession?.projectRoot || activeSession?.cwd || '';
 								const fullPath = `${treeRoot}/${filePath}`;
-								const filename = filePath.split('/').pop() || filePath;
+								const filename = filePath.split('/').pop()!;
 								// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
 								// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
 								const sshRemoteId =
@@ -3133,119 +3135,101 @@ function MaestroConsoleInner() {
 				)}
 
 				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
-				{!logViewerOpen &&
-					activeGroupChatId &&
-					groupChats.find((c) => c.id === activeGroupChatId) && (
-						<>
-							<div className="flex-1 flex flex-col min-w-0">
-								<GroupChatPanel
-									theme={theme}
-									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
-									messages={groupChatMessages}
-									state={groupChatState}
-									groups={groups}
-									totalCost={(() => {
-										const chat = groupChats.find((c) => c.id === activeGroupChatId);
-										const participantsCost = (chat?.participants || []).reduce(
-											(sum, p) => sum + (p.totalCost || 0),
-											0
-										);
-										const modCost = moderatorUsage?.totalCost || 0;
-										return participantsCost + modCost;
-									})()}
-									costIncomplete={(() => {
-										const chat = groupChats.find((c) => c.id === activeGroupChatId);
-										const participants = chat?.participants || [];
-										// Check if any participant is missing cost data
-										const anyParticipantMissingCost = participants.some(
-											(p) => p.totalCost === undefined || p.totalCost === null
-										);
-										// Moderator is also considered - if no usage stats yet, cost is incomplete
-										const moderatorMissingCost =
-											moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
-										return anyParticipantMissingCost || moderatorMissingCost;
-									})()}
-									onSendMessage={handleSendGroupChatMessage}
-									onStopAll={handleStopAll}
-									onRename={() =>
-										activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
-									}
-									onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
-									rightPanelOpen={rightPanelOpen}
-									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
-									shortcuts={shortcuts}
-									sessions={sessions}
-									onDraftChange={handleGroupChatDraftChange}
-									onOpenPromptComposer={() => setPromptComposerOpen(true)}
-									stagedImages={groupChatStagedImages}
-									setStagedImages={setGroupChatStagedImages}
-									readOnlyMode={groupChatReadOnlyMode}
-									setReadOnlyMode={setGroupChatReadOnlyMode}
-									inputRef={groupChatInputRef}
-									handlePaste={handlePaste}
-									handleDrop={handleDrop}
-									onOpenLightbox={handleSetLightboxImage}
-									executionQueue={groupChatExecutionQueue.filter(
-										(item) => item.tabId === activeGroupChatId
-									)}
-									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
-									onReorderQueuedItems={handleReorderGroupChatQueueItems}
-									markdownEditMode={chatRawTextMode}
-									onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
-									maxOutputLines={maxOutputLines}
-									enterToSendAI={enterToSendAI}
-									setEnterToSendAI={setEnterToSendAI}
-									showFlashNotification={(message: string) => {
-										setSuccessFlashNotification(message);
-										setTimeout(() => setSuccessFlashNotification(null), 2000);
-									}}
-									participantColors={groupChatParticipantColors}
-									messagesRef={groupChatMessagesRef}
-								/>
-							</div>
-							<GroupChatRightPanel
+				{!logViewerOpen && activeGroupChatId && activeGroupChat && (
+					<>
+						<div className="flex-1 flex flex-col min-w-0">
+							<GroupChatPanel
 								theme={theme}
-								groupChatId={activeGroupChatId}
-								participants={
-									groupChats.find((c) => c.id === activeGroupChatId)?.participants || []
+								groupChat={activeGroupChat}
+								messages={groupChatMessages}
+								state={groupChatState}
+								groups={groups}
+								totalCost={(() => {
+									const participantsCost = activeGroupChatParticipants.reduce(
+										(sum, p) => sum + (p.totalCost || 0),
+										0
+									);
+									const modCost = moderatorUsage?.totalCost || 0;
+									return participantsCost + modCost;
+								})()}
+								costIncomplete={(() => {
+									// Check if any participant is missing cost data
+									const anyParticipantMissingCost = activeGroupChatParticipants.some(
+										(p) => p.totalCost === undefined || p.totalCost === null
+									);
+									// Moderator is also considered - if no usage stats yet, cost is incomplete
+									const moderatorMissingCost =
+										moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
+									return anyParticipantMissingCost || moderatorMissingCost;
+								})()}
+								onSendMessage={handleSendGroupChatMessage}
+								onStopAll={handleStopAll}
+								onRename={() =>
+									activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
 								}
-								participantStates={participantStates}
-								participantSessionPaths={
-									new Map(
-										sessions
-											.filter((s) =>
-												groupChats
-													.find((c) => c.id === activeGroupChatId)
-													?.participants.some((p) => p.sessionId === s.id)
-											)
-											.map((s) => [s.id, s.projectRoot])
-									)
-								}
-								sessionSshRemoteNames={sessionSshRemoteNames}
-								isOpen={rightPanelOpen}
-								onToggle={() => setRightPanelOpen(!rightPanelOpen)}
-								width={rightPanelWidth}
-								setWidthState={setRightPanelWidth}
+								onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
+								rightPanelOpen={rightPanelOpen}
+								onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
 								shortcuts={shortcuts}
-								moderatorAgentId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
-									'claude-code'
-								}
-								moderatorSessionId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
-								}
-								moderatorAgentSessionId={
-									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
-								}
-								moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
-								moderatorUsage={moderatorUsage}
-								activeTab={groupChatRightTab}
-								onTabChange={handleGroupChatRightTabChange}
-								onJumpToMessage={handleJumpToGroupChatMessage}
-								onColorsComputed={setGroupChatParticipantColors}
+								sessions={sessions}
+								onDraftChange={handleGroupChatDraftChange}
+								onOpenPromptComposer={() => setPromptComposerOpen(true)}
+								stagedImages={groupChatStagedImages}
+								setStagedImages={setGroupChatStagedImages}
+								readOnlyMode={groupChatReadOnlyMode}
+								setReadOnlyMode={setGroupChatReadOnlyMode}
+								inputRef={groupChatInputRef}
+								handlePaste={handlePaste}
+								handleDrop={handleDrop}
+								onOpenLightbox={handleSetLightboxImage}
+								executionQueue={groupChatExecutionQueue.filter(
+									(item) => item.tabId === activeGroupChatId
+								)}
+								onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
+								onReorderQueuedItems={handleReorderGroupChatQueueItems}
+								markdownEditMode={chatRawTextMode}
+								onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
+								maxOutputLines={maxOutputLines}
+								enterToSendAI={enterToSendAI}
+								setEnterToSendAI={setEnterToSendAI}
+								showFlashNotification={(message: string) => {
+									setSuccessFlashNotification(message);
+									setTimeout(() => setSuccessFlashNotification(null), 2000);
+								}}
+								participantColors={groupChatParticipantColors}
+								messagesRef={groupChatMessagesRef}
 							/>
-						</>
-					)}
+						</div>
+						<GroupChatRightPanel
+							theme={theme}
+							groupChatId={activeGroupChatId}
+							participants={activeGroupChatParticipants}
+							participantStates={participantStates}
+							participantSessionPaths={
+								new Map(
+									sessions
+										.filter((s) => activeGroupChatParticipants.some((p) => p.sessionId === s.id))
+										.map((s) => [s.id, s.projectRoot])
+								)
+							}
+							sessionSshRemoteNames={sessionSshRemoteNames}
+							isOpen={rightPanelOpen}
+							onToggle={() => setRightPanelOpen(!rightPanelOpen)}
+							width={rightPanelWidth}
+							setWidthState={setRightPanelWidth}
+							shortcuts={shortcuts}
+							moderatorAgentId={activeGroupChat.moderatorAgentId || 'claude-code'}
+							moderatorSessionId={activeGroupChat.moderatorSessionId || ''}
+							moderatorAgentSessionId={activeGroupChat.moderatorAgentSessionId}
+							moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
+							moderatorUsage={moderatorUsage}
+							activeTab={groupChatRightTab}
+							onTabChange={handleGroupChatRightTabChange}
+							onJumpToMessage={handleJumpToGroupChatMessage}
+							onColorsComputed={setGroupChatParticipantColors}
+						/>
+					</>
+				)}
 
 				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
 				{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (

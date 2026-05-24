@@ -142,7 +142,7 @@ interface LoopSummaryParams {
 	exitReason?: string;
 }
 
-function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryEntry, 'id'> {
+export function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryEntry, 'id'> {
 	const {
 		loopIteration,
 		loopTasksCompleted,
@@ -519,75 +519,66 @@ export function useBatchProcessor({
 			// Apply update directly without debouncing
 			const currentState = useBatchStore.getState().batchRunStates;
 			const newState = updater(currentState);
-			const newStateForSession = newState[sessionId] || null;
+			const newStateForSession = newState[sessionId]!;
 
 			console.log('[BatchProcessor:updateBatchStateAndBroadcast] DIRECT update (no debounce)', {
 				sessionId,
 				prevCompleted: currentState[sessionId]?.completedTasksAcrossAllDocs,
-				newCompleted: newStateForSession?.completedTasksAcrossAllDocs,
+				newCompleted: newStateForSession.completedTasksAcrossAllDocs,
 			});
 
-			if (newStateForSession) {
-				const prevSessionState = currentState[sessionId] || DEFAULT_BATCH_STATE;
+			const prevSessionState = currentState[sessionId]!;
 
-				dispatch({
-					type: 'UPDATE_PROGRESS',
-					sessionId,
-					payload: {
-						currentDocumentIndex:
-							newStateForSession.currentDocumentIndex !== prevSessionState.currentDocumentIndex
-								? newStateForSession.currentDocumentIndex
-								: undefined,
-						currentDocTasksTotal:
-							newStateForSession.currentDocTasksTotal !== prevSessionState.currentDocTasksTotal
-								? newStateForSession.currentDocTasksTotal
-								: undefined,
-						currentDocTasksCompleted:
-							newStateForSession.currentDocTasksCompleted !==
-							prevSessionState.currentDocTasksCompleted
-								? newStateForSession.currentDocTasksCompleted
-								: undefined,
-						totalTasksAcrossAllDocs:
-							newStateForSession.totalTasksAcrossAllDocs !==
-							prevSessionState.totalTasksAcrossAllDocs
-								? newStateForSession.totalTasksAcrossAllDocs
-								: undefined,
-						completedTasksAcrossAllDocs:
-							newStateForSession.completedTasksAcrossAllDocs !==
-							prevSessionState.completedTasksAcrossAllDocs
-								? newStateForSession.completedTasksAcrossAllDocs
-								: undefined,
-						totalTasks:
-							newStateForSession.totalTasks !== prevSessionState.totalTasks
-								? newStateForSession.totalTasks
-								: undefined,
-						completedTasks:
-							newStateForSession.completedTasks !== prevSessionState.completedTasks
-								? newStateForSession.completedTasks
-								: undefined,
-						currentTaskIndex:
-							newStateForSession.currentTaskIndex !== prevSessionState.currentTaskIndex
-								? newStateForSession.currentTaskIndex
-								: undefined,
-						sessionIds:
-							newStateForSession.sessionIds !== prevSessionState.sessionIds
-								? newStateForSession.sessionIds
-								: undefined,
-						accumulatedElapsedMs:
-							newStateForSession.accumulatedElapsedMs !== prevSessionState.accumulatedElapsedMs
-								? newStateForSession.accumulatedElapsedMs
-								: undefined,
-						lastActiveTimestamp:
-							newStateForSession.lastActiveTimestamp !== prevSessionState.lastActiveTimestamp
-								? newStateForSession.lastActiveTimestamp
-								: undefined,
-						loopIteration:
-							newStateForSession.loopIteration !== prevSessionState.loopIteration
-								? newStateForSession.loopIteration
-								: undefined,
-					},
-				});
-			}
+			dispatch({
+				type: 'UPDATE_PROGRESS',
+				sessionId,
+				payload: {
+					currentDocumentIndex:
+						newStateForSession.currentDocumentIndex !== prevSessionState.currentDocumentIndex
+							? newStateForSession.currentDocumentIndex
+							: undefined,
+					currentDocTasksTotal:
+						newStateForSession.currentDocTasksTotal !== prevSessionState.currentDocTasksTotal
+							? newStateForSession.currentDocTasksTotal
+							: undefined,
+					currentDocTasksCompleted:
+						newStateForSession.currentDocTasksCompleted !==
+						prevSessionState.currentDocTasksCompleted
+							? newStateForSession.currentDocTasksCompleted
+							: undefined,
+					totalTasksAcrossAllDocs:
+						newStateForSession.totalTasksAcrossAllDocs !== prevSessionState.totalTasksAcrossAllDocs
+							? newStateForSession.totalTasksAcrossAllDocs
+							: undefined,
+					completedTasksAcrossAllDocs:
+						newStateForSession.completedTasksAcrossAllDocs !==
+						prevSessionState.completedTasksAcrossAllDocs
+							? newStateForSession.completedTasksAcrossAllDocs
+							: undefined,
+					totalTasks:
+						newStateForSession.totalTasks !== prevSessionState.totalTasks
+							? newStateForSession.totalTasks
+							: undefined,
+					completedTasks:
+						newStateForSession.completedTasks !== prevSessionState.completedTasks
+							? newStateForSession.completedTasks
+							: undefined,
+					currentTaskIndex:
+						newStateForSession.currentTaskIndex !== prevSessionState.currentTaskIndex
+							? newStateForSession.currentTaskIndex
+							: undefined,
+					sessionIds:
+						newStateForSession.sessionIds !== prevSessionState.sessionIds
+							? newStateForSession.sessionIds
+							: undefined,
+					accumulatedElapsedMs: newStateForSession.accumulatedElapsedMs,
+					lastActiveTimestamp: newStateForSession.lastActiveTimestamp,
+					loopIteration:
+						newStateForSession.loopIteration !== prevSessionState.loopIteration
+							? newStateForSession.loopIteration
+							: undefined,
+				},
+			});
 
 			broadcastAutoRunState(sessionId, newStateForSession);
 		},
@@ -1122,7 +1113,7 @@ export function useBatchProcessor({
 										sessionId: sessionId,
 										agentType: session.toolType,
 										taskIndex: totalCompletedTasks - 1, // 0-indexed
-										taskContent: shortSummary || undefined,
+										taskContent: shortSummary,
 										startTime: Date.now() - elapsedTimeMs,
 										duration: elapsedTimeMs,
 										success: success,
@@ -1135,13 +1126,13 @@ export function useBatchProcessor({
 
 							// Track token usage for loop summary and cumulative totals
 							if (usageStats) {
-								loopTotalInputTokens += usageStats.inputTokens || 0;
-								loopTotalOutputTokens += usageStats.outputTokens || 0;
-								loopTotalCost += usageStats.totalCostUsd || 0;
+								loopTotalInputTokens += usageStats.inputTokens;
+								loopTotalOutputTokens += usageStats.outputTokens;
+								loopTotalCost += usageStats.totalCostUsd;
 								// Also track cumulative totals for final summary
-								totalInputTokens += usageStats.inputTokens || 0;
-								totalOutputTokens += usageStats.outputTokens || 0;
-								totalCost += usageStats.totalCostUsd || 0;
+								totalInputTokens += usageStats.inputTokens;
+								totalOutputTokens += usageStats.outputTokens;
+								totalCost += usageStats.totalCostUsd;
 							}
 
 							// Update Symphony contribution with real-time progress
@@ -1191,7 +1182,7 @@ export function useBatchProcessor({
 							}
 
 							updateBatchStateAndBroadcastRef.current!(sessionId, (prev) => {
-								const prevState = prev[sessionId] || DEFAULT_BATCH_STATE;
+								const prevState = prev[sessionId]!;
 								const nextTotalAcrossAllDocs = Math.max(0, recountedTotal);
 								const nextTotalTasks = Math.max(0, recountedTotal);
 
@@ -1209,7 +1200,7 @@ export function useBatchProcessor({
 										completedTasks: totalCompletedTasks,
 										totalTasks: nextTotalTasks,
 										currentTaskIndex: totalCompletedTasks,
-										sessionIds: [...(prevState?.sessionIds || []), agentSessionId || ''],
+										sessionIds: [...prevState.sessionIds, agentSessionId || ''],
 									},
 								};
 							});
@@ -1590,7 +1581,7 @@ export function useBatchProcessor({
 						? `PR created: ${prResult.prUrl}`
 						: `PR creation failed: ${prResult.error || 'Unknown error'}`,
 					fullResponse: prResult.success
-						? `**Pull Request Created**\n\n- **URL:** ${prResult.prUrl}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\`\n- **Tasks Completed:** ${totalCompletedTasks}`
+						? `**Pull Request Created**\n\n- **URL:** ${prResult.prUrl}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch}\`\n- **Tasks Completed:** ${totalCompletedTasks}`
 						: `**Pull Request Creation Failed**\n\n- **Error:** ${prResult.error || 'Unknown error'}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\``,
 					projectPath: worktreePath,
 					sessionId,
@@ -1624,9 +1615,7 @@ export function useBatchProcessor({
 			const nextBadge = getNextBadge(currentBadge);
 			const levelProgressText = nextBadge
 				? `Level ${currentBadge?.level || 0} → ${nextBadge.level}: ${formatTimeRemaining(projectedCumulativeTime, nextBadge)}`
-				: currentBadge
-					? `Level ${currentBadge.level} (${currentBadge.name}) - Maximum level achieved!`
-					: 'Level 0 → 1: ' + formatTimeRemaining(0, getBadgeForTime(0));
+				: `Level ${currentBadge!.level} (${currentBadge!.name}) - Maximum level achieved!`;
 
 			// Build summary with stall info if applicable
 			const stalledSuffix = stalledCount > 0 ? ` (${stalledCount} stalled)` : '';
@@ -1814,10 +1803,8 @@ export function useBatchProcessor({
 			// Use SET_STOPPING action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 			dispatch({ type: 'SET_STOPPING', sessionId });
 			// Broadcast state change
-			const newState = useBatchStore.getState().batchRunStates[sessionId];
-			if (newState) {
-				broadcastAutoRunState(sessionId, { ...newState, isStopping: true });
-			}
+			const newState = useBatchStore.getState().batchRunStates[sessionId]!;
+			broadcastAutoRunState(sessionId, { ...newState, isStopping: true });
 		},
 		[broadcastAutoRunState]
 	);
@@ -1900,7 +1887,7 @@ export function useBatchProcessor({
 				payload: { error, documentIndex, taskDescription },
 			});
 			// Broadcast state change
-			const currentState = useBatchStore.getState().batchRunStates[sessionId];
+			const currentState = useBatchStore.getState().batchRunStates[sessionId]!;
 			if (currentState) {
 				broadcastAutoRunState(sessionId, {
 					...currentState,
@@ -2015,9 +2002,7 @@ export function useBatchProcessor({
 			dispatch({ type: 'SET_STOPPING', sessionId });
 			// Broadcast state change
 			const currentState = useBatchStore.getState().batchRunStates[sessionId];
-			if (currentState) {
-				broadcastAutoRunState(sessionId, currentState);
-			}
+			broadcastAutoRunState(sessionId, currentState);
 		},
 		[broadcastAutoRunState]
 	);
