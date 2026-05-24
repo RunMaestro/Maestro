@@ -85,8 +85,10 @@ This prevents code duplication and maintains consistency across the project.
 
 Every task MUST strictly follow this format:
 
+> Note: Checkbox markers in these examples are escaped so Auto Run does not parse this prompt as an active checklist. Generated tasks.md files must use literal `- [ ]` task markers.
+
 ```text
-- [ ] [TaskID] [P?] [Story?] Description with file path
+- \[ \] [TaskID] [P?] [Story?] Description with file path
 ```
 
 **Format Components**:
@@ -104,14 +106,14 @@ Every task MUST strictly follow this format:
 
 **Examples**:
 
-- ✅ CORRECT: `- [ ] T001 Create project structure per implementation plan`
-- ✅ CORRECT: `- [ ] T005 [P] Implement authentication middleware in src/middleware/auth.py`
-- ✅ CORRECT: `- [ ] T012 [P] [US1] Create User model in src/models/user.py`
-- ✅ CORRECT: `- [ ] T014 [US1] Implement UserService in src/services/user_service.py`
-- ❌ WRONG: `- [ ] Create User model` (missing ID and Story label)
+- ✅ CORRECT: `- \[ \] T001 Create project structure per implementation plan`
+- ✅ CORRECT: `- \[ \] T005 [P] Implement authentication middleware in src/middleware/auth.py`
+- ✅ CORRECT: `- \[ \] T012 [P] [US1] Create User model in src/models/user.py`
+- ✅ CORRECT: `- \[ \] T014 [US1] Implement UserService in src/services/user_service.py`
+- ❌ WRONG: `- \[ \] Create User model` (missing ID and Story label)
 - ❌ WRONG: `T001 [US1] Create model` (missing checkbox)
-- ❌ WRONG: `- [ ] [US1] Create User model` (missing Task ID)
-- ❌ WRONG: `- [ ] T001 [US1] Create model` (missing file path)
+- ❌ WRONG: `- \[ \] [US1] Create User model` (missing Task ID)
+- ❌ WRONG: `- \[ \] T001 [US1] Create model` (missing file path)
 
 ### Task Organization
 
