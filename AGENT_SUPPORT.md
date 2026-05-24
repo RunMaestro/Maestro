@@ -690,7 +690,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `NewInstanceModal` coverage that every visible detected agent renders as an agent provider option, while hidden internal agents such as `terminal` stay excluded.
 - [x] New session starts successfully
   - Verified with `useSessionCrud.createNewSession` coverage that a selected provider resolves through `window.maestro.agents.get()`, creates an active AI-mode session, initializes the first AI tab, selects it as active, records a ready shell log, and makes the new session active.
-- [ ] Output streams to AI Terminal
+- [x] Output streams to AI Terminal
+  - Verified with `useAgentListeners` coverage that `process:thinking-chunk` events for `{sessionId}-ai-{tabId}` are RAF-batched into a `source: 'thinking'` log on the matching AI tab when thinking display is enabled.
 - [ ] Session ID captured and displayed
 - [ ] Token usage updates (if applicable)
 - [ ] Session resume works (if applicable)
