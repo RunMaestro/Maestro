@@ -101,6 +101,8 @@ Given that feature description, do this:
 
    a. **Create Spec Quality Checklist**: Generate a checklist file at `FEATURE_DIR/checklists/requirements.md` using the checklist template structure with these validation items:
 
+   > Note: Checkbox markers in this example are escaped so Auto Run does not parse the prompt as an active checklist. Generated checklist files must use literal `- [ ]` task markers.
+
    ```markdown
    # Specification Quality Checklist: [FEATURE NAME]
 
@@ -110,28 +112,28 @@ Given that feature description, do this:
 
    ## Content Quality
 
-   - [ ] No implementation details (languages, frameworks, APIs)
-   - [ ] Focused on user value and business needs
-   - [ ] Written for non-technical stakeholders
-   - [ ] All mandatory sections completed
+   - \[ \] No implementation details (languages, frameworks, APIs)
+   - \[ \] Focused on user value and business needs
+   - \[ \] Written for non-technical stakeholders
+   - \[ \] All mandatory sections completed
 
    ## Requirement Completeness
 
-   - [ ] No [NEEDS CLARIFICATION] markers remain
-   - [ ] Requirements are testable and unambiguous
-   - [ ] Success criteria are measurable
-   - [ ] Success criteria are technology-agnostic (no implementation details)
-   - [ ] All acceptance scenarios are defined
-   - [ ] Edge cases are identified
-   - [ ] Scope is clearly bounded
-   - [ ] Dependencies and assumptions identified
+   - \[ \] No [NEEDS CLARIFICATION] markers remain
+   - \[ \] Requirements are testable and unambiguous
+   - \[ \] Success criteria are measurable
+   - \[ \] Success criteria are technology-agnostic (no implementation details)
+   - \[ \] All acceptance scenarios are defined
+   - \[ \] Edge cases are identified
+   - \[ \] Scope is clearly bounded
+   - \[ \] Dependencies and assumptions identified
 
    ## Feature Readiness
 
-   - [ ] All functional requirements have clear acceptance criteria
-   - [ ] User scenarios cover primary flows
-   - [ ] Feature meets measurable outcomes defined in Success Criteria
-   - [ ] No implementation details leak into specification
+   - \[ \] All functional requirements have clear acceptance criteria
+   - \[ \] User scenarios cover primary flows
+   - \[ \] Feature meets measurable outcomes defined in Success Criteria
+   - \[ \] No implementation details leak into specification
 
    ## Notes
 
