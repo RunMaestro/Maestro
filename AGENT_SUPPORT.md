@@ -698,7 +698,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `setupUsageListener` coverage that main-process `usage` events are forwarded to the renderer as `process:usage`. Verified with `useAgentListeners` coverage that `process:usage` for `{sessionId}-ai-{tabId}` is parsed, batched into both the matching AI tab and session usage stats, updates context usage when it can be estimated, and increments cycle output tokens.
 - [x] Session resume works (if applicable)
   - Verified with `agent-completeness` coverage that every agent declaring `supportsResume` also provides a `resumeArgs(sessionId)` builder that preserves the resumable provider session ID. Verified with `process:spawn` IPC coverage that resumed renderer spawns pass `agentSessionId` into `buildAgentArgs()` and the resulting resume arguments are forwarded to `ProcessManager.spawn()` alongside the prompt.
-- [ ] Read-only mode works (if applicable)
+- [x] Read-only mode works (if applicable)
+  - Verified with `agent-completeness` coverage that every agent declaring `supportsReadOnlyMode` also provides a `readOnlyArgs` contract and explicitly declares whether read-only mode is CLI-enforced. Existing `buildAgentArgs`, IPC, renderer input, and UI coverage verify that read-only sends apply provider-specific read-only args, omit conflicting batch/YOLO flags, propagate the mode through spawn calls, and hide/show the toggle based on agent capabilities.
 - [ ] Error modal appears on auth/token errors
 - [ ] Auto Run works with your agent
 

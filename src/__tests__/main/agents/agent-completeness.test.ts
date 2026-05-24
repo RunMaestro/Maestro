@@ -126,6 +126,21 @@ describe('Agent Completeness', () => {
 					}
 				});
 
+				it('has read-only args contract if supportsReadOnlyMode', () => {
+					const caps = getAgentCapabilities(def.id);
+					if (caps.supportsReadOnlyMode) {
+						expect(
+							def.readOnlyArgs,
+							`Agent "${def.id}" has supportsReadOnlyMode=true but no readOnlyArgs contract`
+						).toBeDefined();
+
+						expect(
+							typeof def.readOnlyCliEnforced,
+							`Agent "${def.id}" should explicitly declare whether read-only mode is CLI-enforced`
+						).toBe('boolean');
+					}
+				});
+
 				it('has error patterns if has output parser', () => {
 					const parser = getOutputParser(def.id);
 					if (parser) {
