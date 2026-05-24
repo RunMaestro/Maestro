@@ -230,6 +230,17 @@ Text - [ ] also not a task`;
 			const content = 'This is some text with - [ ] embedded checkbox';
 			expect(countUnfinishedTasks(content)).toBe(0);
 		});
+
+		it('should not count unchecked tasks inside fenced code blocks', () => {
+			const content = `# Creating Tasks
+
+\`\`\`markdown
+- [ ] Example task
+\`\`\`
+
+- [ ] Real task`;
+			expect(countUnfinishedTasks(content)).toBe(1);
+		});
 	});
 
 	describe('line ending handling', () => {

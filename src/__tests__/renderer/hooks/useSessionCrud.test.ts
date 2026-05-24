@@ -233,6 +233,32 @@ describe('useSessionCrud', () => {
 			expect(sessions[0].projectRoot).toBe('/test/project');
 		});
 
+		it('starts a new agent session with an active AI tab and ready shell log', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('codex', '/test/project', 'Codex Session');
+			});
+
+			const { activeSessionId, sessions } = useSessionStore.getState();
+			const session = sessions[0];
+
+			expect(mockMaestro.agents.get).toHaveBeenCalledWith('codex');
+			expect(activeSessionId).toBe(session.id);
+			expect(session.toolType).toBe('codex');
+			expect(session.inputMode).toBe('ai');
+			expect(session.aiTabs).toHaveLength(1);
+			expect(session.activeTabId).toBe(session.aiTabs[0].id);
+			expect(session.aiTabs[0].state).toBe('idle');
+			expect(session.shellLogs).toEqual([
+				expect.objectContaining({
+					source: 'system',
+					text: 'Shell Session Ready.',
+				}),
+			]);
+		});
+
 		it('sets active session ID to the new session', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));

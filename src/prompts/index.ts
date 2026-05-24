@@ -48,4 +48,7 @@ export {
 
 	// Director's Notes
 	directorNotesPrompt,
+
+	// Feedback
+	feedbackPrompt,
 } from '../generated/prompts';

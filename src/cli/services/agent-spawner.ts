@@ -5,9 +5,7 @@ import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
 import type { AgentOutputParser } from '../../main/parsers/agent-output-parser';
-import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
-import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
-import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
+import { ensureParsersInitialized, getOutputParser } from '../../main/parsers';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
@@ -15,6 +13,11 @@ import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import {
+	countUncheckedMarkdownTasks,
+	extractUncheckedMarkdownTasks,
+	uncheckAllMarkdownTasks,
+} from '../../shared/markdownTasks';
 
 // Claude Code arguments for batch mode (stream-json format)
 const CLAUDE_ARGS = [
@@ -319,16 +322,12 @@ function mergeUsageStats(
 
 /** Create the appropriate output parser for a given agent type */
 function createParser(toolType: ToolType): AgentOutputParser {
-	switch (toolType) {
-		case 'codex':
-			return new CodexOutputParser();
-		case 'opencode':
-			return new OpenCodeOutputParser();
-		case 'factory-droid':
-			return new FactoryDroidOutputParser();
-		default:
-			throw new Error(`No parser available for agent type: ${toolType}`);
+	ensureParsersInitialized();
+	const parser = getOutputParser(toolType);
+	if (!parser) {
+		throw new Error(`No parser available for agent type: ${toolType}`);
 	}
+	return parser;
 }
 
 /**
@@ -491,10 +490,9 @@ export function readDocAndCountTasks(
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
-		const matches = content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
 		return {
 			content,
-			taskCount: matches ? matches.length : 0,
+			taskCount: countUncheckedMarkdownTasks(content),
 		};
 	} catch {
 		return { content: '', taskCount: 0 };
@@ -512,9 +510,7 @@ export function readDocAndGetTasks(
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
-		const matches = content.match(/^[\s]*-\s*\[\s*\]\s*(.+)$/gm);
-		const tasks = matches ? matches.map((m) => m.replace(/^[\s]*-\s*\[\s*\]\s*/, '').trim()) : [];
-		return { content, tasks };
+		return { content, tasks: extractUncheckedMarkdownTasks(content) };
 	} catch {
 		return { content: '', tasks: [] };
 	}
@@ -524,7 +520,7 @@ export function readDocAndGetTasks(
  * Uncheck all markdown checkboxes in content (for reset-on-completion)
  */
 export function uncheckAllTasks(content: string): string {
-	return content.replace(/^(\s*-\s*)\[x\]/gim, '$1[ ]');
+	return uncheckAllMarkdownTasks(content);
 }
 
 /**

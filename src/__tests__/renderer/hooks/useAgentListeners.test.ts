@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import {
 	useAgentListeners,
 	getErrorTitleForType,
@@ -414,6 +414,42 @@ describe('useAgentListeners', () => {
 				expect.any(Number)
 			);
 		});
+
+		it('streams thinking chunks into the active AI Terminal tab', async () => {
+			let rafCallback: FrameRequestCallback | null = null;
+			vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				rafCallback = callback;
+				return 1;
+			});
+
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', showThinking: 'on' })],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			await act(async () => {
+				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'First chunk. ');
+				onThinkingChunkHandler?.('sess-1-ai-tab-1', 'Second chunk.');
+				rafCallback?.(0);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs.find((tab) => tab.id === 'tab-1')?.logs;
+
+			expect(logs).toHaveLength(1);
+			expect(logs?.[0]).toMatchObject({
+				source: 'thinking',
+				text: 'First chunk. Second chunk.',
+			});
+		});
 	});
 
 	// ========================================================================
@@ -749,7 +785,10 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorPaused).toBe(true);
 		});
 
-		it('opens the agent error modal', () => {
+		it.each([
+			['auth_expired' as const, 'Authentication required'],
+			['token_exhaustion' as const, 'Token limit exceeded'],
+		])('opens the agent error modal for %s errors', (errorType, message) => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -765,7 +804,11 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
+			onAgentErrorHandler?.('sess-1-ai-tab-1', {
+				...baseError,
+				type: errorType,
+				message,
+			});
 
 			// Check that the agentError modal was opened
 			const agentErrorOpen = useModalStore.getState().isOpen('agentError');

@@ -53,6 +53,7 @@ import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../utils/markdownConfig';
 import type { FileNode } from '../types/fileTree';
 import { isImageFile } from '../../shared/gitUtils';
+import { countMarkdownTasks as countSharedMarkdownTasks } from '../../shared/markdownTasks';
 import { BionifyTextBlock } from '../utils/bionifyReadingMode';
 
 // Global cache for loaded images to prevent re-fetching and flickering
@@ -316,14 +317,12 @@ const formatDateTime = (isoString: string): string => {
 	});
 };
 
-// Count markdown tasks (checkboxes)
+// Count markdown tasks outside fenced examples.
 const countMarkdownTasks = (content: string): { open: number; closed: number } => {
-	// Match markdown checkboxes: - [ ] or - [x] (also * [ ] and * [x])
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
+	const counts = countSharedMarkdownTasks(content);
 	return {
-		open: openMatches?.length || 0,
-		closed: closedMatches?.length || 0,
+		open: counts.total - counts.completed,
+		closed: counts.completed,
 	};
 };
 

@@ -291,6 +291,81 @@ describe('NewInstanceModal', () => {
 			expect(screen.queryByText('Hidden Agent')).not.toBeInTheDocument();
 		});
 
+		it('should display every visible detected agent in the provider selector', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({
+					id: 'codex',
+					name: 'Codex',
+					available: true,
+					binaryName: 'codex',
+				}),
+				createAgentConfig({
+					id: 'gemini-cli',
+					name: 'Gemini CLI',
+					available: false,
+					binaryName: 'gemini',
+				}),
+				createAgentConfig({
+					id: 'qwen3-coder',
+					name: 'Qwen3 Coder',
+					available: false,
+					binaryName: 'qwen3-coder',
+				}),
+				createAgentConfig({
+					id: 'opencode',
+					name: 'OpenCode',
+					available: true,
+					binaryName: 'opencode',
+				}),
+				createAgentConfig({
+					id: 'factory-droid',
+					name: 'Factory Droid',
+					available: true,
+					binaryName: 'droid',
+				}),
+				createAgentConfig({
+					id: 'aider',
+					name: 'Aider',
+					available: false,
+					binaryName: 'aider',
+				}),
+				createAgentConfig({
+					id: 'terminal',
+					name: 'Terminal',
+					available: true,
+					hidden: true,
+					binaryName: 'bash',
+				}),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			for (const agentName of [
+				'Claude Code',
+				'Codex',
+				'Gemini CLI',
+				'Qwen3 Coder',
+				'OpenCode',
+				'Factory Droid',
+				'Aider',
+			]) {
+				expect(
+					await screen.findByRole('option', { name: new RegExp(agentName, 'i') })
+				).toBeInTheDocument();
+			}
+
+			expect(screen.queryByRole('option', { name: /Terminal/i })).not.toBeInTheDocument();
+		});
+
 		it('should select default agent when available', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),

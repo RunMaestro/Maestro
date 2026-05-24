@@ -13,6 +13,7 @@
 import { useEffect, useCallback } from 'react';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
+import { countMarkdownTasks } from '../../../shared/markdownTasks';
 
 // ============================================================================
 // Return type
@@ -45,20 +46,6 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
 	} = useBatchStore.getState();
 
-	// Helper to count tasks in document content
-	const countTasksInContent = useCallback(
-		(content: string): { completed: number; total: number } => {
-			const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-			const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-			const completedMatches = content.match(completedRegex) || [];
-			const uncheckedMatches = content.match(uncheckedRegex) || [];
-			const completed = completedMatches.length;
-			const total = completed + uncheckedMatches.length;
-			return { completed, total };
-		},
-		[]
-	);
-
 	// Load task counts for all documents
 	const loadTaskCounts = useCallback(
 		async (folderPath: string, documents: string[], sshRemoteId?: string) => {
@@ -74,7 +61,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 							sshRemoteId
 						);
 						if (result.success && result.content) {
-							const taskCount = countTasksInContent(result.content);
+							const taskCount = countMarkdownTasks(result.content);
 							if (taskCount.total > 0) {
 								counts.set(docPath, taskCount);
 							}
@@ -87,7 +74,7 @@ export function useAutoRunDocumentLoader(): UseAutoRunDocumentLoaderReturn {
 
 			return counts;
 		},
-		[countTasksInContent]
+		[]
 	);
 
 	// Load Auto Run document list and content when session changes

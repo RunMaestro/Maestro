@@ -299,11 +299,42 @@ your-agent run --format json "say hello" 2>&1 | head -20
 
 Document:
 
-- [ ] How to get JSON output
-- [ ] Session ID field name and format
-- [ ] How to resume a session
-- [ ] How to enable read-only mode
-- [ ] Token/usage reporting format
+- [x] How to get JSON output
+  - Existing Maestro integrations declare JSON mode through `jsonOutputArgs` in `src/main/agents/definitions.ts`. Current examples: Claude Code uses `--output-format stream-json`, Codex uses `--json`, Gemini CLI uses `--output-format stream-json`, OpenCode uses `--format json`, and Factory Droid uses `-o stream-json`.
+- [x] Session ID field name and format
+  - Normalize provider-specific IDs into `ParsedEvent.sessionId` in the agent output parser. The field should be a stable string that can be passed back into the agent definition's `resumeArgs(sessionId)` builder without transformation.
+  - Current verified formats:
+
+    | Agent         | Raw field                        | First event to capture            | Format / notes                                                       | Resume args             |
+    | ------------- | -------------------------------- | --------------------------------- | -------------------------------------------------------------------- | ----------------------- |
+    | Claude Code   | `session_id`                     | `type: "system", subtype: "init"` | UUID-like string; also appears on `result` and usage-bearing events  | `--resume <sessionId>`  |
+    | Codex         | `thread_id`                      | `type: "thread.started"`          | Thread UUID string; Codex names provider sessions "threads"          | `resume <sessionId>`    |
+    | OpenCode      | `sessionID`                      | `type: "step_start"`              | String session ID in camelCase field; also appears on step events    | `--session <sessionId>` |
+    | Factory Droid | `session_id` or session filename | `type: "system", subtype: "init"` | UUID string; persisted as `<sessionId>.jsonl` under Factory sessions | `-s <sessionId>`        |
+
+  - For a new parser, implement `extractSessionId(event)` so it returns `event.sessionId` first, then falls back to the raw provider field. If the provider stores sessions on disk, use the same raw ID as the `AgentSession.sessionId` value so session browsing, resume, deletion, and history links all address the same conversation.
+
+- [x] How to resume a session
+  - Add a `resumeArgs: (sessionId) => string[]` builder to the agent definition and ensure the parser/storage layer preserves the provider's raw resumable ID as `agentSessionId`. Maestro passes that ID into `buildAgentArgs()` when resuming a tab or provider session; the helper appends the provider-specific resume args after JSON/read-only/model args. Current patterns are Claude Code `--resume <sessionId>`, Codex `resume <thread_id>`, OpenCode `--session <sessionId>`, Gemini CLI `--resume <sessionId>`, and Factory Droid `-s <sessionId>`.
+  - Verify the resumed command still receives a prompt when the provider requires one, and that JSON output remains enabled during resume so the parser can capture follow-up events and usage. If the agent cannot resume from CLI, leave `supportsResume: false` and omit `resumeArgs` so resume UI is disabled by capability gates.
+- [x] How to enable read-only mode
+  - Declare provider-specific read-only or plan-mode CLI arguments with `readOnlyArgs` in `src/main/agents/definitions.ts`, then set `supportsReadOnlyMode: true` in `src/main/agents/capabilities.ts` only after the mode has been verified. Maestro's argument builder appends `readOnlyArgs` when a tab, Auto Run, group chat, wizard conversation, or helper spawn requests read-only mode.
+  - Set `readOnlyCliEnforced: true` when the provider's CLI actually prevents writes, such as Claude Code `--permission-mode plan`, Codex `--sandbox read-only`, OpenCode `--agent plan`, or Factory Droid's default read-only `exec` behavior with empty `readOnlyArgs`. Set `readOnlyCliEnforced: false` only for prompt-only guidance, such as Gemini CLI while its plan approval mode is not generally available; in that case keep `supportsReadOnlyMode: false` unless the UI should expose a clearly non-enforced mode.
+  - If the agent uses default environment variables or YOLO/full-access flags in normal operation, add `readOnlyEnvOverrides` and/or `yoloModeArgs` so read-only launches remove blanket write approvals. Current OpenCode support strips its permissive `OPENCODE_CONFIG_CONTENT` in read-only mode while keeping the question tool disabled to avoid batch-mode hangs.
+  - Verify the final command composition keeps JSON output, resume args, model args, working-directory args, and prompt delivery working in read-only mode. For providers where read-only flags conflict with full-access flags, the read-only path must win.
+- [x] Token/usage reporting format
+  - Normalize provider token data through `ParsedEvent.usage` in the output parser, then expose it through `extractUsage(event)`. `StdoutHandler.buildUsageStats()` maps parser fields to the shared app shape: `inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `totalCostUsd`, `contextWindow`, and optional `reasoningTokens`.
+  - Required parser fields are `inputTokens` and `outputTokens`; optional fields are `cacheReadTokens`, `cacheCreationTokens`, `costUsd`, `contextWindow`, and `reasoningTokens`. Use zero for missing cache/cost values, and leave `contextWindow` unset when the process config or `DEFAULT_CONTEXT_WINDOWS` should supply the fallback.
+  - Current verified formats:
+
+    | Agent         | Raw usage event / field                               | Mapping / notes                                                                                                                                                                                                              |
+    | ------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Claude Code   | `modelUsage`, `usage`, `total_cost_usd`               | `aggregateModelUsage()` uses max per-model input/output/cache values to avoid double-counting multi-model turns; falls back to top-level `usage`; maps `total_cost_usd` to `costUsd` and includes reported context window.   |
+    | Codex         | `turn.completed.usage`                                | Maps `input_tokens`, `output_tokens`, `cached_input_tokens`, and `reasoning_output_tokens`; `outputTokens` includes reasoning tokens; cache reads are display-only because OpenAI cached input is already included in input. |
+    | OpenCode      | `step_finish.part.tokens` and `step_finish.part.cost` | Maps `tokens.input`, `tokens.output`, `tokens.cache.read`, `tokens.cache.write`, and `part.cost`; context window comes from the agent configuration/default.                                                                 |
+    | Factory Droid | `completion.usage`                                    | Maps `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, and `thinking_tokens` as `reasoningTokens`; context window comes from the agent configuration/default.                       |
+
+  - Set `supportsUsageStats: true` only after a parser emits usage for real CLI output. Set `supportsCostTracking: true` only when the provider reports cost directly or Maestro has a verified pricing calculation for that agent.
 
 ### Step 2: Add Agent Definition
 
@@ -655,15 +686,24 @@ describe('YourAgentOutputParser', () => {
 
 ### Integration Testing Checklist
 
-- [ ] Agent appears in agent selection dropdown
-- [ ] New session starts successfully
-- [ ] Output streams to AI Terminal
-- [ ] Session ID captured and displayed
-- [ ] Token usage updates (if applicable)
-- [ ] Session resume works (if applicable)
-- [ ] Read-only mode works (if applicable)
-- [ ] Error modal appears on auth/token errors
-- [ ] Auto Run works with your agent
+- [x] Agent appears in agent selection dropdown
+  - Verified with `NewInstanceModal` coverage that every visible detected agent renders as an agent provider option, while hidden internal agents such as `terminal` stay excluded.
+- [x] New session starts successfully
+  - Verified with `useSessionCrud.createNewSession` coverage that a selected provider resolves through `window.maestro.agents.get()`, creates an active AI-mode session, initializes the first AI tab, selects it as active, records a ready shell log, and makes the new session active.
+- [x] Output streams to AI Terminal
+  - Verified with `useAgentListeners` coverage that `process:thinking-chunk` events for `{sessionId}-ai-{tabId}` are RAF-batched into a `source: 'thinking'` log on the matching AI tab when thinking display is enabled.
+- [x] Session ID captured and displayed
+  - Verified with `useAgentListeners` coverage that `process:session-id` updates the matching AI tab's `agentSessionId`, clears `awaitingSessionId`, stores the session-level fallback ID, and registers the provider session origin. Verified with `MainPanel` and `TabBar` coverage that captured IDs render as the truncated session ID pill/header and can be copied from the UI when the agent declares `supportsSessionId`.
+- [x] Token usage updates (if applicable)
+  - Verified with `setupUsageListener` coverage that main-process `usage` events are forwarded to the renderer as `process:usage`. Verified with `useAgentListeners` coverage that `process:usage` for `{sessionId}-ai-{tabId}` is parsed, batched into both the matching AI tab and session usage stats, updates context usage when it can be estimated, and increments cycle output tokens.
+- [x] Session resume works (if applicable)
+  - Verified with `agent-completeness` coverage that every agent declaring `supportsResume` also provides a `resumeArgs(sessionId)` builder that preserves the resumable provider session ID. Verified with `process:spawn` IPC coverage that resumed renderer spawns pass `agentSessionId` into `buildAgentArgs()` and the resulting resume arguments are forwarded to `ProcessManager.spawn()` alongside the prompt.
+- [x] Read-only mode works (if applicable)
+  - Verified with `agent-completeness` coverage that every agent declaring `supportsReadOnlyMode` also provides a `readOnlyArgs` contract and explicitly declares whether read-only mode is CLI-enforced. Existing `buildAgentArgs`, IPC, renderer input, and UI coverage verify that read-only sends apply provider-specific read-only args, omit conflicting batch/YOLO flags, propagate the mode through spawn calls, and hide/show the toggle based on agent capabilities.
+- [x] Error modal appears on auth/token errors
+  - Verified with `setupErrorListener` coverage that main-process `agent-error` events for `auth_expired` and `token_exhaustion` are forwarded to the renderer as `agent:error`. Verified with `useAgentListeners` coverage that both error types set the matching agent/tab error state, put the agent into `error`, open the `agentError` modal store entry, and append an error log entry. Existing modal/recovery coverage verifies the rendered modal titles/actions for authentication and context-limit failures.
+- [x] Auto Run works with your agent
+  - Verified with CLI Auto Run spawner coverage that Codex, OpenCode, and Factory Droid batch runs build provider-specific command arguments from `AGENT_DEFINITIONS`, parse output through the shared output parser registry, capture provider session IDs, normalize usage stats, support resume arguments, and reject non-batch agents such as `terminal`.
 
 ---
 
