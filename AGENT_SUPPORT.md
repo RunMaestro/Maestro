@@ -694,7 +694,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `useAgentListeners` coverage that `process:thinking-chunk` events for `{sessionId}-ai-{tabId}` are RAF-batched into a `source: 'thinking'` log on the matching AI tab when thinking display is enabled.
 - [x] Session ID captured and displayed
   - Verified with `useAgentListeners` coverage that `process:session-id` updates the matching AI tab's `agentSessionId`, clears `awaitingSessionId`, stores the session-level fallback ID, and registers the provider session origin. Verified with `MainPanel` and `TabBar` coverage that captured IDs render as the truncated session ID pill/header and can be copied from the UI when the agent declares `supportsSessionId`.
-- [ ] Token usage updates (if applicable)
+- [x] Token usage updates (if applicable)
+  - Verified with `setupUsageListener` coverage that main-process `usage` events are forwarded to the renderer as `process:usage`. Verified with `useAgentListeners` coverage that `process:usage` for `{sessionId}-ai-{tabId}` is parsed, batched into both the matching AI tab and session usage stats, updates context usage when it can be estimated, and increments cycle output tokens.
 - [ ] Session resume works (if applicable)
 - [ ] Read-only mode works (if applicable)
 - [ ] Error modal appears on auth/token errors
