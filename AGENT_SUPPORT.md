@@ -299,7 +299,8 @@ your-agent run --format json "say hello" 2>&1 | head -20
 
 Document:
 
-- [ ] How to get JSON output
+- [x] How to get JSON output
+  - Existing Maestro integrations declare JSON mode through `jsonOutputArgs` in `src/main/agents/definitions.ts`. Current examples: Claude Code uses `--output-format stream-json`, Codex uses `--json`, Gemini CLI uses `--output-format stream-json`, OpenCode uses `--format json`, and Factory Droid uses `-o stream-json`.
 - [ ] Session ID field name and format
 - [ ] How to resume a session
 - [ ] How to enable read-only mode
