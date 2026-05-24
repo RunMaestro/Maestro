@@ -301,7 +301,19 @@ Document:
 
 - [x] How to get JSON output
   - Existing Maestro integrations declare JSON mode through `jsonOutputArgs` in `src/main/agents/definitions.ts`. Current examples: Claude Code uses `--output-format stream-json`, Codex uses `--json`, Gemini CLI uses `--output-format stream-json`, OpenCode uses `--format json`, and Factory Droid uses `-o stream-json`.
-- [ ] Session ID field name and format
+- [x] Session ID field name and format
+  - Normalize provider-specific IDs into `ParsedEvent.sessionId` in the agent output parser. The field should be a stable string that can be passed back into the agent definition's `resumeArgs(sessionId)` builder without transformation.
+  - Current verified formats:
+
+    | Agent         | Raw field                        | First event to capture            | Format / notes                                                       | Resume args             |
+    | ------------- | -------------------------------- | --------------------------------- | -------------------------------------------------------------------- | ----------------------- |
+    | Claude Code   | `session_id`                     | `type: "system", subtype: "init"` | UUID-like string; also appears on `result` and usage-bearing events  | `--resume <sessionId>`  |
+    | Codex         | `thread_id`                      | `type: "thread.started"`          | Thread UUID string; Codex names provider sessions "threads"          | `resume <sessionId>`    |
+    | OpenCode      | `sessionID`                      | `type: "step_start"`              | String session ID in camelCase field; also appears on step events    | `--session <sessionId>` |
+    | Factory Droid | `session_id` or session filename | `type: "system", subtype: "init"` | UUID string; persisted as `<sessionId>.jsonl` under Factory sessions | `-s <sessionId>`        |
+
+  - For a new parser, implement `extractSessionId(event)` so it returns `event.sessionId` first, then falls back to the raw provider field. If the provider stores sessions on disk, use the same raw ID as the `AgentSession.sessionId` value so session browsing, resume, deletion, and history links all address the same conversation.
+
 - [ ] How to resume a session
 - [ ] How to enable read-only mode
 - [ ] Token/usage reporting format
