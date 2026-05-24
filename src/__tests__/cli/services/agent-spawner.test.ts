@@ -1246,6 +1246,208 @@ Some text with [x] in it that's not a checkbox
 				);
 			}
 		});
+
+		it.each([
+			{
+				toolType: 'codex' as const,
+				expectedArgs: [
+					'-C',
+					'/project',
+					'exec',
+					'--dangerously-bypass-approvals-and-sandbox',
+					'--skip-git-repo-check',
+					'--json',
+					'--',
+					'Auto Run task prompt',
+				],
+				outputLines: [
+					{ type: 'thread.started', thread_id: 'codex-thread-1' },
+					{
+						type: 'item.completed',
+						item: { type: 'agent_message', text: 'Codex completed task' },
+					},
+					{
+						type: 'turn.completed',
+						usage: {
+							input_tokens: 11,
+							output_tokens: 7,
+							cached_input_tokens: 3,
+							reasoning_output_tokens: 2,
+						},
+					},
+				],
+				expectedSessionId: 'codex-thread-1',
+				expectedResponse: 'Codex completed task',
+				expectedUsage: {
+					inputTokens: 11,
+					outputTokens: 9,
+					cacheReadInputTokens: 3,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0,
+					contextWindow: 400000,
+					reasoningTokens: 2,
+				},
+			},
+			{
+				toolType: 'opencode' as const,
+				expectedArgs: ['run', '--format', 'json', '--', 'Auto Run task prompt'],
+				outputLines: [
+					{ type: 'step_start', sessionID: 'opencode-session-1', part: { type: 'step-start' } },
+					{
+						type: 'text',
+						sessionID: 'opencode-session-1',
+						part: { type: 'text', text: 'OpenCode completed task' },
+					},
+					{
+						type: 'step_finish',
+						sessionID: 'opencode-session-1',
+						part: {
+							type: 'step-finish',
+							reason: 'stop',
+							cost: 0.012,
+							tokens: {
+								input: 13,
+								output: 8,
+								cache: { read: 5, write: 2 },
+							},
+						},
+					},
+				],
+				expectedSessionId: 'opencode-session-1',
+				expectedResponse: 'OpenCode completed task',
+				expectedUsage: {
+					inputTokens: 13,
+					outputTokens: 8,
+					cacheReadInputTokens: 5,
+					cacheCreationInputTokens: 2,
+					totalCostUsd: 0.012,
+					contextWindow: 0,
+				},
+			},
+			{
+				toolType: 'factory-droid' as const,
+				expectedArgs: [
+					'exec',
+					'--skip-permissions-unsafe',
+					'-o',
+					'stream-json',
+					'Auto Run task prompt',
+				],
+				outputLines: [
+					{
+						type: 'system',
+						subtype: 'init',
+						session_id: 'factory-session-1',
+					},
+					{
+						type: 'completion',
+						session_id: 'factory-session-1',
+						finalText: 'Factory Droid completed task',
+						usage: {
+							input_tokens: 17,
+							output_tokens: 9,
+							cache_read_input_tokens: 4,
+							cache_creation_input_tokens: 1,
+							thinking_tokens: 6,
+						},
+					},
+				],
+				expectedSessionId: 'factory-session-1',
+				expectedResponse: 'Factory Droid completed task',
+				expectedUsage: {
+					inputTokens: 17,
+					outputTokens: 9,
+					cacheReadInputTokens: 4,
+					cacheCreationInputTokens: 1,
+					totalCostUsd: 0,
+					contextWindow: 0,
+					reasoningTokens: 6,
+				},
+			},
+		])(
+			'should run $toolType Auto Run tasks through the shared parser registry',
+			async ({
+				toolType,
+				expectedArgs,
+				outputLines,
+				expectedSessionId,
+				expectedResponse,
+				expectedUsage,
+			}) => {
+				const resultPromise = spawnAgent(toolType, '/project', 'Auto Run task prompt');
+
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const [, args, options] = mockSpawn.mock.calls[0];
+				expect(args).toEqual(expectedArgs);
+				expect(options.cwd).toBe('/project');
+
+				for (const line of outputLines) {
+					mockStdout.emit('data', Buffer.from(`${JSON.stringify(line)}\n`));
+				}
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(result).toMatchObject<Partial<AgentResult>>({
+					success: true,
+					response: expectedResponse,
+					agentSessionId: expectedSessionId,
+					usageStats: expectedUsage,
+				});
+			}
+		);
+
+		it('should resume JSONL agents with provider-specific session arguments', async () => {
+			const resultPromise = spawnAgent(
+				'codex',
+				'/project',
+				'Follow-up Auto Run prompt',
+				'existing-thread-id'
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			expect(args).toEqual([
+				'-C',
+				'/project',
+				'exec',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--skip-git-repo-check',
+				'--json',
+				'resume',
+				'existing-thread-id',
+				'--',
+				'Follow-up Auto Run prompt',
+			]);
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					`${JSON.stringify({
+						type: 'item.completed',
+						item: { type: 'agent_message', text: 'Resumed response' },
+					})}\n`
+				)
+			);
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Resumed response');
+		});
+
+		it('should reject agents that do not declare batch output support', async () => {
+			const result = await spawnAgent('terminal', '/project', 'prompt');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Unsupported agent type for batch mode: terminal',
+			});
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('PATH expansion (via spawnAgent)', () => {

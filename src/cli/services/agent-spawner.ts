@@ -5,9 +5,7 @@ import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
 import type { AgentOutputParser } from '../../main/parsers/agent-output-parser';
-import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
-import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
-import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
+import { ensureParsersInitialized, getOutputParser } from '../../main/parsers';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
@@ -324,16 +322,12 @@ function mergeUsageStats(
 
 /** Create the appropriate output parser for a given agent type */
 function createParser(toolType: ToolType): AgentOutputParser {
-	switch (toolType) {
-		case 'codex':
-			return new CodexOutputParser();
-		case 'opencode':
-			return new OpenCodeOutputParser();
-		case 'factory-droid':
-			return new FactoryDroidOutputParser();
-		default:
-			throw new Error(`No parser available for agent type: ${toolType}`);
+	ensureParsersInitialized();
+	const parser = getOutputParser(toolType);
+	if (!parser) {
+		throw new Error(`No parser available for agent type: ${toolType}`);
 	}
+	return parser;
 }
 
 /**
