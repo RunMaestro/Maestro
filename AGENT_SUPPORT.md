@@ -317,7 +317,11 @@ Document:
 - [x] How to resume a session
   - Add a `resumeArgs: (sessionId) => string[]` builder to the agent definition and ensure the parser/storage layer preserves the provider's raw resumable ID as `agentSessionId`. Maestro passes that ID into `buildAgentArgs()` when resuming a tab or provider session; the helper appends the provider-specific resume args after JSON/read-only/model args. Current patterns are Claude Code `--resume <sessionId>`, Codex `resume <thread_id>`, OpenCode `--session <sessionId>`, Gemini CLI `--resume <sessionId>`, and Factory Droid `-s <sessionId>`.
   - Verify the resumed command still receives a prompt when the provider requires one, and that JSON output remains enabled during resume so the parser can capture follow-up events and usage. If the agent cannot resume from CLI, leave `supportsResume: false` and omit `resumeArgs` so resume UI is disabled by capability gates.
-- [ ] How to enable read-only mode
+- [x] How to enable read-only mode
+  - Declare provider-specific read-only or plan-mode CLI arguments with `readOnlyArgs` in `src/main/agents/definitions.ts`, then set `supportsReadOnlyMode: true` in `src/main/agents/capabilities.ts` only after the mode has been verified. Maestro's argument builder appends `readOnlyArgs` when a tab, Auto Run, group chat, wizard conversation, or helper spawn requests read-only mode.
+  - Set `readOnlyCliEnforced: true` when the provider's CLI actually prevents writes, such as Claude Code `--permission-mode plan`, Codex `--sandbox read-only`, OpenCode `--agent plan`, or Factory Droid's default read-only `exec` behavior with empty `readOnlyArgs`. Set `readOnlyCliEnforced: false` only for prompt-only guidance, such as Gemini CLI while its plan approval mode is not generally available; in that case keep `supportsReadOnlyMode: false` unless the UI should expose a clearly non-enforced mode.
+  - If the agent uses default environment variables or YOLO/full-access flags in normal operation, add `readOnlyEnvOverrides` and/or `yoloModeArgs` so read-only launches remove blanket write approvals. Current OpenCode support strips its permissive `OPENCODE_CONFIG_CONTENT` in read-only mode while keeping the question tool disabled to avoid batch-mode hangs.
+  - Verify the final command composition keeps JSON output, resume args, model args, working-directory args, and prompt delivery working in read-only mode. For providers where read-only flags conflict with full-access flags, the read-only path must win.
 - [ ] Token/usage reporting format
 
 ### Step 2: Add Agent Definition
