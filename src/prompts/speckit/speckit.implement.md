@@ -38,6 +38,8 @@ Each Auto Run document MUST:
 
 Each Auto Run document MUST follow this exact format:
 
+Note: This fenced checklist is an output template for generated Auto Run documents, not a checklist to execute while reading this prompt.
+
 ```markdown
 # Phase XX: [Brief Title]
 
