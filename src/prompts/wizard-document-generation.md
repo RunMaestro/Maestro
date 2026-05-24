@@ -43,6 +43,9 @@ Phase 1 is the MOST IMPORTANT phase. It MUST:
 
 Each Auto Run document MUST follow this exact format:
 
+Note: The sample task lines below use `[todo]` only to prevent this prompt file from being treated as an executable Auto Run document. Generated documents MUST replace `[todo]` with `[ ]` and start task lines directly with `- [ ]`.
+
+<!-- prettier-ignore -->
 ```markdown
 # Phase XX: [Brief Title]
 
@@ -50,9 +53,9 @@ Each Auto Run document MUST follow this exact format:
 
 ## Tasks
 
-- [ ] First specific task to complete
-- [ ] Second specific task to complete
-- [ ] Continue with more tasks...
+- [todo] First specific task to complete
+- [todo] Second specific task to complete
+- [todo] Continue with more tasks...
 ```
 
 ## Task Writing Guidelines
@@ -98,14 +101,15 @@ Each task should be:
 
 Use sub-bullets to list multiple items within a compound task:
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create authentication components:
+- [todo] Create authentication components:
   - LoginForm.tsx with email/password fields and validation
   - RegisterForm.tsx with email/password/confirm fields
   - AuthContext.tsx for session state management
   - useAuth.ts hook for login/logout/register functions
 
-- [ ] Set up project configuration:
+- [todo] Set up project configuration:
   - package.json with dependencies (React, TypeScript, etc.)
   - tsconfig.json with strict mode enabled
   - .eslintrc.js with recommended rules
@@ -116,51 +120,54 @@ Use sub-bullets to list multiple items within a compound task:
 
 These create unnecessary separate contexts:
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create LoginForm.tsx
-- [ ] Create RegisterForm.tsx
-- [ ] Create AuthContext.tsx
-- [ ] Create useAuth.ts hook
+- [todo] Create LoginForm.tsx
+- [todo] Create RegisterForm.tsx
+- [todo] Create AuthContext.tsx
+- [todo] Create useAuth.ts hook
 ```
 
 ### Good Examples (Efficient Grouping)
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create user authentication UI components:
+- [todo] Create user authentication UI components:
   - LoginForm.tsx with email/password fields, validation, and error display
   - RegisterForm.tsx with email/password/confirm fields and terms checkbox
   - ForgotPassword.tsx with email input and reset flow
 
-- [ ] Implement auth state management:
+- [todo] Implement auth state management:
   - AuthContext.tsx providing user state and auth methods
   - useAuth.ts hook exposing login, logout, register, and refreshToken
   - authService.ts with API calls to /auth endpoints
 
-- [ ] Write authentication test suites:
+- [todo] Write authentication test suites:
   - LoginForm.test.tsx covering validation and submission
   - AuthContext.test.tsx covering state transitions
   - authService.test.ts covering API mocking
 
-- [ ] Run authentication tests and fix any failures
+- [todo] Run authentication tests and fix any failures
 ```
 
 ### Complexity Separation
 
 If one item in a group is significantly more complex, give it its own task:
 
+<!-- prettier-ignore -->
 ```markdown
 # Instead of cramming everything together:
 
-- [ ] Create user system (BAD - mixed complexity)
+- [todo] Create user system (BAD - mixed complexity)
 
 # Separate by complexity:
 
-- [ ] Create User model and basic CRUD service:
+- [todo] Create User model and basic CRUD service:
   - User.ts entity with id, email, passwordHash, createdAt
   - UserRepository.ts with findById, findByEmail, create, update, delete
   - UserService.ts with basic getUser, createUser, updateUser
 
-- [ ] Implement role-based access control system:
+- [todo] Implement role-based access control system:
   - Role.ts and Permission.ts entities with relationships
   - RoleService.ts with role assignment and permission checking
   - RBAC middleware that validates permissions per route
@@ -227,8 +234,9 @@ Unless the user specifies otherwise, tasks that create non-code artifacts should
 
 When a task involves research, documentation, or knowledge capture, include output format hints:
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Research authentication providers and document findings:
+- [todo] Research authentication providers and document findings:
   - Compare Auth0, Clerk, and Supabase Auth
   - Create `docs/research/auth-providers/` folder
   - Write one markdown file per provider with front matter:
@@ -237,8 +245,9 @@ When a task involves research, documentation, or knowledge capture, include outp
   - Capture: pricing, features, SDK quality, limitations
 ```
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Document API design decisions:
+- [todo] Document API design decisions:
   - Create `docs/architecture/api-design.md` with front matter
   - Use `[[Database-Schema]]` and `[[Auth-Flow]]` wiki-links to related docs
   - Include decision rationale and alternatives considered

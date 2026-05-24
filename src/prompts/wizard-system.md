@@ -88,8 +88,11 @@ Each task checkbox (`- [ ]`) starts a **fresh AI context** with the entire docum
 
 Use sub-bullets for compound tasks:
 
+Note: The sample task line below uses `[todo]` only to prevent this prompt file from being treated as an executable Auto Run document. Generated documents MUST replace `[todo]` with `[ ]` and start task lines directly with `- [ ]`.
+
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create authentication components:
+- [todo] Create authentication components:
   - LoginForm.tsx with validation
   - RegisterForm.tsx with error handling
   - AuthContext.tsx for state management

@@ -49,6 +49,9 @@ When deciding:
 
 Each Auto Run document MUST follow this exact format:
 
+Note: The sample task lines below use `[todo]` only to prevent this prompt file from being treated as an executable Auto Run document. Generated documents MUST replace `[todo]` with `[ ]` and start task lines directly with `- [ ]`.
+
+<!-- prettier-ignore -->
 ```markdown
 # Phase XX: [Brief Title]
 
@@ -56,9 +59,9 @@ Each Auto Run document MUST follow this exact format:
 
 ## Tasks
 
-- [ ] First specific task to complete
-- [ ] Second specific task to complete
-- [ ] Continue with more tasks...
+- [todo] First specific task to complete
+- [todo] Second specific task to complete
+- [todo] Continue with more tasks...
 ```
 
 ## Task Writing Guidelines
@@ -103,37 +106,40 @@ Each task should be:
 
 Use sub-bullets to list multiple items within a compound task:
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create dashboard widgets:
+- [todo] Create dashboard widgets:
   - StatsCard.tsx displaying key metrics
   - ChartWidget.tsx with configurable chart types
   - RecentActivity.tsx showing latest events
 
-- [ ] Write widget test suites:
+- [todo] Write widget test suites:
   - StatsCard.test.tsx covering data display
   - ChartWidget.test.tsx covering chart rendering
 
-- [ ] Run widget tests and fix any failures
+- [todo] Run widget tests and fix any failures
 ```
 
 ### Bad Examples (Token-Wasteful)
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Create StatsCard.tsx
-- [ ] Create ChartWidget.tsx
-- [ ] Create RecentActivity.tsx
+- [todo] Create StatsCard.tsx
+- [todo] Create ChartWidget.tsx
+- [todo] Create RecentActivity.tsx
 ```
 
 ### Good Examples (Efficient Grouping)
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Add notification system components:
+- [todo] Add notification system components:
   - NotificationBell.tsx with unread count badge
   - NotificationList.tsx with infinite scroll
   - NotificationItem.tsx with read/unread states
   - useNotifications.ts hook for fetching and marking read
 
-- [ ] Implement notification backend integration:
+- [todo] Implement notification backend integration:
   - notificationService.ts with API calls
   - NotificationContext.tsx for app-wide state
   - Real-time updates via WebSocket connection
@@ -169,8 +175,9 @@ Unless the user specifies otherwise, tasks that create non-code artifacts should
 
 When a task involves research, documentation, or knowledge capture, include output format hints:
 
+<!-- prettier-ignore -->
 ```markdown
-- [ ] Research caching strategies and document findings:
+- [todo] Research caching strategies and document findings:
   - Compare Redis, Memcached, and in-memory options
   - Create `docs/research/caching/` folder
   - Write one markdown file per option with front matter (type: research)
