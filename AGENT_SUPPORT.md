@@ -314,7 +314,9 @@ Document:
 
   - For a new parser, implement `extractSessionId(event)` so it returns `event.sessionId` first, then falls back to the raw provider field. If the provider stores sessions on disk, use the same raw ID as the `AgentSession.sessionId` value so session browsing, resume, deletion, and history links all address the same conversation.
 
-- [ ] How to resume a session
+- [x] How to resume a session
+  - Add a `resumeArgs: (sessionId) => string[]` builder to the agent definition and ensure the parser/storage layer preserves the provider's raw resumable ID as `agentSessionId`. Maestro passes that ID into `buildAgentArgs()` when resuming a tab or provider session; the helper appends the provider-specific resume args after JSON/read-only/model args. Current patterns are Claude Code `--resume <sessionId>`, Codex `resume <thread_id>`, OpenCode `--session <sessionId>`, Gemini CLI `--resume <sessionId>`, and Factory Droid `-s <sessionId>`.
+  - Verify the resumed command still receives a prompt when the provider requires one, and that JSON output remains enabled during resume so the parser can capture follow-up events and usage. If the agent cannot resume from CLI, leave `supportsResume: false` and omit `resumeArgs` so resume UI is disabled by capability gates.
 - [ ] How to enable read-only mode
 - [ ] Token/usage reporting format
 
