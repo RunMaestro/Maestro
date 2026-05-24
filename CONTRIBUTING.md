@@ -882,7 +882,7 @@ All PRs must pass these checks before review:
 
 ### PR Checklist
 
-- [ ] Linting passes (`npm run lint && npm run lint:eslint`)
+- [x] Linting passes (`npm run lint && npm run lint:eslint`) — Verified 2026-05-24. ESLint reported one warning in `src/main/web-server/web-server-factory.ts` for an unused catch parameter, but exited successfully.
 - [ ] Tests pass (`npm test`)
 - [ ] Manually tested affected features
 - [ ] No new console warnings or errors
