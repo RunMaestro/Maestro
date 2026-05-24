@@ -36,11 +36,13 @@ Each Auto Run document MUST:
 
 ## Document Format
 
-Each Auto Run document MUST follow this exact format:
+Each generated document block MUST follow this exact format:
 
-Note: This fenced checklist is an output template for generated Auto Run documents, not a checklist to execute while reading this prompt.
-
+<!-- prettier-ignore-start -->
 ```markdown
+---BEGIN DOCUMENT---
+FILENAME: SpecKit-<feature-name>-Phase-XX-[Description].md
+CONTENT:
 # Phase XX: [Brief Title]
 
 [One paragraph describing what this phase accomplishes and why it matters]
@@ -53,15 +55,21 @@ Note: This fenced checklist is an output template for generated Auto Run documen
 
 ## Tasks
 
-- [ ] T001 First specific task to complete
-- [ ] T002 Second specific task to complete
-- [ ] Continue with more tasks...
+<unchecked task> T001 First specific task to complete
+<unchecked task> T002 Second specific task to complete
+<unchecked task> Continue with more tasks...
 
 ## Completion
 
-- [ ] Verify all changes work as expected
-- [ ] Run `/speckit.analyze` to verify consistency
+<unchecked task> Verify all changes work as expected
+<unchecked task> Run `/speckit.analyze` to verify consistency
+---END DOCUMENT---
 ```
+<!-- prettier-ignore-end -->
+
+Where `<unchecked task>` appears in the example, generate a standard Markdown unchecked task marker: hyphen, space, `[ ]`, then a space. The prompt avoids spelling that marker literally so Auto Run does not treat this template as an executable checklist.
+
+The marker, filename, and content header lines are for Maestro's parser only. The saved Auto Run document content starts at `# Phase XX` and ends before `---END DOCUMENT---`.
 
 ## Task Writing Guidelines
 
