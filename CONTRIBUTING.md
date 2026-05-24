@@ -886,7 +886,7 @@ All PRs must pass these checks before review:
 - [x] Tests pass (`npm test`) — Verified 2026-05-24. Vitest passed: 546 files passed, 1 skipped; 22,552 tests passed, 107 skipped.
 - [x] Manually tested affected features — Verified 2026-05-24 with a representative Auto Run Markdown document containing real tasks plus backtick- and tilde-fenced task-list examples; shared task counting/extraction ignored fenced examples and reported only executable tasks.
 - [x] No new console warnings or errors — Verified 2026-05-24 by inspecting the affected Auto Run/File Preview changes for newly introduced console warning/error paths and running `npm run build:renderer`; the build succeeded, with only pre-existing unrelated Vite/CSS/chunk warnings.
-- [ ] Documentation updated if needed (code comments, README, or `docs/`)
+- [x] Documentation updated if needed (code comments, README, or `docs/`) — Verified 2026-05-24. `docs/autorun-playbooks.md` documents that fenced Markdown checkbox examples are ignored by Auto Run task scanning and editor/file-preview task counts.
 - [ ] Commit messages follow [conventional format](#commit-messages)
 
 ### Opening the PR
