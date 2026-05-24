@@ -322,7 +322,19 @@ Document:
   - Set `readOnlyCliEnforced: true` when the provider's CLI actually prevents writes, such as Claude Code `--permission-mode plan`, Codex `--sandbox read-only`, OpenCode `--agent plan`, or Factory Droid's default read-only `exec` behavior with empty `readOnlyArgs`. Set `readOnlyCliEnforced: false` only for prompt-only guidance, such as Gemini CLI while its plan approval mode is not generally available; in that case keep `supportsReadOnlyMode: false` unless the UI should expose a clearly non-enforced mode.
   - If the agent uses default environment variables or YOLO/full-access flags in normal operation, add `readOnlyEnvOverrides` and/or `yoloModeArgs` so read-only launches remove blanket write approvals. Current OpenCode support strips its permissive `OPENCODE_CONFIG_CONTENT` in read-only mode while keeping the question tool disabled to avoid batch-mode hangs.
   - Verify the final command composition keeps JSON output, resume args, model args, working-directory args, and prompt delivery working in read-only mode. For providers where read-only flags conflict with full-access flags, the read-only path must win.
-- [ ] Token/usage reporting format
+- [x] Token/usage reporting format
+  - Normalize provider token data through `ParsedEvent.usage` in the output parser, then expose it through `extractUsage(event)`. `StdoutHandler.buildUsageStats()` maps parser fields to the shared app shape: `inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `totalCostUsd`, `contextWindow`, and optional `reasoningTokens`.
+  - Required parser fields are `inputTokens` and `outputTokens`; optional fields are `cacheReadTokens`, `cacheCreationTokens`, `costUsd`, `contextWindow`, and `reasoningTokens`. Use zero for missing cache/cost values, and leave `contextWindow` unset when the process config or `DEFAULT_CONTEXT_WINDOWS` should supply the fallback.
+  - Current verified formats:
+
+    | Agent         | Raw usage event / field                               | Mapping / notes                                                                                                                                                                                                              |
+    | ------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Claude Code   | `modelUsage`, `usage`, `total_cost_usd`               | `aggregateModelUsage()` uses max per-model input/output/cache values to avoid double-counting multi-model turns; falls back to top-level `usage`; maps `total_cost_usd` to `costUsd` and includes reported context window.   |
+    | Codex         | `turn.completed.usage`                                | Maps `input_tokens`, `output_tokens`, `cached_input_tokens`, and `reasoning_output_tokens`; `outputTokens` includes reasoning tokens; cache reads are display-only because OpenAI cached input is already included in input. |
+    | OpenCode      | `step_finish.part.tokens` and `step_finish.part.cost` | Maps `tokens.input`, `tokens.output`, `tokens.cache.read`, `tokens.cache.write`, and `part.cost`; context window comes from the agent configuration/default.                                                                 |
+    | Factory Droid | `completion.usage`                                    | Maps `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, and `thinking_tokens` as `reasoningTokens`; context window comes from the agent configuration/default.                       |
+
+  - Set `supportsUsageStats: true` only after a parser emits usage for real CLI output. Set `supportsCostTracking: true` only when the provider reports cost directly or Maestro has a verified pricing calculation for that agent.
 
 ### Step 2: Add Agent Definition
 
