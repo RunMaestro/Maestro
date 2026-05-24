@@ -884,7 +884,7 @@ All PRs must pass these checks before review:
 
 - [x] Linting passes (`npm run lint && npm run lint:eslint`) — Verified 2026-05-24. ESLint reported one warning in `src/main/web-server/web-server-factory.ts` for an unused catch parameter, but exited successfully.
 - [x] Tests pass (`npm test`) — Verified 2026-05-24. Vitest passed: 546 files passed, 1 skipped; 22,552 tests passed, 107 skipped.
-- [ ] Manually tested affected features
+- [x] Manually tested affected features — Verified 2026-05-24 with a representative Auto Run Markdown document containing real tasks plus backtick- and tilde-fenced task-list examples; shared task counting/extraction ignored fenced examples and reported only executable tasks.
 - [ ] No new console warnings or errors
 - [ ] Documentation updated if needed (code comments, README, or `docs/`)
 - [ ] Commit messages follow [conventional format](#commit-messages)
