@@ -15,6 +15,7 @@ import Store from 'electron-store';
 import type { AgentDetector } from './detector';
 import type { AgentConfigsData } from '../stores/types';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { resolveCodexHomeKey, setCodexUsageSnapshot } from '../stores/codexUsageStore';
 import { sampleCodexUsage } from './codex-usage-sampler';
 
@@ -60,10 +61,20 @@ export async function discoverCodexHomes(homeDir = os.homedir()): Promise<string
 		if (!isLikelyCodexAccountDirName(entry.name)) continue;
 		if (ACCOUNT_DIR_EXCLUDE_RE.test(entry.name)) continue;
 		const codexHome = path.join(homeDir, entry.name);
+		const authPath = path.join(codexHome, 'auth.json');
 		try {
-			await fs.promises.access(path.join(codexHome, 'auth.json'), fs.constants.R_OK);
-		} catch {
-			continue;
+			await fs.promises.access(authPath, fs.constants.R_OK);
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT' || code === 'EACCES') {
+				continue;
+			}
+			void captureException(err, {
+				operation: 'codexUsage:discoverCodexHomes.access',
+				codexHome,
+				authPath,
+			});
+			throw err;
 		}
 		homes.push(codexHome);
 	}

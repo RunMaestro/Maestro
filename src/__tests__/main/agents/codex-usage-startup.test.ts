@@ -4,15 +4,20 @@
  * Covers review-sensitive behavior:
  *   - corrupted CODEX_HOME values fall back to the default account home
  *   - one account failure does not cancel sampling for the rest of the batch
+ *   - discovery only swallows expected missing/unreadable auth.json errors
  */
 
+import * as fs from 'fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { sampleCodexUsageMock, loggerWarnMock, loggerInfoMock } = vi.hoisted(() => ({
-	sampleCodexUsageMock: vi.fn(),
-	loggerWarnMock: vi.fn(),
-	loggerInfoMock: vi.fn(),
-}));
+const { sampleCodexUsageMock, loggerWarnMock, loggerInfoMock, captureExceptionMock } = vi.hoisted(
+	() => ({
+		sampleCodexUsageMock: vi.fn(),
+		loggerWarnMock: vi.fn(),
+		loggerInfoMock: vi.fn(),
+		captureExceptionMock: vi.fn(),
+	})
+);
 
 vi.mock('../../../main/agents/codex-usage-sampler', () => ({
 	sampleCodexUsage: sampleCodexUsageMock,
@@ -25,6 +30,10 @@ vi.mock('../../../main/utils/logger', () => ({
 		debug: vi.fn(),
 		error: vi.fn(),
 	},
+}));
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: captureExceptionMock,
 }));
 
 vi.mock('electron-store', () => {
@@ -57,7 +66,10 @@ vi.mock('os', async () => {
 	};
 });
 
-import { runCodexUsageSampling } from '../../../main/agents/codex-usage-startup';
+import {
+	discoverCodexHomes,
+	runCodexUsageSampling,
+} from '../../../main/agents/codex-usage-startup';
 import {
 	clearCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
@@ -103,6 +115,10 @@ function makeSnapshot(codexHomeKey: string): CodexUsageSnapshot {
 	};
 }
 
+function makeDirent(name: string, isDirectory = true): fs.Dirent {
+	return { name, isDirectory: () => isDirectory } as fs.Dirent;
+}
+
 const FAKE_AGENT = {
 	id: 'codex',
 	name: 'Codex',
@@ -113,11 +129,67 @@ const FAKE_AGENT = {
 	available: true,
 };
 
+describe('codex-usage-startup → discoverCodexHomes', () => {
+	beforeEach(() => {
+		captureExceptionMock.mockReset();
+	});
+
+	it('skips homes with missing or unreadable auth.json files', async () => {
+		const readdirSpy = vi
+			.spyOn(fs.promises, 'readdir')
+			.mockResolvedValue([
+				makeDirent('.codex-missing'),
+				makeDirent('.codex-denied'),
+				makeDirent('.codex-good'),
+			] as never);
+		const accessSpy = vi
+			.spyOn(fs.promises, 'access')
+			.mockImplementation(async (authPath: fs.PathLike) => {
+				const pathText = String(authPath);
+				if (pathText.includes('.codex-missing')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+				if (pathText.includes('.codex-denied')) {
+					throw Object.assign(new Error('denied'), { code: 'EACCES' });
+				}
+			});
+
+		try {
+			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual(['/Users/test/.codex-good']);
+			expect(captureExceptionMock).not.toHaveBeenCalled();
+		} finally {
+			readdirSpy.mockRestore();
+			accessSpy.mockRestore();
+		}
+	});
+
+	it('reports and rethrows unexpected auth.json access errors', async () => {
+		const unexpected = Object.assign(new Error('disk failure'), { code: 'EIO' });
+		const readdirSpy = vi
+			.spyOn(fs.promises, 'readdir')
+			.mockResolvedValue([makeDirent('.codex-broken')] as never);
+		const accessSpy = vi.spyOn(fs.promises, 'access').mockRejectedValue(unexpected);
+
+		try {
+			await expect(discoverCodexHomes('/Users/test')).rejects.toThrow('disk failure');
+			expect(captureExceptionMock).toHaveBeenCalledWith(unexpected, {
+				operation: 'codexUsage:discoverCodexHomes.access',
+				codexHome: '/Users/test/.codex-broken',
+				authPath: '/Users/test/.codex-broken/auth.json',
+			});
+		} finally {
+			readdirSpy.mockRestore();
+			accessSpy.mockRestore();
+		}
+	});
+});
+
 describe('codex-usage-startup → runCodexUsageSampling', () => {
 	beforeEach(() => {
 		sampleCodexUsageMock.mockReset();
 		loggerWarnMock.mockReset();
 		loggerInfoMock.mockReset();
+		captureExceptionMock.mockReset();
 		resetCodexUsageStore();
 		clearCodexUsageSnapshots();
 	});
