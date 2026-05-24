@@ -686,7 +686,8 @@ describe('YourAgentOutputParser', () => {
 
 ### Integration Testing Checklist
 
-- [ ] Agent appears in agent selection dropdown
+- [x] Agent appears in agent selection dropdown
+  - Verified with `NewInstanceModal` coverage that every visible detected agent renders as an agent provider option, while hidden internal agents such as `terminal` stay excluded.
 - [ ] New session starts successfully
 - [ ] Output streams to AI Terminal
 - [ ] Session ID captured and displayed
