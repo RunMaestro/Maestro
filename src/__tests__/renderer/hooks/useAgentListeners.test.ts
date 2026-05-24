@@ -785,7 +785,10 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorPaused).toBe(true);
 		});
 
-		it('opens the agent error modal', () => {
+		it.each([
+			['auth_expired' as const, 'Authentication required'],
+			['token_exhaustion' as const, 'Token limit exceeded'],
+		])('opens the agent error modal for %s errors', (errorType, message) => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -801,7 +804,11 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
+			onAgentErrorHandler?.('sess-1-ai-tab-1', {
+				...baseError,
+				type: errorType,
+				message,
+			});
 
 			// Check that the agentError modal was opened
 			const agentErrorOpen = useModalStore.getState().isOpen('agentError');

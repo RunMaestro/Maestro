@@ -700,7 +700,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `agent-completeness` coverage that every agent declaring `supportsResume` also provides a `resumeArgs(sessionId)` builder that preserves the resumable provider session ID. Verified with `process:spawn` IPC coverage that resumed renderer spawns pass `agentSessionId` into `buildAgentArgs()` and the resulting resume arguments are forwarded to `ProcessManager.spawn()` alongside the prompt.
 - [x] Read-only mode works (if applicable)
   - Verified with `agent-completeness` coverage that every agent declaring `supportsReadOnlyMode` also provides a `readOnlyArgs` contract and explicitly declares whether read-only mode is CLI-enforced. Existing `buildAgentArgs`, IPC, renderer input, and UI coverage verify that read-only sends apply provider-specific read-only args, omit conflicting batch/YOLO flags, propagate the mode through spawn calls, and hide/show the toggle based on agent capabilities.
-- [ ] Error modal appears on auth/token errors
+- [x] Error modal appears on auth/token errors
+  - Verified with `setupErrorListener` coverage that main-process `agent-error` events for `auth_expired` and `token_exhaustion` are forwarded to the renderer as `agent:error`. Verified with `useAgentListeners` coverage that both error types set the matching agent/tab error state, put the agent into `error`, open the `agentError` modal store entry, and append an error log entry. Existing modal/recovery coverage verifies the rendered modal titles/actions for authentication and context-limit failures.
 - [ ] Auto Run works with your agent
 
 ---
