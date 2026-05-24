@@ -110,6 +110,22 @@ describe('Agent Completeness', () => {
 					}
 				});
 
+				it('has resume args if supportsResume', () => {
+					const caps = getAgentCapabilities(def.id);
+					if (caps.supportsResume) {
+						expect(
+							def.resumeArgs,
+							`Agent "${def.id}" has supportsResume=true but no resumeArgs builder`
+						).toBeDefined();
+
+						const args = def.resumeArgs?.('test-session-id') ?? [];
+						expect(
+							args,
+							`Agent "${def.id}" resumeArgs should include the session ID verbatim`
+						).toContain('test-session-id');
+					}
+				});
+
 				it('has error patterns if has output parser', () => {
 					const parser = getOutputParser(def.id);
 					if (parser) {

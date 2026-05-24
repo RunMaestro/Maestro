@@ -696,7 +696,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `useAgentListeners` coverage that `process:session-id` updates the matching AI tab's `agentSessionId`, clears `awaitingSessionId`, stores the session-level fallback ID, and registers the provider session origin. Verified with `MainPanel` and `TabBar` coverage that captured IDs render as the truncated session ID pill/header and can be copied from the UI when the agent declares `supportsSessionId`.
 - [x] Token usage updates (if applicable)
   - Verified with `setupUsageListener` coverage that main-process `usage` events are forwarded to the renderer as `process:usage`. Verified with `useAgentListeners` coverage that `process:usage` for `{sessionId}-ai-{tabId}` is parsed, batched into both the matching AI tab and session usage stats, updates context usage when it can be estimated, and increments cycle output tokens.
-- [ ] Session resume works (if applicable)
+- [x] Session resume works (if applicable)
+  - Verified with `agent-completeness` coverage that every agent declaring `supportsResume` also provides a `resumeArgs(sessionId)` builder that preserves the resumable provider session ID. Verified with `process:spawn` IPC coverage that resumed renderer spawns pass `agentSessionId` into `buildAgentArgs()` and the resulting resume arguments are forwarded to `ProcessManager.spawn()` alongside the prompt.
 - [ ] Read-only mode works (if applicable)
 - [ ] Error modal appears on auth/token errors
 - [ ] Auto Run works with your agent

@@ -608,6 +608,50 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('should pass agentSessionId into agent argument construction for resumed sessions', async () => {
+			const { buildAgentArgs } = await import('../../../../main/utils/agent-args');
+			const mockBuildAgentArgs = vi.mocked(buildAgentArgs);
+			mockBuildAgentArgs.mockReturnValueOnce(['--print', '--resume', 'agent-session-123']);
+
+			const mockAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+				resumeArgs: (sessionId: string) => ['--resume', sessionId],
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2003, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-resume',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'continue this session',
+				agentSessionId: 'agent-session-123',
+			});
+
+			expect(mockBuildAgentArgs).toHaveBeenCalledWith(mockAgent, {
+				baseArgs: ['--print'],
+				prompt: 'continue this session',
+				cwd: '/test/project',
+				readOnlyMode: undefined,
+				modelId: undefined,
+				yoloMode: undefined,
+				agentSessionId: 'agent-session-123',
+			});
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-resume',
+					toolType: 'claude-code',
+					args: ['--print', '--resume', 'agent-session-123'],
+					prompt: 'continue this session',
+				})
+			);
+		});
+
 		it('should NOT pass promptArgs for agents that use positional prompts (like Claude)', async () => {
 			// Claude uses positional args with -- separator, not promptArgs
 			const mockAgent = {
