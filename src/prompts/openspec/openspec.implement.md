@@ -56,17 +56,19 @@ CONTENT:
 
 ## Tasks
 
-- [ ] T001 First specific task to complete
-- [ ] T002 Second specific task to complete
-- [ ] Continue with more tasks...
+<unchecked task> T001 First specific task to complete
+<unchecked task> T002 Second specific task to complete
+<unchecked task> Continue with more tasks...
 
 ## Completion
 
-- [ ] Verify all changes work as expected
-- [ ] Run `openspec validate <change-id>` (if available)
+<unchecked task> Verify all changes work as expected
+<unchecked task> Run `openspec validate <change-id>` (if available)
 ---END DOCUMENT---
 ```
 <!-- prettier-ignore-end -->
+
+Where `<unchecked task>` appears in the example, generate a standard Markdown unchecked task marker: hyphen, space, `[ ]`, then a space. The prompt avoids spelling that marker literally so Auto Run does not treat this template as an executable checklist.
 
 The marker, filename, and content header lines are for Maestro's parser only. The saved Auto Run document content starts at `# Phase XX` and ends before `---END DOCUMENT---`.
 

@@ -16,4 +16,13 @@ describe('openspec implement prompt', () => {
 		expect(formatBlock?.[1]).toContain('CONTENT:\n# Phase XX: [Brief Title]');
 		expect(formatBlock?.[1]).toContain('---END DOCUMENT---');
 	});
+
+	it('does not contain literal unchecked task markers that Auto Run can select from the prompt template', () => {
+		const promptPath = path.join(process.cwd(), 'src/prompts/openspec/openspec.implement.md');
+		const prompt = fs.readFileSync(promptPath, 'utf8');
+
+		expect(prompt).not.toMatch(/^- \[ \]/m);
+		expect(prompt).toContain('<unchecked task> T001 First specific task to complete');
+		expect(prompt).toContain('generate a standard Markdown unchecked task marker');
+	});
 });
