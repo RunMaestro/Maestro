@@ -37,9 +37,13 @@ Each Auto Run document MUST:
 
 ## Document Format
 
-Each Auto Run document MUST follow this exact format:
+Each generated document block MUST follow this exact format:
 
+<!-- prettier-ignore-start -->
 ```markdown
+---BEGIN DOCUMENT---
+FILENAME: OpenSpec-<change-id>-Phase-XX-[Description].md
+CONTENT:
 # Phase XX: [Brief Title]
 
 [One paragraph describing what this phase accomplishes and why it matters]
@@ -60,7 +64,11 @@ Each Auto Run document MUST follow this exact format:
 
 - [ ] Verify all changes work as expected
 - [ ] Run `openspec validate <change-id>` (if available)
+---END DOCUMENT---
 ```
+<!-- prettier-ignore-end -->
+
+The marker, filename, and content header lines are for Maestro's parser only. The saved Auto Run document content starts at `# Phase XX` and ends before `---END DOCUMENT---`.
 
 ## Task Writing Guidelines
 
