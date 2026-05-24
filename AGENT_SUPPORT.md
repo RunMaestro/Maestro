@@ -692,7 +692,8 @@ describe('YourAgentOutputParser', () => {
   - Verified with `useSessionCrud.createNewSession` coverage that a selected provider resolves through `window.maestro.agents.get()`, creates an active AI-mode session, initializes the first AI tab, selects it as active, records a ready shell log, and makes the new session active.
 - [x] Output streams to AI Terminal
   - Verified with `useAgentListeners` coverage that `process:thinking-chunk` events for `{sessionId}-ai-{tabId}` are RAF-batched into a `source: 'thinking'` log on the matching AI tab when thinking display is enabled.
-- [ ] Session ID captured and displayed
+- [x] Session ID captured and displayed
+  - Verified with `useAgentListeners` coverage that `process:session-id` updates the matching AI tab's `agentSessionId`, clears `awaitingSessionId`, stores the session-level fallback ID, and registers the provider session origin. Verified with `MainPanel` and `TabBar` coverage that captured IDs render as the truncated session ID pill/header and can be copied from the UI when the agent declares `supportsSessionId`.
 - [ ] Token usage updates (if applicable)
 - [ ] Session resume works (if applicable)
 - [ ] Read-only mode works (if applicable)
