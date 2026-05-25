@@ -1,6 +1,6 @@
 # Full Test Coverage Campaign Prompt
 
-You are operating in the Maestro repository at `/Users/jeffscottward/Github/tools/Maestro`.
+You are operating in the Maestro repository.
 
 Your mission is to run a full test coverage and test-quality campaign, not a quick patch. The target is 100% meaningful test coverage with a defensible assessment that the tests are comprehensive, behaviorally useful, and capable of catching regressions.
 
@@ -18,38 +18,19 @@ Follow these constraints:
 - When a production module is hard to test, first evaluate whether it needs a small testability seam. Keep such refactors minimal and behavior-preserving.
 - Never introduce broad refactors just to make tests easier.
 
-## Current Context
+## Campaign Context
 
-The current branch is `full-test-coverage`.
+Start from the branch or worktree provided by the user. Do not assume a fixed local path, branch name, baseline percentage, or previously completed test set.
 
-Initial coverage measured with `npm run test:coverage`:
+At the start of the campaign, capture the current state:
 
-- Statements: `67.17%`
-- Branches: `60.58%`
-- Functions: `67.73%`
-- Lines: `67.81%`
+- `git status --short --branch`
+- `npm run test:coverage`
+- current statement, branch, function, and line coverage from the generated coverage report
+- the current list of low-coverage and zero-coverage files
+- the current validation status for lint, ESLint, unit tests, coverage, integration tests, and E2E tests
 
-After initial focused tests:
-
-- Statements: `67.30%`
-- Branches: `60.64%`
-- Functions: `67.85%`
-- Lines: `67.95%`
-
-Tests already added in this branch:
-
-- `src/__tests__/web/hooks/useLongPress.test.ts`
-- `src/__tests__/renderer/utils/tokenCounter.test.ts`
-- `src/__tests__/renderer/services/speckit.test.ts`
-- `src/__tests__/renderer/utils/sentry.test.ts`
-- `docs/test-coverage-audit.md`
-
-Validation already run:
-
-- `npm run test:coverage` passes
-- Targeted new tests pass
-- `npm run lint` passes
-- `npm run lint:eslint` passes with one pre-existing warning in `src/main/web-server/web-server-factory.ts`
+Record this fresh baseline in `docs/test-coverage-audit.md`. Treat any existing numbers in older notes as historical context only, not as authoritative campaign state.
 
 Existing unrelated dirty/untracked files may be present. Leave them alone unless explicitly needed.
 
